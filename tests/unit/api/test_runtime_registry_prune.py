@@ -1,4 +1,5 @@
 import json
+import os
 import time
 
 import evileye.api.core.runtime_registry as rr
@@ -124,3 +125,25 @@ def test_get_current_run_summary_hydrates_one(tmp_path, monkeypatch):
     assert current is not None
     assert current["id"] == 100
     assert calls["n"] == 1
+
+
+def test_refresh_marks_foreign_pid_stopped(tmp_path, monkeypatch):
+    _patch_registry(tmp_path, monkeypatch)
+    rr.save_runtime_record(
+        {
+            "id": 7,
+            "pid": 424242,
+            "state": "running",
+            "alive": True,
+            "updated_at": time.time(),
+            "name": "foreign",
+        }
+    )
+    monkeypatch.setattr(os, "kill", lambda pid, sig: None)
+    monkeypatch.setattr(rr, "_parse_process_cmdline", lambda pid: None)
+
+    record = rr.load_runtime_record(7)
+    assert record is not None
+    assert record["alive"] is False
+    assert record["state"] == "stopped"
+    assert record["pid"] is None

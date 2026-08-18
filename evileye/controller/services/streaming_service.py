@@ -39,6 +39,7 @@ class FrameRelayClient:
         self.token = token or ""
         self.timeout_sec = max(0.1, float(timeout_sec))
         self.logger = get_module_logger("frame_relay")
+        self._last_warn_ts = 0.0
         self._lock = threading.Lock()
         self._pending: dict[str, tuple[str, bytes, int | None, dict[str, Any] | None]] = {}
         self._wake = threading.Event()
@@ -66,6 +67,14 @@ class FrameRelayClient:
         self._wake.set()
         return True
 
+    def _log_publish_failure(self, exc: Exception) -> None:
+        now = time.time()
+        if now - self._last_warn_ts >= 30.0:
+            self.logger.warning("Frame relay publish failed: %s", exc)
+            self._last_warn_ts = now
+        else:
+            self.logger.debug("Frame relay publish failed: %s", exc)
+
     def _loop(self) -> None:
         while not self._stop.is_set():
             self._wake.wait(timeout=0.5)
@@ -79,7 +88,7 @@ class FrameRelayClient:
                 try:
                     self._post(pipeline_id, jpeg_bytes, source_id=source_id, metadata=metadata)
                 except Exception as exc:
-                    self.logger.debug("Frame relay publish failed: %s", exc)
+                    self._log_publish_failure(exc)
 
     def _post(
         self,
@@ -122,7 +131,7 @@ class FrameRelayClient:
             with urllib.request.urlopen(request, timeout=self.timeout_sec) as response:
                 return 200 <= getattr(response, "status", 200) < 300
         except (urllib.error.URLError, TimeoutError, OSError) as exc:
-            self.logger.debug("Frame relay publish failed: %s", exc)
+            self._log_publish_failure(exc)
             return False
 
 
@@ -226,6 +235,8 @@ class StreamingService:
                 except Exception:
                     pass
             self._frame_relay = FrameRelayClient(relay_base_url, token=relay_token) if relay_base_url else None
+            if relay_base_url:
+                self.logger.info("Frame relay enabled: %s", relay_base_url)
             self._condition.notify_all()
 
     def submit_frame(

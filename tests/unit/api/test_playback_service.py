@@ -249,3 +249,36 @@ def test_load_segments_prefers_sidecar_session_start(tmp_path, monkeypatch):
     segs = svc.load_segments("Cam4", date="2026-08-17")
     assert abs(segs[0]["start_ts"] - mux_start) < 0.05
     assert segs[0]["start_ts"] - filename_start > 2.0
+
+
+def test_load_segments_skips_files_outside_window_before_mvhd(tmp_path, monkeypatch):
+    """Nominal slot filter must not open every MP4 in the day when from/to is set."""
+    from datetime import datetime
+
+    root = tmp_path / "EvilEyeData"
+    cam = root / "Streams" / "2026-08-17" / "Cam1"
+    cam.mkdir(parents=True)
+    for idx in range(20):
+        (cam / f"Cam1_20260817_014911_0_{idx:05d}.mp4").write_bytes(b"fake")
+    monkeypatch.setenv("EVILEYE_DATA_DIR", str(root))
+    monkeypatch.setattr(svc, "_configured_segment_length_sec", lambda: 1800.0)
+
+    calls = {"n": 0}
+    real = svc._mp4_duration_sec
+
+    def counting(path: str):
+        calls["n"] += 1
+        return real(path)
+
+    monkeypatch.setattr(svc, "_mp4_duration_sec", counting)
+
+    tick = datetime(2026, 8, 17, 11, 18, 15).timestamp()
+    segs = svc.load_segments(
+        "Cam1",
+        from_ts=tick - 120,
+        to_ts=tick + 120,
+        date="2026-08-17",
+    )
+    assert segs
+    assert calls["n"] < 10
+    assert calls["n"] < 20

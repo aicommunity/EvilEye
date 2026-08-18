@@ -5,7 +5,11 @@ import json
 import os
 from pathlib import Path
 from typing import Any, Optional
+from urllib.parse import urlparse, urlunparse
+
 from evileye.core.paths import creds_path
+
+_BIND_ALL_HOSTS = frozenset({"0.0.0.0", "::", "[::]"})
 
 
 def _load_credentials() -> dict[str, Any]:
@@ -19,6 +23,22 @@ def _load_credentials() -> dict[str, Any]:
     return payload if isinstance(payload, dict) else {}
 
 
+def canonicalize_relay_base_url(url: str) -> str:
+    """Replace bind-all hosts with loopback so urllib can connect."""
+    raw = (url or "").strip()
+    if not raw:
+        return raw
+    parsed = urlparse(raw)
+    host = (parsed.hostname or "").lower()
+    if host not in _BIND_ALL_HOSTS:
+        return raw.rstrip("/")
+    port = parsed.port
+    if port is None:
+        port = 443 if parsed.scheme == "https" else 80
+    netloc = f"127.0.0.1:{port}"
+    return urlunparse(parsed._replace(netloc=netloc)).rstrip("/")
+
+
 def resolve_public_api_base_url(*, port: Optional[int] = None) -> str:
     """
     Priority:
@@ -28,7 +48,8 @@ def resolve_public_api_base_url(*, port: Optional[int] = None) -> str:
     """
     env = (os.getenv("EVILEYE_WEB_API_BASE") or "").strip().rstrip("/")
     if env:
-        return env if env.endswith("/api/v1") else f"{env}/api/v1"
+        base = env if env.endswith("/api/v1") else f"{env}/api/v1"
+        return canonicalize_relay_base_url(base)
 
     creds = _load_credentials()
     server = creds.get("server") if isinstance(creds.get("server"), dict) else {}

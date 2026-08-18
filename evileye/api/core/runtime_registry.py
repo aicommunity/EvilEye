@@ -84,7 +84,7 @@ def _is_pid_alive(pid: Optional[int]) -> bool:
         os.kill(int(pid), 0)
     except OSError:
         return False
-    return True
+    return _parse_process_cmdline(int(pid)) is not None
 
 
 @contextmanager

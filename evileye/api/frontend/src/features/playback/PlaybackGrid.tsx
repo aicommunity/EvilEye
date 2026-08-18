@@ -32,6 +32,7 @@ export function PlaybackGrid({
   globalDetectionTs = [],
   onVideoClock,
   onExpand,
+  segmentsLoading = false,
 }: {
   cameras: string[];
   cameraDefs: Record<string, PlaybackCamera>;
@@ -50,6 +51,7 @@ export function PlaybackGrid({
   globalDetectionTs?: number[];
   onVideoClock?: (globalSec: number) => void;
   onExpand: (cameraId: string) => void;
+  segmentsLoading?: boolean;
 }) {
   const { t } = useI18n();
   if (!cameras.length) return <p className="empty">{t('playback.selectCameras')}</p>;
@@ -77,6 +79,7 @@ export function PlaybackGrid({
           globalDetectionTs={globalDetectionTs}
           onVideoClock={onVideoClock}
           onExpand={() => onExpand(id)}
+          segmentsLoading={segmentsLoading && !(segmentsByCam[id]?.length)}
         />
       ))}
     </div>
@@ -99,6 +102,7 @@ function PlaybackCell({
   globalDetectionTs,
   onVideoClock,
   onExpand,
+  segmentsLoading = false,
 }: {
   id: string;
   camera?: PlaybackCamera;
@@ -115,6 +119,7 @@ function PlaybackCell({
   globalDetectionTs: number[];
   onVideoClock?: (globalSec: number) => void;
   onExpand: () => void;
+  segmentsLoading?: boolean;
 }) {
   const mediaRef = useRef<HTMLDivElement>(null);
   const [videoReady, setVideoReady] = useState(0);
@@ -181,6 +186,7 @@ function PlaybackCell({
       detectionItems={detectionItems}
       globalDetectionTs={globalDetectionTs}
       onExpand={onExpand}
+      segmentsLoading={segmentsLoading}
     />
   );
 }
@@ -206,6 +212,7 @@ function NormalPlaybackCell({
   detectionItems,
   globalDetectionTs,
   onExpand,
+  segmentsLoading = false,
 }: {
   id: string;
   camera?: PlaybackCamera;
@@ -227,6 +234,7 @@ function NormalPlaybackCell({
   detectionItems: PlaybackDetectionItem[];
   globalDetectionTs: number[];
   onExpand: () => void;
+  segmentsLoading?: boolean;
 }) {
   const { meta, loading } = usePlaybackCameraMetadata({
     cameraId: id,
@@ -264,6 +272,7 @@ function NormalPlaybackCell({
           speed={speed}
           playMode={playMode}
           loading={loading}
+          segmentsLoading={segmentsLoading}
         />
       </div>
     </article>

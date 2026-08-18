@@ -22,11 +22,26 @@ import { useDetectionIndex } from './useDetectionIndex';
 import { usePlaybackLayout } from './usePlaybackLayout';
 import { useTimelineViewport } from './useTimelineViewport';
 import { fitColsForCount } from '../layout/fitGrid';
-import { formatPlaybackDateTime, localDateString, mergeSegments } from './timelineMath';
+import { formatPlaybackDateTime, localDateString, mergeSegments, dayBoundsLocal } from './timelineMath';
 
 function today(): string {
   const d = new Date();
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+}
+
+const INITIAL_WINDOW_SEC = 7200;
+const SEGMENTS_LOAD_TIMEOUT_MS = 15_000;
+const VIEWPORT_DATE_SLACK_SEC = 30 * 60;
+
+function initialSegmentWindow(dateStr: string): { from: number; to: number } {
+  const { start, end } = dayBoundsLocal(dateStr);
+  const nowSec = Date.now() / 1000;
+  if (dateStr === today()) {
+    const to = Math.min(end, nowSec);
+    const from = Math.max(start, nowSec - INITIAL_WINDOW_SEC);
+    return { from, to };
+  }
+  return { from: Math.max(start, end - INITIAL_WINDOW_SEC), to: end };
 }
 
 function parseDeepLinkTime(raw: string | null): number | null {
@@ -58,6 +73,7 @@ export function PlaybackPage() {
   const [segmentsByCam, setSegmentsByCam] = useState<Record<string, PlaybackSegment[]>>({});
   const [markers, setMarkers] = useState<PlaybackEventMarker[]>([]);
   const [segmentsLoaded, setSegmentsLoaded] = useState(false);
+  const [segmentsLoading, setSegmentsLoading] = useState(false);
   const [showMetadata, setShowMetadata] = useState(true);
   const [scrubbing, setScrubbing] = useState(false);
   const [expandedCameraId, setExpandedCameraId] = useState<string | null>(null);
@@ -194,6 +210,9 @@ export function PlaybackPage() {
       segmentsAbortRef.current?.abort();
       const ac = new AbortController();
       segmentsAbortRef.current = ac;
+      const timeoutId = window.setTimeout(() => ac.abort(), SEGMENTS_LOAD_TIMEOUT_MS);
+      const isInitialLoad = !opts?.merge;
+      if (isInitialLoad) setSegmentsLoading(true);
       try {
         const nextSelected = camsOverride ?? selectedIdsRef.current;
         if (!nextSelected.length) {
@@ -210,7 +229,10 @@ export function PlaybackPage() {
         const evKey = `playback:events:${useDate ?? ''}:${opts?.from ?? ''}:${opts?.to ?? ''}:${nextSelected.join(',')}`;
 
         const [batch, ev] = await Promise.all([
-          playbackApi.segmentsBatch(nextSelected, opts?.from, opts?.to, useDate, { signal: ac.signal }),
+          playbackApi.segmentsBatch(nextSelected, opts?.from, opts?.to, useDate, {
+            signal: ac.signal,
+            runId,
+          }),
           playbackApi.events(opts?.from, opts?.to, undefined, opts?.merge ? undefined : useDate, nextSelected, {
             signal: ac.signal,
           }),
@@ -258,11 +280,20 @@ export function PlaybackPage() {
         setSegmentsLoaded(true);
         if (!opts?.merge && initialT != null) ctrl.seek(initialT);
       } catch (e) {
-        if (isAbortError(e)) return;
+        if (isAbortError(e)) {
+          if (isInitialLoad) {
+            setSegmentsLoaded(true);
+            showError(t('playback.unavailable'));
+          }
+          return;
+        }
         showError(e instanceof Error ? e.message : t('playback.unavailable'));
+      } finally {
+        window.clearTimeout(timeoutId);
+        if (isInitialLoad) setSegmentsLoading(false);
       }
     },
-    [date, initialT, showError, ctrl, viewport],
+    [date, initialT, showError, ctrl, viewport, runId, t],
   );
   useEffect(() => {
     // Show calendar-day timeline immediately on date change (before segments return).
@@ -276,7 +307,7 @@ export function PlaybackPage() {
       skipHardSegmentReloadRef.current = false;
       return;
     }
-    void loadSegments(selectedIds);
+    void loadSegments(selectedIds, initialSegmentWindow(date));
     // eslint-disable-next-line react-hooks/exhaustive-deps -- reload on date/selection only
   }, [date, selectedIds, camerasLoading]);
 
@@ -300,7 +331,12 @@ export function PlaybackPage() {
     (vf: number, vt: number) => {
       viewport.setView(vf, vt);
       ensureAdjacentLoad(vf, vt);
-      const centerDate = localDateString((vf + vt) / 2);
+      const center = (vf + vt) / 2;
+      const { start, end } = dayBoundsLocal(date);
+      if (center >= start - VIEWPORT_DATE_SLACK_SEC && center <= end + VIEWPORT_DATE_SLACK_SEC) {
+        return;
+      }
+      const centerDate = localDateString(center);
       if (centerDate !== date) {
         dateChangeSourceRef.current = 'viewport';
         setDate(centerDate);
@@ -356,7 +392,6 @@ export function PlaybackPage() {
   if (camerasLoading) gridEmpty = t('playback.loadingCamerasGrid');
   else if (!cameras.length) gridEmpty = t('playback.noCamerasForDate');
   else if (!selectedIds.length) gridEmpty = t('playback.selectCameras');
-  else if (!segmentsLoaded) gridEmpty = t('playback.loadingCamerasGrid');
 
   return (
     <section className={`panel active playback-page${mode === 'fit' ? ' playback-page--fit' : ''}`}>
@@ -465,6 +500,7 @@ export function PlaybackPage() {
               globalDetectionTs={detectionIndex.globalTs}
               onVideoClock={ctrl.syncPositionFromVideo}
               onExpand={setExpandedCameraId}
+              segmentsLoading={segmentsLoading}
             />
           )}
         </div>

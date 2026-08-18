@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { stateApi, journalsApi, streamStatus, type StateCamera, cacheGet, cacheSet, isAbortError } from '../../api';
 import { ApiError } from '../../api';
+import { useAuth } from '../../auth/AuthContext';
 import { Button } from '../../components/ui';
 import { StreamOverlay } from '../../components/StreamOverlay';
 import { useVisibilityPolling } from '../../hooks/useVisibilityPolling';
@@ -21,6 +22,7 @@ const STATS_TTL_MS = 20_000;
 export function LivePage() {
   const { showError } = useToast();
   const { t } = useI18n();
+  const { refresh } = useAuth();
   const cachedCams = cacheGet<{ items: StateCamera[] }>(CAMERAS_CACHE_KEY);
   const cachedStats = cacheGet<{ available: boolean; events_total?: number; objects_total?: number }>(STATS_CACHE_KEY);
   const [cameras, setCameras] = useState<StateCamera[]>(() => cachedCams?.items ?? []);
@@ -56,12 +58,15 @@ export function LivePage() {
       }
     } catch (e) {
       if (isAbortError(e) || ac.signal.aborted) return;
-      if (e instanceof ApiError && e.status === 401) return;
+      if (e instanceof ApiError && e.status === 401) {
+        void refresh();
+        return;
+      }
       showError(e instanceof Error ? e.message : t('live.empty'));
     } finally {
       if (!ac.signal.aborted) setCamerasLoading(false);
     }
-  }, [showError]);
+  }, [showError, refresh, t]);
 
   useEffect(() => () => abortRef.current?.abort(), []);
 

@@ -23,7 +23,7 @@ export function useDetectionIndex({
   const cameraKey = cameras.join(',');
 
   useEffect(() => {
-    if (!enabled || !cameras.length) {
+    if (!enabled || !cameras.length || fromSec == null || toSec == null) {
       setByCamera({});
       setLoading(false);
       return;

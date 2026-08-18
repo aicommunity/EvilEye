@@ -25,12 +25,13 @@ export const playbackApi = {
     from?: number,
     to?: number,
     date?: string,
-    opts?: RequestOptions,
+    opts?: RequestOptions & { runId?: number | null },
   ): Promise<{ items: PlaybackSegment[] }> {
     const p = new URLSearchParams({ camera });
     if (from != null) p.set('from', String(from));
     if (to != null) p.set('to', String(to));
     if (date) p.set('date', date);
+    if (opts?.runId != null) p.set('run_id', String(opts.runId));
     return request(`/playback/segments?${p}`, opts);
   },
   segmentsBatch(
@@ -38,12 +39,13 @@ export const playbackApi = {
     from?: number,
     to?: number,
     date?: string,
-    opts?: RequestOptions,
+    opts?: RequestOptions & { runId?: number | null },
   ): Promise<{ by_camera: Record<string, PlaybackSegment[]>; items: PlaybackSegment[] }> {
     const p = new URLSearchParams({ cameras: cameras.join(',') });
     if (from != null) p.set('from', String(from));
     if (to != null) p.set('to', String(to));
     if (date) p.set('date', date);
+    if (opts?.runId != null) p.set('run_id', String(opts.runId));
     return request(`/playback/segments?${p}`, opts);
   },
   events(

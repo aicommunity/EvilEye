@@ -261,6 +261,7 @@ def _mp4_duration_sec(path: str) -> float | None:
     Closed splitmux parts have ``moov``; in-progress files often do not.
     Result is cached by mtime.
     """
+    max_boxes = 4096
     try:
         st = os.stat(path)
     except OSError:
@@ -274,6 +275,7 @@ def _mp4_duration_sec(path: str) -> float | None:
         with open(path, "rb") as fh:
             file_size = st.st_size
             stack: list[int] = [file_size]
+            box_count = 0
             while True:
                 pos = fh.tell()
                 limit = stack[-1] if stack else file_size
@@ -286,6 +288,11 @@ def _mp4_duration_sec(path: str) -> float | None:
                 if parsed is None:
                     break
                 size, typ, hdr_len = parsed
+                if size < hdr_len:
+                    break
+                box_count += 1
+                if box_count > max_boxes:
+                    break
                 payload_end = pos + size
                 if payload_end > file_size or payload_end < pos:
                     break
@@ -664,6 +671,34 @@ def list_logical_cameras(run_id: int | None = None, date: Optional[str] = None) 
     return cameras
 
 
+def _nominal_slot_bounds(
+    session_start: float,
+    index: int | None,
+    configured_length: float,
+) -> tuple[float, float]:
+    idx = float(index or 0)
+    start = session_start + idx * configured_length
+    return start, start + configured_length
+
+
+def _slot_might_overlap_window(
+    session_start: float,
+    index: int | None,
+    configured_length: float,
+    from_ts: float | None,
+    to_ts: float | None,
+    slack: float,
+) -> bool:
+    if from_ts is None and to_ts is None:
+        return True
+    start, end = _nominal_slot_bounds(session_start, index, configured_length)
+    if from_ts is not None and end < from_ts - slack:
+        return False
+    if to_ts is not None and start > to_ts + slack:
+        return False
+    return True
+
+
 def load_segments(
     camera: str,
     from_ts: Optional[float] = None,
@@ -684,6 +719,7 @@ def load_segments(
             paths.extend(_mp4_paths_for_logical_camera(folder, camera))
 
     configured_length = _configured_segment_length_sec()
+    slack = max(60.0, configured_length * 0.5)
     parsed_named: list[tuple[str, float, int | None]] = []
     undated: list[str] = []
     for path in set(paths):
@@ -691,6 +727,10 @@ def load_segments(
         if parsed is not None:
             session_start, index = parsed
             session_start = _session_start_with_sidecar(path, session_start)
+            if not _slot_might_overlap_window(
+                session_start, index, configured_length, from_ts, to_ts, slack
+            ):
+                continue
             parsed_named.append((path, session_start, index))
         else:
             undated.append(path)

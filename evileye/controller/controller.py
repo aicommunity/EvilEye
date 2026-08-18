@@ -1279,12 +1279,19 @@ class Controller(ControllerProcessingMixin):
         if managed_run and server_cfg.get("enabled", False):
             self.logger.info("Skipping embedded web server for managed runtime launch")
             if self._streaming_service is not None and relay_base_url:
-                self._streaming_service.set_frame_relay(relay_base_url, relay_token)
+                from evileye.api.core.public_base_url import canonicalize_relay_base_url
+
+                self._streaming_service.set_frame_relay(
+                    canonicalize_relay_base_url(relay_base_url), relay_token
+                )
         elif server_cfg.get("enabled", False) and str(server_cfg.get("execution_mode", "process")).lower() == "process":
             host = server_cfg.get("host", "127.0.0.1")
             port = int(server_cfg.get("port", 8181))
-            scheme = "https" if server_cfg.get("ssl_certfile") or server_cfg.get("ssl_keyfile") else "http"
-            inferred_base_url = relay_base_url or f"{scheme}://{host}:{port}/api/v1"
+            from evileye.api.core.public_base_url import canonicalize_relay_base_url, resolve_public_api_base_url
+
+            inferred_base_url = canonicalize_relay_base_url(
+                relay_base_url or resolve_public_api_base_url(port=port)
+            )
             if not self._can_bind_embedded_server(host, port):
                 self.logger.info(
                     "Skipping embedded web server because %s:%s is already in use",

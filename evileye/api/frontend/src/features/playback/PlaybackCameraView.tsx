@@ -266,6 +266,7 @@ export function PlaybackVideoSurface({
   speed,
   playMode = 'normal',
   loading = false,
+  segmentsLoading = false,
 }: {
   videoRef: RefObject<HTMLVideoElement | null>;
   preloadRef: RefObject<HTMLVideoElement | null>;
@@ -284,6 +285,7 @@ export function PlaybackVideoSurface({
   speed: number;
   playMode?: PlaybackPlayMode;
   loading?: boolean;
+  segmentsLoading?: boolean;
 }) {
   const { t } = useI18n();
   const [seeking, setSeeking] = useState(false);
@@ -353,7 +355,9 @@ export function PlaybackVideoSurface({
           />
         </>
       ) : (
-        <div className={`${previewClass} camera-preview-empty`}>{t('playback.noSegment')}</div>
+        <div className={`${previewClass} camera-preview-empty`}>
+          {segmentsLoading ? t('playback.loadingSegment') : t('playback.noSegment')}
+        </div>
       )}
       <div className="camera-card-overlay-top">
         <span className="camera-name">{cameraLabel}</span>
