@@ -86,12 +86,19 @@ class RunMetadataStore {
     if (this.restTimer != null) window.clearInterval(this.restTimer);
     const pollRest = async () => {
       if (this.cancelled || this.wsOpen) return;
-      try {
-        // Run-level metadata: the payload is expected to include `source_id`.
-        const payload = await request<StreamMetadata>(`/runs/${this.rid}/metadata`);
-        if (!this.cancelled) this.pushPayload(payload);
-      } catch {
-        /* ignore */
+      const sourceKeys = [...this.listenersBySource.entries()]
+        .filter(([, subs]) => subs.size > 0)
+        .map(([sourceId]) => sourceId);
+      if (!sourceKeys.length) return;
+
+      for (const sourceId of sourceKeys) {
+        try {
+          const qs = sourceId != null ? `?source_id=${sourceId}` : '';
+          const payload = await request<StreamMetadata>(`/runs/${this.rid}/metadata${qs}`);
+          if (!this.cancelled) this.pushPayload(payload);
+        } catch {
+          /* ignore */
+        }
       }
     };
     void pollRest();

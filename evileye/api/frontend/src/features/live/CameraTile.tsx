@@ -78,7 +78,9 @@ export function CameraTile({
 
   const mode = useMemo(() => resolvePreviewMode(camera, previewError), [camera, previewError]);
   const running = camera.run_state === 'running';
-  const wantOverlay = running && active;
+  // Keep overlays strictly bound to fresh preview frames; stale snapshots can
+  // make metadata appear ahead of the person/object by several seconds.
+  const wantOverlay = running && active && mode === 'live';
   const meta = useRunMetadataWs(wantOverlay ? camera.run_id : null, camera.source_id ?? null);
   const wantSnapshot = running && active && !useMjpeg && !previewWsActive;
   const wantWsPreview = running && active && !useMjpeg && previewWsActive && previewBlobUrl;
