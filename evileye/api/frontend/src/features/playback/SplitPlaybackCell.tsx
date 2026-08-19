@@ -106,6 +106,11 @@ export function SplitPlaybackCell({
     return prepareOverlayMetadata(mergedMeta, metadataFrameSize);
   }, [mergedMeta, showMetadata, metadataFrameSize]);
 
+  useEffect(() => {
+    setLocalFrameSize(null);
+    setVideoReady(0);
+  }, [videoUrl]);
+
   const drawFrame = () => {
     const video = videoRef.current;
     const canvas = canvasRef.current;

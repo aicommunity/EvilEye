@@ -61,6 +61,8 @@ export function usePlaybackMetadata({
 
   useEffect(() => {
     if (!enabled || !camera || !Number.isFinite(positionSec)) {
+      if (timerRef.current != null) window.clearTimeout(timerRef.current);
+      timerRef.current = null;
       abortRef.current?.abort();
       abortRef.current = null;
       inflightKeyRef.current = null;
@@ -70,10 +72,23 @@ export function usePlaybackMetadata({
       return;
     }
     if (!hasFrameSize(frameSize)) {
+      if (timerRef.current != null) window.clearTimeout(timerRef.current);
+      timerRef.current = null;
+      abortRef.current?.abort();
+      abortRef.current = null;
+      inflightKeyRef.current = null;
+      setMeta(null);
+      setLoading(false);
+      setError(null);
       return;
     }
     if (!hasDetectionAtPosition) {
-      setMeta((prev) => (prev ? { ...prev, objects: [] } : prev));
+      if (timerRef.current != null) window.clearTimeout(timerRef.current);
+      timerRef.current = null;
+      abortRef.current?.abort();
+      abortRef.current = null;
+      inflightKeyRef.current = null;
+      setMeta(null);
       setLoading(false);
       setError(null);
       return;

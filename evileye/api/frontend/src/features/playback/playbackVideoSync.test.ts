@@ -31,6 +31,13 @@ describe('seekPlaybackVideo', () => {
     expect(video.currentTime).toBe(12);
     expect(video.pause).not.toHaveBeenCalled();
   });
+
+  it('does not pause the video during transient seek settling', () => {
+    const video = fakeVideo(3);
+    seekPlaybackVideo(video, 1005, 1000, { playing: true, scrubbing: true });
+    expect(video.currentTime).toBe(5);
+    expect(video.pause).not.toHaveBeenCalled();
+  });
 });
 
 describe('shouldEmitPlaybackClock', () => {

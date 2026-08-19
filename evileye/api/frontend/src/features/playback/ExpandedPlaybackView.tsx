@@ -79,6 +79,11 @@ export function ExpandedPlaybackView({
   });
 
   useEffect(() => {
+    setFrameSize(null);
+    setVideoReady(0);
+  }, [slot?.url]);
+
+  useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if (e.key === 'Escape') onClose();
     };

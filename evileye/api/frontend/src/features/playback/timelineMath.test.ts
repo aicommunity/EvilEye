@@ -5,6 +5,8 @@ import {
   clampViewToDayBounds,
   dayBoundsLocal,
   defaultTimelineView,
+  pickContainingSegment,
+  pickSegmentNear,
   snapTimelineSeek,
   snapUnixToDetections,
 } from './timelineMath';
@@ -93,5 +95,22 @@ describe('snapTimelineSeek', () => {
     const to = from + 30 * 60;
     const tick = from + 10 * 60;
     expect(snapTimelineSeek(tick + 0.4, [tick], from, to, 800)).toBe(tick);
+  });
+});
+
+describe('segment picking', () => {
+  const segs = [
+    { path: 'a.mp4', start_ts: 100, end_ts: 120, duration_ms: 20_000 },
+    { path: 'b.mp4', start_ts: 140, end_ts: 160, duration_ms: 20_000 },
+  ];
+
+  it('picks only the containing segment for active playback', () => {
+    expect(pickContainingSegment(segs, 110)?.path).toBe('a.mp4');
+    expect(pickContainingSegment(segs, 130)).toBeNull();
+  });
+
+  it('still exposes nearest-segment fallback for preload use-cases', () => {
+    expect(pickSegmentNear(segs, 130)?.path).toBe('a.mp4');
+    expect(pickSegmentNear(segs, 158)?.path).toBe('b.mp4');
   });
 });

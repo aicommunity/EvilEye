@@ -1,4 +1,4 @@
-import { useRef, useState, type Dispatch, type RefObject, type SetStateAction } from 'react';
+import { useEffect, useRef, useState, type Dispatch, type RefObject, type SetStateAction } from 'react';
 import type {
   FrameSize,
   PlaybackCamera,
@@ -140,6 +140,11 @@ function PlaybackCell({
     id,
   );
   const split = Boolean(camera?.split && camera?.src_coords && camera.src_coords.length === 4);
+
+  useEffect(() => {
+    setFrameSize(null);
+    setVideoReady(0);
+  }, [slot?.url]);
 
   if (split && slot?.url && camera?.src_coords) {
     return (

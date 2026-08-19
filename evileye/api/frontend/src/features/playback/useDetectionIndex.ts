@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { cacheGet, cacheSet, isAbortError, playbackApi, type PlaybackDetectionItem } from '../../api';
 import { mergeGlobalDetectionTs } from './detectionSync';
 
@@ -100,19 +100,30 @@ export function useDetectionIndex({
   backgroundToSec: number | null;
   enabled: boolean;
 }) {
-  const [byCamera, setByCamera] = useState<Record<string, PlaybackDetectionItem[]>>({});
+  const [fullByCamera, setFullByCamera] = useState<Record<string, PlaybackDetectionItem[]>>({});
+  const [tickByCamera, setTickByCamera] = useState<Record<string, PlaybackDetectionItem[]>>({});
   const [priorityLoading, setPriorityLoading] = useState(false);
   const [backgroundLoading, setBackgroundLoading] = useState(false);
 
   const cameraKey = cameras.join(',');
-  const byCameraRef = useRef(byCamera);
-  byCameraRef.current = byCamera;
+  const queryKey = `${date}:${runId ?? 'none'}:${cameraKey}`;
+
+  useEffect(() => {
+    if (!enabled || !cameras.length) {
+      setFullByCamera({});
+      setTickByCamera({});
+      setPriorityLoading(false);
+      setBackgroundLoading(false);
+      return;
+    }
+    setFullByCamera({});
+    setTickByCamera({});
+  }, [enabled, queryKey]);
 
   useEffect(() => {
     if (!enabled || !cameras.length || priorityFromSec == null || priorityToSec == null) {
-      setByCamera({});
+      setFullByCamera({});
       setPriorityLoading(false);
-      setBackgroundLoading(false);
       return;
     }
 
@@ -129,11 +140,11 @@ export function useDetectionIndex({
     })
       .then((mapped) => {
         if (ac.signal.aborted) return;
-        setByCamera((prev) => mergeDetectionItems(prev, mapped, cameras));
+        setFullByCamera((prev) => mergeDetectionItems(prev, mapped, cameras));
       })
       .catch((e) => {
         if (isAbortError(e) || ac.signal.aborted) return;
-        setByCamera({});
+        setFullByCamera({});
       })
       .finally(() => {
         if (!ac.signal.aborted) setPriorityLoading(false);
@@ -173,7 +184,7 @@ export function useDetectionIndex({
     })
       .then((mapped) => {
         if (ac.signal.aborted) return;
-        setByCamera((prev) => mergeDetectionItems(prev, mapped, cameras));
+        setTickByCamera((prev) => mergeDetectionItems(prev, mapped, cameras));
       })
       .catch((e) => {
         if (isAbortError(e) || ac.signal.aborted) return;
@@ -194,7 +205,11 @@ export function useDetectionIndex({
     enabled,
   ]);
 
-  const globalTs = useMemo(() => mergeGlobalDetectionTs(byCamera), [byCamera]);
+  const byCamera = useMemo(() => fullByCamera, [fullByCamera]);
+  const globalTs = useMemo(
+    () => mergeGlobalDetectionTs(mergeDetectionItems(tickByCamera, fullByCamera, cameras)),
+    [tickByCamera, fullByCamera, cameras],
+  );
   const hasDetections = globalTs.length > 0;
 
   return {

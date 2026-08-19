@@ -33,7 +33,6 @@ export function seekPlaybackVideo(
   const threshold = opts?.thresholdSec ?? (paused ? PAUSED_SEEK_THRESHOLD_SEC : 1.0);
 
   if (Math.abs(video.currentTime - local) <= threshold) return;
-  if (opts?.scrubbing) video.pause();
   try {
     video.currentTime = local;
   } catch {

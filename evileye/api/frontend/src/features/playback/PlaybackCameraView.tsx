@@ -21,7 +21,7 @@ import { mergePlaybackMetadata } from './mergePlaybackMetadata';
 import { seekPlaybackVideo, shouldEmitPlaybackClock } from './playbackVideoSync';
 import { usePlaybackMetadata } from './usePlaybackMetadata';
 import { usePlaybackStaticMetadata } from './usePlaybackStaticMetadata';
-import { pickSegmentNear } from './timelineMath';
+import { pickContainingSegment } from './timelineMath';
 
 export type PlaybackMediaSlot = {
   url: string | null;
@@ -51,6 +51,7 @@ export function usePlaybackCameraSlot(
   const pathRef = useRef<string | null>(null);
   const slotRef = useRef<PlaybackMediaSlot | null>(null);
   const [slot, setSlot] = useState<PlaybackMediaSlot | null>(null);
+  const lastAppliedPositionRef = useRef<number | null>(null);
   const getPositionRef = useRef(getPosition);
   getPositionRef.current = getPosition;
   const segmentsRef = useRef(segments);
@@ -62,8 +63,9 @@ export function usePlaybackCameraSlot(
 
   const applySync = () => {
     const position = getPositionRef.current();
+    lastAppliedPositionRef.current = position;
     const segs = segmentsRef.current;
-    const seg = pickSegmentNear(segs, position);
+    const seg = pickContainingSegment(segs, position);
     const nxt = nextSegment(segs, seg);
     const preload = preloadRef.current;
     let segmentChanged = false;
@@ -143,7 +145,23 @@ export function usePlaybackCameraSlot(
         }
       }
     };
-    const onReady = () => applySync();
+    const onReady = () => {
+      const expectedPosition = lastAppliedPositionRef.current;
+      const current = slotRef.current;
+      const v = ref.current;
+      if (expectedPosition != null && current && v && expectedPosition >= current.startTs && expectedPosition <= current.endTs) {
+        const local = Math.max(0, expectedPosition - current.startTs);
+        if (Math.abs(v.currentTime - local) > 0.15) {
+          seekPlaybackVideo(v, expectedPosition, current.startTs, {
+            playing,
+            scrubbing: scrubbingRef.current,
+            thresholdSec: 0.15,
+          });
+          return;
+        }
+      }
+      applySync();
+    };
     const v = ref.current;
     if (!v) return;
     v.addEventListener('timeupdate', onTimeUpdate);
@@ -307,9 +325,9 @@ export function PlaybackVideoSurface({
     const v = videoRef.current;
     if (!v) return;
     v.playbackRate = speed;
-    if (playing) void v.play().catch(() => null);
+    if (playing && !seeking) void v.play().catch(() => null);
     else v.pause();
-  }, [playing, speed, slot?.url, videoRef]);
+  }, [playing, speed, slot?.url, videoRef, seeking]);
 
   const previewClass = expanded ? 'expanded-camera-frame' : 'camera-preview';
 

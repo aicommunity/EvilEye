@@ -20,7 +20,7 @@ export function Timeline({
   detectionTs = [],
   onSeek,
   onViewChange,
-  onScrubbingChange,
+  onPanningChange,
 }: {
   viewFrom: number | null;
   viewTo: number | null;
@@ -30,7 +30,7 @@ export function Timeline({
   detectionTs?: number[];
   onSeek: (sec: number) => void;
   onViewChange: (viewFrom: number, viewTo: number) => void;
-  onScrubbingChange?: (scrubbing: boolean) => void;
+  onPanningChange?: (panning: boolean) => void;
 }) {
   const { t, dateLocaleTag } = useI18n();
   const rootRef = useRef<HTMLDivElement>(null);
@@ -136,7 +136,7 @@ export function Timeline({
         if (!drag.moved && Math.abs(dx) >= PAN_CLICK_SLOP_PX) {
           drag.moved = true;
           setPanning(true);
-          onScrubbingChange?.(true);
+          onPanningChange?.(true);
           try {
             (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId);
           } catch {
@@ -159,7 +159,7 @@ export function Timeline({
         dragRef.current = null;
         const wasPan = drag.moved;
         setPanning(false);
-        if (wasPan) onScrubbingChange?.(false);
+        if (wasPan) onPanningChange?.(false);
         try {
           (e.currentTarget as HTMLElement).releasePointerCapture(e.pointerId);
         } catch {
@@ -172,7 +172,7 @@ export function Timeline({
       onPointerCancel={() => {
         dragRef.current = null;
         setPanning(false);
-        onScrubbingChange?.(false);
+        onPanningChange?.(false);
       }}
       onPointerLeave={() => setHoverSec(null)}
     >

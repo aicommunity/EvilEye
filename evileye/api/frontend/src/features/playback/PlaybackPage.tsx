@@ -58,7 +58,7 @@ const SEGMENTS_TTL_MS = 15_000;
 /** Padding around viewport/position for the priority detection fetch. */
 const DETECTION_PRIORITY_PAD_SEC = 900;
 const VIEWPORT_DEBOUNCE_MS = 350;
-const SEEK_SCRUB_HOLD_MS = 800;
+const SEEK_SETTLE_HOLD_MS = 800;
 
 function useDebouncedValue<T>(value: T, delayMs: number): T {
   const [debounced, setDebounced] = useState(value);
@@ -89,14 +89,15 @@ export function PlaybackPage() {
   const [segmentsLoaded, setSegmentsLoaded] = useState(false);
   const [segmentsLoading, setSegmentsLoading] = useState(false);
   const [showMetadata, setShowMetadata] = useState(true);
-  const [scrubbing, setScrubbing] = useState(false);
+  const [, setTimelinePanning] = useState(false);
+  const [seekSettling, setSeekSettling] = useState(false);
   const [expandedCameraId, setExpandedCameraId] = useState<string | null>(null);
   const initialT = parseDeepLinkTime(params.get('t'));
   const ctrl = usePlaybackController(initialT);
   const viewport = useTimelineViewport();
   const debouncedViewFrom = useDebouncedValue(viewport.viewFrom, VIEWPORT_DEBOUNCE_MS);
   const debouncedViewTo = useDebouncedValue(viewport.viewTo, VIEWPORT_DEBOUNCE_MS);
-  const seekScrubTimerRef = useRef<number | null>(null);
+  const seekSettleTimerRef = useRef<number | null>(null);
   const dayBounds = useMemo(() => {
     const { start } = dayBoundsLocal(date);
     return { fromSec: start, toSec: dayViewUpperBound(date) };
@@ -138,11 +139,16 @@ export function PlaybackPage() {
   }, [detectionIndex.globalTs, showMetadata]);
 
   useEffect(() => {
-    ctrl.setScrubbing(scrubbing);
+    ctrl.setScrubbing(seekSettling);
     // eslint-disable-next-line react-hooks/exhaustive-deps -- controller setters are stable
-  }, [scrubbing]);
+  }, [seekSettling]);
 
   const togglePlay = useCallback(() => {
+    if (ctrl.playing && seekSettleTimerRef.current != null) {
+      window.clearTimeout(seekSettleTimerRef.current);
+      seekSettleTimerRef.current = null;
+      setSeekSettling(false);
+    }
     ctrl.setPlaying(!ctrl.playing);
   }, [ctrl]);
 
@@ -376,12 +382,12 @@ export function PlaybackPage() {
   const seek = useCallback(
     (sec: number) => {
       ctrl.seek(sec);
-      setScrubbing(true);
-      if (seekScrubTimerRef.current != null) window.clearTimeout(seekScrubTimerRef.current);
-      seekScrubTimerRef.current = window.setTimeout(() => {
-        setScrubbing(false);
-        seekScrubTimerRef.current = null;
-      }, SEEK_SCRUB_HOLD_MS);
+      setSeekSettling(true);
+      if (seekSettleTimerRef.current != null) window.clearTimeout(seekSettleTimerRef.current);
+      seekSettleTimerRef.current = window.setTimeout(() => {
+        setSeekSettling(false);
+        seekSettleTimerRef.current = null;
+      }, SEEK_SETTLE_HOLD_MS);
       ensureAdjacentLoad(sec - SEEK_LOAD_HALF_SEC, sec + SEEK_LOAD_HALF_SEC);
     },
     [ctrl, ensureAdjacentLoad],
@@ -389,7 +395,7 @@ export function PlaybackPage() {
 
   useEffect(() => {
     return () => {
-      if (seekScrubTimerRef.current != null) window.clearTimeout(seekScrubTimerRef.current);
+      if (seekSettleTimerRef.current != null) window.clearTimeout(seekSettleTimerRef.current);
     };
   }, []);
 
@@ -529,7 +535,7 @@ export function PlaybackPage() {
               runId={runId}
               showMetadata={showMetadata}
               playMode="normal"
-              scrubbing={scrubbing}
+              scrubbing={seekSettling}
               detectionItems={detectionIndex.byCamera[expandedCamera.id] ?? []}
               globalDetectionTs={detectionIndex.globalTs}
               onVideoClock={ctrl.syncPositionFromVideo}
@@ -552,7 +558,7 @@ export function PlaybackPage() {
               runId={runId}
               showMetadata={showMetadata}
               playMode="normal"
-              scrubbing={scrubbing}
+              scrubbing={seekSettling}
               detectionByCamera={detectionIndex.byCamera}
               globalDetectionTs={detectionIndex.globalTs}
               onVideoClock={ctrl.syncPositionFromVideo}
@@ -575,7 +581,7 @@ export function PlaybackPage() {
             detectionTs={detectionIndex.globalTs}
             onSeek={seek}
             onViewChange={onViewChange}
-            onScrubbingChange={setScrubbing}
+            onPanningChange={setTimelinePanning}
           />
         </div>
       </div>

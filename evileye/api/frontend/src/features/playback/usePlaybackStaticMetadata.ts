@@ -36,6 +36,7 @@ export function usePlaybackStaticMetadata({
     }
     if (!hasFrameSize(frameSize)) {
       // Wait for video dimensions — avoid caching/merging coords normalized for the wrong frame size.
+      setMeta(null);
       return;
     }
 

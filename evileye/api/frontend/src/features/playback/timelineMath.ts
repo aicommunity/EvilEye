@@ -247,9 +247,13 @@ export function mergeSegments(prev: PlaybackSegment[], next: PlaybackSegment[]):
   return Array.from(byPath.values()).sort((a, b) => a.start_ts - b.start_ts);
 }
 
+export function pickContainingSegment(segs: PlaybackSegment[], positionSec: number): PlaybackSegment | null {
+  return segs.find((s) => positionSec >= s.start_ts && positionSec <= s.end_ts) ?? null;
+}
+
 export function pickSegmentNear(segs: PlaybackSegment[], positionSec: number): PlaybackSegment | null {
   if (!segs.length) return null;
-  const containing = segs.find((s) => positionSec >= s.start_ts && positionSec <= s.end_ts);
+  const containing = pickContainingSegment(segs, positionSec);
   if (containing) return containing;
   let best = segs[0];
   let bestDist = Infinity;
