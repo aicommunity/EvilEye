@@ -11,6 +11,8 @@ READY_URL="$BASE/ready"
 E2E_LONGRUN_SEC="${E2E_LONGRUN_SEC:-1800}"
 E2E_LONGRUN_STEP_MS="${E2E_LONGRUN_STEP_MS:-30000}"
 RUN_LONGRUN="${RUN_LONGRUN:-1}"
+E2E_PLAYBACK_DATES="${E2E_PLAYBACK_DATES:-$(date +%F),2026-08-17,2026-08-16}"
+E2E_LONGRUN_DATE="${E2E_LONGRUN_DATE:-$(date +%F)}"
 
 KILL_EXISTING="${KILL_EXISTING:-1}"
 
@@ -56,11 +58,11 @@ echo "Running Playwright web smoke"
 npx @playwright/test test tests/e2e/web_smoke.spec.ts --reporter=line
 
 echo "Running Playwright playback seek smoke"
-npx @playwright/test test tests/e2e/playback_seek_smoke.spec.ts --reporter=line
+E2E_PLAYBACK_DATES="$E2E_PLAYBACK_DATES" npx @playwright/test test tests/e2e/playback_seek_smoke.spec.ts --reporter=line
 
 if [[ "$RUN_LONGRUN" == "1" ]]; then
-  echo "Running Playwright playback long-run seeks (${E2E_LONGRUN_SEC}s)"
-  E2E_LONGRUN_SEC="$E2E_LONGRUN_SEC" E2E_LONGRUN_STEP_MS="$E2E_LONGRUN_STEP_MS" npx @playwright/test test tests/e2e/playback_longrun_seek.spec.ts --reporter=line
+  echo "Running Playwright playback long-run seeks (${E2E_LONGRUN_SEC}s) on ${E2E_LONGRUN_DATE}"
+  E2E_LONGRUN_SEC="$E2E_LONGRUN_SEC" E2E_LONGRUN_STEP_MS="$E2E_LONGRUN_STEP_MS" E2E_LONGRUN_DATE="$E2E_LONGRUN_DATE" npx @playwright/test test tests/e2e/playback_longrun_seek.spec.ts --reporter=line
 else
   echo "Skipping long-run (RUN_LONGRUN=0)"
 fi

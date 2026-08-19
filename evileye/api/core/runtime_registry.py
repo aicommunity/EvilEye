@@ -383,6 +383,7 @@ _STUBS_CACHE_TTL_SEC = 0.75
 
 def list_runtime_record_stubs(*, discover: bool = False) -> Dict[int, Dict]:
     """Light registry scan: id/pid/state/alive/paths only (no snapshots)."""
+    global _stubs_cache_value, _stubs_cache_ts
     _ensure_dirs()
     if discover:
         maybe_discover_process_runtimes()
@@ -404,7 +405,6 @@ def list_runtime_record_stubs(*, discover: bool = False) -> Dict[int, Dict]:
     items = dict(sorted(items.items(), key=lambda pair: pair[0]))
     if not discover:
         with _stubs_cache_lock:
-            global _stubs_cache_value, _stubs_cache_ts
             _stubs_cache_value = items
             _stubs_cache_ts = time.time()
     return items
