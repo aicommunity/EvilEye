@@ -8,16 +8,39 @@ from evileye.api.core.server_state import (
     get_current_run_summary,
     get_run_summary,
     list_camera_summaries,
+    get_cached_overview,
+    get_cached_camera_summaries,
+    probe_cached_current_run_summary,
+    probe_cached_active_run_summaries,
     list_history_run_summaries,
     list_run_summaries,
 )
 
 router = APIRouter(prefix="/api/v1/state", tags=["state"])
 
+_STATE_ROUTE_TIMEOUT_SEC = 2.0
+_STATE_HEAVY_ROUTE_SEMAPHORE = asyncio.Semaphore(3)
+
+
+async def _to_thread_with_timeout_or_cached(value_fn, cached_fn, *, timeout_sec: float, err_detail: str):
+    try:
+        return await asyncio.wait_for(asyncio.to_thread(value_fn), timeout=timeout_sec)
+    except asyncio.TimeoutError:
+        cached = cached_fn()
+        if cached is not None:
+            return cached
+        raise HTTPException(status_code=503, detail=err_detail)
+
 
 @router.get("/overview")
 async def state_overview() -> dict:
-    return await asyncio.to_thread(build_overview)
+    async with _STATE_HEAVY_ROUTE_SEMAPHORE:
+        return await _to_thread_with_timeout_or_cached(
+            build_overview,
+            get_cached_overview,
+            timeout_sec=_STATE_ROUTE_TIMEOUT_SEC,
+            err_detail="state_overview timeout",
+        )
 
 
 @router.get("/runs")
@@ -29,15 +52,64 @@ async def state_runs(scope: str = Query("current", pattern="^(current|active|his
         if scope == "active":
             return {"current_run": get_current_run_summary(), "items": list_active_run_summaries()}
         if scope == "history":
-            return {"current_run": get_current_run_summary(), "items": list_history_run_summaries(exclude_current=True)}
+            return {
+                "current_run": get_current_run_summary(),
+                "items": list_history_run_summaries(exclude_current=True),
+            }
         return {"current_run": get_current_run_summary(), "items": list_run_summaries()}
 
-    return await asyncio.to_thread(_load)
+    def _cached() -> dict | None:
+        if scope == "current":
+            ok, current = probe_cached_current_run_summary()
+            if not ok:
+                return None
+            return {"current_run": current, "items": [current] if current else []}
+
+        if scope == "active":
+            ok_c, current = probe_cached_current_run_summary()
+            ok_a, active_items = probe_cached_active_run_summaries()
+            if not ok_c and not ok_a:
+                return None
+            return {"current_run": current, "items": active_items}
+
+        if scope == "history":
+            ok_c, current = probe_cached_current_run_summary()
+            if not ok_c:
+                return None
+            # Items from history aren't cached currently; return partial to avoid UI hangs.
+            return {"current_run": current, "items": []}
+
+        # scope == "all": no safe stale cache probe for full lists yet.
+        return None
+
+    async with _STATE_HEAVY_ROUTE_SEMAPHORE:
+        return await _to_thread_with_timeout_or_cached(
+            _load,
+            _cached,
+            timeout_sec=_STATE_ROUTE_TIMEOUT_SEC,
+            err_detail=f"state_runs({scope}) timeout",
+        )
 
 
 @router.get("/history")
 async def state_history() -> dict:
-    return await asyncio.to_thread(build_runtime_history)
+    def _load() -> dict:
+        return build_runtime_history()
+
+    def _cached() -> dict | None:
+        ok_c, current = probe_cached_current_run_summary()
+        ok_a, active_items = probe_cached_active_run_summaries()
+        if not ok_c and not ok_a:
+            return None
+        return {"current_run": current, "active_runs": active_items, "items": []}
+
+    async with _STATE_HEAVY_ROUTE_SEMAPHORE:
+        return await _to_thread_with_timeout_or_cached(
+            _load,
+            _cached,
+            timeout_sec=_STATE_ROUTE_TIMEOUT_SEC,
+            err_detail="state_history timeout",
+        )
 
 
 @router.get("/runs/{rid}")
@@ -50,5 +122,17 @@ async def state_run(rid: int) -> dict:
 
 @router.get("/cameras")
 async def state_cameras(scope: str = Query("active", pattern="^(current|active|all)$")) -> dict:
-    items = await asyncio.to_thread(list_camera_summaries, scope=scope)
+    def _load():
+        return list_camera_summaries(scope=scope)
+
+    def _cached():
+        return get_cached_camera_summaries(scope)
+
+    async with _STATE_HEAVY_ROUTE_SEMAPHORE:
+        items = await _to_thread_with_timeout_or_cached(
+            _load,
+            _cached,
+            timeout_sec=_STATE_ROUTE_TIMEOUT_SEC,
+            err_detail="state_cameras timeout",
+        )
     return {"items": items}
