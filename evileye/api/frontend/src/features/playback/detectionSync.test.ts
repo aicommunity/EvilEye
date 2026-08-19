@@ -116,9 +116,10 @@ describe('hasActiveTrackAt', () => {
       { ts: 100, kind: 'found' as const, object_id: 3 },
       { ts: 729, kind: 'lost' as const, object_id: 3 },
     ];
-    expect(hasActiveTrackAt(long, 400)).toBe(false);
+    expect(hasActiveTrackAt(long, 400)).toBe(true);
     expect(hasActiveTrackAt(long, 100)).toBe(true);
     expect(hasActiveTrackAt(long, 729)).toBe(true);
+    expect(hasActiveTrackAt(long, 730.1)).toBe(false);
   });
 
   it('is false before an upcoming detection snapshot', () => {
@@ -175,7 +176,7 @@ describe('objectsToOverlayFromIndex', () => {
     expect(objs[0].class_name).toBe('person');
   });
 
-  it('lerps bbox on a short track', () => {
+  it('holds bbox until next snapshot on a short track', () => {
     const items = [
       {
         ts: 100,
@@ -192,10 +193,15 @@ describe('objectsToOverlayFromIndex', () => {
     ];
     const objs = objectsToOverlayFromIndex(items, 101, { w: 100, h: 100 });
     expect(objs).toHaveLength(1);
-    expect(objs[0].bbox?.[0]).toBeCloseTo(0.05, 5);
+    expect(objs[0].bbox).toEqual([0, 0, 0.1, 0.1]);
+    const atSwitch = objectsToOverlayFromIndex(items, 102, { w: 100, h: 100 });
+    expect(atSwitch).toHaveLength(1);
+    expect(atSwitch[0].bbox).toEqual([0.1, 0, 0.2, 0.1]);
+    const afterLast = objectsToOverlayFromIndex(items, 102.8, { w: 100, h: 100 });
+    expect(afterLast).toHaveLength(0);
   });
 
-  it('does not lerp a span beyond MAX_LERP_SEC', () => {
+  it('holds the last confirmed bbox until next snapshot even on long spans', () => {
     const items = [
       {
         ts: 100,
@@ -210,8 +216,24 @@ describe('objectsToOverlayFromIndex', () => {
         bounding_box: { x: 10, y: 0, width: 10, height: 10 },
       },
     ];
-    expect(objectsToOverlayFromIndex(items, 400, { w: 100, h: 100 })).toHaveLength(0);
+    const mid = objectsToOverlayFromIndex(items, 400, { w: 100, h: 100 });
+    expect(mid).toHaveLength(1);
+    expect(mid[0].bbox).toEqual([0, 0, 0.1, 0.1]);
     expect(objectsToOverlayFromIndex(items, 100, { w: 100, h: 100 })).toHaveLength(1);
+  });
+
+  it('shows nothing before first snapshot and after terminal snapshot window', () => {
+    const items = [
+      {
+        ts: 50,
+        kind: 'found' as const,
+        object_id: 9,
+        bounding_box: { x: 2, y: 2, width: 4, height: 4 },
+      },
+    ];
+    expect(objectsToOverlayFromIndex(items, 49.0, { w: 100, h: 100 })).toHaveLength(0);
+    expect(objectsToOverlayFromIndex(items, 50.0, { w: 100, h: 100 })).toHaveLength(1);
+    expect(objectsToOverlayFromIndex(items, 51.0, { w: 100, h: 100 })).toHaveLength(0);
   });
 });
 

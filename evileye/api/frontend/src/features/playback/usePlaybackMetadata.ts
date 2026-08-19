@@ -4,7 +4,7 @@ import { localDateString } from './timelineMath';
 
 const FETCH_DEBOUNCE_MS = 130;
 const TS_ROUND_SEC = PLAYBACK_DETECTION_MATCH_SEC;
-const APPLY_SLACK_SEC = 0.3;
+const APPLY_SLACK_SEC = 0.2;
 
 function roundTs(ts: number): number {
   return Math.round(ts / TS_ROUND_SEC) * TS_ROUND_SEC;
@@ -106,6 +106,8 @@ export function usePlaybackMetadata({
     }
 
     setError(null);
+    // Avoid showing stale boxes while waiting for metadata for a new frame.
+    setMeta(null);
 
     const fetchNow = () => {
       if (inflightKeyRef.current === key) return;
@@ -125,7 +127,10 @@ export function usePlaybackMetadata({
           if (ac.signal.aborted) return;
           const payload = res.metadata ?? null;
           const payloadTs = payload?.ts != null ? Number(payload.ts) : rounded;
-          if (Math.abs(payloadTs - roundedRef.current) >= APPLY_SLACK_SEC) return;
+          if (Math.abs(payloadTs - roundedRef.current) >= APPLY_SLACK_SEC) {
+            setMeta(null);
+            return;
+          }
           metadataCache.set(key, { ts: rounded, meta: payload });
           setMeta(payload);
           setError(null);

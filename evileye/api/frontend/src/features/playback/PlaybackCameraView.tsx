@@ -245,21 +245,23 @@ export function usePlaybackCameraMetadata({
   const meta = useMemo(() => {
     const merged = mergePlaybackMetadata(staticMeta, dynamicMeta);
     if (!showMetadata || !merged) return merged;
-    if (!showObjects) return { ...merged, objects: [] };
+    const staticOnly = mergePlaybackMetadata(staticMeta, null) ?? merged;
+    if (!showObjects) return { ...staticOnly, objects: [] };
     const metaTs = dynamicMeta?.ts;
     const fresh = metaTs != null && Math.abs(metaTs - positionSec) < 0.3;
     if (fresh) return merged;
     if (optimisticObjects.length) {
       return {
-        ...merged,
+        ...staticOnly,
         objects: optimisticObjects,
         overlay: {
-          ...merged.overlay,
+          ...staticOnly.overlay,
           time_label: overlayTimeLabel(positionSec),
         },
       };
     }
-    return merged;
+    // Do not leak stale dynamic objects into the current frame.
+    return { ...staticOnly, objects: [] };
   }, [staticMeta, dynamicMeta, showMetadata, showObjects, optimisticObjects, positionSec]);
 
   return { meta, loading, showObjects };

@@ -2,7 +2,7 @@ import type { PlaybackDetectionItem, StreamMetadataObject } from '../../api';
 
 export const MATCH_SEC = 0.5;
 export const SKIP_GAP_SEC = 1.0;
-/** Interpolate bbox across found→lost; cap avoids runaway on bad pairing data. */
+/** Step-hold overlay model does not interpolate between snapshots. */
 export const MAX_LERP_SEC = 600.0;
 
 export type FrameSizeLike = { w: number; h: number };
@@ -144,6 +144,52 @@ function intervalVisibleAt(
   return false;
 }
 
+type TrackSnapshot = {
+  ts: number;
+  item: PlaybackDetectionItem;
+  bbox: [number, number, number, number];
+};
+
+function buildTrackSnapshots(
+  items: PlaybackDetectionItem[],
+  frameSize?: FrameSizeLike | null,
+): Map<number, TrackSnapshot[]> {
+  const byObject = new Map<number, TrackSnapshot[]>();
+  for (const it of items) {
+    if (!Number.isFinite(it.ts) || it.object_id == null) continue;
+    const bbox = bboxFromIndexBox(it.bounding_box, frameSize);
+    if (!bbox) continue;
+    const list = byObject.get(it.object_id) ?? [];
+    list.push({ ts: it.ts, item: it, bbox });
+    byObject.set(it.object_id, list);
+  }
+  for (const list of byObject.values()) {
+    list.sort((a, b) => a.ts - b.ts);
+  }
+  return byObject;
+}
+
+function lastSnapshotIndexAtOrBefore(
+  snapshots: TrackSnapshot[],
+  positionSec: number,
+): number {
+  let idx = -1;
+  for (let i = 0; i < snapshots.length; i += 1) {
+    if (snapshots[i].ts <= positionSec) idx = i;
+    else break;
+  }
+  return idx;
+}
+
+function lastTsIndexAtOrBefore(tsList: number[], positionSec: number): number {
+  let idx = -1;
+  for (let i = 0; i < tsList.length; i += 1) {
+    if (tsList[i] <= positionSec) idx = i;
+    else break;
+  }
+  return idx;
+}
+
 /** True on snapshots and inside consecutive found→lost intervals. */
 export function hasActiveTrackAt(
   items: PlaybackDetectionItem[],
@@ -157,8 +203,28 @@ export function hasActiveTrackAt(
     if (Math.abs(it.ts - positionSec) < matchSec) return true;
   }
   if (objectsFromDetectionIndex(items, positionSec, matchSec).length > 0) return true;
-  for (const interval of pairTrackIntervals(items)) {
-    if (intervalVisibleAt(interval, positionSec, matchSec, maxLerpSec)) return true;
+
+  // Step-hold per object:
+  // - hold snapshot i until snapshot i+1 exists and is reached;
+  // - if there is no next snapshot, show only on this exact snapshot window.
+  const byObjectTs = new Map<number, number[]>();
+  for (const it of items) {
+    if (!Number.isFinite(it.ts) || it.object_id == null) continue;
+    const list = byObjectTs.get(it.object_id) ?? [];
+    list.push(it.ts);
+    byObjectTs.set(it.object_id, list);
+  }
+  for (const tsList of byObjectTs.values()) {
+    tsList.sort((a, b) => a - b);
+    const idx = lastTsIndexAtOrBefore(tsList, positionSec);
+    if (idx < 0) continue;
+    const currTs = tsList[idx];
+    const nextTs = tsList[idx + 1];
+    if (nextTs != null) {
+      if (positionSec >= currTs && positionSec < nextTs) return true;
+      continue;
+    }
+    if (Math.abs(positionSec - currTs) < matchSec) return true;
   }
   return false;
 }
@@ -205,20 +271,6 @@ export function bboxFromIndexBox(
   return null;
 }
 
-function lerpBbox(
-  start: [number, number, number, number],
-  end: [number, number, number, number],
-  t: number,
-): [number, number, number, number] {
-  const u = Math.max(0, Math.min(1, t));
-  return [
-    start[0] + (end[0] - start[0]) * u,
-    start[1] + (end[1] - start[1]) * u,
-    start[2] + (end[2] - start[2]) * u,
-    start[3] + (end[3] - start[3]) * u,
-  ];
-}
-
 function itemToObject(
   it: PlaybackDetectionItem,
   bbox: [number, number, number, number],
@@ -256,24 +308,25 @@ export function objectsToOverlayFromIndex(
     out.push(itemToObject(it, bbox));
   }
 
-  for (const interval of pairTrackIntervals(items)) {
-    const oid = interval.found.object_id ?? interval.lost.object_id;
-    const key = oid ?? `interval:${interval.foundTs}`;
+  const byObject = buildTrackSnapshots(items, frameSize);
+  for (const [objectId, snapshots] of byObject.entries()) {
+    const key = objectId;
     if (seen.has(key)) continue;
-    if (!intervalVisibleAt(interval, positionSec, matchSec, maxLerpSec)) continue;
-    const span = interval.lostTs - interval.foundTs;
-    const foundBox = bboxFromIndexBox(interval.found.bounding_box, frameSize);
-    const lostBox = bboxFromIndexBox(interval.lost.bounding_box, frameSize);
-    if (!foundBox) continue;
-    let bbox = foundBox;
-    if (span > 1e-9 && lostBox && positionSec > interval.foundTs && positionSec < interval.lostTs) {
-      const t = (positionSec - interval.foundTs) / span;
-      bbox = lerpBbox(foundBox, lostBox, t);
-    } else if (Math.abs(interval.lostTs - positionSec) < matchSec && lostBox) {
-      bbox = lostBox;
+    const idx = lastSnapshotIndexAtOrBefore(snapshots, positionSec);
+    if (idx < 0) continue;
+    const curr = snapshots[idx];
+    const next = snapshots[idx + 1];
+    if (next) {
+      if (positionSec >= curr.ts && positionSec < next.ts) {
+        seen.add(key);
+        out.push(itemToObject(curr.item, curr.bbox));
+      }
+      continue;
     }
-    seen.add(key);
-    out.push(itemToObject(interval.found, bbox));
+    if (Math.abs(positionSec - curr.ts) < matchSec) {
+      seen.add(key);
+      out.push(itemToObject(curr.item, curr.bbox));
+    }
   }
   return out;
 }
