@@ -38,18 +38,33 @@ export function LivePage() {
   const [expandedKey, setExpandedKey] = useState<string | null>(null);
   const { cols, setCols, order, setOrder, mode, setMode } = useLiveLayout();
   const abortRef = useRef<AbortController | null>(null);
+  const camerasLoadingTimerRef = useRef<number | null>(null);
 
   const load = useCallback(async () => {
     abortRef.current?.abort();
     const ac = new AbortController();
     abortRef.current = ac;
-    if (!camerasRef.current.length && !cacheGet(CAMERAS_CACHE_KEY)) setCamerasLoading(true);
+    // Avoid "Searching…" flicker on transient backend hiccups.
+    if (camerasLoadingTimerRef.current != null) {
+      window.clearTimeout(camerasLoadingTimerRef.current);
+      camerasLoadingTimerRef.current = null;
+    }
+    if (!camerasRef.current.length && !cacheGet(CAMERAS_CACHE_KEY)) {
+      camerasLoadingTimerRef.current = window.setTimeout(() => setCamerasLoading(true), 1500);
+    } else {
+      setCamerasLoading(false);
+    }
     try {
-      const [camRes, st] = await Promise.all([
+      const [camCurrent, st] = await Promise.all([
         stateApi.cameras('current', { signal: ac.signal }),
         journalsApi.stats(undefined, { signal: ac.signal }).catch(() => null),
       ]);
       if (ac.signal.aborted) return;
+      let camRes = camCurrent;
+      if (!(camCurrent.items ?? []).length) {
+        camRes = await stateApi.cameras('active', { signal: ac.signal });
+        if (ac.signal.aborted) return;
+      }
       cacheSet(CAMERAS_CACHE_KEY, camRes, CAMERAS_TTL_MS);
       setCameras(camRes.items ?? []);
       if (st?.available) {
@@ -64,13 +79,17 @@ export function LivePage() {
       }
       showError(e instanceof Error ? e.message : t('live.empty'));
     } finally {
+      if (camerasLoadingTimerRef.current != null) {
+        window.clearTimeout(camerasLoadingTimerRef.current);
+        camerasLoadingTimerRef.current = null;
+      }
       if (!ac.signal.aborted) setCamerasLoading(false);
     }
   }, [showError, refresh, t]);
 
   useEffect(() => () => abortRef.current?.abort(), []);
 
-  useVisibilityPolling(load, 5000, true, 0);
+  useVisibilityPolling(load, 10_000, true, 0);
 
   const primaryRunId = useMemo(() => {
     const ids = [...new Set(cameras.map((c) => c.run_id).filter((id) => Number.isFinite(id)))];
@@ -78,7 +97,10 @@ export function LivePage() {
   }, [cameras]);
 
   const previewSourceIds = useMemo(
-    () => cameras.map((c) => c.source_id).filter((id): id is number => id != null),
+    () =>
+      Array.from(new Set(cameras.map((c) => c.source_id).filter((id): id is number => id != null))).sort(
+        (a, b) => a - b,
+      ),
     [cameras],
   );
 

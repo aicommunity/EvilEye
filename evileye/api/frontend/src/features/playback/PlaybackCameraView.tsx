@@ -362,6 +362,7 @@ export function PlaybackVideoSurface({
             mediaRef={mediaRef}
             meta={meta}
             showMetadata={showMetadata}
+            visible={!seeking}
             videoReady={videoReady}
             density={expanded ? 'full' : 'compact'}
           />

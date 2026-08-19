@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import { useI18n } from '../../i18n';
 
-const SHOW_DELAY_MS = 150;
+const SHOW_DELAY_MS = 2500;
 
 export function PlaybackBusyHint({
   seeking = false,

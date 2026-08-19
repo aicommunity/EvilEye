@@ -19,13 +19,20 @@ function MobileLiveInner() {
   const [fullscreen, setFullscreen] = useState(false);
   const [snapTs, setSnapTs] = useState(Date.now());
   const abortRef = useRef<AbortController | null>(null);
+  const camerasLoadingTimerRef = useRef<number | null>(null);
 
   const load = useCallback(async () => {
     abortRef.current?.abort();
     const ac = new AbortController();
     abortRef.current = ac;
+    if (camerasLoadingTimerRef.current != null) {
+      window.clearTimeout(camerasLoadingTimerRef.current);
+      camerasLoadingTimerRef.current = null;
+    }
     setCameras((prev) => {
-      if (!prev.length) setCamerasLoading(true);
+      if (!prev.length) {
+        camerasLoadingTimerRef.current = window.setTimeout(() => setCamerasLoading(true), 1500);
+      }
       return prev;
     });
     try {
@@ -36,13 +43,23 @@ function MobileLiveInner() {
     } catch (e) {
       if (isAbortError(e)) return;
     } finally {
+      if (camerasLoadingTimerRef.current != null) {
+        window.clearTimeout(camerasLoadingTimerRef.current);
+        camerasLoadingTimerRef.current = null;
+      }
       if (!ac.signal.aborted) setCamerasLoading(false);
     }
   }, []);
 
   useEffect(() => () => abortRef.current?.abort(), []);
+  useEffect(() => () => {
+    if (camerasLoadingTimerRef.current != null) {
+      window.clearTimeout(camerasLoadingTimerRef.current);
+      camerasLoadingTimerRef.current = null;
+    }
+  }, []);
 
-  useVisibilityPolling(load, 5000, true, 200);
+  useVisibilityPolling(load, 10_000, true, 200);
   useEffect(() => {
     if (idx >= cameras.length) setIdx(0);
   }, [cameras, idx]);

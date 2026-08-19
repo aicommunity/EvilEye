@@ -282,7 +282,7 @@ export function SplitPlaybackCell({
         meta={displayMeta}
         layoutBox={layoutBox.width > 0 && layoutBox.height > 0 ? layoutBox : undefined}
         density={expanded ? 'full' : 'compact'}
-        visible={showMetadata}
+        visible={showMetadata && !seeking}
       />
       <PlaybackBusyHint
         seeking={seeking}

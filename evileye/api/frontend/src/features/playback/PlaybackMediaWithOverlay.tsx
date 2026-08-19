@@ -9,6 +9,7 @@ export function PlaybackMediaWithOverlay({
   mediaRef,
   meta,
   showMetadata,
+  visible = true,
   density = 'full',
   videoReady = 0,
 }: {
@@ -16,6 +17,7 @@ export function PlaybackMediaWithOverlay({
   mediaRef: RefObject<HTMLElement | null>;
   meta: StreamMetadata | null;
   showMetadata: boolean;
+  visible?: boolean;
   density?: 'compact' | 'full';
   videoReady?: number;
 }) {
@@ -35,7 +37,7 @@ export function PlaybackMediaWithOverlay({
       meta={displayMeta}
       layoutBox={layoutBox.width > 0 && layoutBox.height > 0 ? layoutBox : undefined}
       density={density}
-      visible={showMetadata}
+      visible={showMetadata && visible}
     />
   );
 }
