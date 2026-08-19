@@ -2,6 +2,7 @@ import json
 import os
 import tempfile
 import time
+import threading
 from contextlib import contextmanager
 from pathlib import Path
 from typing import Dict, Iterable, Optional
@@ -23,6 +24,7 @@ _corrupt_record_logged: set[int] = set()
 _corrupt_snapshot_logged: set[int] = set()
 _last_discover_ts: float = 0.0
 _DISCOVER_MIN_INTERVAL_SEC = 5.0
+_discover_lock = threading.Lock()
 _STUB_FIELDS = (
     "id",
     "pid",
@@ -202,7 +204,12 @@ def maybe_discover_process_runtimes(*, force: bool = False) -> None:
     now = time.time()
     if not force and (now - _last_discover_ts) < _DISCOVER_MIN_INTERVAL_SEC:
         return
-    discover_process_runtimes()
+    # Single-flight: avoid concurrent /proc walks when multiple UI calls race.
+    with _discover_lock:
+        now = time.time()
+        if not force and (now - _last_discover_ts) < _DISCOVER_MIN_INTERVAL_SEC:
+            return
+        discover_process_runtimes()
 
 def load_runtime_record(rid: int, *, refresh_state: bool = True) -> Optional[Dict]:
     path = _record_path(rid)
@@ -368,11 +375,22 @@ def _record_to_stub(record: Dict) -> Dict:
     return stub
 
 
+_stubs_cache_lock = threading.Lock()
+_stubs_cache_ts: float = 0.0
+_stubs_cache_value: Optional[Dict[int, Dict]] = None
+_STUBS_CACHE_TTL_SEC = 0.75
+
+
 def list_runtime_record_stubs(*, discover: bool = False) -> Dict[int, Dict]:
     """Light registry scan: id/pid/state/alive/paths only (no snapshots)."""
     _ensure_dirs()
     if discover:
         maybe_discover_process_runtimes()
+    if not discover:
+        now = time.time()
+        with _stubs_cache_lock:
+            if _stubs_cache_value is not None and (now - _stubs_cache_ts) < _STUBS_CACHE_TTL_SEC:
+                return _stubs_cache_value
     items: Dict[int, Dict] = {}
     for path in REGISTRY_DIR.glob("*.json"):
         try:
@@ -383,7 +401,13 @@ def list_runtime_record_stubs(*, discover: bool = False) -> Dict[int, Dict]:
         if not record:
             continue
         items[rid] = _record_to_stub(record)
-    return dict(sorted(items.items(), key=lambda pair: pair[0]))
+    items = dict(sorted(items.items(), key=lambda pair: pair[0]))
+    if not discover:
+        with _stubs_cache_lock:
+            global _stubs_cache_value, _stubs_cache_ts
+            _stubs_cache_value = items
+            _stubs_cache_ts = time.time()
+    return items
 
 
 def prune_stale_runtime_records(

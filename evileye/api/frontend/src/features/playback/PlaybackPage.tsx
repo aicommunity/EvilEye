@@ -164,7 +164,7 @@ export function PlaybackPage() {
   useEffect(() => {
     const ac = new AbortController();
     void stateApi
-      .runs('current', { signal: ac.signal })
+      .runs('active', { signal: ac.signal })
       .then((res) => {
         if (ac.signal.aborted) return;
         const items = Array.isArray(res) ? res : res.items ?? [];
@@ -254,7 +254,7 @@ export function PlaybackPage() {
       segmentsAbortRef.current = ac;
       const timeoutId = window.setTimeout(() => ac.abort(), SEGMENTS_LOAD_TIMEOUT_MS);
       const isInitialLoad = !opts?.merge;
-      if (isInitialLoad) setSegmentsLoading(true);
+      let didSetSegmentsLoading = false;
       try {
         const nextSelected = camsOverride ?? selectedIdsRef.current;
         if (!nextSelected.length) {
@@ -270,6 +270,55 @@ export function PlaybackPage() {
         const segKey = `playback:segments:${useDate ?? ''}:${opts?.from ?? ''}:${opts?.to ?? ''}:${nextSelected.join(',')}`;
         const evKey = `playback:events:${useDate ?? ''}:${opts?.from ?? ''}:${opts?.to ?? ''}:${nextSelected.join(',')}`;
 
+        const cachedBatch = cacheGet<{ by_camera: Record<string, PlaybackSegment[]>; items: PlaybackSegment[] }>(segKey);
+        const cachedEv = cacheGet<{ items: PlaybackEventMarker[] }>(evKey);
+        if (cachedBatch?.by_camera && cachedEv?.items) {
+          const incoming: Record<string, PlaybackSegment[]> = { ...(cachedBatch.by_camera || {}) };
+          for (const id of nextSelected) {
+            if (!incoming[id]) incoming[id] = [];
+          }
+          setSegmentsByCam((prev) => {
+            if (!opts?.merge) return incoming;
+            const merged: Record<string, PlaybackSegment[]> = { ...prev };
+            for (const id of nextSelected) {
+              merged[id] = mergeSegments(prev[id] ?? [], incoming[id] ?? []);
+            }
+            return merged;
+          });
+
+          const allSegs = Object.values(incoming).flat();
+          const from = allSegs.length ? Math.min(...allSegs.map((s) => s.start_ts)) : opts?.from;
+          const to = allSegs.length ? Math.max(...allSegs.map((s) => s.end_ts)) : opts?.to;
+          if (from != null && to != null) {
+            viewport.expandLoaded(from, to);
+            ctrl.setRange(
+              opts?.merge ? Math.min(ctrl.fromSec ?? from, from) : from,
+              opts?.merge ? Math.max(ctrl.toSec ?? to, to) : to,
+              { preservePosition: Boolean(opts?.merge) || initialT != null },
+            );
+          }
+          if (!opts?.merge) {
+            viewport.resetToData(from ?? null, to ?? null, useDate ?? date);
+          }
+
+          setMarkers((prev) => {
+            if (!opts?.merge) return cachedEv.items;
+            const byKey = new Map<string, PlaybackEventMarker>();
+            for (const m of prev) byKey.set(`${m.ts}:${m.camera}:${m.type}`, m);
+            for (const m of cachedEv.items) byKey.set(`${m.ts}:${m.camera}:${m.type}`, m);
+            return Array.from(byKey.values()).sort((a, b) => a.ts - b.ts);
+          });
+
+          setSegmentsLoaded(true);
+          if (!opts?.merge && initialT != null) ctrl.seek(initialT);
+          return;
+        }
+
+        if (isInitialLoad) {
+          setSegmentsLoading(true);
+          didSetSegmentsLoading = true;
+        }
+
         const [batch, ev] = await Promise.all([
           playbackApi.segmentsBatch(nextSelected, opts?.from, opts?.to, useDate, {
             signal: ac.signal,
@@ -281,10 +330,8 @@ export function PlaybackPage() {
         ]);
         if (ac.signal.aborted) return;
 
-        if (!opts?.merge) {
-          cacheSet(segKey, batch, SEGMENTS_TTL_MS);
-          cacheSet(evKey, ev, SEGMENTS_TTL_MS);
-        }
+        cacheSet(segKey, batch, SEGMENTS_TTL_MS);
+        cacheSet(evKey, ev, SEGMENTS_TTL_MS);
 
         const incoming: Record<string, PlaybackSegment[]> = { ...(batch.by_camera || {}) };
         for (const id of nextSelected) {
@@ -332,7 +379,7 @@ export function PlaybackPage() {
         showError(e instanceof Error ? e.message : t('playback.unavailable'));
       } finally {
         window.clearTimeout(timeoutId);
-        if (isInitialLoad) setSegmentsLoading(false);
+        if (didSetSegmentsLoading) setSegmentsLoading(false);
       }
     },
     [date, initialT, showError, ctrl, viewport, runId, t],
