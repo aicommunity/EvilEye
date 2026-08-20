@@ -396,7 +396,7 @@ def list_active_run_summaries() -> list[Dict[str, Any]]:
     runs: list[Dict[str, Any]] = []
     computed_ok = False
     try:
-        stubs = _combined_runtime_stubs(discover=True)
+        stubs = _combined_runtime_stubs(discover=False)
         active_ids = [rid for rid, stub in stubs.items() if _is_run_active(stub)]
         for rid in active_ids:
             record = _combined_runtime_record(rid)
@@ -475,7 +475,7 @@ def get_current_run_summary() -> Optional[Dict[str, Any]]:
     computed_ok = False
     result: Optional[Dict[str, Any]] = None
     try:
-        stubs = _combined_runtime_stubs(discover=True)
+        stubs = _combined_runtime_stubs(discover=False)
         if not stubs:
             result = None
         else:
@@ -698,6 +698,52 @@ _STATE_CACHE_TTL_SEC = 2.0
 _STATE_STALE_WHILE_REFRESH_TTL_SEC = 30.0
 _STATE_FOLLOWER_WAIT_SEC = 0.25
 _STATE_LATENCY_WARN_SEC = 1.0
+_BACKGROUND_DISCOVER_INTERVAL_SEC = 5.0
+
+_background_discover_stop = threading.Event()
+_background_discover_thread: threading.Thread | None = None
+_background_discover_lock = threading.Lock()
+
+
+def start_background_runtime_discovery(*, interval_sec: float | None = None) -> None:
+    """Periodic process discovery so hot state paths can use discover=False."""
+    global _background_discover_thread
+    interval = float(interval_sec) if interval_sec is not None else _BACKGROUND_DISCOVER_INTERVAL_SEC
+    interval = max(1.0, interval)
+
+    with _background_discover_lock:
+        if _background_discover_thread is not None and _background_discover_thread.is_alive():
+            return
+        _background_discover_stop.clear()
+
+        def _loop() -> None:
+            # Prime once so first UI request sees live PIDs.
+            try:
+                maybe_discover_process_runtimes(force=True)
+            except Exception:
+                logger.debug("Initial runtime discovery failed", exc_info=True)
+            while not _background_discover_stop.wait(interval):
+                try:
+                    maybe_discover_process_runtimes()
+                except Exception:
+                    logger.debug("Background runtime discovery failed", exc_info=True)
+
+        _background_discover_thread = threading.Thread(
+            target=_loop,
+            daemon=True,
+            name="RuntimeDiscovery",
+        )
+        _background_discover_thread.start()
+
+
+def stop_background_runtime_discovery() -> None:
+    global _background_discover_thread
+    with _background_discover_lock:
+        _background_discover_stop.set()
+        thread = _background_discover_thread
+        _background_discover_thread = None
+    if thread is not None and thread.is_alive():
+        thread.join(timeout=2.0)
 
 
 @dataclass

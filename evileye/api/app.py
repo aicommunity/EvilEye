@@ -195,9 +195,22 @@ async def lifespan(_app: FastAPI):
     registry_prune_thread.start()
 
     try:
+        from evileye.api.core.server_state import start_background_runtime_discovery
+
+        start_background_runtime_discovery()
+    except Exception as exc:
+        logger.warning("Background runtime discovery failed to start: %s", exc)
+
+    try:
         yield
     finally:
         cleanup_stop.set()
+        try:
+            from evileye.api.core.server_state import stop_background_runtime_discovery
+
+            stop_background_runtime_discovery()
+        except Exception:
+            pass
         try:
             from evileye.api.core.live_preview_hub import get_live_preview_hub
 
