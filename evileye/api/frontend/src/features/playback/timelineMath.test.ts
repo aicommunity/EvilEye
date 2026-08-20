@@ -103,6 +103,8 @@ describe('zoom day hard stop', () => {
     expect(ticks).toContain(start);
   });
 });
+
+describe('clampViewToDayBounds', () => {
   it('keeps pan/zoom inside the selected calendar day', () => {
     const date = '2026-08-18';
     const { start } = dayBoundsLocal(date);

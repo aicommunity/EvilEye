@@ -472,11 +472,27 @@ def load_detection_index_batch(
     to_ts: float | None = None,
     ticks_only: bool = False,
 ) -> dict[str, list[dict[str, Any]]]:
-    params = _load_params_for_run(run_id)
-    base = _playback_data_dir(params)
     cam_list = [str(camera).strip() for camera in cameras if str(camera).strip()]
     if not cam_list:
         return {}
+    if ticks_only:
+        try:
+            from evileye.api.core.playback_timeline_index import ensure_detection_ticks
+
+            by_ticks = ensure_detection_ticks(
+                date_folder=date_folder,
+                cameras=cam_list,
+                run_id=run_id,
+            )
+            out: dict[str, list[dict[str, Any]]] = {}
+            for cam in cam_list:
+                rows = by_ticks.get(cam) or []
+                out[cam] = _filter_index_window(rows, from_ts, to_ts, ticks_only=False)
+            return out
+        except Exception:
+            pass
+    params = _load_params_for_run(run_id)
+    base = _playback_data_dir(params)
     all_by_camera = _load_day_index_by_camera(
         base=base,
         date_folder=date_folder,

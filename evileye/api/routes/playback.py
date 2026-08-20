@@ -44,6 +44,30 @@ async def playback_segments(
     return {"items": items}
 
 
+@router.get("/timeline")
+async def playback_timeline(
+    date: str = Query(..., description="YYYY-MM-DD"),
+    cameras: str = Query(..., description="Comma-separated camera ids"),
+    run_id: Optional[int] = Query(None),
+    from_ts: Optional[float] = Query(None, alias="from"),
+    to_ts: Optional[float] = Query(None, alias="to"),
+) -> dict:
+    """Compact day timeline: segments + detection ticks + event intervals in one round-trip."""
+    from evileye.api.core.playback_timeline_index import build_timeline
+
+    cam_list = [c.strip() for c in cameras.split(",") if c.strip()]
+    if not cam_list:
+        raise HTTPException(status_code=400, detail="cameras query required")
+    return await asyncio.to_thread(
+        build_timeline,
+        date_folder=date,
+        cameras=cam_list,
+        run_id=run_id,
+        from_ts=from_ts,
+        to_ts=to_ts,
+    )
+
+
 @router.get("/events")
 async def playback_events(
     from_ts: Optional[float] = Query(None, alias="from"),

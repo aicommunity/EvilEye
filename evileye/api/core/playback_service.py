@@ -752,12 +752,13 @@ def _slot_might_overlap_window(
     return True
 
 
-def load_segments(
+def load_segments_uncached(
     camera: str,
     from_ts: Optional[float] = None,
     to_ts: Optional[float] = None,
     date: Optional[str] = None,
 ) -> list[dict[str, Any]]:
+    """Scan MP4 files and build segment rows (no on-disk index)."""
     base = data_dir() / "Streams"
     if not base.exists():
         return []
@@ -813,16 +814,75 @@ def load_segments(
     return items
 
 
+def load_segments(
+    camera: str,
+    from_ts: Optional[float] = None,
+    to_ts: Optional[float] = None,
+    date: Optional[str] = None,
+) -> list[dict[str, Any]]:
+    if date:
+        try:
+            from evileye.api.core.playback_timeline_index import (
+                ensure_segment_index,
+                filter_segments_window,
+                read_segment_index_if_fresh,
+                upsert_segment_index_camera,
+            )
+
+            cached = read_segment_index_if_fresh(date)
+            if cached is not None and camera in cached:
+                return filter_segments_window(cached.get(camera) or [], from_ts, to_ts)
+            # Windowed query before an index exists: keep the mvhd skip optimization.
+            if cached is None and (from_ts is not None or to_ts is not None):
+                return load_segments_uncached(camera, from_ts, to_ts, date=date)
+            by_camera = ensure_segment_index(date_folder=date, cameras=[camera])
+            if camera not in by_camera or not by_camera.get(camera):
+                rows = load_segments_uncached(camera, date=date)
+                upsert_segment_index_camera(date, camera, rows)
+                return filter_segments_window(rows, from_ts, to_ts)
+            return filter_segments_window(by_camera.get(camera) or [], from_ts, to_ts)
+        except Exception:
+            pass
+    return load_segments_uncached(camera, from_ts, to_ts, date=date)
+
+
 def load_segments_batch(
     cameras: list[str],
     from_ts: Optional[float] = None,
     to_ts: Optional[float] = None,
     date: Optional[str] = None,
 ) -> dict[str, list[dict[str, Any]]]:
+    cam_list = [cam for cam in cameras if cam]
+    if date and cam_list:
+        try:
+            from evileye.api.core.playback_timeline_index import (
+                ensure_segment_index,
+                filter_segments_window,
+                read_segment_index_if_fresh,
+                upsert_segment_index_camera,
+            )
+
+            cached = read_segment_index_if_fresh(date)
+            if cached is None and (from_ts is not None or to_ts is not None):
+                return {
+                    cam: load_segments_uncached(cam, from_ts, to_ts, date=date)
+                    for cam in cam_list
+                }
+            by_camera = ensure_segment_index(date_folder=date, cameras=cam_list)
+            for cam in cam_list:
+                if cam not in by_camera or not by_camera.get(cam):
+                    rows = load_segments_uncached(cam, date=date)
+                    upsert_segment_index_camera(date, cam, rows)
+                    by_camera[cam] = rows
+            return {
+                cam: filter_segments_window(by_camera.get(cam) or [], from_ts, to_ts)
+                for cam in cam_list
+            }
+        except Exception:
+            pass
     return {
-        cam: load_segments(cam, from_ts, to_ts, date=date)
-        for cam in cameras
-        if cam
+        cam: load_segments_uncached(cam, from_ts, to_ts, date=date)
+        for cam in cam_list
     }
 
 

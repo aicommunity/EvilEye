@@ -55,6 +55,31 @@ export const playbackApi = {
     if (opts?.runId != null) p.set('run_id', String(opts.runId));
     return request(`/playback/segments?${p}`, opts);
   },
+  timeline(
+    date: string,
+    cameras: string[],
+    opts?: RequestOptions & {
+      from?: number;
+      to?: number;
+      runId?: number | null;
+    },
+  ): Promise<{
+    date: string;
+    by_camera: Record<
+      string,
+      {
+        segments: PlaybackSegment[];
+        detection_ticks: PlaybackDetectionItem[];
+        events: PlaybackEventInterval[];
+      }
+    >;
+  }> {
+    const p = new URLSearchParams({ date, cameras: cameras.join(',') });
+    if (opts?.from != null) p.set('from', String(opts.from));
+    if (opts?.to != null) p.set('to', String(opts.to));
+    if (opts?.runId != null) p.set('run_id', String(opts.runId));
+    return request(`/playback/timeline?${p}`, opts);
+  },
   events(
     from?: number,
     to?: number,

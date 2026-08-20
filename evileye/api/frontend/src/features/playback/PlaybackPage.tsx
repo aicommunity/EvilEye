@@ -4,6 +4,7 @@ import {
   playbackApi,
   stateApi,
   type PlaybackCamera,
+  type PlaybackDetectionItem,
   type PlaybackEventInterval,
   type PlaybackEventMarker,
   type PlaybackSegment,
@@ -405,24 +406,58 @@ export function PlaybackPage() {
           didSetSegmentsLoading = true;
         }
 
-        const [batch, ev] = await Promise.all([
-          playbackApi.segmentsBatch(nextSelected, opts?.from, opts?.to, useDate, {
-            signal: ac.signal,
+        let incoming: Record<string, PlaybackSegment[]> = {};
+        let evItems: PlaybackEventInterval[] = [];
+        let evLegacy: PlaybackEventMarker[] = [];
+        let timelineTicks: Record<string, PlaybackDetectionItem[]> | null = null;
+
+        try {
+          const timeline = await playbackApi.timeline(useDate ?? date, nextSelected, {
+            from: opts?.from,
+            to: opts?.to,
             runId,
-          }),
-          playbackApi.events(opts?.from, opts?.to, undefined, useDate, nextSelected, {
             signal: ac.signal,
-          }),
-        ]);
-        if (ac.signal.aborted) return;
-
-        cacheSet(segKey, batch, SEGMENTS_TTL_MS);
-        cacheSet(evKey, ev, SEGMENTS_TTL_MS);
-
-        const incoming: Record<string, PlaybackSegment[]> = { ...(batch.by_camera || {}) };
-        for (const id of nextSelected) {
-          if (!incoming[id]) incoming[id] = [];
+          });
+          if (ac.signal.aborted) return;
+          incoming = {};
+          for (const id of nextSelected) {
+            const row = timeline.by_camera?.[id];
+            incoming[id] = row?.segments ?? [];
+            if (row?.detection_ticks?.length) {
+              if (!timelineTicks) timelineTicks = {};
+              timelineTicks[id] = row.detection_ticks;
+            }
+            if (row?.events?.length) evItems.push(...row.events);
+          }
+          cacheSet(segKey, { by_camera: incoming, items: Object.values(incoming).flat() }, SEGMENTS_TTL_MS);
+          cacheSet(evKey, { items: evItems, legacy_markers: [] }, SEGMENTS_TTL_MS);
+          if (timelineTicks) {
+            const tickKey = `playback:detections:${useDate ?? ''}:ticks:${nextSelected.join(',')}`;
+            cacheSet(tickKey, { by_camera: timelineTicks }, SEGMENTS_TTL_MS);
+          }
+        } catch (timelineErr) {
+          if (isAbortError(timelineErr)) throw timelineErr;
+          // Fallback to legacy fan-out if /timeline is unavailable.
+          const [batch, ev] = await Promise.all([
+            playbackApi.segmentsBatch(nextSelected, opts?.from, opts?.to, useDate, {
+              signal: ac.signal,
+              runId,
+            }),
+            playbackApi.events(opts?.from, opts?.to, undefined, useDate, nextSelected, {
+              signal: ac.signal,
+            }),
+          ]);
+          if (ac.signal.aborted) return;
+          cacheSet(segKey, batch, SEGMENTS_TTL_MS);
+          cacheSet(evKey, ev, SEGMENTS_TTL_MS);
+          incoming = { ...(batch.by_camera || {}) };
+          for (const id of nextSelected) {
+            if (!incoming[id]) incoming[id] = [];
+          }
+          evItems = ev.items;
+          evLegacy = ev.legacy_markers ?? [];
         }
+
         setSegmentsByCam((prev) => {
           if (!opts?.merge) return incoming;
           const merged: Record<string, PlaybackSegment[]> = { ...prev };
@@ -446,7 +481,7 @@ export function PlaybackPage() {
           viewport.resetToData(from ?? null, to ?? null, useDate ?? date);
         }
         setMarkers((prev) => {
-          const incomingMarkers = ev.legacy_markers ?? [];
+          const incomingMarkers = evLegacy;
           if (!opts?.merge) return incomingMarkers;
           const byKey = new Map<string, PlaybackEventMarker>();
           for (const m of prev) byKey.set(`${m.ts}:${m.camera}:${m.type}`, m);
@@ -454,10 +489,10 @@ export function PlaybackPage() {
           return Array.from(byKey.values()).sort((a, b) => a.ts - b.ts);
         });
         setEventIntervals((prev) => {
-          if (!opts?.merge) return ev.items;
+          if (!opts?.merge) return evItems;
           const byKey = new Map<string, PlaybackEventInterval>();
           for (const it of prev) byKey.set(`${it.start_ts}:${it.end_ts}:${it.camera}:${it.event_type}:${it.label}`, it);
-          for (const it of ev.items) byKey.set(`${it.start_ts}:${it.end_ts}:${it.camera}:${it.event_type}:${it.label}`, it);
+          for (const it of evItems) byKey.set(`${it.start_ts}:${it.end_ts}:${it.camera}:${it.event_type}:${it.label}`, it);
           return Array.from(byKey.values()).sort((a, b) => a.start_ts - b.start_ts);
         });
         setSegmentsLoaded(true);
