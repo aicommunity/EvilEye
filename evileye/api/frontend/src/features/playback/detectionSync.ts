@@ -337,3 +337,14 @@ export function overlayTimeLabel(positionSec: number): string {
   const pad = (n: number) => String(n).padStart(2, '0');
   return `${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`;
 }
+
+/** While playing, overlay must follow the decoded video frame, not the shared playhead. */
+export function resolvePlaybackOverlaySec(
+  positionSec: number,
+  videoGlobalSec: number | null | undefined,
+  opts?: { playing?: boolean; videoSeeking?: boolean; scrubbing?: boolean },
+): number {
+  if (opts?.scrubbing || !opts?.playing || opts?.videoSeeking) return positionSec;
+  if (videoGlobalSec == null || !Number.isFinite(videoGlobalSec)) return positionSec;
+  return videoGlobalSec;
+}

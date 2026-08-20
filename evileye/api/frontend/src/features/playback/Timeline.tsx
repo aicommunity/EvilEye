@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import type { PlaybackEventMarker, PlaybackSegment } from '../../api';
+import type { PlaybackEventInterval, PlaybackEventMarker, PlaybackSegment } from '../../api';
 import { useI18n } from '../../i18n';
 import { EventMarkers } from './EventMarkers';
 import {
@@ -18,6 +18,7 @@ export function Timeline({
   markers,
   segments = [],
   detectionTs = [],
+  eventIntervals = [],
   onSeek,
   onViewChange,
   onPanningChange,
@@ -28,6 +29,7 @@ export function Timeline({
   markers: PlaybackEventMarker[];
   segments?: PlaybackSegment[];
   detectionTs?: number[];
+  eventIntervals?: PlaybackEventInterval[];
   onSeek: (sec: number) => void;
   onViewChange: (viewFrom: number, viewTo: number) => void;
   onPanningChange?: (panning: boolean) => void;
@@ -199,6 +201,7 @@ export function Timeline({
           );
         })}
       </div>
+      <EventIntervalsCanvas eventIntervals={eventIntervals} viewFrom={viewFrom} viewTo={viewTo} />
       <DetectionTicksCanvas detectionTs={detectionTs} viewFrom={viewFrom} viewTo={viewTo} />
       {segments.map((seg) => {
         const left = ((seg.start_ts - viewFrom) / span) * 100;
@@ -259,6 +262,56 @@ export function Timeline({
       {noData ? <div className="playback-timeline-empty-banner">{t('playback.timelineNoRecordings')}</div> : null}
     </div>
   );
+}
+
+function EventIntervalsCanvas({
+  eventIntervals,
+  viewFrom,
+  viewTo,
+}: {
+  eventIntervals: PlaybackEventInterval[];
+  viewFrom: number;
+  viewTo: number;
+}) {
+  const canvasRef = useRef<HTMLCanvasElement>(null);
+
+  useEffect(() => {
+    const canvas = canvasRef.current;
+    const parent = canvas?.parentElement;
+    if (!canvas || !parent) return;
+
+    const paint = () => {
+      const dpr = window.devicePixelRatio || 1;
+      const w = parent.clientWidth;
+      const h = parent.clientHeight;
+      canvas.width = Math.max(1, Math.round(w * dpr));
+      canvas.height = Math.max(1, Math.round(h * dpr));
+      canvas.style.width = `${w}px`;
+      canvas.style.height = `${h}px`;
+      const ctx = canvas.getContext('2d');
+      if (!ctx) return;
+      ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+      ctx.clearRect(0, 0, w, h);
+      const span = viewTo - viewFrom;
+      if (!(span > 0) || !eventIntervals.length) return;
+      ctx.fillStyle = 'rgba(245, 158, 11, 0.42)';
+      for (const it of eventIntervals) {
+        if (it.end_ts < viewFrom || it.start_ts > viewTo) continue;
+        const leftSec = Math.max(it.start_ts, viewFrom);
+        const rightSec = Math.min(it.end_ts, viewTo);
+        const left = ((leftSec - viewFrom) / span) * w;
+        const width = Math.max(2, ((rightSec - leftSec) / span) * w);
+        ctx.fillRect(left, h * 0.06, width, Math.max(4, h * 0.14));
+      }
+    };
+
+    paint();
+    const ro = new ResizeObserver(paint);
+    ro.observe(parent);
+    return () => ro.disconnect();
+  }, [eventIntervals, viewFrom, viewTo]);
+
+  return <canvas ref={canvasRef} className="timeline-event-intervals-canvas" aria-hidden />;
 }
 
 export { EventMarkers } from './EventMarkers';

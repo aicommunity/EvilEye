@@ -3,6 +3,7 @@ import type {
   FrameSize,
   PlaybackCamera,
   PlaybackDetectionItem,
+  PlaybackEventInterval,
   PlaybackPlayMode,
   PlaybackSegment,
 } from '../../api';
@@ -30,6 +31,7 @@ export function PlaybackGrid({
   scrubbing = false,
   detectionByCamera = {},
   globalDetectionTs = [],
+  eventIntervalsByCamera = {},
   onVideoClock,
   onExpand,
   segmentsLoading = false,
@@ -50,6 +52,7 @@ export function PlaybackGrid({
   scrubbing?: boolean;
   detectionByCamera?: Record<string, PlaybackDetectionItem[]>;
   globalDetectionTs?: number[];
+  eventIntervalsByCamera?: Record<string, PlaybackEventInterval[]>;
   onVideoClock?: (globalSec: number) => void;
   onExpand: (cameraId: string) => void;
   segmentsLoading?: boolean;
@@ -79,6 +82,7 @@ export function PlaybackGrid({
           scrubbing={scrubbing}
           detectionItems={detectionByCamera[id] ?? []}
           globalDetectionTs={globalDetectionTs}
+          eventIntervals={eventIntervalsByCamera[id] ?? []}
           onVideoClock={onVideoClock}
           onExpand={() => onExpand(id)}
           segmentsLoading={segmentsLoading && !(segmentsByCam[id]?.length)}
@@ -103,6 +107,7 @@ function PlaybackCell({
   scrubbing,
   detectionItems,
   globalDetectionTs,
+  eventIntervals,
   onVideoClock,
   onExpand,
   segmentsLoading = false,
@@ -121,6 +126,7 @@ function PlaybackCell({
   scrubbing: boolean;
   detectionItems: PlaybackDetectionItem[];
   globalDetectionTs: number[];
+  eventIntervals: PlaybackEventInterval[];
   onVideoClock?: (globalSec: number) => void;
   onExpand: () => void;
   segmentsLoading?: boolean;
@@ -129,7 +135,7 @@ function PlaybackCell({
   const mediaRef = useRef<HTMLDivElement>(null);
   const [videoReady, setVideoReady] = useState(0);
   const [frameSize, setFrameSize] = useState<FrameSize | null>(null);
-  const { ref, preloadRef, slot, applySync } = usePlaybackCameraSlot(
+  const { ref, preloadRef, slot, applySync, videoGlobalSec, videoSeeking } = usePlaybackCameraSlot(
     segments,
     getPosition,
     positionSec,
@@ -166,6 +172,7 @@ function PlaybackCell({
         scrubbing={scrubbing}
         detectionItems={detectionItems}
         globalDetectionTs={globalDetectionTs}
+        eventIntervals={eventIntervals}
         onVideoClock={onVideoClock}
         onExpand={onExpand}
         frameSize={frameSize}
@@ -194,8 +201,12 @@ function PlaybackCell({
       runId={runId}
       showMetadata={showMetadata}
       playMode={playMode}
+      scrubbing={scrubbing}
+      videoGlobalSec={videoGlobalSec}
+      videoSeeking={videoSeeking}
       detectionItems={detectionItems}
       globalDetectionTs={globalDetectionTs}
+      eventIntervals={eventIntervals}
       onExpand={onExpand}
       segmentsLoading={segmentsLoading}
       detectionsReady={detectionsReady}
@@ -221,8 +232,12 @@ function NormalPlaybackCell({
   runId,
   showMetadata,
   playMode,
+  scrubbing = false,
+  videoGlobalSec = null,
+  videoSeeking = false,
   detectionItems,
   globalDetectionTs,
+  eventIntervals,
   onExpand,
   segmentsLoading = false,
   detectionsReady = true,
@@ -244,8 +259,12 @@ function NormalPlaybackCell({
   runId: number | null;
   showMetadata: boolean;
   playMode: PlaybackPlayMode;
+  scrubbing?: boolean;
+  videoGlobalSec?: number | null;
+  videoSeeking?: boolean;
   detectionItems: PlaybackDetectionItem[];
   globalDetectionTs: number[];
+  eventIntervals: PlaybackEventInterval[];
   onExpand: () => void;
   segmentsLoading?: boolean;
   detectionsReady?: boolean;
@@ -259,8 +278,12 @@ function NormalPlaybackCell({
     hasVideo: Boolean(slot?.url),
     frameSize,
     playing,
+    scrubbing,
+    videoGlobalSec,
+    videoSeeking,
     detectionItems,
     globalDetectionTs,
+    eventIntervals,
     detectionsReady,
   });
 

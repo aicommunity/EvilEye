@@ -38,6 +38,7 @@ export function PlaybackMediaWithOverlay({
       layoutBox={layoutBox.width > 0 && layoutBox.height > 0 ? layoutBox : undefined}
       density={density}
       visible={showMetadata && visible}
+      renderMode="playback"
     />
   );
 }

@@ -5,9 +5,31 @@ import {
   objectsToOverlayFromIndex,
   pairTrackIntervals,
   shouldSkipToDetection,
+  resolvePlaybackOverlaySec,
   shouldShowPlaybackObjects,
   SKIP_GAP_SEC,
 } from './detectionSync';
+
+describe('resolvePlaybackOverlaySec', () => {
+  it('follows the decoded video frame while playing', () => {
+    expect(
+      resolvePlaybackOverlaySec(115, 100, { playing: true, videoSeeking: false, scrubbing: false }),
+    ).toBe(100);
+  });
+
+  it('uses the playhead while scrubbing or paused', () => {
+    expect(
+      resolvePlaybackOverlaySec(115, 100, { playing: true, videoSeeking: false, scrubbing: true }),
+    ).toBe(115);
+    expect(
+      resolvePlaybackOverlaySec(115, 100, { playing: false, videoSeeking: false, scrubbing: false }),
+    ).toBe(115);
+  });
+
+  it('falls back to playhead when video time is unavailable', () => {
+    expect(resolvePlaybackOverlaySec(115, null, { playing: true })).toBe(115);
+  });
+});
 
 describe('shouldSkipToDetection', () => {
   it('skips when the next snapshot is within the gap', () => {

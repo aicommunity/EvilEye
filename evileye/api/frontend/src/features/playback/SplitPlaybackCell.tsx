@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import type { FrameSize, PlaybackCamera, PlaybackDetectionItem, PlaybackPlayMode } from '../../api';
+import type { FrameSize, PlaybackCamera, PlaybackDetectionItem, PlaybackEventInterval, PlaybackPlayMode } from '../../api';
 import { MetadataOverlayLayer } from '../overlay/MetadataOverlayLayer';
 import { prepareOverlayMetadata } from '../overlay/overlayMath';
 import { resolvePlaybackFrameSize } from '../overlay/playbackFrameSize';
@@ -27,6 +27,7 @@ export function SplitPlaybackCell({
   scrubbing = false,
   detectionItems = [],
   globalDetectionTs = [],
+  eventIntervals = [],
   onVideoClock,
   onExpand,
   expanded = false,
@@ -51,6 +52,7 @@ export function SplitPlaybackCell({
   scrubbing?: boolean;
   detectionItems?: PlaybackDetectionItem[];
   globalDetectionTs?: number[];
+  eventIntervals?: PlaybackEventInterval[];
   onVideoClock?: (globalSec: number) => void;
   onExpand?: () => void;
   expanded?: boolean;
@@ -66,6 +68,7 @@ export function SplitPlaybackCell({
   getPositionRef.current = getPosition;
   const [videoReady, setVideoReady] = useState(0);
   const [seeking, setSeeking] = useState(false);
+  const [videoGlobalSec, setVideoGlobalSec] = useState<number | null>(null);
   const [localFrameSize, setLocalFrameSize] = useState<FrameSize | null>(null);
   const parentVideoSize = frameSizeProp ?? localFrameSize;
   const onVideoClockRef = useRef(onVideoClock);
@@ -85,8 +88,12 @@ export function SplitPlaybackCell({
     hasVideo: Boolean(videoUrl),
     frameSize: metadataFrameSize,
     playing,
+    scrubbing,
+    videoGlobalSec,
+    videoSeeking: seeking,
     detectionItems,
     globalDetectionTs,
+    eventIntervals,
     detectionsReady,
   });
 
@@ -109,6 +116,7 @@ export function SplitPlaybackCell({
   useEffect(() => {
     setLocalFrameSize(null);
     setVideoReady(0);
+    setVideoGlobalSec(null);
   }, [videoUrl]);
 
   const drawFrame = () => {
@@ -208,8 +216,12 @@ export function SplitPlaybackCell({
     const video = videoRef.current;
     if (!video) return;
     const onSeeking = () => setSeeking(true);
-    const onSeeked = () => setSeeking(false);
+    const onSeeked = () => {
+      setSeeking(false);
+      setVideoGlobalSec(startTs + video.currentTime);
+    };
     const onTime = () => {
+      if (video.readyState >= 2) setVideoGlobalSec(startTs + video.currentTime);
       if (video.seeking || scrubbing) return;
       if (playing && shouldEmitPlaybackClock(cameraId, video)) {
         onVideoClockRef.current?.(startTs + video.currentTime);
@@ -283,6 +295,7 @@ export function SplitPlaybackCell({
         layoutBox={layoutBox.width > 0 && layoutBox.height > 0 ? layoutBox : undefined}
         density={expanded ? 'full' : 'compact'}
         visible={showMetadata && !seeking}
+        renderMode="playback"
       />
       <PlaybackBusyHint
         seeking={seeking}

@@ -106,7 +106,6 @@ export function usePlaybackMetadata({
     }
 
     setError(null);
-    // Avoid showing stale boxes while waiting for metadata for a new frame.
     setMeta(null);
 
     const fetchNow = () => {

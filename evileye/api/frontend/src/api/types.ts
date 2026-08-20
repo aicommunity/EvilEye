@@ -162,6 +162,7 @@ export interface StreamMetadata {
     source_name?: string;
     time_label?: string;
   };
+  highlight_zone_name?: string | null;
 }
 
 /** Alias for overlays shared between live and archive playback. */
@@ -193,6 +194,23 @@ export interface PlaybackEventMarker {
   type: string;
   camera?: string;
   row_key?: string;
+}
+
+export interface PlaybackEventInterval {
+  start_ts: number;
+  end_ts: number;
+  event_type: string;
+  label?: string;
+  camera?: string;
+  severity?: string | number | null;
+  zone_id?: string | null;
+  zone_name?: string | null;
+  raw_id?: string | number | null;
+}
+
+export interface PlaybackEventsResponse {
+  items: PlaybackEventInterval[];
+  legacy_markers?: PlaybackEventMarker[];
 }
 
 export interface PlaybackDetectionItem {

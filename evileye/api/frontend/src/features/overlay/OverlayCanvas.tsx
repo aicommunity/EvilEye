@@ -10,15 +10,18 @@ export type OverlayLayoutBox = {
 };
 
 export type OverlayDensity = 'compact' | 'full';
+export type OverlayRenderMode = 'live' | 'playback';
 
 export function OverlayCanvas({
   meta,
   layoutBox,
   density = 'full',
+  renderMode = 'live',
 }: {
   meta: StreamMetadata | null;
   layoutBox?: OverlayLayoutBox;
   density?: OverlayDensity;
+  renderMode?: OverlayRenderMode;
 }) {
   const payload = meta;
   const hasContent = Boolean(
@@ -49,6 +52,8 @@ export function OverlayCanvas({
         pointerEvents: 'none',
       };
 
+  const isPlayback = renderMode === 'playback';
+  const highlightedZone = payload.highlight_zone_name ? String(payload.highlight_zone_name) : null;
   return (
     <div style={style} className="live-overlay-root">
       <svg className="journal-preview-overlay" viewBox="0 0 100 100" preserveAspectRatio="none">
@@ -72,13 +77,14 @@ export function OverlayCanvas({
           : null}
         {(payload.zones ?? []).map((z, i) => {
           if (!z.points?.length) return null;
+          const zoneHighlighted = highlightedZone && z.name && String(z.name) === highlightedZone;
           const points = z.points.map(([x, y]) => `${x * 100},${y * 100}`).join(' ');
           return (
             <g key={`z${i}`}>
               <polygon
                 points={points}
-                fill="rgba(239,68,68,0.15)"
-                stroke="#ef4444"
+                fill={zoneHighlighted ? 'rgba(245, 158, 11, 0.35)' : 'rgba(239,68,68,0.15)'}
+                stroke={zoneHighlighted ? '#f59e0b' : '#ef4444'}
                 strokeWidth="1.5"
                 vectorEffect="non-scaling-stroke"
               />
@@ -96,7 +102,7 @@ export function OverlayCanvas({
             </g>
           );
         })}
-        {density === 'full'
+        {!isPlayback && density === 'full'
           ? (payload.objects ?? []).map((o, i) => {
               if (!o.trail?.length || o.trail.length < 2) return null;
               const points = o.trail.map(([x, y]) => `${x * 100},${y * 100}`).join(' ');
@@ -112,7 +118,7 @@ export function OverlayCanvas({
               );
             })
           : null}
-        {(payload.objects ?? []).map((o, i) => {
+        {!isPlayback ? (payload.objects ?? []).map((o, i) => {
           const b = o.bbox;
           if (!b || b.length !== 4) return null;
           const [x1, y1, x2, y2] = b;
@@ -129,18 +135,18 @@ export function OverlayCanvas({
               vectorEffect="non-scaling-stroke"
             />
           );
-        })}
+        }) : null}
       </svg>
-      {density === 'full' ? (
+      {!isPlayback && density === 'full' ? (
         <div className="live-overlay-label-layer">
           {(payload.objects ?? []).map((o, i) => renderObjectLabel(o, i))}
           {(payload.objects ?? []).map((o, i) => renderObjectAttributes(o, i))}
         </div>
-      ) : (
+      ) : !isPlayback ? (
         <div className="live-overlay-label-layer live-overlay-label-layer--compact">
           {(payload.objects ?? []).map((o, i) => renderCompactObjectLabel(o, i))}
         </div>
-      )}
+      ) : null}
       {payload.signalization && (payload.event_labels?.length ?? 0) > 0 ? (
         <div
           className="live-event-banner"

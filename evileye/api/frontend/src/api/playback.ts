@@ -1,5 +1,12 @@
 import { API_BASE, request, type RequestOptions } from './client';
-import type { PlaybackCamera, PlaybackDetectionItem, PlaybackEventMarker, PlaybackSegment } from './types';
+import type {
+  PlaybackCamera,
+  PlaybackDetectionItem,
+  PlaybackEventInterval,
+  PlaybackEventMarker,
+  PlaybackEventsResponse,
+  PlaybackSegment,
+} from './types';
 
 export type FrameSize = { w: number; h: number };
 
@@ -55,14 +62,38 @@ export const playbackApi = {
     date?: string,
     cameras?: string[],
     opts?: RequestOptions,
-  ): Promise<{ items: PlaybackEventMarker[] }> {
+  ): Promise<PlaybackEventsResponse> {
     const p = new URLSearchParams();
     if (from != null) p.set('from', String(from));
     if (to != null) p.set('to', String(to));
     if (camera) p.set('camera', camera);
     if (cameras?.length) p.set('cameras', cameras.join(','));
     if (date) p.set('date', date);
-    return request(`/playback/events?${p}`, opts);
+    return request(`/playback/events?${p}`, opts).then((raw: any) => {
+      const itemsRaw = Array.isArray(raw?.items) ? raw.items : [];
+      const looksLegacy = itemsRaw.length > 0 && itemsRaw[0]?.ts != null && itemsRaw[0]?.start_ts == null;
+      if (looksLegacy) {
+        return {
+          items: [],
+          legacy_markers: itemsRaw as PlaybackEventMarker[],
+        };
+      }
+      const items: PlaybackEventInterval[] = itemsRaw
+        .map((it: any) => ({
+          start_ts: Number(it.start_ts),
+          end_ts: Number(it.end_ts),
+          event_type: String(it.event_type ?? 'event'),
+          label: it.label != null ? String(it.label) : undefined,
+          camera: it.camera != null ? String(it.camera) : undefined,
+          severity: it.severity ?? undefined,
+          zone_id: it.zone_id != null ? String(it.zone_id) : undefined,
+          zone_name: it.zone_name != null ? String(it.zone_name) : undefined,
+          raw_id: it.raw_id ?? undefined,
+        }))
+        .filter((it: PlaybackEventInterval) => Number.isFinite(it.start_ts) && Number.isFinite(it.end_ts) && it.end_ts >= it.start_ts);
+      const legacy = Array.isArray(raw?.legacy_markers) ? (raw.legacy_markers as PlaybackEventMarker[]) : undefined;
+      return { items, legacy_markers: legacy };
+    });
   },
   mediaUrl(path: string): string {
     return `${API_BASE}/playback/media?path=${encodeURIComponent(path)}`;

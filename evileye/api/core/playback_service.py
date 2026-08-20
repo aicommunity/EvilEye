@@ -864,6 +864,202 @@ def load_event_markers(
     return markers[:cap]
 
 
+_EVENT_FILES = {
+    "camera_events.json": "camera_events",
+    "system_events.json": "system_events",
+    "zone_events_entered.json": "zone_events_entered",
+    "zone_events_left.json": "zone_events_left",
+    "attribute_events_found.json": "attribute_events_found",
+    "attribute_events_finished.json": "attribute_events_finished",
+}
+
+
+def _parse_event_ts(value: Any) -> float | None:
+    if value in (None, ""):
+        return None
+    if isinstance(value, (int, float)):
+        try:
+            return float(value)
+        except Exception:
+            return None
+    s = str(value).strip()
+    if not s:
+        return None
+    try:
+        return float(s)
+    except Exception:
+        pass
+    for fmt in ("%Y-%m-%dT%H:%M:%S.%f", "%Y-%m-%dT%H:%M:%S"):
+        try:
+            return datetime.strptime(s, fmt).timestamp()
+        except Exception:
+            continue
+    return None
+
+
+def _event_zone(event: dict[str, Any]) -> tuple[str | None, str | None]:
+    zone_name = event.get("zone_name") or event.get("zone") or event.get("zone_id")
+    zone_id = event.get("zone_id")
+    if zone_name is not None:
+        zone_name = str(zone_name)
+    if zone_id is not None:
+        zone_id = str(zone_id)
+    return zone_id, zone_name
+
+
+def _event_label(event: dict[str, Any], event_type: str) -> str:
+    return str(
+        event.get("event_name")
+        or event.get("attribute_name")
+        or event.get("zone_name")
+        or event_type
+    )
+
+
+def _iter_event_rows(
+    from_ts: Optional[float] = None,
+    to_ts: Optional[float] = None,
+    cameras: Optional[list[str]] = None,
+    *,
+    date: Optional[str] = None,
+) -> list[dict[str, Any]]:
+    base = data_dir() / "Events"
+    if not base.exists():
+        return []
+    rows: list[dict[str, Any]] = []
+    date_dirs = _date_dirs_covering(base, date=date, from_ts=from_ts, to_ts=to_ts)
+    camera_filters = [c for c in (cameras or []) if c]
+    for date_dir in date_dirs:
+        meta_dir = date_dir / "Metadata"
+        if not meta_dir.is_dir():
+            continue
+        for filename, event_type in _EVENT_FILES.items():
+            filepath = meta_dir / filename
+            if not filepath.is_file():
+                continue
+            try:
+                data = json.loads(filepath.read_text(encoding="utf-8"))
+            except Exception:
+                continue
+            events_list = data if isinstance(data, list) else data.get("events", [])
+            if not isinstance(events_list, list):
+                continue
+            for raw in events_list:
+                if not isinstance(raw, dict):
+                    continue
+                ts = _parse_event_ts(raw.get("ts") or raw.get("time_stamp") or raw.get("timestamp"))
+                if ts is None:
+                    continue
+                if from_ts is not None and ts < from_ts:
+                    continue
+                if to_ts is not None and ts > to_ts:
+                    continue
+                source_name = str(raw.get("source_name") or raw.get("camera") or "")
+                if camera_filters and source_name and source_name not in camera_filters:
+                    continue
+                if camera_filters and not source_name:
+                    continue
+                zone_id, zone_name = _event_zone(raw)
+                rows.append(
+                    {
+                        "ts": ts,
+                        "camera": source_name or None,
+                        "event_type": event_type,
+                        "label": _event_label(raw, event_type),
+                        "severity": raw.get("severity"),
+                        "zone_id": zone_id,
+                        "zone_name": zone_name,
+                        "raw_id": raw.get("id") or raw.get("event_id"),
+                    }
+                )
+    rows.sort(key=lambda r: float(r["ts"]))
+    return rows
+
+
+def load_event_intervals(
+    from_ts: Optional[float] = None,
+    to_ts: Optional[float] = None,
+    camera: Optional[str] = None,
+    cameras: Optional[list[str]] = None,
+    *,
+    date: Optional[str] = None,
+    limit: int = 500,
+    default_event_duration_sec: float = 2.0,
+) -> list[dict[str, Any]]:
+    camera_filters = [c for c in (cameras or []) if c]
+    if camera and not camera_filters:
+        camera_filters = [camera]
+    rows = _iter_event_rows(from_ts=from_ts, to_ts=to_ts, cameras=camera_filters, date=date)
+    cap = max(1, min(int(limit or 500), 2000))
+    out: list[dict[str, Any]] = []
+    # pair enter/left and found/finished per (camera, zone/name)
+    pending: dict[tuple[str | None, str, str | None], dict[str, Any]] = {}
+    for row in rows:
+        ev_type = str(row.get("event_type") or "")
+        label = str(row.get("label") or ev_type)
+        key = (row.get("camera"), ev_type.replace("_left", "_entered").replace("_finished", "_found"), row.get("zone_name") or label)
+        is_start = ev_type.endswith("_entered") or ev_type.endswith("_found")
+        is_end = ev_type.endswith("_left") or ev_type.endswith("_finished")
+        if is_start:
+            pending[key] = row
+            continue
+        if is_end and key in pending:
+            start_row = pending.pop(key)
+            start_ts = float(start_row["ts"])
+            end_ts = float(row["ts"])
+            if end_ts < start_ts:
+                start_ts, end_ts = end_ts, start_ts
+            out.append(
+                {
+                    "start_ts": start_ts,
+                    "end_ts": end_ts,
+                    "camera": start_row.get("camera"),
+                    "event_type": start_row.get("event_type"),
+                    "label": start_row.get("label"),
+                    "severity": start_row.get("severity"),
+                    "zone_id": start_row.get("zone_id"),
+                    "zone_name": start_row.get("zone_name"),
+                    "raw_id": start_row.get("raw_id"),
+                }
+            )
+            continue
+        ts = float(row["ts"])
+        out.append(
+            {
+                "start_ts": ts,
+                "end_ts": ts + default_event_duration_sec,
+                "camera": row.get("camera"),
+                "event_type": row.get("event_type"),
+                "label": row.get("label"),
+                "severity": row.get("severity"),
+                "zone_id": row.get("zone_id"),
+                "zone_name": row.get("zone_name"),
+                "raw_id": row.get("raw_id"),
+            }
+        )
+    for start_row in pending.values():
+        ts = float(start_row["ts"])
+        out.append(
+            {
+                "start_ts": ts,
+                "end_ts": ts + default_event_duration_sec,
+                "camera": start_row.get("camera"),
+                "event_type": start_row.get("event_type"),
+                "label": start_row.get("label"),
+                "severity": start_row.get("severity"),
+                "zone_id": start_row.get("zone_id"),
+                "zone_name": start_row.get("zone_name"),
+                "raw_id": start_row.get("raw_id"),
+            }
+        )
+    if from_ts is not None:
+        out = [it for it in out if float(it["end_ts"]) >= from_ts]
+    if to_ts is not None:
+        out = [it for it in out if float(it["start_ts"]) <= to_ts]
+    out.sort(key=lambda it: (float(it["start_ts"]), float(it["end_ts"])))
+    return out[:cap]
+
+
 def resolve_media_path(path: str) -> Path:
     candidate = Path(path)
     if not candidate.is_absolute():

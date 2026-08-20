@@ -4,6 +4,7 @@ import {
   playbackApi,
   stateApi,
   type PlaybackCamera,
+  type PlaybackEventInterval,
   type PlaybackEventMarker,
   type PlaybackSegment,
   cacheGet,
@@ -86,6 +87,7 @@ export function PlaybackPage() {
   const { cols, setCols, selectedIds, setSelectedIds, mode, setMode } = usePlaybackLayout();
   const [segmentsByCam, setSegmentsByCam] = useState<Record<string, PlaybackSegment[]>>({});
   const [markers, setMarkers] = useState<PlaybackEventMarker[]>([]);
+  const [eventIntervals, setEventIntervals] = useState<PlaybackEventInterval[]>([]);
   const [segmentsLoaded, setSegmentsLoaded] = useState(false);
   const [segmentsLoading, setSegmentsLoading] = useState(false);
   const [showMetadata, setShowMetadata] = useState(true);
@@ -260,6 +262,7 @@ export function PlaybackPage() {
         if (!nextSelected.length) {
           setSegmentsByCam({});
           setMarkers([]);
+          setEventIntervals([]);
           setSegmentsLoaded(true);
           if (!opts?.merge) {
             viewport.resetToData(null, null, opts?.date ?? date);
@@ -271,7 +274,7 @@ export function PlaybackPage() {
         const evKey = `playback:events:${useDate ?? ''}:${opts?.from ?? ''}:${opts?.to ?? ''}:${nextSelected.join(',')}`;
 
         const cachedBatch = cacheGet<{ by_camera: Record<string, PlaybackSegment[]>; items: PlaybackSegment[] }>(segKey);
-        const cachedEv = cacheGet<{ items: PlaybackEventMarker[] }>(evKey);
+        const cachedEv = cacheGet<{ items: PlaybackEventInterval[]; legacy_markers?: PlaybackEventMarker[] }>(evKey);
         if (cachedBatch?.by_camera && cachedEv?.items) {
           const incoming: Record<string, PlaybackSegment[]> = { ...(cachedBatch.by_camera || {}) };
           for (const id of nextSelected) {
@@ -302,11 +305,19 @@ export function PlaybackPage() {
           }
 
           setMarkers((prev) => {
-            if (!opts?.merge) return cachedEv.items;
+            const incomingMarkers = cachedEv.legacy_markers ?? [];
+            if (!opts?.merge) return incomingMarkers;
             const byKey = new Map<string, PlaybackEventMarker>();
             for (const m of prev) byKey.set(`${m.ts}:${m.camera}:${m.type}`, m);
-            for (const m of cachedEv.items) byKey.set(`${m.ts}:${m.camera}:${m.type}`, m);
+            for (const m of incomingMarkers) byKey.set(`${m.ts}:${m.camera}:${m.type}`, m);
             return Array.from(byKey.values()).sort((a, b) => a.ts - b.ts);
+          });
+          setEventIntervals((prev) => {
+            if (!opts?.merge) return cachedEv.items;
+            const byKey = new Map<string, PlaybackEventInterval>();
+            for (const it of prev) byKey.set(`${it.start_ts}:${it.end_ts}:${it.camera}:${it.event_type}:${it.label}`, it);
+            for (const it of cachedEv.items) byKey.set(`${it.start_ts}:${it.end_ts}:${it.camera}:${it.event_type}:${it.label}`, it);
+            return Array.from(byKey.values()).sort((a, b) => a.start_ts - b.start_ts);
           });
 
           setSegmentsLoaded(true);
@@ -360,11 +371,19 @@ export function PlaybackPage() {
           viewport.resetToData(from ?? null, to ?? null, useDate ?? date);
         }
         setMarkers((prev) => {
-          if (!opts?.merge) return ev.items;
+          const incomingMarkers = ev.legacy_markers ?? [];
+          if (!opts?.merge) return incomingMarkers;
           const byKey = new Map<string, PlaybackEventMarker>();
           for (const m of prev) byKey.set(`${m.ts}:${m.camera}:${m.type}`, m);
-          for (const m of ev.items) byKey.set(`${m.ts}:${m.camera}:${m.type}`, m);
+          for (const m of incomingMarkers) byKey.set(`${m.ts}:${m.camera}:${m.type}`, m);
           return Array.from(byKey.values()).sort((a, b) => a.ts - b.ts);
+        });
+        setEventIntervals((prev) => {
+          if (!opts?.merge) return ev.items;
+          const byKey = new Map<string, PlaybackEventInterval>();
+          for (const it of prev) byKey.set(`${it.start_ts}:${it.end_ts}:${it.camera}:${it.event_type}:${it.label}`, it);
+          for (const it of ev.items) byKey.set(`${it.start_ts}:${it.end_ts}:${it.camera}:${it.event_type}:${it.label}`, it);
+          return Array.from(byKey.values()).sort((a, b) => a.start_ts - b.start_ts);
         });
         setSegmentsLoaded(true);
         if (!opts?.merge && initialT != null) ctrl.seek(initialT);
@@ -493,6 +512,18 @@ export function PlaybackPage() {
     const { start, end } = dayBoundsLocal(date);
     return markers.filter((m) => m.ts >= start && m.ts < end);
   }, [markers, date]);
+  const timelineEventIntervals = useMemo(() => {
+    const { start, end } = dayBoundsLocal(date);
+    return eventIntervals.filter((it) => it.end_ts >= start && it.start_ts < end);
+  }, [eventIntervals, date]);
+  const eventIntervalsByCamera = useMemo(() => {
+    const out: Record<string, PlaybackEventInterval[]> = {};
+    for (const id of selectedIds) out[id] = [];
+    for (const it of eventIntervals) {
+      if (it.camera && out[it.camera]) out[it.camera].push(it);
+    }
+    return out;
+  }, [eventIntervals, selectedIds]);
   const effectiveCols = mode === 'fit' ? fitColsForCount(selectedIds.length) : cols;
   const positionLabel = formatPlaybackDateTime(ctrl.positionSec);
   const detectionsReady = !detectionIndex.loading;
@@ -585,6 +616,7 @@ export function PlaybackPage() {
               scrubbing={seekSettling}
               detectionItems={detectionIndex.byCamera[expandedCamera.id] ?? []}
               globalDetectionTs={detectionIndex.globalTs}
+              eventIntervals={eventIntervalsByCamera[expandedCamera.id] ?? []}
               onVideoClock={ctrl.syncPositionFromVideo}
               onClose={() => setExpandedCameraId(null)}
               detectionsReady={detectionsReady}
@@ -608,6 +640,7 @@ export function PlaybackPage() {
               scrubbing={seekSettling}
               detectionByCamera={detectionIndex.byCamera}
               globalDetectionTs={detectionIndex.globalTs}
+              eventIntervalsByCamera={eventIntervalsByCamera}
               onVideoClock={ctrl.syncPositionFromVideo}
               onExpand={setExpandedCameraId}
               segmentsLoading={segmentsLoading}
@@ -626,6 +659,7 @@ export function PlaybackPage() {
             markers={timelineMarkers}
             segments={allSegments}
             detectionTs={detectionIndex.globalTs}
+            eventIntervals={timelineEventIntervals}
             onSeek={seek}
             onViewChange={onViewChange}
             onPanningChange={setTimelinePanning}

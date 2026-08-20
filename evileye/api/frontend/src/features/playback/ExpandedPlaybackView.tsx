@@ -3,6 +3,7 @@ import type {
   FrameSize,
   PlaybackCamera,
   PlaybackDetectionItem,
+  PlaybackEventInterval,
   PlaybackPlayMode,
   PlaybackSegment,
 } from '../../api';
@@ -29,6 +30,7 @@ export function ExpandedPlaybackView({
   scrubbing = false,
   detectionItems = [],
   globalDetectionTs = [],
+  eventIntervals = [],
   onVideoClock,
   onClose,
   detectionsReady = true,
@@ -46,6 +48,7 @@ export function ExpandedPlaybackView({
   scrubbing?: boolean;
   detectionItems?: PlaybackDetectionItem[];
   globalDetectionTs?: number[];
+  eventIntervals?: PlaybackEventInterval[];
   onVideoClock?: (globalSec: number) => void;
   onClose: () => void;
   detectionsReady?: boolean;
@@ -54,7 +57,7 @@ export function ExpandedPlaybackView({
   const mediaRef = useRef<HTMLDivElement>(null);
   const [videoReady, setVideoReady] = useState(0);
   const [frameSize, setFrameSize] = useState<FrameSize | null>(null);
-  const { ref, preloadRef, slot, applySync } = usePlaybackCameraSlot(
+  const { ref, preloadRef, slot, applySync, videoGlobalSec, videoSeeking } = usePlaybackCameraSlot(
     segments,
     getPosition,
     positionSec,
@@ -73,8 +76,12 @@ export function ExpandedPlaybackView({
     hasVideo: Boolean(slot?.url),
     frameSize,
     playing,
+    scrubbing,
+    videoGlobalSec,
+    videoSeeking,
     detectionItems,
     globalDetectionTs,
+    eventIntervals,
     detectionsReady,
   });
 
@@ -128,6 +135,7 @@ export function ExpandedPlaybackView({
             scrubbing={scrubbing}
             detectionItems={detectionItems}
             globalDetectionTs={globalDetectionTs}
+            eventIntervals={eventIntervals}
             onVideoClock={onVideoClock}
             expanded
             frameSize={frameSize}

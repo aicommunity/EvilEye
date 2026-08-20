@@ -2459,13 +2459,22 @@ body {
   z-index: 5;
 }
 
-.timeline-detection-canvas {
+.timeline-event-intervals-canvas {
   position: absolute;
   inset: 0;
   width: 100%;
   height: 100%;
   pointer-events: none;
   z-index: 2;
+}
+
+.timeline-detection-canvas {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  pointer-events: none;
+  z-index: 3;
 }
 
 .playback-busy-hint {

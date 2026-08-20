@@ -54,7 +54,16 @@ async def playback_events(
     limit: int = Query(500, ge=1, le=2000),
 ) -> dict:
     cam_list = [c.strip() for c in (cameras or "").split(",") if c.strip()]
-    items = await asyncio.to_thread(
+    intervals = await asyncio.to_thread(
+        svc.load_event_intervals,
+        from_ts,
+        to_ts,
+        camera,
+        cam_list or None,
+        date=date,
+        limit=limit,
+    )
+    legacy_markers = await asyncio.to_thread(
         svc.load_event_markers,
         from_ts,
         to_ts,
@@ -63,7 +72,7 @@ async def playback_events(
         date=date,
         limit=limit,
     )
-    return {"items": items}
+    return {"items": intervals, "legacy_markers": legacy_markers}
 
 
 @router.get("/metadata")
