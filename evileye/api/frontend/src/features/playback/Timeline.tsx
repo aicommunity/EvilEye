@@ -5,7 +5,7 @@ import { EventMarkers } from './EventMarkers';
 import {
   PAN_CLICK_SLOP_PX,
   buildTimelineTicks,
-  formatPlaybackDateTime,
+  clipRangeToView,
   snapTimelineSeek,
   unixAtClientX,
   zoomViewAt,
@@ -34,7 +34,7 @@ export function Timeline({
   onViewChange: (viewFrom: number, viewTo: number) => void;
   onPanningChange?: (panning: boolean) => void;
 }) {
-  const { t, dateLocaleTag } = useI18n();
+  const { t, formatDateTime, formatDate, formatTime } = useI18n();
   const rootRef = useRef<HTMLDivElement>(null);
   const [panning, setPanning] = useState(false);
   const [hoverSec, setHoverSec] = useState<number | null>(null);
@@ -184,16 +184,8 @@ export function Timeline({
           const edge =
             left < 3 ? 'timeline-tick-label--start' : left > 97 ? 'timeline-tick-label--end' : '';
           const label = multiDay
-            ? new Date(ts * 1000).toLocaleString(dateLocaleTag, {
-                month: 'short',
-                day: 'numeric',
-                hour: '2-digit',
-                minute: '2-digit',
-              })
-            : new Date(ts * 1000).toLocaleTimeString(dateLocaleTag, {
-                hour: '2-digit',
-                minute: '2-digit',
-              });
+            ? `${formatDate(new Date(ts * 1000))} ${formatTime(new Date(ts * 1000)).slice(0, 5)}`
+            : formatTime(new Date(ts * 1000)).slice(0, 5);
           return (
             <div key={ts} className="timeline-tick" style={{ left: `${left}%` }}>
               <span className={`timeline-tick-label ${edge}`.trim()}>{label}</span>
@@ -204,18 +196,16 @@ export function Timeline({
       <EventIntervalsCanvas eventIntervals={eventIntervals} viewFrom={viewFrom} viewTo={viewTo} />
       <DetectionTicksCanvas detectionTs={detectionTs} viewFrom={viewFrom} viewTo={viewTo} />
       {segments.map((seg) => {
-        const left = ((seg.start_ts - viewFrom) / span) * 100;
-        const width = ((seg.end_ts - seg.start_ts) / span) * 100;
-        if (width <= 0 && left < 0) return null;
-        if (left > 100 || left + width < 0) return null;
+        const clipped = clipRangeToView(seg.start_ts, seg.end_ts, viewFrom, viewTo);
+        if (!clipped) return null;
         return (
           <div
             key={seg.path}
             className="timeline-segment-block"
             style={{
               position: 'absolute',
-              left: `${left}%`,
-              width: `${Math.max(0.15, width)}%`,
+              left: `${clipped.leftPct}%`,
+              width: `${Math.max(0.15, clipped.widthPct)}%`,
               top: '16%',
               height: '48%',
               background: 'rgba(59, 130, 246, 0.45)',
@@ -237,7 +227,7 @@ export function Timeline({
             className="timeline-hover-tooltip"
             style={{ left: `${Math.max(0, Math.min(100, ((hoverSec - viewFrom) / span) * 100))}%` }}
           >
-            {formatPlaybackDateTime(hoverSec)}
+            {formatDateTime(hoverSec)}
           </div>
         </>
       ) : null}

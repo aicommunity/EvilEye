@@ -10,6 +10,10 @@ const store = new Map<string, CacheEntry>();
 export function cacheGet<T>(key: string): T | undefined {
   const entry = store.get(key);
   if (!entry) return undefined;
+  if (Date.now() > entry.expiresAt) {
+    store.delete(key);
+    return undefined;
+  }
   return entry.value as T;
 }
 

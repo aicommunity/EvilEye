@@ -196,6 +196,57 @@ body {
 .toolbar-label {
   font-size: 0.875rem;
   color: var(--text-muted);
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  margin: 0;
+}
+
+.playback-controls-toolbar {
+  align-items: center;
+}
+
+.playback-controls-toolbar .playback-date-input {
+  flex: 0 0 auto;
+  min-width: 10.5rem;
+  width: auto;
+}
+
+.playback-position-clock {
+  display: inline-flex;
+  align-items: center;
+  justify-content: flex-start;
+  min-width: 8.2ch;
+  width: 8.2ch;
+  font-variant-numeric: tabular-nums;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  font-size: 0.875rem;
+  color: var(--text-muted);
+  flex: 0 0 auto;
+  line-height: 1;
+}
+
+.playback-controls-main {
+  display: inline-flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.5rem;
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.playback-metadata-toggle {
+  flex: 0 0 auto;
+  margin: 0;
+  white-space: nowrap;
+}
+
+.journal-toolbar .toolbar-label {
+  margin: 0;
+}
+
+.journal-toolbar .search-input {
+  flex: 0 1 auto;
 }
 
 .users-create {
@@ -2331,6 +2382,10 @@ body {
   gap: 0.75rem;
   padding: 0.5rem 0.75rem;
   border-bottom: 1px solid var(--border);
+}
+
+.expanded-camera-toolbar .icon-btn {
+  margin-left: auto;
 }
 
 .expanded-camera-media {

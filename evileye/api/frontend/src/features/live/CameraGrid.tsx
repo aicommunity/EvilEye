@@ -11,8 +11,11 @@ export function CameraGrid({
   onReorder,
   onExpand,
   getPreviewBlob,
+  getPreviewFrameAgeSec,
   previewWsActive = false,
   loading = false,
+  camerasPolledAtMs,
+  healthTick = 0,
 }: {
   cameras: StateCamera[];
   cols: number;
@@ -21,8 +24,11 @@ export function CameraGrid({
   onReorder: (keys: string[]) => void;
   onExpand?: (key: string) => void;
   getPreviewBlob?: (sourceId: number | null) => string | null | undefined;
+  getPreviewFrameAgeSec?: (sourceId: number | null) => number | null | undefined;
   previewWsActive?: boolean;
   loading?: boolean;
+  camerasPolledAtMs?: number;
+  healthTick?: number;
 }) {
   const { t } = useI18n();
   const [selected, setSelected] = useState<string | null>(null);
@@ -96,6 +102,9 @@ export function CameraGrid({
               gridMode
               active={isVisible}
               previewBlobUrl={getPreviewBlob?.(camera.source_id) ?? null}
+              previewFrameAgeSec={getPreviewFrameAgeSec?.(camera.source_id) ?? null}
+              camerasPolledAtMs={camerasPolledAtMs}
+              healthTick={healthTick}
               previewWsActive={previewWsActive}
               onOpen={() => onOpenStream(camera.run_id, camera.source_id)}
               onExpand={onExpand ? () => onExpand(key) : undefined}

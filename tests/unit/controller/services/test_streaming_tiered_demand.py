@@ -58,7 +58,7 @@ def test_should_publish_grid_fps_with_grid_demand():
 
     service._throttle_ok = _throttle  # type: ignore[method-assign]
     assert service._should_publish("7:0") is True
-    assert seen["fps_override"] == 2.0
+    assert seen["fps_override"] == 5.0
 
 
 def test_should_publish_stream_fps_with_stream_demand():

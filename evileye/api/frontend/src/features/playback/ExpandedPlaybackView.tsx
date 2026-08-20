@@ -7,7 +7,6 @@ import type {
   PlaybackPlayMode,
   PlaybackSegment,
 } from '../../api';
-import { Button } from '../../components/ui';
 import { useI18n } from '../../i18n';
 import {
   PlaybackVideoSurface,
@@ -111,9 +110,15 @@ export function ExpandedPlaybackView({
             run: runId ?? '—',
           })}
         </span>
-        <Button size="sm" variant="outline" onClick={onClose}>
-          {t('live.expandClose')}
-        </Button>
+        <button
+          type="button"
+          className="icon-btn"
+          title={t('live.expandClose')}
+          aria-label={t('live.expandClose')}
+          onClick={onClose}
+        >
+          ⤡
+        </button>
       </div>
       <div className="expanded-camera-media" ref={mediaRef} style={{ position: 'relative' }}>
         {split && slot?.url && camera?.src_coords ? (

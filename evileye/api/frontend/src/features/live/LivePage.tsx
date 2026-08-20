@@ -16,8 +16,10 @@ import { fitColsForCount } from '../layout/fitGrid';
 
 const CAMERAS_CACHE_KEY = 'state:cameras:current';
 const STATS_CACHE_KEY = 'journals:stats';
-const CAMERAS_TTL_MS = 8_000;
+const CAMERAS_TTL_MS = 5_000;
 const STATS_TTL_MS = 20_000;
+const PREVIEW_DEMAND_MS = 5_000;
+const HEALTH_TICK_MS = 1_000;
 
 export function LivePage() {
   const { showError } = useToast();
@@ -27,6 +29,8 @@ export function LivePage() {
   const cachedStats = cacheGet<{ available: boolean; events_total?: number; objects_total?: number }>(STATS_CACHE_KEY);
   const [cameras, setCameras] = useState<StateCamera[]>(() => cachedCams?.items ?? []);
   const [camerasLoading, setCamerasLoading] = useState(() => !(cachedCams?.items?.length));
+  const [camerasPolledAtMs, setCamerasPolledAtMs] = useState(() => Date.now());
+  const [healthTick, setHealthTick] = useState(0);
   const camerasRef = useRef(cameras);
   camerasRef.current = cameras;
   const [stats, setStats] = useState<{ events?: number; objects?: number }>(() =>
@@ -67,6 +71,7 @@ export function LivePage() {
       }
       cacheSet(CAMERAS_CACHE_KEY, camRes, CAMERAS_TTL_MS);
       setCameras(camRes.items ?? []);
+      setCamerasPolledAtMs(Date.now());
       if (st?.available) {
         cacheSet(STATS_CACHE_KEY, st, STATS_TTL_MS);
         setStats({ events: st.events_total, objects: st.objects_total });
@@ -89,7 +94,12 @@ export function LivePage() {
 
   useEffect(() => () => abortRef.current?.abort(), []);
 
-  useVisibilityPolling(load, 10_000, true, 0);
+  useVisibilityPolling(load, 8_000, true, 0);
+
+  useEffect(() => {
+    const id = window.setInterval(() => setHealthTick((n) => n + 1), HEALTH_TICK_MS);
+    return () => window.clearInterval(id);
+  }, []);
 
   const primaryRunId = useMemo(() => {
     const ids = [...new Set(cameras.map((c) => c.run_id).filter((id) => Number.isFinite(id)))];
@@ -106,22 +116,20 @@ export function LivePage() {
 
   const previewWs = useLiveGridPreviewWs(primaryRunId, previewSourceIds);
 
-  // Keep preview demand warm while Live is open. Skip only the run already covered by grid WS.
+  // Keep preview demand warm while Live is open (per camera + run-level).
   useEffect(() => {
-    const runIds = [...new Set(cameras.map((c) => c.run_id).filter((id) => Number.isFinite(id)))];
-    if (!runIds.length) return;
+    if (!cameras.length) return;
 
     const tick = () => {
-      if (typeof document !== 'undefined' && document.hidden) return;
-      for (const rid of runIds) {
-        if (previewWs.connected && primaryRunId != null && rid === primaryRunId) continue;
-        void streamStatus(rid).catch(() => undefined);
+      for (const cam of cameras) {
+        if (!Number.isFinite(cam.run_id)) continue;
+        void streamStatus(cam.run_id, cam.source_id ?? null).catch(() => undefined);
       }
     };
     tick();
-    const id = window.setInterval(tick, 15000);
+    const id = window.setInterval(tick, PREVIEW_DEMAND_MS);
     return () => window.clearInterval(id);
-  }, [cameras, previewWs.connected, primaryRunId]);
+  }, [cameras]);
 
   const ordered = useMemo(() => {
     if (!order.length) return cameras;
@@ -181,7 +189,7 @@ export function LivePage() {
                   </Button>
                 ))
               : null}
-            <Button variant="outline" onClick={() => void load()}>
+            <Button size="sm" variant="outline" onClick={() => void load()}>
               {t('live.refresh')}
             </Button>
           </div>
@@ -199,7 +207,10 @@ export function LivePage() {
               onReorder={setOrder}
               onExpand={setExpandedKey}
               getPreviewBlob={(sid) => previewWs.getBlobUrl(sid)}
+              getPreviewFrameAgeSec={(sid) => previewWs.getPreviewFrameAgeSec(sid)}
               previewWsActive={previewWs.connected}
+              camerasPolledAtMs={camerasPolledAtMs}
+              healthTick={healthTick}
               loading={camerasLoading}
             />
           </div>

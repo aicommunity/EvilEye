@@ -20,13 +20,25 @@ router = APIRouter(prefix="/api/v1", tags=["realtime"])
 _WS_MIN_INTERVAL_SEC = 0.5
 
 
-def _touch_preview_demand_ws(websocket: WebSocket, rid: int, level: str = "grid", *, force: bool = False) -> None:
+def _touch_preview_demand_ws(
+    websocket: WebSocket,
+    rid: int,
+    level: str = "grid",
+    *,
+    force: bool = False,
+    source_id: int | None = None,
+) -> None:
     queue = getattr(websocket.app.state, "preview_demand_queue", None)
     if queue is None:
         return
     touched_at = time.time()
+    normalized_level = (level or "grid").strip().lower()
+    if normalized_level not in {"grid", "stream"}:
+        normalized_level = "grid"
     try:
-        queue.put_nowait((str(rid), touched_at, level, force))
+        if source_id is not None:
+            queue.put_nowait((f"{rid}:{source_id}", touched_at, normalized_level, force))
+        queue.put_nowait((str(rid), touched_at, normalized_level, force))
     except Exception:
         pass
 
@@ -224,9 +236,14 @@ async def live_grid_preview_ws(websocket: WebSocket, rid: int):
             if op == "subscribe" or msg.get("subscribe") is not None:
                 ids = msg.get("source_ids") or msg.get("subscribe") or []
                 if isinstance(ids, list):
-                    hub.set_client_sources(client, [int(x) for x in ids])
+                    source_ids = [int(x) for x in ids]
+                    hub.set_client_sources(client, source_ids)
+                    for sid in source_ids:
+                        _touch_preview_demand_ws(websocket, rid, "grid", source_id=sid)
             elif op == "ping":
                 _touch_preview_demand_ws(websocket, rid, "grid")
+                for sid in client.source_ids:
+                    _touch_preview_demand_ws(websocket, rid, "grid", source_id=sid)
                 await websocket.send_json({"op": "pong"})
     except WebSocketDisconnect:
         pass

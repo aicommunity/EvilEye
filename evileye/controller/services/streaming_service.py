@@ -414,10 +414,13 @@ class StreamingService:
         with self._condition:
             while not self._stop_event.is_set() and not self._pending_jobs:
                 self._condition.wait(timeout=0.5)
-            if self._stop_event.is_set():
+            if self._stop_event.is_set() or not self._pending_jobs:
                 return None
-            _, job = self._pending_jobs.popitem()
-            return job
+            oldest_key = min(
+                self._pending_jobs,
+                key=lambda key: self._pending_jobs[key].created_at,
+            )
+            return self._pending_jobs.pop(oldest_key)
 
     def _should_publish(self, throttle_key: str) -> bool:
         has_local_stream, has_server_preview_demand, has_server_process, has_relay = self._get_consumer_state(
@@ -462,9 +465,9 @@ class StreamingService:
 
     def _get_grid_fps(self) -> float:
         try:
-            return max(0.0, float(os.getenv("EVILEYE_PREVIEW_GRID_FPS", "2.0")))
+            return max(0.0, float(os.getenv("EVILEYE_PREVIEW_GRID_FPS", "5.0")))
         except Exception:
-            return 2.0
+            return 5.0
 
     def _fps_for_demand_level(self, level: str) -> float:
         if level == "stream":

@@ -1253,8 +1253,9 @@ class Controller(ControllerProcessingMixin):
         server_cfg = self.params.get("server", {}) if isinstance(self.params, dict) else {}
         relay_base_url = os.environ.get("EVILEYE_WEB_API_BASE")
         relay_token = os.environ.get("EVILEYE_INTERNAL_TOKEN") or load_web_auth_config().internal_token
+        default_workers = 2 if bool(server_cfg.get("enabled")) else 1
+        default_render_workers = max(3, default_workers)
         if self._streaming_service is not None:
-            default_workers = 2 if bool(server_cfg.get("enabled")) else 1
             self._streaming_service.configure(
                 pipeline_id=self.stream_pipeline_id,
                 publish_fps=self._stream_publish_fps,
@@ -1270,7 +1271,7 @@ class Controller(ControllerProcessingMixin):
         if self._preview_render_service is not None:
             self._preview_render_service.configure(
                 streaming_service=self._streaming_service,
-                num_workers=server_cfg.get("preview_render_workers", 1),
+                num_workers=server_cfg.get("preview_render_workers", default_render_workers),
             )
 
         # Managed API runs already have an outer web server; do not start another one inside the child runtime.

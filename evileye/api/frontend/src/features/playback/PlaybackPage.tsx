@@ -23,7 +23,7 @@ import { useDetectionIndex } from './useDetectionIndex';
 import { usePlaybackLayout } from './usePlaybackLayout';
 import { useTimelineViewport } from './useTimelineViewport';
 import { fitColsForCount } from '../layout/fitGrid';
-import { formatPlaybackDateTime, localDateString, mergeSegments, dayBoundsLocal, dayViewUpperBound, clampViewToDayBounds, segmentIntersectsDay, snapPositionToPlayable } from './timelineMath';
+import { localDateString, mergeSegments, dayBoundsLocal, dayViewUpperBound, resolveTimelineViewChange, segmentIntersectsDay, snapPositionToPlayable, formatPlaybackTime } from './timelineMath';
 
 function today(): string {
   const d = new Date();
@@ -470,9 +470,13 @@ export function PlaybackPage() {
 
   const onViewChange = useCallback(
     (vf: number, vt: number) => {
-      const clamped = clampViewToDayBounds(vf, vt, date);
-      viewport.setView(clamped.viewFrom, clamped.viewTo);
-      ensureAdjacentLoad(clamped.viewFrom, clamped.viewTo);
+      const resolved = resolveTimelineViewChange(vf, vt, date);
+      if (resolved.dateChanged) {
+        dateChangeSourceRef.current = 'viewport';
+        setDate(resolved.date);
+      }
+      viewport.setView(resolved.viewFrom, resolved.viewTo);
+      ensureAdjacentLoad(resolved.viewFrom, resolved.viewTo);
     },
     [viewport, ensureAdjacentLoad, date],
   );
@@ -557,7 +561,7 @@ export function PlaybackPage() {
     return out;
   }, [eventIntervals, selectedIds]);
   const effectiveCols = mode === 'fit' ? fitColsForCount(selectedIds.length) : cols;
-  const positionLabel = formatPlaybackDateTime(ctrl.positionSec);
+  const positionLabel = formatPlaybackTime(ctrl.positionSec);
   const detectionsReady = !detectionIndex.loading;
 
   let gridEmpty: string | null = null;
@@ -574,41 +578,43 @@ export function PlaybackPage() {
             <h2 style={{ margin: 0 }}>{t('playback.title')}</h2>
             <p className="hint">{t('playback.hint')}</p>
           </div>
-          <div className="toolbar">
+          <div className="toolbar playback-controls-toolbar">
             <input
               type="date"
-              className="search-input"
+              className="search-input playback-date-input"
               value={date}
               onChange={(e) => {
                 dateChangeSourceRef.current = 'user';
                 setDate(e.target.value);
               }}
             />
-            <span className="hint playback-position-clock" title={t('playback.currentTime')}>
+            <span className="playback-position-clock" title={t('playback.currentTime')}>
               {positionLabel}
             </span>
-            <Button size="sm" variant={mode === 'fit' ? 'primary' : 'outline'} onClick={() => setMode('fit')}>
-              {t('layout.fit')}
-            </Button>
-            <Button size="sm" variant={mode === 'fixed' ? 'primary' : 'outline'} onClick={() => setMode('fixed')}>
-              {t('layout.fixed')}
-            </Button>
-            {mode === 'fixed'
-              ? [1, 2, 3, 4].map((n) => (
-                  <Button key={n} size="sm" variant={cols === n ? 'primary' : 'outline'} onClick={() => setCols(n)}>
-                    {n}
-                  </Button>
-                ))
-              : null}
-            <Button size="sm" variant={ctrl.playing ? 'danger' : 'success'} onClick={togglePlay}>
-              {ctrl.playing ? t('playback.pause') : t('playback.play')}
-            </Button>
-            {[0.5, 1, 2, 4].map((s) => (
-              <Button key={s} size="sm" variant={ctrl.speed === s ? 'primary' : 'outline'} onClick={() => ctrl.setSpeed(s)}>
-                {s}x
+            <div className="playback-controls-main">
+              <Button size="sm" variant={mode === 'fit' ? 'primary' : 'outline'} onClick={() => setMode('fit')}>
+                {t('layout.fit')}
               </Button>
-            ))}
-            <label className="hint" style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
+              <Button size="sm" variant={mode === 'fixed' ? 'primary' : 'outline'} onClick={() => setMode('fixed')}>
+                {t('layout.fixed')}
+              </Button>
+              {mode === 'fixed'
+                ? [1, 2, 3, 4].map((n) => (
+                    <Button key={n} size="sm" variant={cols === n ? 'primary' : 'outline'} onClick={() => setCols(n)}>
+                      {n}
+                    </Button>
+                  ))
+                : null}
+              <Button size="sm" variant={ctrl.playing ? 'danger' : 'success'} onClick={togglePlay}>
+                {ctrl.playing ? t('playback.pause') : t('playback.play')}
+              </Button>
+              {[0.5, 1, 2, 4].map((s) => (
+                <Button key={s} size="sm" variant={ctrl.speed === s ? 'primary' : 'outline'} onClick={() => ctrl.setSpeed(s)}>
+                  {s}x
+                </Button>
+              ))}
+            </div>
+            <label className="checkbox-label playback-metadata-toggle">
               <input
                 type="checkbox"
                 checked={showMetadata}

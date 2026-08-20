@@ -324,7 +324,7 @@ def load_filters_meta() -> dict[str, Any]:
 
     dates: list[str] = []
     try:
-        if configured_storage_mode() == "database":
+        if configured_storage_mode() == "database" and not _use_json_journal():
             controller = _db_controller()
             if controller is not None:
                 source = _make_db_source(controller, journal_type="events")
@@ -437,6 +437,13 @@ def _database_mode_status() -> dict[str, Any]:
             "message": "PostgreSQL не настроена: отсутствует секция database в credentials.json.",
         }
     if _db_controller() is None:
+        if _json_journal_available():
+            return {
+                "available": True,
+                "mode": "json",
+                "reason": "database_fallback_json",
+                "message": "",
+            }
         return {
             "available": False,
             "mode": "database",
@@ -455,6 +462,15 @@ def journal_availability() -> dict[str, Any]:
     if configured_storage_mode() == "database":
         return _database_mode_status()
     return _json_mode_status()
+
+
+def _use_json_journal() -> bool:
+    """Prefer database when reachable; fall back to JSON when DB is configured but down."""
+    if configured_storage_mode() != "database":
+        return True
+    if _db_controller() is not None:
+        return False
+    return _json_journal_available()
 
 
 def _unavailable_payload() -> dict[str, Any]:
@@ -539,7 +555,7 @@ def load_events_page(
         date_to: str | None = None,
 ) -> dict[str, Any]:
     scoped_filters = _merge_current_filters(filters, journal_kind="events")
-    if configured_storage_mode() == "database":
+    if configured_storage_mode() == "database" and not _use_json_journal():
         controller = _db_controller()
         if controller is None:
             return _unavailable_payload()
@@ -556,7 +572,14 @@ def load_events_page(
     source.begin_request()
     items = source.fetch(page, size, scoped_filters, sort=[("ts", "desc")])
     total = source.get_total(scoped_filters)
-    return _with_journal_meta({"available": True, "items": items, "total": total}, mode="json")
+    mode = "json"
+    reason = "ok"
+    if configured_storage_mode() == "database":
+        reason = "database_fallback_json"
+    return _with_journal_meta(
+        {"available": True, "items": items, "total": total, "reason": reason},
+        mode=mode,
+    )
 
 
 def load_objects_page(
@@ -569,7 +592,7 @@ def load_objects_page(
         date_to: str | None = None,
 ) -> dict[str, Any]:
     scoped_filters = _merge_current_filters(filters, journal_kind="objects")
-    if configured_storage_mode() == "database":
+    if configured_storage_mode() == "database" and not _use_json_journal():
         controller = _db_controller()
         if controller is None:
             return _unavailable_payload()
@@ -586,7 +609,14 @@ def load_objects_page(
     source.begin_request()
     items = source.fetch(page, size, scoped_filters, sort=[("ts", "desc")])
     total = source.get_total(scoped_filters)
-    return _with_journal_meta({"available": True, "items": items, "total": total}, mode="json")
+    mode = "json"
+    reason = "ok"
+    if configured_storage_mode() == "database":
+        reason = "database_fallback_json"
+    return _with_journal_meta(
+        {"available": True, "items": items, "total": total, "reason": reason},
+        mode=mode,
+    )
 
 
 def load_events_grouped_page(
@@ -708,7 +738,7 @@ def load_journal_stats(
     if scope["mode"] == "single":
         scoped_filters["date_folder"] = scope["date"]
 
-    if configured_storage_mode() == "database":
+    if configured_storage_mode() == "database" and not _use_json_journal():
         controller = _db_controller()
         if controller is None:
             return {"available": False}

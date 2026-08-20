@@ -3,12 +3,14 @@ import {
   DEFAULT_TIMELINE_WINDOW_SEC,
   DETECTION_SNAP_MAX_SEC,
   clampViewToDayBounds,
+  clipRangeToView,
   dayBoundsLocal,
   defaultTimelineView,
   pickContainingSegment,
   pickLastPlayableSegment,
   pickPlayableSegmentForPosition,
   pickSegmentNear,
+  resolveTimelineViewChange,
   snapPositionToPlayable,
   isPositionInRecordingSegment,
   snapTimelineSeek,
@@ -82,6 +84,49 @@ describe('clampViewToDayBounds', () => {
     expect(shifted.viewFrom).toBeGreaterThanOrEqual(start);
     expect(shifted.viewTo).toBeLessThanOrEqual(upper);
     expect(shifted.viewTo - shifted.viewFrom).toBeGreaterThan(0);
+  });
+
+  it('clamps today to now instead of end of day', () => {
+    const date = '2026-08-18';
+    const { start } = dayBoundsLocal(date);
+    const noon = start + 12 * 3600;
+    const shifted = clampViewToDayBounds(noon - 1800, noon + 3600, date, noon);
+    expect(shifted.viewTo).toBeLessThanOrEqual(noon);
+  });
+});
+
+describe('resolveTimelineViewChange', () => {
+  it('switches to the previous day when panning into the past', () => {
+    const date = '2026-08-18';
+    const { start } = dayBoundsLocal(date);
+    const span = 3600;
+    const resolved = resolveTimelineViewChange(start - span / 2, start + span / 2, date, start + 12 * 3600);
+    expect(resolved.date).toBe('2026-08-17');
+    expect(resolved.dateChanged).toBe(true);
+    expect(resolved.viewFrom).toBeGreaterThanOrEqual(dayBoundsLocal('2026-08-17').start);
+  });
+
+  it('does not move past now on today', () => {
+    const date = '2026-08-18';
+    const { start } = dayBoundsLocal(date);
+    const noon = start + 12 * 3600;
+    const span = 3600;
+    const resolved = resolveTimelineViewChange(noon - span / 2, noon + span, date, noon);
+    expect(resolved.date).toBe(date);
+    expect(resolved.viewTo).toBeLessThanOrEqual(noon);
+  });
+});
+
+describe('clipRangeToView', () => {
+  it('clips segments that overhang the viewport edges', () => {
+    const clipped = clipRangeToView(90, 130, 100, 200);
+    expect(clipped).not.toBeNull();
+    expect(clipped!.leftPct).toBe(0);
+    expect(clipped!.widthPct).toBe(30);
+  });
+
+  it('returns null when there is no intersection', () => {
+    expect(clipRangeToView(10, 20, 100, 200)).toBeNull();
   });
 });
 

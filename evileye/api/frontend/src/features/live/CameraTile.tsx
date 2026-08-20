@@ -4,26 +4,14 @@ import { Button, Badge } from '../../components/ui';
 import { useI18n } from '../../i18n';
 import { OverlayCanvas } from '../overlay/OverlayCanvas';
 import { useImageLetterbox } from '../overlay/useMediaLetterbox';
+import { resolvePreviewMode, type PreviewMode } from './liveHealth';
 import { useRunMetadataWs } from './useRunMetadataWs';
 
-const STALE_SEC = 5;
 const LIVE_SNAPSHOT_MS = 3000;
 const STALE_SNAPSHOT_BACKOFF_MS = [2000, 4000, 8000];
 const ERROR_BACKOFF_MS = [1000, 2000, 4000, 8000];
 
-export type PreviewMode = 'live' | 'snapshot' | 'stale' | 'error' | 'offline';
-
-export function resolvePreviewMode(camera: StateCamera, previewError: boolean): PreviewMode {
-  if (camera.run_state !== 'running') return 'offline';
-  if (previewError) return 'error';
-  if (camera.reconnecting === true) return 'stale';
-  const age = camera.last_frame_age_sec;
-  const staleByAge = age != null && age > STALE_SEC;
-  if (camera.preview_available === false || staleByAge || camera.is_working === false) {
-    return 'stale';
-  }
-  return 'live';
-}
+export type { PreviewMode } from './liveHealth';
 
 function StatusDot({ mode }: { mode: PreviewMode }) {
   const color =
@@ -53,6 +41,9 @@ export function CameraTile({
   onDrop,
   previewBlobUrl,
   previewWsActive = false,
+  previewFrameAgeSec,
+  camerasPolledAtMs,
+  healthTick = 0,
 }: {
   camera: StateCamera;
   useMjpeg: boolean;
@@ -65,6 +56,9 @@ export function CameraTile({
   onDrop?: () => void;
   previewBlobUrl?: string | null;
   previewWsActive?: boolean;
+  previewFrameAgeSec?: number | null;
+  camerasPolledAtMs?: number;
+  healthTick?: number;
 }) {
   const { t } = useI18n();
   const [snapTs, setSnapTs] = useState(Date.now());
@@ -76,7 +70,14 @@ export function CameraTile({
   const imgRef = useRef<HTMLImageElement>(null);
   const [imgLoaded, setImgLoaded] = useState(0);
 
-  const mode = useMemo(() => resolvePreviewMode(camera, previewError), [camera, previewError]);
+  const mode = useMemo(
+    () =>
+      resolvePreviewMode(camera, previewError, {
+        previewFrameAgeSec,
+        camerasPolledAtMs,
+      }),
+    [camera, previewError, previewFrameAgeSec, camerasPolledAtMs, healthTick],
+  );
   const running = camera.run_state === 'running';
   // Keep overlays strictly bound to fresh preview frames; stale snapshots can
   // make metadata appear ahead of the person/object by several seconds.

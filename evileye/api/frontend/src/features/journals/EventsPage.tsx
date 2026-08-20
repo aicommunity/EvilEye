@@ -159,7 +159,7 @@ export function EventsPage() {
           <p className="setup-banner">{t('journals.detectionDisabled')}</p>
         ) : null}
         <div className="journal-toolbar toolbar">
-          <label className="hint" style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
+          <label className="toolbar-label">
             {t('journals.dateFrom')}
             <input
               type="date"
@@ -168,7 +168,7 @@ export function EventsPage() {
               onChange={(e) => setDateFrom(e.target.value)}
             />
           </label>
-          <label className="hint" style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
+          <label className="toolbar-label">
             {t('journals.dateTo')}
             <input type="date" className="search-input" value={dateTo} onChange={(e) => setDateTo(e.target.value)} />
           </label>
@@ -220,7 +220,7 @@ export function EventsPage() {
               ))}
             </select>
           ) : null}
-          <Button variant="outline" onClick={() => void feed.reload()}>
+          <Button size="sm" variant="outline" onClick={() => void feed.reload()}>
             {t('common.refresh')}
           </Button>
           {tab !== 'history' ? (

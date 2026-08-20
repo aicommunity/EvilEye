@@ -118,6 +118,7 @@ const en: Dict = {
     refresh: 'Refresh',
     error: 'Error',
     language: 'Language',
+    dateFormat: 'Date format',
     close: 'Close',
     fields: 'Fields',
     loadMore: 'Load more',

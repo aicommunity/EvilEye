@@ -118,6 +118,7 @@ const ru: Dict = {
     refresh: 'Обновить',
     error: 'Ошибка',
     language: 'Язык',
+    dateFormat: 'Формат даты',
     close: 'Закрыть',
     fields: 'Поля',
     loadMore: 'Загрузить ещё',

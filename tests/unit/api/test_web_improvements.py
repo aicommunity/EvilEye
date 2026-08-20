@@ -237,7 +237,7 @@ def test_journal_disabled_message(tmp_path, monkeypatch):
     assert "EvilEyeData" in payload["message"]
 
 
-def test_journal_database_mode_does_not_fallback_to_json(tmp_path, monkeypatch):
+def test_journal_database_mode_falls_back_to_json_when_unreachable(tmp_path, monkeypatch):
     base_dir = tmp_path / "EvilEyeData"
     metadata = base_dir / "Detections" / "2026-06-13" / "Metadata"
     metadata.mkdir(parents=True)
@@ -264,14 +264,14 @@ def test_journal_database_mode_does_not_fallback_to_json(tmp_path, monkeypatch):
     journal_service._image_base_dir_cache = None
 
     status = journal_service.journal_availability()
-    assert status["available"] is False
-    assert status["mode"] == "database"
-    assert status["reason"] == "database_unreachable"
+    assert status["available"] is True
+    assert status["mode"] == "json"
+    assert status["reason"] == "database_fallback_json"
 
     payload = journal_service.load_events_page(page=0, size=10, filters={})
-    assert payload["available"] is False
-    assert payload["mode"] == "database"
-    assert payload["reason"] == "database_unreachable"
+    assert payload["available"] is True
+    assert payload["mode"] == "json"
+    assert payload["reason"] == "database_fallback_json"
 
 
 def test_journal_uses_runtime_snapshot_after_db_startup_fallback(tmp_path, monkeypatch):

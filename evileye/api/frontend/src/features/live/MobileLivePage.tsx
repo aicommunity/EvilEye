@@ -38,7 +38,7 @@ function MobileLiveInner() {
     try {
       const res = await stateApi.cameras('current', { signal: ac.signal });
       if (ac.signal.aborted) return;
-      cacheSet('state:cameras:current', res, 8_000);
+      cacheSet('state:cameras:current', res, 5_000);
       setCameras(res.items ?? []);
     } catch (e) {
       if (isAbortError(e)) return;
@@ -59,7 +59,7 @@ function MobileLiveInner() {
     }
   }, []);
 
-  useVisibilityPolling(load, 10_000, true, 200);
+  useVisibilityPolling(load, 8_000, true, 200);
   useEffect(() => {
     if (idx >= cameras.length) setIdx(0);
   }, [cameras, idx]);
@@ -86,10 +86,10 @@ function MobileLiveInner() {
     const rid = cam.run_id;
     const tick = () => {
       if (typeof document !== 'undefined' && document.hidden) return;
-      void streamStatus(rid).catch(() => undefined);
+      void streamStatus(rid, cam.source_id ?? null).catch(() => undefined);
     };
     tick();
-    const id = window.setInterval(tick, 15000);
+    const id = window.setInterval(tick, 5_000);
     return () => window.clearInterval(id);
   }, [cam?.run_id, cam?.run_state]);
 

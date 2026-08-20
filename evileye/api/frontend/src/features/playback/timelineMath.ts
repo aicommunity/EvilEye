@@ -151,11 +151,19 @@ export function localDateString(tsSec: number): string {
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
 }
 
+export function formatPlaybackTime(tsSec: number): string {
+  if (!Number.isFinite(tsSec) || tsSec <= 0) return '—';
+  const d = new Date(tsSec * 1000);
+  const pad = (n: number) => String(n).padStart(2, '0');
+  return `${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`;
+}
+
+/** @deprecated Prefer formatPlaybackTime in toolbar; keep for tests/tooltips without i18n. */
 export function formatPlaybackDateTime(tsSec: number): string {
   if (!Number.isFinite(tsSec) || tsSec <= 0) return '—';
   const d = new Date(tsSec * 1000);
   const pad = (n: number) => String(n).padStart(2, '0');
-  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`;
+  return `${pad(d.getDate())}-${pad(d.getMonth() + 1)}-${d.getFullYear()} ${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`;
 }
 
 export function dayBoundsLocal(dateStr: string): { start: number; end: number } {
@@ -165,9 +173,21 @@ export function dayBoundsLocal(dateStr: string): { start: number; end: number } 
   return { start, end };
 }
 
-/** Inclusive upper bound for timeline pan/zoom (avoids labelling the next calendar day at 00:00). */
-export function dayViewUpperBound(dateStr: string): number {
-  return dayBoundsLocal(dateStr).end - 1;
+export function shiftLocalDate(dateStr: string, deltaDays: number): string {
+  const [y, m, d] = dateStr.split('-').map(Number);
+  const dt = new Date(y, (m || 1) - 1, d || 1, 12, 0, 0, 0);
+  dt.setDate(dt.getDate() + deltaDays);
+  return localDateString(dt.getTime() / 1000);
+}
+
+/** Inclusive upper bound for timeline pan/zoom; for today clamps to now. */
+export function dayViewUpperBound(dateStr: string, nowSec?: number): number {
+  const dayEnd = dayBoundsLocal(dateStr).end - 1;
+  const now = nowSec ?? Date.now() / 1000;
+  if (localDateString(now) === dateStr) {
+    return Math.min(dayEnd, now);
+  }
+  return dayEnd;
 }
 
 /** Default zoomed timeline window — never the full calendar day (pan/zoom need headroom). */
@@ -181,9 +201,9 @@ export function defaultTimelineView(
   },
 ): { viewFrom: number; viewTo: number } {
   const { start } = dayBoundsLocal(dateStr);
-  const upper = dayViewUpperBound(dateStr);
-  const windowSec = opts?.windowSec ?? DEFAULT_TIMELINE_WINDOW_SEC;
   const nowSec = opts?.nowSec ?? Date.now() / 1000;
+  const upper = dayViewUpperBound(dateStr, nowSec);
+  const windowSec = opts?.windowSec ?? DEFAULT_TIMELINE_WINDOW_SEC;
   const dataFrom = opts?.dataFrom;
   const dataTo = opts?.dataTo;
 
@@ -219,10 +239,11 @@ export function clampViewToDayBounds(
   viewFrom: number,
   viewTo: number,
   dateStr: string,
+  nowSec?: number,
 ): { viewFrom: number; viewTo: number } {
   const { start } = dayBoundsLocal(dateStr);
-  const upper = dayViewUpperBound(dateStr);
-  const daySpan = upper - start + 1;
+  const upper = dayViewUpperBound(dateStr, nowSec);
+  const daySpan = Math.max(MIN_VIEW_SPAN_SEC, upper - start + 1);
   let { viewFrom: from, viewTo: to } = clampView(viewFrom, viewTo, {
     minSpan: MIN_VIEW_SPAN_SEC,
     maxSpan: Math.min(MAX_VIEW_SPAN_SEC, daySpan),
@@ -238,6 +259,62 @@ export function clampViewToDayBounds(
   }
   if (from < start) from = start;
   return { viewFrom: from, viewTo: to };
+}
+
+/**
+ * Clamp/pan across day boundaries. Moving into the past switches date;
+ * moving past "now" on today is hard-clamped.
+ */
+export function resolveTimelineViewChange(
+  viewFrom: number,
+  viewTo: number,
+  dateStr: string,
+  nowSec?: number,
+): { date: string; viewFrom: number; viewTo: number; dateChanged: boolean } {
+  const now = nowSec ?? Date.now() / 1000;
+  const today = localDateString(now);
+  const { start } = dayBoundsLocal(dateStr);
+  const upper = dayViewUpperBound(dateStr, now);
+
+  if (viewFrom < start) {
+    const prev = shiftLocalDate(dateStr, -1);
+    const clamped = clampViewToDayBounds(viewFrom, viewTo, prev, now);
+    return { date: prev, viewFrom: clamped.viewFrom, viewTo: clamped.viewTo, dateChanged: true };
+  }
+
+  if (dateStr >= today) {
+    const date = today;
+    const clamped = clampViewToDayBounds(viewFrom, viewTo, date, now);
+    return { date, viewFrom: clamped.viewFrom, viewTo: clamped.viewTo, dateChanged: date !== dateStr };
+  }
+
+  if (viewTo > upper) {
+    const next = shiftLocalDate(dateStr, 1);
+    const date = next > today ? today : next;
+    const clamped = clampViewToDayBounds(viewFrom, viewTo, date, now);
+    return { date, viewFrom: clamped.viewFrom, viewTo: clamped.viewTo, dateChanged: date !== dateStr };
+  }
+
+  const clamped = clampViewToDayBounds(viewFrom, viewTo, dateStr, now);
+  return { date: dateStr, viewFrom: clamped.viewFrom, viewTo: clamped.viewTo, dateChanged: false };
+}
+
+/** Clip a time range to the visible viewport; null if no intersection. */
+export function clipRangeToView(
+  startTs: number,
+  endTs: number,
+  viewFrom: number,
+  viewTo: number,
+): { leftPct: number; widthPct: number } | null {
+  const span = viewTo - viewFrom;
+  if (!(span > 0) || endTs <= viewFrom || startTs >= viewTo) return null;
+  const leftSec = Math.max(startTs, viewFrom);
+  const rightSec = Math.min(endTs, viewTo);
+  if (rightSec <= leftSec) return null;
+  return {
+    leftPct: ((leftSec - viewFrom) / span) * 100,
+    widthPct: ((rightSec - leftSec) / span) * 100,
+  };
 }
 
 export function mergeSegments(prev: PlaybackSegment[], next: PlaybackSegment[]): PlaybackSegment[] {

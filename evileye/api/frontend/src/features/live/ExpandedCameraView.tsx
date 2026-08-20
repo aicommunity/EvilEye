@@ -50,9 +50,15 @@ export function ExpandedCameraView({
         <span className="hint">
           {t('live.camera.runLabel', { id: camera.run_id, sid: camera.source_id ?? '—' })}
         </span>
-        <Button size="sm" variant="outline" onClick={onClose}>
-          {t('live.expandClose')}
-        </Button>
+        <button
+          type="button"
+          className="icon-btn"
+          title={t('live.expandClose')}
+          aria-label={t('live.expandClose')}
+          onClick={onClose}
+        >
+          ⤡
+        </button>
       </div>
       <div className="expanded-camera-media" ref={mediaRef}>
         {!running ? (

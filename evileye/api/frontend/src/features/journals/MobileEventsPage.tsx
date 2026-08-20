@@ -5,7 +5,7 @@ import { Button } from '../../components/ui';
 import { useI18n } from '../../i18n';
 import { JournalDetailDrawer } from './JournalDetailDrawer';
 import { useJournalFeed } from './useJournalFeed';
-import { formatJournalTime, redactMediaCredentials } from './journalMath';
+import { redactMediaCredentials } from './journalMath';
 import { useVisibilityPolling } from '../../hooks/useVisibilityPolling';
 
 export function MobileEventsPage() {
@@ -13,7 +13,7 @@ export function MobileEventsPage() {
 }
 
 function MobileEventsInner() {
-  const { t, lang, setLang, dateLocaleTag } = useI18n();
+  const { t, lang, setLang, formatDateTime } = useI18n();
   const defaultFilters = useMemo(() => {
     const format = (d: Date) =>
       `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
@@ -76,7 +76,7 @@ function MobileEventsInner() {
               >
                 <div style={{ fontWeight: 600 }}>{String(row.event ?? t('journals.eventFallback'))}</div>
                 <div className="hint">
-                  {formatJournalTime(row.time, dateLocaleTag)} · {redactMediaCredentials(row.source ?? '')}
+                  {formatDateTime(row.time as string | null | undefined)} · {redactMediaCredentials(row.source ?? '')}
                 </div>
                 <div className="hint" style={{ marginTop: 4 }}>
                   {redactMediaCredentials(row.information ?? '').slice(0, 120)}

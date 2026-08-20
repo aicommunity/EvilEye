@@ -22,6 +22,13 @@ _PREVIEW_LEVEL_RANK = {"idle": 0, "grid": 1, "stream": 2}
 _VALID_PREVIEW_LEVELS = frozenset(_PREVIEW_LEVEL_RANK)
 
 
+def _preview_demand_ttl_sec() -> float:
+    try:
+        return max(5.0, float(os.getenv("EVILEYE_PREVIEW_DEMAND_TTL_SEC", "45")))
+    except Exception:
+        return 45.0
+
+
 def _normalize_preview_level(level: str | None) -> str:
     normalized = (level or "grid").strip().lower()
     if normalized in _VALID_PREVIEW_LEVELS:
@@ -206,19 +213,20 @@ class ServerProcessManager:
             return None
         return level
 
-    def get_preview_demand_level(self, pipeline_key: str, *, ttl_sec: float = 20.0) -> str:
+    def get_preview_demand_level(self, pipeline_key: str, *, ttl_sec: float | None = None) -> str:
         now = time.time()
+        effective_ttl = _preview_demand_ttl_sec() if ttl_sec is None else ttl_sec
         key = str(pipeline_key)
-        level = self._demand_entry_level(key, ttl_sec=ttl_sec, now=now)
+        level = self._demand_entry_level(key, ttl_sec=effective_ttl, now=now)
         if level is not None:
             return level
         root_key = key.split(":", 1)[0]
-        root_level = self._demand_entry_level(root_key, ttl_sec=ttl_sec, now=now)
+        root_level = self._demand_entry_level(root_key, ttl_sec=effective_ttl, now=now)
         if root_level is not None:
             return root_level
         return "idle"
 
-    def has_preview_demand(self, pipeline_key: str, *, ttl_sec: float = 20.0) -> bool:
+    def has_preview_demand(self, pipeline_key: str, *, ttl_sec: float | None = None) -> bool:
         return self.get_preview_demand_level(pipeline_key, ttl_sec=ttl_sec) != "idle"
 
     def publish_frame(self, pipeline_id: str, jpeg_bytes: bytes, metadata=None):

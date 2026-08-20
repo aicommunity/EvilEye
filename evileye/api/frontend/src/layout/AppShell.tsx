@@ -21,7 +21,7 @@ const NAV: Array<{ to: string; labelKey: string; permission?: string }> = [
 
 export function AppShell() {
   const { loading, authEnabled, user, hasPermission, logout, refresh } = useAuth();
-  const { t, lang, setLang } = useI18n();
+  const { t, lang, setLang, dateFormat, setDateFormat } = useI18n();
   const { showError, showSuccess } = useToast();
   const [version, setVersion] = useState('—');
   const [pwOpen, setPwOpen] = useState(false);
@@ -80,6 +80,20 @@ export function AppShell() {
             <select value={lang} onChange={(e) => setLang(e.target.value === 'en' ? 'en' : 'ru')}>
               <option value="ru">RU</option>
               <option value="en">EN</option>
+            </select>
+          </label>
+          <label className="lang-switch">
+            <span className="hint">{t('common.dateFormat')}</span>
+            <select
+              value={dateFormat}
+              onChange={(e) => {
+                const v = e.target.value;
+                if (v === 'DD-MM-YYYY' || v === 'YYYY-MM-DD' || v === 'MM-DD-YYYY') setDateFormat(v);
+              }}
+            >
+              <option value="DD-MM-YYYY">DD-MM-YYYY</option>
+              <option value="YYYY-MM-DD">YYYY-MM-DD</option>
+              <option value="MM-DD-YYYY">MM-DD-YYYY</option>
             </select>
           </label>
           {authEnabled && user ? (

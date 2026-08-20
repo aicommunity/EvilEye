@@ -75,6 +75,16 @@ export function useLiveGridPreviewWs(runId: number | null, sourceIds: number[]) 
     [frames],
   );
 
+  const getPreviewFrameAgeSec = useCallback(
+    (sourceId: number | null | undefined) => {
+      if (sourceId == null) return undefined;
+      const frame = frames.get(sourceId);
+      if (!frame?.ts) return undefined;
+      return Math.max(0, Date.now() / 1000 - frame.ts);
+    },
+    [frames],
+  );
+
   useEffect(() => {
     if (runId == null || !sourceIds.length) {
       setConnected(false);
@@ -101,7 +111,7 @@ export function useLiveGridPreviewWs(runId: number | null, sourceIds: number[]) 
           if (ws.readyState === WebSocket.OPEN) {
             ws.send(JSON.stringify({ op: 'ping' }));
           }
-        }, 15000);
+        }, 5000);
       };
 
       ws.onmessage = async (ev) => {
@@ -181,5 +191,5 @@ export function useLiveGridPreviewWs(runId: number | null, sourceIds: number[]) 
     };
   }, [runId, sourceIds.join(','), applyBlob]);
 
-  return { frames, connected, failed, getBlobUrl };
+  return { frames, connected, failed, getBlobUrl, getPreviewFrameAgeSec };
 }
