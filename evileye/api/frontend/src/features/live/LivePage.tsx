@@ -16,7 +16,7 @@ import { fitColsForCount } from '../layout/fitGrid';
 
 const CAMERAS_CACHE_KEY = 'state:cameras:current';
 const STATS_CACHE_KEY = 'journals:stats';
-const CAMERAS_TTL_MS = 5_000;
+const CAMERAS_TTL_MS = 12_000;
 const STATS_TTL_MS = 20_000;
 const PREVIEW_DEMAND_MS = 5_000;
 const HEALTH_TICK_MS = 1_000;
@@ -94,7 +94,7 @@ export function LivePage() {
 
   useEffect(() => () => abortRef.current?.abort(), []);
 
-  useVisibilityPolling(load, 8_000, true, 0);
+  useVisibilityPolling(load, 15_000, true, 0);
 
   useEffect(() => {
     const id = window.setInterval(() => setHealthTick((n) => n + 1), HEALTH_TICK_MS);

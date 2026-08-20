@@ -38,7 +38,7 @@ function MobileLiveInner() {
     try {
       const res = await stateApi.cameras('current', { signal: ac.signal });
       if (ac.signal.aborted) return;
-      cacheSet('state:cameras:current', res, 5_000);
+      cacheSet('state:cameras:current', res, 12_000);
       setCameras(res.items ?? []);
     } catch (e) {
       if (isAbortError(e)) return;
@@ -59,7 +59,7 @@ function MobileLiveInner() {
     }
   }, []);
 
-  useVisibilityPolling(load, 8_000, true, 200);
+  useVisibilityPolling(load, 15_000, true, 200);
   useEffect(() => {
     if (idx >= cameras.length) setIdx(0);
   }, [cameras, idx]);

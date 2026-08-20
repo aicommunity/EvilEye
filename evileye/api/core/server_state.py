@@ -729,7 +729,7 @@ def list_camera_summaries(*, scope: str = "current") -> list[Dict[str, Any]]:
 _journal_stats_cache: tuple[float, dict[str, Any]] | None = None
 _JOURNAL_STATS_TTL_SEC = 60
 
-_STATE_CACHE_TTL_SEC = 2.0
+_STATE_CACHE_TTL_SEC = 6.0
 _STATE_STALE_WHILE_REFRESH_TTL_SEC = 30.0
 _STATE_FOLLOWER_WAIT_SEC = 0.25
 _STATE_LATENCY_WARN_SEC = 1.0
