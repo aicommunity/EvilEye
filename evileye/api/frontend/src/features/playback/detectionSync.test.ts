@@ -26,6 +26,12 @@ describe('resolvePlaybackOverlaySec', () => {
     ).toBe(115);
   });
 
+  it('keeps video clock while seeking during play', () => {
+    expect(
+      resolvePlaybackOverlaySec(115, 100, { playing: true, videoSeeking: true, scrubbing: false }),
+    ).toBe(100);
+  });
+
   it('falls back to playhead when video time is unavailable', () => {
     expect(resolvePlaybackOverlaySec(115, null, { playing: true })).toBe(115);
   });
@@ -159,7 +165,7 @@ describe('hasActiveTrackAt', () => {
     expect(objectsToOverlayFromIndex(items, before, { w: 100, h: 100 })).toHaveLength(0);
   });
 
-  it('interpolates bbox on a medium-length track', () => {
+  it('holds found bbox on a medium-length track (step-hold)', () => {
     const found = new Date('2026-08-18T09:55:32+03:00').getTime() / 1000;
     const lost = new Date('2026-08-18T09:55:46+03:00').getTime() / 1000;
     const items = [
@@ -177,7 +183,30 @@ describe('hasActiveTrackAt', () => {
       },
     ];
     expect(hasActiveTrackAt(items, found + 4)).toBe(true);
-    expect(objectsToOverlayFromIndex(items, found + 4, { w: 100, h: 100 })).toHaveLength(1);
+    const objs = objectsToOverlayFromIndex(items, found + 4, { w: 100, h: 100 });
+    expect(objs).toHaveLength(1);
+    expect(objs[0].bbox).toEqual([0, 0, 0.1, 0.1]);
+  });
+
+  it('does not jump to next snapshot before its timestamp (no near override)', () => {
+    const items = [
+      {
+        ts: 100,
+        kind: 'found' as const,
+        object_id: 1,
+        bounding_box: { x: 0, y: 0, width: 10, height: 10 },
+      },
+      {
+        ts: 102,
+        kind: 'lost' as const,
+        object_id: 1,
+        bounding_box: { x: 50, y: 0, width: 10, height: 10 },
+      },
+    ];
+    // 0.2s before next — still hold found, not near-match lost.
+    const objs = objectsToOverlayFromIndex(items, 101.8, { w: 100, h: 100 });
+    expect(objs).toHaveLength(1);
+    expect(objs[0].bbox).toEqual([0, 0, 0.1, 0.1]);
   });
 });
 

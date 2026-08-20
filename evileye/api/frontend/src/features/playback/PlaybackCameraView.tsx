@@ -325,49 +325,21 @@ export function usePlaybackCameraMetadata({
   }, [eventIntervals, overlaySec]);
 
   const meta = useMemo(() => {
+    // Strip API objects — overlay boxes come from detection-index step-hold only.
     const merged = mergePlaybackMetadata(staticMeta, dynamicMeta, { stripObjects: true });
     if (!showMetadata || !merged) return merged;
     const staticOnly = mergePlaybackMetadata(staticMeta, null, { stripObjects: true }) ?? merged;
-    if (!showObjects) {
-      return {
-        ...staticOnly,
-        objects: [],
-        signalization: Boolean(activeEvent),
-        event_labels: activeEventLabel ? [activeEventLabel] : [],
-        highlight_zone_name: highlightedZoneName,
-      };
-    }
-    const metaTs = dynamicMeta?.ts;
-    const fresh = metaTs != null && Math.abs(metaTs - overlaySec) < 0.3;
-    if (fresh) {
-      return {
-        ...merged,
-        objects: [],
-        signalization: Boolean(activeEvent),
-        event_labels: activeEventLabel ? [activeEventLabel] : merged.event_labels ?? [],
-        highlight_zone_name: highlightedZoneName,
-      };
-    }
-    if (optimisticObjects.length) {
-      return {
-        ...staticOnly,
-        objects: [],
-        signalization: Boolean(activeEvent),
-        event_labels: activeEventLabel ? [activeEventLabel] : [],
-        highlight_zone_name: highlightedZoneName,
-        overlay: {
-          ...staticOnly.overlay,
-          time_label: overlayTimeLabel(overlaySec),
-        },
-      };
-    }
-    // Do not leak stale dynamic objects into the current frame.
+    const objects = showObjects ? optimisticObjects : [];
     return {
       ...staticOnly,
-      objects: [],
+      objects,
       signalization: Boolean(activeEvent),
       event_labels: activeEventLabel ? [activeEventLabel] : [],
       highlight_zone_name: highlightedZoneName,
+      overlay: {
+        ...staticOnly.overlay,
+        time_label: overlayTimeLabel(overlaySec),
+      },
     };
   }, [staticMeta, dynamicMeta, showMetadata, showObjects, optimisticObjects, overlaySec, activeEvent, activeEventLabel, highlightedZoneName]);
 

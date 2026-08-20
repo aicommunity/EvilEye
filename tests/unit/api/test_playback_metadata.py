@@ -558,12 +558,12 @@ def test_json_active_track_between_found_and_lost(tmp_path, monkeypatch):
     assert len(mid["objects"]) == 1
     mid_bbox = mid["objects"][0]["bbox"]
     found_x = 1335 / 2304
-    lost_x = 1314 / 2304
-    assert min(found_x, lost_x) < mid_bbox[0] < max(found_x, lost_x)
+    # Step-hold keeps found bbox until lost (no interpolation).
+    assert abs(mid_bbox[0] - found_x) < 1e-6
     assert len(gone["objects"]) == 0
 
 
-def test_json_long_track_has_mid_lerp(tmp_path, monkeypatch):
+def test_json_long_track_has_mid_step_hold(tmp_path, monkeypatch):
     root = tmp_path / "EvilEyeData"
     date = "2026-08-17"
     meta = root / "Detections" / date / "Metadata"

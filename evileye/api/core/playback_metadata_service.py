@@ -673,14 +673,8 @@ def _load_objects_from_detection_index(
         span = lost_ts - found_ts
         if span > MAX_LERP_SEC:
             continue
-        t = 0.0 if span <= 1e-9 else (target_ts - found_ts) / span
-        interpolated = dict(found_obj)
-        interpolated["bounding_box"] = _lerp_bbox(
-            found_obj.get("bounding_box") or found_obj.get("box"),
-            lost_obj.get("bounding_box") or lost_obj.get("box"),
-            t,
-        )
-        selected[("interval", oid)] = interpolated
+        # Step-hold: keep found bbox until lost (no interpolation).
+        selected[("interval", oid)] = dict(found_obj)
 
     return list(selected.values())
 
@@ -695,7 +689,7 @@ def _load_objects_from_json(
     camera: str | None = None,
     date_folder: str | None = None,
 ) -> list[dict[str, Any]]:
-    """Load snapshots near ``target``, plus interpolated tracks between found and lost."""
+    """Load snapshots near ``target``, plus step-held tracks between found and lost."""
     if camera and date_folder:
         return _load_objects_from_detection_index(
             target=target,
@@ -748,14 +742,8 @@ def _load_objects_from_json(
         span = (lost_ts - found_ts).total_seconds()
         if span > MAX_LERP_SEC:
             continue
-        t = 0.0 if span <= 1e-9 else (target - found_ts).total_seconds() / span
-        interpolated = dict(found_obj)
-        interpolated["bounding_box"] = _lerp_bbox(
-            found_obj.get("bounding_box") or found_obj.get("box"),
-            lost_obj.get("bounding_box") or lost_obj.get("box"),
-            t,
-        )
-        selected[("interval", oid)] = interpolated
+        # Step-hold: keep found bbox until lost (no interpolation).
+        selected[("interval", oid)] = dict(found_obj)
 
     return list(selected.values())
 

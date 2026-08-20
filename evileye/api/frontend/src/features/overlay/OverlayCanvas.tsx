@@ -57,24 +57,22 @@ export function OverlayCanvas({
   return (
     <div style={style} className="live-overlay-root">
       <svg className="journal-preview-overlay" viewBox="0 0 100 100" preserveAspectRatio="none">
-        {density === 'full'
-          ? (payload.debug_rois ?? []).map((roi, i) => {
-              const [x1, y1, x2, y2] = roi;
-              return (
-                <rect
-                  key={`d${i}`}
-                  x={x1 * 100}
-                  y={y1 * 100}
-                  width={(x2 - x1) * 100}
-                  height={(y2 - y1) * 100}
-                  fill="none"
-                  stroke="#3b82f6"
-                  strokeWidth="1.5"
-                  vectorEffect="non-scaling-stroke"
-                />
-              );
-            })
-          : null}
+        {(payload.debug_rois ?? []).map((roi, i) => {
+          const [x1, y1, x2, y2] = roi;
+          return (
+            <rect
+              key={`d${i}`}
+              x={x1 * 100}
+              y={y1 * 100}
+              width={(x2 - x1) * 100}
+              height={(y2 - y1) * 100}
+              fill="none"
+              stroke="#3b82f6"
+              strokeWidth="1.5"
+              vectorEffect="non-scaling-stroke"
+            />
+          );
+        })}
         {(payload.zones ?? []).map((z, i) => {
           if (!z.points?.length) return null;
           const zoneHighlighted = highlightedZone && z.name && String(z.name) === highlightedZone;
@@ -118,7 +116,7 @@ export function OverlayCanvas({
               );
             })
           : null}
-        {!isPlayback ? (payload.objects ?? []).map((o, i) => {
+        {(payload.objects ?? []).map((o, i) => {
           const b = o.bbox;
           if (!b || b.length !== 4) return null;
           const [x1, y1, x2, y2] = b;
@@ -131,11 +129,11 @@ export function OverlayCanvas({
               height={(y2 - y1) * 100}
               fill="none"
               stroke={o.event_active ? '#ef4444' : '#22c55e'}
-              strokeWidth={density === 'compact' ? '2.5' : '1.5'}
+              strokeWidth={density === 'compact' || isPlayback ? '2.5' : '1.5'}
               vectorEffect="non-scaling-stroke"
             />
           );
-        }) : null}
+        })}
       </svg>
       {!isPlayback && density === 'full' ? (
         <div className="live-overlay-label-layer">

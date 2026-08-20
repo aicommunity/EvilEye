@@ -286,23 +286,25 @@ function itemToObject(
   };
 }
 
-/** Immediate overlay objects from snapshots and found→lost intervals. */
+/** Immediate overlay objects via pure step-hold (no near-window override). */
 export function objectsToOverlayFromIndex(
   items: PlaybackDetectionItem[],
   positionSec: number,
   frameSize?: FrameSizeLike | null,
   matchSec = MATCH_SEC,
-  maxLerpSec = MAX_LERP_SEC,
+  _maxHoldSec = MAX_LERP_SEC,
 ): StreamMetadataObject[] {
   if (!Number.isFinite(positionSec)) return [];
   const out: StreamMetadataObject[] = [];
   const seen = new Set<number | string>();
 
-  const near = objectsFromDetectionIndex(items, positionSec, matchSec);
-  for (const it of near) {
+  // Anonymous snapshots (no object_id): show only within MATCH_SEC of their ts.
+  for (const it of items) {
+    if (!Number.isFinite(it.ts) || it.object_id != null) continue;
+    if (Math.abs(it.ts - positionSec) >= matchSec) continue;
     const bbox = bboxFromIndexBox(it.bounding_box, frameSize);
     if (!bbox) continue;
-    const key = it.object_id ?? `anon:${it.ts}:${it.kind}`;
+    const key = `anon:${it.ts}:${it.kind}`;
     if (seen.has(key)) continue;
     seen.add(key);
     out.push(itemToObject(it, bbox));
@@ -344,7 +346,8 @@ export function resolvePlaybackOverlaySec(
   videoGlobalSec: number | null | undefined,
   opts?: { playing?: boolean; videoSeeking?: boolean; scrubbing?: boolean },
 ): number {
-  if (opts?.scrubbing || !opts?.playing || opts?.videoSeeking) return positionSec;
-  if (videoGlobalSec == null || !Number.isFinite(videoGlobalSec)) return positionSec;
-  return videoGlobalSec;
+  if (opts?.scrubbing || !opts?.playing) return positionSec;
+  // Keep video clock during brief seeking so overlays do not jump to playhead.
+  if (videoGlobalSec != null && Number.isFinite(videoGlobalSec)) return videoGlobalSec;
+  return positionSec;
 }
