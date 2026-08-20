@@ -57,7 +57,7 @@ export function ExpandedPlaybackView({
   const mediaRef = useRef<HTMLDivElement>(null);
   const [videoReady, setVideoReady] = useState(0);
   const [frameSize, setFrameSize] = useState<FrameSize | null>(null);
-  const { ref, preloadRef, slot, applySync, videoGlobalSec, videoSeeking } = usePlaybackCameraSlot(
+  const { ref, preloadRef, slot, applySync, videoGlobalSec, videoSeeking, recordingInProgress } = usePlaybackCameraSlot(
     segments,
     getPosition,
     positionSec,
@@ -160,6 +160,7 @@ export function ExpandedPlaybackView({
             speed={speed}
             playMode={playMode}
             loading={loading}
+            recordingInProgress={recordingInProgress}
           />
         )}
       </div>

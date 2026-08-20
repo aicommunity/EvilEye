@@ -238,6 +238,7 @@ const en: Dict = {
     timelineHint: 'Wheel zooms, drag pans, click seeks (snaps to a nearby detection mark).',
     noSegment: 'No segment',
     loadingSegment: 'Loading recording…',
+    recordingInProgress: 'Recording in progress — playback available after the segment closes',
     seekingFrame: 'Seeking frame…',
     loadingMetadata: 'Loading metadata…',
     showMetadata: 'Show metadata',

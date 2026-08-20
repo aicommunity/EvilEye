@@ -135,7 +135,7 @@ function PlaybackCell({
   const mediaRef = useRef<HTMLDivElement>(null);
   const [videoReady, setVideoReady] = useState(0);
   const [frameSize, setFrameSize] = useState<FrameSize | null>(null);
-  const { ref, preloadRef, slot, applySync, videoGlobalSec, videoSeeking } = usePlaybackCameraSlot(
+  const { ref, preloadRef, slot, applySync, videoGlobalSec, videoSeeking, recordingInProgress } = usePlaybackCameraSlot(
     segments,
     getPosition,
     positionSec,
@@ -210,6 +210,7 @@ function PlaybackCell({
       onExpand={onExpand}
       segmentsLoading={segmentsLoading}
       detectionsReady={detectionsReady}
+      recordingInProgress={recordingInProgress}
     />
   );
 }
@@ -241,6 +242,7 @@ function NormalPlaybackCell({
   onExpand,
   segmentsLoading = false,
   detectionsReady = true,
+  recordingInProgress = false,
 }: {
   id: string;
   camera?: PlaybackCamera;
@@ -268,6 +270,7 @@ function NormalPlaybackCell({
   onExpand: () => void;
   segmentsLoading?: boolean;
   detectionsReady?: boolean;
+  recordingInProgress?: boolean;
 }) {
   const { meta, loading } = usePlaybackCameraMetadata({
     cameraId: id,
@@ -311,6 +314,7 @@ function NormalPlaybackCell({
           playMode={playMode}
           loading={loading}
           segmentsLoading={segmentsLoading}
+          recordingInProgress={recordingInProgress}
         />
       </div>
     </article>

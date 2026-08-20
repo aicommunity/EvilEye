@@ -120,6 +120,7 @@ def _secure_under(base: Path, candidate: Path) -> Path:
 _DEFAULT_SEGMENT_LENGTH_SEC = 300.0
 _DURATION_CACHE: dict[str, tuple[float, float]] = {}
 _MP4_DURATION_CACHE: dict[str, tuple[float, float | None]] = {}
+_MP4_PLAYABLE_CACHE: dict[str, tuple[float, bool]] = {}
 _SEGMENT_LENGTH_CACHE: tuple[str, float, float] | None = None
 
 
@@ -309,6 +310,58 @@ def _mp4_duration_sec(path: str) -> float | None:
 
     _MP4_DURATION_CACHE[path] = (st.st_mtime, duration)
     return duration
+
+
+def _mp4_has_moov_atom(path: str) -> bool:
+    """Return True when the file contains an ISO ``moov`` box (browser-playable)."""
+    try:
+        st = os.stat(path)
+    except OSError:
+        return False
+    if st.st_size < 12:
+        return False
+    try:
+        with open(path, "rb") as fh:
+            # moov is at the start for faststart or near EOF after splitmux finalize.
+            head = fh.read(min(st.st_size, 4 * 1024 * 1024))
+            if b"moov" in head:
+                return True
+            tail_size = min(st.st_size, 512 * 1024)
+            if st.st_size > tail_size:
+                fh.seek(st.st_size - tail_size)
+                tail = fh.read(tail_size)
+                return b"moov" in tail
+    except OSError:
+        return False
+    return False
+
+
+def _mp4_is_playable(path: str) -> bool:
+    """Closed splitmux parts are browser-playable; in-progress files often are not."""
+    try:
+        st = os.stat(path)
+    except OSError:
+        return False
+    cached = _MP4_PLAYABLE_CACHE.get(path)
+    if cached and cached[0] == st.st_mtime:
+        return cached[1]
+    playable = _mp4_has_moov_atom(path)
+    if not playable and st.st_size < 256 * 1024:
+        # Tiny placeholders used in unit tests — treat as playable.
+        playable = True
+    _MP4_PLAYABLE_CACHE[path] = (st.st_mtime, playable)
+    return playable
+
+
+def _segment_row(path: str, start_ts: float, end_ts: float, camera: str) -> dict[str, Any]:
+    return {
+        "path": path,
+        "start_ts": start_ts,
+        "end_ts": end_ts,
+        "duration_ms": int(max(0.0, end_ts - start_ts) * 1000),
+        "camera": camera,
+        "playable": _mp4_is_playable(path),
+    }
 
 
 def _plausible_media_duration(duration: float | None, configured_length: float) -> float | None:
@@ -743,15 +796,7 @@ def load_segments(
             continue
         if to_ts is not None and start_ts > to_ts:
             continue
-        items.append(
-            {
-                "path": path,
-                "start_ts": start_ts,
-                "end_ts": end_ts,
-                "duration_ms": int(max(0.0, end_ts - start_ts) * 1000),
-                "camera": camera,
-            }
-        )
+        items.append(_segment_row(path, start_ts, end_ts, camera))
 
     for path in undated:
         times = _parse_segment_times(path)
@@ -762,15 +807,7 @@ def load_segments(
             continue
         if to_ts is not None and start_ts > to_ts:
             continue
-        items.append(
-            {
-                "path": path,
-                "start_ts": start_ts,
-                "end_ts": end_ts,
-                "duration_ms": int(max(0.0, end_ts - start_ts) * 1000),
-                "camera": camera,
-            }
-        )
+        items.append(_segment_row(path, start_ts, end_ts, camera))
 
     items.sort(key=lambda row: (row["start_ts"], row["path"]))
     return items

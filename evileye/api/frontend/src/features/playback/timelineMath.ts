@@ -247,6 +247,10 @@ export function mergeSegments(prev: PlaybackSegment[], next: PlaybackSegment[]):
   return Array.from(byPath.values()).sort((a, b) => a.start_ts - b.start_ts);
 }
 
+export function isPlayableSegment(seg: PlaybackSegment): boolean {
+  return seg.playable !== false;
+}
+
 export function pickContainingSegment(segs: PlaybackSegment[], positionSec: number): PlaybackSegment | null {
   return segs.find((s) => positionSec >= s.start_ts && positionSec <= s.end_ts) ?? null;
 }
@@ -270,6 +274,41 @@ export function pickSegmentNear(segs: PlaybackSegment[], positionSec: number): P
     }
   }
   return best;
+}
+
+/** Nearest browser-playable segment for media src (skips in-progress splitmux files). */
+export function pickPlayableSegmentForPosition(segs: PlaybackSegment[], positionSec: number): PlaybackSegment | null {
+  const playable = segs.filter(isPlayableSegment);
+  if (!playable.length) return null;
+  const containing = pickContainingSegment(playable, positionSec);
+  if (containing) return containing;
+  return pickSegmentNear(playable, positionSec);
+}
+
+export function pickLastPlayableSegment(segs: PlaybackSegment[]): PlaybackSegment | null {
+  const playable = segs.filter(isPlayableSegment);
+  return playable.length ? playable[playable.length - 1] : null;
+}
+
+/** Snap playhead into a playable segment when position sits in a recording-only window. */
+export function snapPositionToPlayable(segs: PlaybackSegment[], positionSec: number): number {
+  if (!segs.length) return positionSec;
+  const containing = pickContainingSegment(segs, positionSec);
+  if (containing && isPlayableSegment(containing)) return positionSec;
+  const target = pickPlayableSegmentForPosition(segs, positionSec);
+  if (target) {
+    if (positionSec > target.end_ts) return Math.max(target.start_ts, target.end_ts - 1);
+    if (positionSec < target.start_ts) return target.start_ts;
+    return positionSec;
+  }
+  const last = pickLastPlayableSegment(segs);
+  if (last) return Math.max(last.start_ts, Math.min(positionSec, last.end_ts - 0.001));
+  return positionSec;
+}
+
+export function isPositionInRecordingSegment(segs: PlaybackSegment[], positionSec: number): boolean {
+  const containing = pickContainingSegment(segs, positionSec);
+  return containing != null && !isPlayableSegment(containing);
 }
 
 /** Build ~6–10 nicely spaced unix-second ticks in [from, to]. */

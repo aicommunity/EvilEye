@@ -187,6 +187,8 @@ export interface PlaybackSegment {
   start_ts: number;
   end_ts: number;
   duration_ms: number;
+  /** False while splitmux is still writing (no moov atom yet). */
+  playable?: boolean;
 }
 
 export interface PlaybackEventMarker {

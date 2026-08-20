@@ -6,7 +6,11 @@ import {
   dayBoundsLocal,
   defaultTimelineView,
   pickContainingSegment,
+  pickLastPlayableSegment,
+  pickPlayableSegmentForPosition,
   pickSegmentNear,
+  snapPositionToPlayable,
+  isPositionInRecordingSegment,
   snapTimelineSeek,
   snapUnixToDetections,
 } from './timelineMath';
@@ -112,5 +116,16 @@ describe('segment picking', () => {
   it('still exposes nearest-segment fallback for preload use-cases', () => {
     expect(pickSegmentNear(segs, 130)?.path).toBe('a.mp4');
     expect(pickSegmentNear(segs, 158)?.path).toBe('b.mp4');
+  });
+
+  it('skips non-playable segments for media src', () => {
+    const mixed = [
+      { path: 'closed.mp4', start_ts: 100, end_ts: 120, duration_ms: 20_000, playable: true },
+      { path: 'open.mp4', start_ts: 120, end_ts: 140, duration_ms: 20_000, playable: false },
+    ];
+    expect(pickPlayableSegmentForPosition(mixed, 130)?.path).toBe('closed.mp4');
+    expect(isPositionInRecordingSegment(mixed, 130)).toBe(true);
+    expect(pickLastPlayableSegment(mixed)?.path).toBe('closed.mp4');
+    expect(snapPositionToPlayable(mixed, 130)).toBeLessThanOrEqual(119);
   });
 });

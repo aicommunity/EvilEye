@@ -23,7 +23,7 @@ import { useDetectionIndex } from './useDetectionIndex';
 import { usePlaybackLayout } from './usePlaybackLayout';
 import { useTimelineViewport } from './useTimelineViewport';
 import { fitColsForCount } from '../layout/fitGrid';
-import { formatPlaybackDateTime, localDateString, mergeSegments, dayBoundsLocal, dayViewUpperBound, clampViewToDayBounds, segmentIntersectsDay } from './timelineMath';
+import { formatPlaybackDateTime, localDateString, mergeSegments, dayBoundsLocal, dayViewUpperBound, clampViewToDayBounds, segmentIntersectsDay, snapPositionToPlayable } from './timelineMath';
 
 function today(): string {
   const d = new Date();
@@ -44,6 +44,11 @@ function initialSegmentWindow(dateStr: string): { from: number; to: number } {
     return { from, to };
   }
   return { from: Math.max(start, end - INITIAL_WINDOW_SEC), to: end };
+}
+
+function dateFromUnixSec(sec: number): string {
+  const d = new Date(sec * 1000);
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
 }
 
 function parseDeepLinkTime(raw: string | null): number | null {
@@ -79,9 +84,10 @@ export function PlaybackPage() {
   const { showError } = useToast();
   const { t } = useI18n();
   const flags = useRunConfigFlags();
-  const [date, setDate] = useState(today());
+  const initialT = parseDeepLinkTime(params.get('t'));
+  const [date, setDate] = useState(() => (initialT != null ? dateFromUnixSec(initialT) : today()));
   const [runId, setRunId] = useState<number | null>(null);
-  const [runReady, setRunReady] = useState(false);
+  const [runResolved, setRunResolved] = useState(false);
   const [cameras, setCameras] = useState<PlaybackCamera[]>([]);
   const [camerasLoading, setCamerasLoading] = useState(false);
   const { cols, setCols, selectedIds, setSelectedIds, mode, setMode } = usePlaybackLayout();
@@ -94,9 +100,16 @@ export function PlaybackPage() {
   const [, setTimelinePanning] = useState(false);
   const [seekSettling, setSeekSettling] = useState(false);
   const [expandedCameraId, setExpandedCameraId] = useState<string | null>(null);
-  const initialT = parseDeepLinkTime(params.get('t'));
   const ctrl = usePlaybackController(initialT);
   const viewport = useTimelineViewport();
+
+  useEffect(() => {
+    const linked = parseDeepLinkTime(params.get('t'));
+    if (linked == null) return;
+    setDate(dateFromUnixSec(linked));
+    ctrl.seek(linked);
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- sync deep link when query changes
+  }, [params]);
   const debouncedViewFrom = useDebouncedValue(viewport.viewFrom, VIEWPORT_DEBOUNCE_MS);
   const debouncedViewTo = useDebouncedValue(viewport.viewTo, VIEWPORT_DEBOUNCE_MS);
   const seekSettleTimerRef = useRef<number | null>(null);
@@ -177,7 +190,7 @@ export function PlaybackPage() {
         if (isAbortError(e)) return;
       })
       .finally(() => {
-        if (!ac.signal.aborted) setRunReady(true);
+        if (!ac.signal.aborted) setRunResolved(true);
       });
     return () => ac.abort();
   }, []);
@@ -201,7 +214,7 @@ export function PlaybackPage() {
   );
 
   useEffect(() => {
-    if (!runReady) return;
+    if (!runResolved) return;
     let cancelled = false;
     if (dateChangeSourceRef.current === 'viewport') {
       dateChangeSourceRef.current = 'user';
@@ -222,7 +235,11 @@ export function PlaybackPage() {
         setCamerasLoading(true);
       }
       try {
-        const camRes = await playbackApi.cameras(date, runId, { signal: ac.signal });
+        let camRes = await playbackApi.cameras(date, runId, { signal: ac.signal });
+        if (cancelled || ac.signal.aborted) return;
+        if (!camRes.items.length && runId != null) {
+          camRes = await playbackApi.cameras(date, null, { signal: ac.signal });
+        }
         if (cancelled || ac.signal.aborted) return;
         cacheSet(cacheKey, camRes, CAMERAS_TTL_MS);
         setCameras(camRes.items);
@@ -247,7 +264,7 @@ export function PlaybackPage() {
       cancelled = true;
       ac.abort();
     };
-  }, [date, runId, runReady, showError, urlCamera, setSelectedIds, softRefreshCameras]);
+  }, [date, runId, runResolved, showError, urlCamera, setSelectedIds, softRefreshCameras]);
 
   const loadSegments = useCallback(
     async (camsOverride?: string[], opts?: { from?: number; to?: number; merge?: boolean; date?: string }) => {
@@ -321,7 +338,11 @@ export function PlaybackPage() {
           });
 
           setSegmentsLoaded(true);
-          if (!opts?.merge && initialT != null) ctrl.seek(initialT);
+          if (!opts?.merge) {
+            const target = initialT != null ? initialT : ctrl.getPosition();
+            const snapped = allSegs.length ? snapPositionToPlayable(allSegs, target) : target;
+            if (Math.abs(snapped - ctrl.getPosition()) > 0.5) ctrl.seek(snapped);
+          }
           return;
         }
 
@@ -386,7 +407,11 @@ export function PlaybackPage() {
           return Array.from(byKey.values()).sort((a, b) => a.start_ts - b.start_ts);
         });
         setSegmentsLoaded(true);
-        if (!opts?.merge && initialT != null) ctrl.seek(initialT);
+        if (!opts?.merge) {
+          const target = initialT != null ? initialT : ctrl.getPosition();
+          const snapped = allSegs.length ? snapPositionToPlayable(allSegs, target) : target;
+          if (Math.abs(snapped - ctrl.getPosition()) > 0.5) ctrl.seek(snapped);
+        }
       } catch (e) {
         if (isAbortError(e)) {
           if (isInitialLoad) {
@@ -532,6 +557,7 @@ export function PlaybackPage() {
   if (camerasLoading) gridEmpty = t('playback.loadingCamerasGrid');
   else if (!cameras.length) gridEmpty = t('playback.noCamerasForDate');
   else if (!selectedIds.length) gridEmpty = t('playback.selectCameras');
+  else if (segmentsLoading || (!segmentsLoaded && cameras.length > 0)) gridEmpty = t('playback.loadingSegment');
 
   return (
     <section className={`panel active playback-page${mode === 'fit' ? ' playback-page--fit' : ''}`}>

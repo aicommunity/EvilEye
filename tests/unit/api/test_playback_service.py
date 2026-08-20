@@ -282,3 +282,20 @@ def test_load_segments_skips_files_outside_window_before_mvhd(tmp_path, monkeypa
     assert segs
     assert calls["n"] < 10
     assert calls["n"] < 20
+
+
+def test_segment_playable_flag(tmp_path, monkeypatch):
+    root = tmp_path / "EvilEyeData"
+    cam = root / "Streams" / "2026-08-20" / "Cam1"
+    cam.mkdir(parents=True)
+    closed = cam / "Cam1_20260820_010000_0_00000.mp4"
+    open_part = cam / "Cam1_20260820_013000_0_00001.mp4"
+    closed.write_bytes(_minimal_mp4(60.0))
+    open_part.write_bytes(b"\x00" * 512 * 1024)  # in-progress size without moov
+    monkeypatch.setenv("EVILEYE_DATA_DIR", str(root))
+    monkeypatch.setattr(svc, "_configured_segment_length_sec", lambda: 1800.0)
+    svc._MP4_PLAYABLE_CACHE.clear()
+
+    segs = {Path(s["path"]).name: s for s in svc.load_segments("Cam1", date="2026-08-20")}
+    assert segs["Cam1_20260820_010000_0_00000.mp4"]["playable"] is True
+    assert segs["Cam1_20260820_013000_0_00001.mp4"]["playable"] is False

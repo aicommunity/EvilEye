@@ -2468,6 +2468,22 @@ body {
   z-index: 2;
 }
 
+.playback-recording-banner {
+  position: absolute;
+  left: 8px;
+  top: 36px;
+  z-index: 7;
+  max-width: calc(100% - 16px);
+  padding: 4px 10px;
+  border-radius: 6px;
+  background: rgba(234, 179, 8, 0.92);
+  color: #1a1200;
+  font-size: 12px;
+  font-weight: 600;
+  line-height: 1.35;
+  pointer-events: none;
+}
+
 .timeline-detection-canvas {
   position: absolute;
   inset: 0;

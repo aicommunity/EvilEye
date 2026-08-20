@@ -23,7 +23,7 @@ import { mergePlaybackMetadata } from './mergePlaybackMetadata';
 import { seekPlaybackVideo, shouldEmitPlaybackClock } from './playbackVideoSync';
 import { usePlaybackMetadata } from './usePlaybackMetadata';
 import { usePlaybackStaticMetadata } from './usePlaybackStaticMetadata';
-import { pickContainingSegment } from './timelineMath';
+import { isPositionInRecordingSegment, pickPlayableSegmentForPosition, isPlayableSegment } from './timelineMath';
 
 const PLAYBACK_EVENT_ZONE_PAD_SEC = 1.5;
 
@@ -36,8 +36,11 @@ export type PlaybackMediaSlot = {
 function nextSegment(segs: PlaybackSegment[], current: PlaybackSegment | null): PlaybackSegment | null {
   if (!current || !segs.length) return null;
   const idx = segs.findIndex((s) => s.path === current.path);
-  if (idx < 0 || idx >= segs.length - 1) return null;
-  return segs[idx + 1];
+  if (idx < 0) return null;
+  for (let i = idx + 1; i < segs.length; i++) {
+    if (isPlayableSegment(segs[i])) return segs[i];
+  }
+  return null;
 }
 
 export function usePlaybackCameraSlot(
@@ -66,6 +69,7 @@ export function usePlaybackCameraSlot(
   onVideoClockRef.current = onVideoClock;
   const [videoGlobalSec, setVideoGlobalSec] = useState<number | null>(null);
   const [videoSeeking, setVideoSeeking] = useState(false);
+  const [recordingInProgress, setRecordingInProgress] = useState(false);
 
   const publishVideoGlobal = () => {
     const v = ref.current;
@@ -78,7 +82,8 @@ export function usePlaybackCameraSlot(
     const position = getPositionRef.current();
     lastAppliedPositionRef.current = position;
     const segs = segmentsRef.current;
-    const seg = pickContainingSegment(segs, position);
+    setRecordingInProgress(isPositionInRecordingSegment(segs, position));
+    const seg = pickPlayableSegmentForPosition(segs, position);
     const nxt = nextSegment(segs, seg);
     const preload = preloadRef.current;
     let segmentChanged = false;
@@ -208,7 +213,7 @@ export function usePlaybackCameraSlot(
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [positionSec, playMode, scrubbing]);
 
-  return { ref, preloadRef, slot, applySync, videoGlobalSec, videoSeeking };
+  return { ref, preloadRef, slot, applySync, videoGlobalSec, videoSeeking, recordingInProgress };
 }
 
 export function usePlaybackCameraMetadata({
@@ -314,9 +319,9 @@ export function usePlaybackCameraMetadata({
   }, [eventIntervals, overlaySec]);
 
   const meta = useMemo(() => {
-    const merged = mergePlaybackMetadata(staticMeta, dynamicMeta);
+    const merged = mergePlaybackMetadata(staticMeta, dynamicMeta, { stripObjects: true });
     if (!showMetadata || !merged) return merged;
-    const staticOnly = mergePlaybackMetadata(staticMeta, null) ?? merged;
+    const staticOnly = mergePlaybackMetadata(staticMeta, null, { stripObjects: true }) ?? merged;
     if (!showObjects) {
       return {
         ...staticOnly,
@@ -382,6 +387,7 @@ export function PlaybackVideoSurface({
   playMode = 'normal',
   loading = false,
   segmentsLoading = false,
+  recordingInProgress = false,
 }: {
   videoRef: RefObject<HTMLVideoElement | null>;
   preloadRef: RefObject<HTMLVideoElement | null>;
@@ -401,6 +407,7 @@ export function PlaybackVideoSurface({
   playMode?: PlaybackPlayMode;
   loading?: boolean;
   segmentsLoading?: boolean;
+  recordingInProgress?: boolean;
 }) {
   const { t } = useI18n();
   const [seeking, setSeeking] = useState(false);
@@ -474,9 +481,16 @@ export function PlaybackVideoSurface({
         </>
       ) : (
         <div className={`${previewClass} camera-preview-empty`}>
-          {segmentsLoading ? t('playback.loadingSegment') : t('playback.noSegment')}
+          {segmentsLoading
+            ? t('playback.loadingSegment')
+            : recordingInProgress
+              ? t('playback.recordingInProgress')
+              : t('playback.noSegment')}
         </div>
       )}
+      {recordingInProgress && slot?.url ? (
+        <div className="playback-recording-banner">{t('playback.recordingInProgress')}</div>
+      ) : null}
       <div className="camera-card-overlay-top">
         <span className="camera-name">{cameraLabel}</span>
       </div>
