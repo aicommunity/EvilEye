@@ -536,6 +536,75 @@ def list_history_run_summaries(*, exclude_current: bool = True) -> list[Dict[str
     return items
 
 
+def _slim_snapshot_for_cameras(rid: int | None) -> dict[str, Any] | None:
+    """Load runtime snapshot but keep only fields needed for camera health."""
+    if rid is None:
+        return None
+    try:
+        snapshot = load_runtime_snapshot(int(rid))
+    except Exception:
+        return None
+    if not isinstance(snapshot, dict):
+        return None
+    sources = snapshot.get("sources")
+    if not isinstance(sources, list):
+        return {"sources": []}
+    return {"sources": sources, "updated_at": snapshot.get("updated_at")}
+
+
+def _slim_run_for_cameras(record: Dict[str, Any]) -> Dict[str, Any]:
+    """Minimal run view for /state/cameras — no logs, no full config snapshot."""
+    config_summary = load_config_summary(record.get("config_path"))
+    rid = record.get("id")
+    return {
+        "id": rid,
+        "name": record.get("name"),
+        "state": record.get("state"),
+        "alive": bool(record.get("alive")),
+        "pipeline_class": config_summary.pipeline_class,
+        "sources": config_summary.source_items,
+        "runtime_snapshot": _slim_snapshot_for_cameras(int(rid) if rid is not None else None),
+    }
+
+
+def _runs_for_camera_summaries(scope: str, *, discover: bool = False) -> list[Dict[str, Any]]:
+    """Resolve runs for camera listing without hydrating full run summaries."""
+    stubs = _combined_runtime_stubs(discover=discover)
+    if not stubs:
+        return []
+
+    if scope == "current":
+        active = [stub for stub in stubs.values() if _is_run_active(stub)]
+        pool = active or list(stubs.values())
+        best = max(pool, key=_stub_candidate_key)
+        rid = int(best.get("id") or 0)
+        if not rid:
+            return []
+        record = _combined_runtime_record(rid)
+        if record is None:
+            return []
+        return [_slim_run_for_cameras(record)]
+
+    if scope == "active":
+        runs: list[Dict[str, Any]] = []
+        for rid, stub in stubs.items():
+            if not _is_run_active(stub):
+                continue
+            record = _combined_runtime_record(rid)
+            if record is None:
+                continue
+            runs.append(_slim_run_for_cameras(record))
+        return runs
+
+    runs = []
+    for rid in stubs:
+        record = _combined_runtime_record(rid)
+        if record is None:
+            continue
+        runs.append(_slim_run_for_cameras(record))
+    return runs
+
+
 def list_camera_summaries(*, scope: str = "current") -> list[Dict[str, Any]]:
     now = time.time()
     with _camera_summaries_cache_lock:
@@ -567,12 +636,7 @@ def list_camera_summaries(*, scope: str = "current") -> list[Dict[str, Any]]:
     cameras: list[Dict[str, Any]] = []
     computed_ok = False
     try:
-        if scope == "current":
-            runs = [get_current_run_summary()]
-        elif scope == "active":
-            runs = list_active_run_summaries()
-        else:
-            runs = list_run_summaries()
+        runs = _runs_for_camera_summaries(scope, discover=False)
 
         for run in runs:
             if not run:

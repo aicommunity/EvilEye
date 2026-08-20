@@ -12,6 +12,28 @@ def _patch_registry(tmp_path, monkeypatch):
     monkeypatch.setattr(rr, "LOCK_FILE", tmp_path / ".lock")
     rr._corrupt_record_logged.clear()
     rr._last_discover_ts = 0.0
+    with rr._stubs_cache_lock:
+        rr._stubs_cache_value = None
+        rr._stubs_cache_ts = 0.0
+    try:
+        from evileye.api.core import server_state as ss
+
+        with ss._current_run_cache_lock:
+            ss._current_run_cache.value = None
+            ss._current_run_cache.expires_at = 0.0
+            ss._current_run_cache.stale_expires_at = 0.0
+            ss._current_run_cache.computing = False
+            ss._current_run_cache.inflight_event = None
+        with ss._active_run_summaries_cache_lock:
+            ss._active_run_summaries_cache.value = None
+            ss._active_run_summaries_cache.expires_at = 0.0
+            ss._active_run_summaries_cache.stale_expires_at = 0.0
+            ss._active_run_summaries_cache.computing = False
+            ss._active_run_summaries_cache.inflight_event = None
+        with ss._camera_summaries_cache_lock:
+            ss._camera_summaries_cache.clear()
+    except Exception:
+        pass
 
 
 def test_prune_keeps_alive_and_recent_stopped(tmp_path, monkeypatch):

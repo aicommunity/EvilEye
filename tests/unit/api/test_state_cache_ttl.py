@@ -60,15 +60,16 @@ def test_list_camera_summaries_ttl_cache_hit(monkeypatch: pytest.MonkeyPatch) ->
         ],
     }
 
-    def fake_get_current_run_summary():
+    def fake_runs_for_camera_summaries(scope, *, discover=False):
         calls["n"] += 1
-        return fake_run
+        assert scope == "current"
+        return [fake_run]
 
     def fake_camera_health(run, source_id, *, stale_sec=2.0):
         assert run is fake_run or run.get("id") == 1
         return True, 0.5, True, False
 
-    monkeypatch.setattr(server_state, "get_current_run_summary", fake_get_current_run_summary)
+    monkeypatch.setattr(server_state, "_runs_for_camera_summaries", fake_runs_for_camera_summaries)
     monkeypatch.setattr(server_state, "_camera_health", fake_camera_health)
 
     r1 = server_state.list_camera_summaries(scope="current")
@@ -102,18 +103,18 @@ def test_list_camera_summaries_returns_stale_while_inflight(monkeypatch: pytest.
         ],
     }
 
-    def fake_get_current_run_summary():
+    def fake_runs_for_camera_summaries(scope, *, discover=False):
         calls["n"] += 1
         # Second computation is intentionally blocked to keep item.computing=True.
         if calls["n"] == 2:
             compute_started.set()
             release.wait(timeout=2.0)
-        return fake_run
+        return [fake_run]
 
     def fake_camera_health(run, source_id, *, stale_sec=2.0):
         return True, 0.5, True, False
 
-    monkeypatch.setattr(server_state, "get_current_run_summary", fake_get_current_run_summary)
+    monkeypatch.setattr(server_state, "_runs_for_camera_summaries", fake_runs_for_camera_summaries)
     monkeypatch.setattr(server_state, "_camera_health", fake_camera_health)
 
     first = server_state.list_camera_summaries(scope="current")
@@ -135,6 +136,38 @@ def test_list_camera_summaries_returns_stale_while_inflight(monkeypatch: pytest.
     release.set()
     t.join(timeout=2.0)
     assert t.is_alive() is False
+
+
+def test_list_camera_summaries_uses_slim_path_not_full_summary(monkeypatch: pytest.MonkeyPatch) -> None:
+    calls = {"full": 0, "slim": 0}
+
+    def boom_get_current():
+        calls["full"] += 1
+        raise AssertionError("get_current_run_summary must not be used for cameras")
+
+    fake_run = {
+        "id": 7,
+        "state": "running",
+        "pipeline_class": "PipelineSurveillance",
+        "name": "run7",
+        "alive": True,
+        "sources": [{"source_id": 0, "source_name": "Cam1", "source_type": "ip", "address": "rtsp://x"}],
+        "runtime_snapshot": {"sources": [{"source_ids": [0], "is_working": True}]},
+    }
+
+    def fake_runs(scope, *, discover=False):
+        calls["slim"] += 1
+        return [fake_run]
+
+    monkeypatch.setattr(server_state, "get_current_run_summary", boom_get_current)
+    monkeypatch.setattr(server_state, "_runs_for_camera_summaries", fake_runs)
+    monkeypatch.setattr(server_state, "_camera_health", lambda *a, **k: (True, 0.1, True, False))
+
+    items = server_state.list_camera_summaries(scope="current")
+    assert calls["full"] == 0
+    assert calls["slim"] == 1
+    assert items[0]["run_id"] == 7
+    assert items[0]["source_name"] == "Cam1"
 
 
 def test_build_overview_ttl_cache_hit(monkeypatch: pytest.MonkeyPatch) -> None:
