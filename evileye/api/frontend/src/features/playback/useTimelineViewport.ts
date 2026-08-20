@@ -5,6 +5,7 @@ import {
   MIN_VIEW_SPAN_SEC,
   clampView,
   dayBoundsLocal,
+  dayViewSpanSec,
   dayViewUpperBound,
   defaultTimelineView,
   panView,
@@ -17,21 +18,21 @@ export function useTimelineViewport() {
   const [loadedFrom, setLoadedFrom] = useState<number | null>(null);
   const [loadedTo, setLoadedTo] = useState<number | null>(null);
 
-  const setView = useCallback((from: number, to: number) => {
-    const next = clampView(from, to, { minSpan: MIN_VIEW_SPAN_SEC, maxSpan: MAX_VIEW_SPAN_SEC });
+  const setView = useCallback((from: number, to: number, dateStr?: string) => {
+    const maxSpan = dateStr ? dayViewSpanSec(dateStr) : MAX_VIEW_SPAN_SEC;
+    const next = clampView(from, to, { minSpan: MIN_VIEW_SPAN_SEC, maxSpan });
     setViewFrom(next.viewFrom);
     setViewTo(next.viewTo);
   }, []);
 
   const resetToData = useCallback((dataFrom: number | null, dataTo: number | null, date: string) => {
-    const bounds = dayBoundsLocal(date);
-    const upper = dayViewUpperBound(date);
+    // Honest loaded range: unknown until segments return (do not fake full-day loaded).
     if (dataFrom != null && dataTo != null && dataTo > dataFrom) {
       setLoadedFrom(dataFrom);
       setLoadedTo(dataTo);
     } else {
-      setLoadedFrom(bounds.start);
-      setLoadedTo(upper);
+      setLoadedFrom(null);
+      setLoadedTo(null);
     }
     const next = defaultTimelineView(date, { dataFrom, dataTo });
     setViewFrom(next.viewFrom);
@@ -58,9 +59,11 @@ export function useTimelineViewport() {
   );
 
   const zoomAt = useCallback(
-    (anchorUnix: number, factor: number) => {
+    (anchorUnix: number, factor: number, dateStr?: string) => {
       if (viewFrom == null || viewTo == null) return;
+      const maxSpan = dateStr ? dayViewSpanSec(dateStr) : MAX_VIEW_SPAN_SEC;
       const next = zoomViewAt(viewFrom, viewTo, anchorUnix, factor, {
+        maxSpan,
         dataMin: loadedFrom ?? undefined,
         dataMax: loadedTo ?? undefined,
       });

@@ -1,7 +1,7 @@
 import type { PlaybackSegment } from '../../api';
 
 export const MIN_VIEW_SPAN_SEC = 120;
-export const MAX_VIEW_SPAN_SEC = 48 * 3600;
+export const MAX_VIEW_SPAN_SEC = 24 * 3600;
 export const DEFAULT_TIMELINE_WINDOW_SEC = 7200;
 export const DAY_LOAD_BUFFER_SEC = 3 * 3600;
 export const PAN_CLICK_SLOP_PX = 10;
@@ -12,6 +12,13 @@ export const DETECTION_SNAP_MAX_SEC = 1.5;
 export const DETECTION_SNAP_VIEW_SPAN_SEC = 2 * 3600;
 
 const TICK_STEPS_SEC = [60, 300, 900, 1800, 3600, 7200, 14400, 21600, 43200, 86400];
+
+/** Visible span of a calendar day for zoom-out hard stop. */
+export function dayViewSpanSec(dateStr: string, nowSec?: number): number {
+  const { start } = dayBoundsLocal(dateStr);
+  const upper = dayViewUpperBound(dateStr, nowSec);
+  return Math.max(MIN_VIEW_SPAN_SEC, upper - start + 1);
+}
 
 export function clampView(
   viewFrom: number,
@@ -210,10 +217,10 @@ export function defaultTimelineView(
   if (dataFrom != null && dataTo != null && dataTo > dataFrom) {
     const dataSpan = dataTo - dataFrom;
     const daySpan = upper - start + 1;
+    // Do not pad the viewport past known data — empty edges confuse the timeline.
     if (dataSpan < daySpan * 0.85) {
-      const pad = Math.max(900, dataSpan * 0.12);
-      const vf = Math.max(start, dataFrom - pad);
-      const vt = Math.min(upper, dataTo + pad);
+      const vf = Math.max(start, dataFrom);
+      const vt = Math.min(upper, dataTo);
       return { viewFrom: vf, viewTo: Math.max(vf + MIN_VIEW_SPAN_SEC, vt) };
     }
     const end = Math.min(upper, dataTo);
@@ -421,6 +428,23 @@ export function buildTimelineTicks(from: number, to: number): number[] {
   const out: number[] = [];
   for (const ts of ticks) {
     if (!out.length || Math.abs(ts - out[out.length - 1]) > step * 0.2) out.push(ts);
+  }
+  return out;
+}
+
+/** Local-midnight unix timestamps that fall inside / on the edges of [from, to]. */
+export function buildTimelineDateBoundaries(from: number, to: number): number[] {
+  if (!(to > from) || !Number.isFinite(from) || !Number.isFinite(to)) return [];
+  const out: number[] = [];
+  const startDate = localDateString(from);
+  const endDate = localDateString(to);
+  let cursor = startDate;
+  // Cap iterations to avoid runaway on bad inputs.
+  for (let i = 0; i < 8; i += 1) {
+    const { start } = dayBoundsLocal(cursor);
+    if (start >= from - 1e-6 && start <= to + 1e-6) out.push(start);
+    if (cursor >= endDate) break;
+    cursor = shiftLocalDate(cursor, 1);
   }
   return out;
 }

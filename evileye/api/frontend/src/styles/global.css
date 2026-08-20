@@ -2572,6 +2572,33 @@ body {
   background: rgba(15, 23, 42, 0.55);
 }
 
+.timeline-date-ticks {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  z-index: 2;
+}
+
+.timeline-date-tick {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 2px;
+  background: color-mix(in srgb, var(--accent, #3b82f6) 55%, transparent);
+  transform: translateX(-1px);
+}
+
+.timeline-date-tick-label {
+  position: absolute;
+  top: 2px;
+  left: 50%;
+  transform: translateX(-50%);
+  font-size: 0.62rem;
+  font-weight: 600;
+  color: var(--text);
+  white-space: nowrap;
+}
+
 .timeline-ticks {
   position: absolute;
   inset: 0;
@@ -2598,12 +2625,14 @@ body {
   white-space: nowrap;
 }
 
-.timeline-tick-label--start {
+.timeline-tick-label--start,
+.timeline-date-tick-label.timeline-tick-label--start {
   left: 0;
   transform: none;
 }
 
-.timeline-tick-label--end {
+.timeline-tick-label--end,
+.timeline-date-tick-label.timeline-tick-label--end {
   left: auto;
   right: 0;
   transform: none;

@@ -22,8 +22,19 @@ import { usePlaybackController } from './usePlaybackController';
 import { useDetectionIndex } from './useDetectionIndex';
 import { usePlaybackLayout } from './usePlaybackLayout';
 import { useTimelineViewport } from './useTimelineViewport';
+import { readPlaybackSession, usePlaybackSessionPersist } from './usePlaybackSession';
 import { fitColsForCount } from '../layout/fitGrid';
-import { localDateString, mergeSegments, dayBoundsLocal, dayViewUpperBound, resolveTimelineViewChange, segmentIntersectsDay, snapPositionToPlayable, formatPlaybackTime } from './timelineMath';
+import {
+  localDateString,
+  mergeSegments,
+  dayBoundsLocal,
+  dayViewSpanSec,
+  dayViewUpperBound,
+  resolveTimelineViewChange,
+  segmentIntersectsDay,
+  snapPositionToPlayable,
+  formatPlaybackTime,
+} from './timelineMath';
 
 function today(): string {
   const d = new Date();
@@ -88,10 +99,15 @@ function camerasCacheKey(date: string, runId: number | null): string {
 export function PlaybackPage() {
   const [params] = useSearchParams();
   const { showError } = useToast();
-  const { t } = useI18n();
+  const { t, formatDate } = useI18n();
   const flags = useRunConfigFlags();
   const initialT = parseDeepLinkTime(params.get('t'));
-  const [date, setDate] = useState(() => (initialT != null ? dateFromUnixSec(initialT) : today()));
+  const sessionSnap = useMemo(() => (initialT != null ? null : readPlaybackSession()), [initialT]);
+  const [date, setDate] = useState(() => {
+    if (initialT != null) return dateFromUnixSec(initialT);
+    if (sessionSnap?.date) return sessionSnap.date;
+    return today();
+  });
   const [runId, setRunId] = useState<number | null>(null);
   const [runResolved, setRunResolved] = useState(false);
   const [cameras, setCameras] = useState<PlaybackCamera[]>([]);
@@ -106,8 +122,9 @@ export function PlaybackPage() {
   const [, setTimelinePanning] = useState(false);
   const [seekSettling, setSeekSettling] = useState(false);
   const [expandedCameraId, setExpandedCameraId] = useState<string | null>(null);
-  const ctrl = usePlaybackController(initialT);
+  const ctrl = usePlaybackController(initialT ?? sessionSnap?.positionSec ?? null);
   const viewport = useTimelineViewport();
+  const sessionViewRestoredRef = useRef(false);
 
   useEffect(() => {
     const linked = parseDeepLinkTime(params.get('t'));
@@ -174,13 +191,34 @@ export function PlaybackPage() {
   }, [ctrl]);
 
   const urlCamera = params.get('camera');
-  const dateChangeSourceRef = useRef<'user' | 'viewport'>('user');
+  const dateChangeSourceRef = useRef<'user' | 'viewport' | 'seek'>('user');
   const skipHardSegmentReloadRef = useRef(false);
+  const pendingViewportLoadRef = useRef<{ date: string; from: number; to: number } | null>(null);
   const loadTimerRef = useRef<number | null>(null);
   const selectedIdsRef = useRef(selectedIds);
   selectedIdsRef.current = selectedIds;
   const camerasAbortRef = useRef<AbortController | null>(null);
   const segmentsAbortRef = useRef<AbortController | null>(null);
+
+  useEffect(() => {
+    if (sessionViewRestoredRef.current || initialT != null || !sessionSnap) return;
+    if (sessionSnap.date !== date) return;
+    sessionViewRestoredRef.current = true;
+    viewport.setView(sessionSnap.viewFrom, sessionSnap.viewTo, sessionSnap.date);
+  }, [sessionSnap, date, initialT, viewport]);
+
+  usePlaybackSessionPersist(
+    viewport.viewFrom != null && viewport.viewTo != null
+      ? {
+          date,
+          positionSec: ctrl.positionSec,
+          viewFrom: viewport.viewFrom,
+          viewTo: viewport.viewTo,
+          runId,
+        }
+      : null,
+    initialT == null,
+  );
 
   useEffect(() => {
     const ac = new AbortController();
@@ -222,10 +260,20 @@ export function PlaybackPage() {
   useEffect(() => {
     if (!runResolved) return;
     let cancelled = false;
-    if (dateChangeSourceRef.current === 'viewport') {
+    if (dateChangeSourceRef.current === 'viewport' || dateChangeSourceRef.current === 'seek') {
       dateChangeSourceRef.current = 'user';
       skipHardSegmentReloadRef.current = true;
       void softRefreshCameras(date);
+      const pending = pendingViewportLoadRef.current;
+      pendingViewportLoadRef.current = null;
+      if (pending && pending.date === date) {
+        void loadSegments(selectedIdsRef.current, {
+          from: pending.from,
+          to: pending.to,
+          merge: true,
+          date: pending.date,
+        });
+      }
       return;
     }
     camerasAbortRef.current?.abort();
@@ -473,9 +521,16 @@ export function PlaybackPage() {
       const resolved = resolveTimelineViewChange(vf, vt, date);
       if (resolved.dateChanged) {
         dateChangeSourceRef.current = 'viewport';
+        const { start } = dayBoundsLocal(resolved.date);
+        const upper = dayViewUpperBound(resolved.date);
+        pendingViewportLoadRef.current = {
+          date: resolved.date,
+          from: Math.max(start, resolved.viewFrom - SEEK_LOAD_HALF_SEC),
+          to: Math.min(upper, resolved.viewTo + SEEK_LOAD_HALF_SEC),
+        };
         setDate(resolved.date);
       }
-      viewport.setView(resolved.viewFrom, resolved.viewTo);
+      viewport.setView(resolved.viewFrom, resolved.viewTo, resolved.date);
       ensureAdjacentLoad(resolved.viewFrom, resolved.viewTo);
     },
     [viewport, ensureAdjacentLoad, date],
@@ -483,6 +538,20 @@ export function PlaybackPage() {
 
   const seek = useCallback(
     (sec: number) => {
+      const nextDate = localDateString(sec);
+      if (nextDate !== date) {
+        dateChangeSourceRef.current = 'seek';
+        const { start } = dayBoundsLocal(nextDate);
+        const upper = dayViewUpperBound(nextDate);
+        pendingViewportLoadRef.current = {
+          date: nextDate,
+          from: Math.max(start, sec - SEEK_LOAD_HALF_SEC),
+          to: Math.min(upper, sec + SEEK_LOAD_HALF_SEC),
+        };
+        setDate(nextDate);
+        const span = Math.min(dayViewSpanSec(nextDate), INITIAL_WINDOW_SEC);
+        viewport.setView(Math.max(start, sec - span / 2), Math.min(upper, sec + span / 2), nextDate);
+      }
       ctrl.seek(sec);
       setSeekSettling(true);
       if (seekSettleTimerRef.current != null) window.clearTimeout(seekSettleTimerRef.current);
@@ -492,7 +561,7 @@ export function PlaybackPage() {
       }, SEEK_SETTLE_HOLD_MS);
       ensureAdjacentLoad(sec - SEEK_LOAD_HALF_SEC, sec + SEEK_LOAD_HALF_SEC);
     },
-    [ctrl, ensureAdjacentLoad],
+    [ctrl, ensureAdjacentLoad, date, viewport],
   );
 
   useEffect(() => {
@@ -561,7 +630,15 @@ export function PlaybackPage() {
     return out;
   }, [eventIntervals, selectedIds]);
   const effectiveCols = mode === 'fit' ? fitColsForCount(selectedIds.length) : cols;
+  useEffect(() => {
+    if (!segmentsLoaded || viewport.viewFrom == null || viewport.viewTo == null) return;
+    ensureAdjacentLoad(viewport.viewFrom, viewport.viewTo);
+    // Only after a hard load settles — adjacent merge fills empty edges.
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- intentional: once per segmentsLoaded flip / date
+  }, [segmentsLoaded, date]);
+
   const positionLabel = formatPlaybackTime(ctrl.positionSec);
+  const positionDateLabel = formatDate(new Date(ctrl.positionSec * 1000));
   const detectionsReady = !detectionIndex.loading;
 
   let gridEmpty: string | null = null;
@@ -583,13 +660,22 @@ export function PlaybackPage() {
               type="date"
               className="search-input playback-date-input"
               value={date}
+              max={today()}
               onChange={(e) => {
+                const next = e.target.value;
+                if (!next) return;
                 dateChangeSourceRef.current = 'user';
-                setDate(e.target.value);
+                const { start } = dayBoundsLocal(next);
+                const upper = dayViewUpperBound(next);
+                const pos = ctrl.getPosition();
+                if (pos < start || pos > upper) {
+                  ctrl.seek(Math.min(upper, Math.max(start, pos)));
+                }
+                setDate(next);
               }}
             />
             <span className="playback-position-clock" title={t('playback.currentTime')}>
-              {positionLabel}
+              {positionDateLabel} {positionLabel}
             </span>
             <div className="playback-controls-main">
               <Button size="sm" variant={mode === 'fit' ? 'primary' : 'outline'} onClick={() => setMode('fit')}>
@@ -692,6 +778,7 @@ export function PlaybackPage() {
             {t('playback.timelineHint')}
           </p>
           <Timeline
+            date={date}
             viewFrom={viewport.viewFrom}
             viewTo={viewport.viewTo}
             position={ctrl.positionSec}

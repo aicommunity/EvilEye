@@ -2,9 +2,12 @@ import { describe, expect, it } from 'vitest';
 import {
   DEFAULT_TIMELINE_WINDOW_SEC,
   DETECTION_SNAP_MAX_SEC,
+  MAX_VIEW_SPAN_SEC,
+  buildTimelineDateBoundaries,
   clampViewToDayBounds,
   clipRangeToView,
   dayBoundsLocal,
+  dayViewSpanSec,
   defaultTimelineView,
   pickContainingSegment,
   pickLastPlayableSegment,
@@ -15,6 +18,7 @@ import {
   isPositionInRecordingSegment,
   snapTimelineSeek,
   snapUnixToDetections,
+  zoomViewAt,
 } from './timelineMath';
 
 describe('snapUnixToDetections', () => {
@@ -75,7 +79,30 @@ describe('defaultTimelineView', () => {
   });
 });
 
-describe('clampViewToDayBounds', () => {
+describe('zoom day hard stop', () => {
+  it('caps MAX_VIEW_SPAN_SEC at one day', () => {
+    expect(MAX_VIEW_SPAN_SEC).toBe(24 * 3600);
+  });
+
+  it('stops zooming out once the view already spans the day', () => {
+    const date = '2026-08-18';
+    const { start } = dayBoundsLocal(date);
+    const upper = start + dayViewSpanSec(date, start + 12 * 3600) - 1;
+    const span = dayViewSpanSec(date, start + 12 * 3600);
+    const from = start;
+    const to = start + span - 1;
+    const next = zoomViewAt(from, to, (from + to) / 2, 2, { maxSpan: span });
+    expect(next.viewTo - next.viewFrom).toBeLessThanOrEqual(span + 1e-6);
+    expect(Math.abs(next.viewFrom - from) < 1 || Math.abs(next.viewTo - next.viewFrom - span) < 2).toBe(true);
+  });
+
+  it('builds date-boundary ticks at local midnights', () => {
+    const date = '2026-08-18';
+    const { start, end } = dayBoundsLocal(date);
+    const ticks = buildTimelineDateBoundaries(start, end - 1);
+    expect(ticks).toContain(start);
+  });
+});
   it('keeps pan/zoom inside the selected calendar day', () => {
     const date = '2026-08-18';
     const { start } = dayBoundsLocal(date);

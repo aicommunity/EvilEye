@@ -4,14 +4,19 @@ import { useI18n } from '../../i18n';
 import { EventMarkers } from './EventMarkers';
 import {
   PAN_CLICK_SLOP_PX,
+  buildTimelineDateBoundaries,
   buildTimelineTicks,
   clipRangeToView,
+  dayViewSpanSec,
   snapTimelineSeek,
   unixAtClientX,
   zoomViewAt,
 } from './timelineMath';
 
+const TIMELINE_HEIGHT_PX = 92;
+
 export function Timeline({
+  date,
   viewFrom,
   viewTo,
   position,
@@ -23,6 +28,7 @@ export function Timeline({
   onViewChange,
   onPanningChange,
 }: {
+  date: string;
   viewFrom: number | null;
   viewTo: number | null;
   position: number;
@@ -52,15 +58,20 @@ export function Timeline({
     const onWheel = (e: WheelEvent) => {
       if (viewFrom == null || viewTo == null || viewTo <= viewFrom) return;
       e.preventDefault();
+      const maxSpan = dayViewSpanSec(date);
+      const span = viewTo - viewFrom;
+      const factor = Math.exp(e.deltaY * 0.0015);
+      // Hard stop: zoom-out does nothing when already at full day.
+      if (factor > 1 && span >= maxSpan - 1) return;
       const rect = el.getBoundingClientRect();
       const anchor = unixAtClientX(e.clientX, rect, viewFrom, viewTo);
-      const factor = Math.exp(e.deltaY * 0.0015);
-      const next = zoomViewAt(viewFrom, viewTo, anchor, factor);
+      const next = zoomViewAt(viewFrom, viewTo, anchor, factor, { maxSpan });
+      if (Math.abs(next.viewFrom - viewFrom) < 1e-6 && Math.abs(next.viewTo - viewTo) < 1e-6) return;
       onViewChange(next.viewFrom, next.viewTo);
     };
     el.addEventListener('wheel', onWheel, { passive: false });
     return () => el.removeEventListener('wheel', onWheel);
-  }, [viewFrom, viewTo, onViewChange]);
+  }, [viewFrom, viewTo, onViewChange, date]);
 
   if (viewFrom == null || viewTo == null || viewTo <= viewFrom) {
     return (
@@ -68,7 +79,7 @@ export function Timeline({
         className="playback-timeline"
         style={{
           position: 'relative',
-          height: 74,
+          height: TIMELINE_HEIGHT_PX,
           margin: '0',
           background: 'var(--bg-card-hover)',
           borderRadius: 8,
@@ -83,7 +94,7 @@ export function Timeline({
   const span = viewTo - viewFrom;
   const pct = ((position - viewFrom) / span) * 100;
   const ticks = buildTimelineTicks(viewFrom, viewTo);
-  const multiDay = span > 86400;
+  const dateTicks = buildTimelineDateBoundaries(viewFrom, viewTo);
   const noData = segments.length === 0 && markers.length === 0;
 
   const seekAtClientX = (clientX: number) => {
@@ -107,7 +118,7 @@ export function Timeline({
       className={`playback-timeline playback-timeline-segments${panning ? ' is-panning' : ''}`}
       style={{
         position: 'relative',
-        height: 74,
+        height: TIMELINE_HEIGHT_PX,
         margin: '0',
         background: 'var(--bg-card-hover)',
         borderRadius: 8,
@@ -178,14 +189,26 @@ export function Timeline({
       }}
       onPointerLeave={() => setHoverSec(null)}
     >
+      <div className="timeline-date-ticks" aria-hidden>
+        {dateTicks.map((ts) => {
+          const left = ((ts - viewFrom) / span) * 100;
+          const edge =
+            left < 3 ? 'timeline-tick-label--start' : left > 97 ? 'timeline-tick-label--end' : '';
+          return (
+            <div key={`d${ts}`} className="timeline-date-tick" style={{ left: `${left}%` }}>
+              <span className={`timeline-date-tick-label ${edge}`.trim()}>
+                {formatDate(new Date(ts * 1000))}
+              </span>
+            </div>
+          );
+        })}
+      </div>
       <div className="timeline-ticks" aria-hidden>
         {ticks.map((ts) => {
           const left = ((ts - viewFrom) / span) * 100;
           const edge =
             left < 3 ? 'timeline-tick-label--start' : left > 97 ? 'timeline-tick-label--end' : '';
-          const label = multiDay
-            ? `${formatDate(new Date(ts * 1000))} ${formatTime(new Date(ts * 1000)).slice(0, 5)}`
-            : formatTime(new Date(ts * 1000)).slice(0, 5);
+          const label = formatTime(new Date(ts * 1000)).slice(0, 5);
           return (
             <div key={ts} className="timeline-tick" style={{ left: `${left}%` }}>
               <span className={`timeline-tick-label ${edge}`.trim()}>{label}</span>
