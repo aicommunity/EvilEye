@@ -116,24 +116,26 @@ export function OverlayCanvas({
               );
             })
           : null}
-        {(payload.objects ?? []).map((o, i) => {
-          const b = o.bbox;
-          if (!b || b.length !== 4) return null;
-          const [x1, y1, x2, y2] = b;
-          return (
-            <rect
-              key={`o${i}`}
-              x={x1 * 100}
-              y={y1 * 100}
-              width={(x2 - x1) * 100}
-              height={(y2 - y1) * 100}
-              fill="none"
-              stroke={o.event_active ? '#ef4444' : '#22c55e'}
-              strokeWidth={density === 'compact' || isPlayback ? '2.5' : '1.5'}
-              vectorEffect="non-scaling-stroke"
-            />
-          );
-        })}
+        {!isPlayback
+          ? (payload.objects ?? []).map((o, i) => {
+              const b = o.bbox;
+              if (!b || b.length !== 4) return null;
+              const [x1, y1, x2, y2] = b;
+              return (
+                <rect
+                  key={`o${i}`}
+                  x={x1 * 100}
+                  y={y1 * 100}
+                  width={(x2 - x1) * 100}
+                  height={(y2 - y1) * 100}
+                  fill="none"
+                  stroke={o.event_active ? '#ef4444' : '#22c55e'}
+                  strokeWidth={density === 'compact' ? '2.5' : '1.5'}
+                  vectorEffect="non-scaling-stroke"
+                />
+              );
+            })
+          : null}
       </svg>
       {!isPlayback && density === 'full' ? (
         <div className="live-overlay-label-layer">

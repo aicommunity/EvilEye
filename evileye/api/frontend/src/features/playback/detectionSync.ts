@@ -15,10 +15,14 @@ type TrackInterval = {
 };
 
 /** Overlay/fetch gate: show objects when this camera has an active track. */
+/**
+ * Archive playback does not draw detection object bboxes/labels on frames.
+ * Zones, ROI, event banners, source name and time remain via static metadata.
+ */
 export function shouldShowPlaybackObjects({
-  showMetadata,
-  atCameraDetection,
-  detectionsReady = true,
+  showMetadata: _showMetadata,
+  atCameraDetection: _atCameraDetection,
+  detectionsReady: _detectionsReady = true,
 }: {
   showMetadata: boolean;
   globalTsLength?: number;
@@ -26,8 +30,7 @@ export function shouldShowPlaybackObjects({
   atGlobalDetection?: boolean;
   detectionsReady?: boolean;
 }): boolean {
-  if (!showMetadata || !detectionsReady) return false;
-  return atCameraDetection;
+  return false;
 }
 
 /** Skip empty frames only when the next snapshot is close (active-track gap). */

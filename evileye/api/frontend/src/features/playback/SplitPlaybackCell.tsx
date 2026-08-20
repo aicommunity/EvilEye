@@ -241,10 +241,11 @@ export function SplitPlaybackCell({
   useEffect(() => {
     const video = videoRef.current;
     if (!video || !videoUrl) return;
+    if (video.seeking) return;
     seekPlaybackVideo(video, getPositionRef.current(), startTs, {
       playing,
       scrubbing,
-      thresholdSec: playing && !scrubbing ? 0.35 : undefined,
+      thresholdSec: playing && !scrubbing ? 1.0 : undefined,
       segmentEndTs: startTs + Math.max(0, video.duration || 0),
     });
     const videoWithVfc = video as HTMLVideoElement & {
@@ -278,7 +279,7 @@ export function SplitPlaybackCell({
           seekPlaybackVideo(video, getPositionRef.current(), startTs, {
             playing,
             scrubbing,
-            thresholdSec: playing && !scrubbing ? 0.35 : undefined,
+            thresholdSec: playing && !scrubbing ? 1.0 : undefined,
             segmentEndTs: startTs + Math.max(0, video?.duration || 0),
           });
         }}
@@ -296,7 +297,7 @@ export function SplitPlaybackCell({
         meta={displayMeta}
         layoutBox={layoutBox.width > 0 && layoutBox.height > 0 ? layoutBox : undefined}
         density={expanded ? 'full' : 'compact'}
-        visible={showMetadata && !seeking}
+        visible={showMetadata}
         renderMode="playback"
       />
       <PlaybackBusyHint
@@ -304,9 +305,7 @@ export function SplitPlaybackCell({
         loading={metaLoading}
         hasObjects={(displayMeta?.objects?.length ?? 0) > 0}
       />
-      <div className="camera-card-overlay-top">
-        <span className="camera-name">{label}</span>
-      </div>
+      {!showMetadata ? <div className="live-overlay-source">{label}</div> : null}
       {onExpand ? (
         <div className="camera-card-overlay-actions">
           <button

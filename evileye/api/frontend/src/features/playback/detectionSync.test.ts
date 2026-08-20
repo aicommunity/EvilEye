@@ -57,24 +57,14 @@ describe('shouldSkipToDetection', () => {
     ).toBe(false);
   });
 
-  it('shows objects at camera detections once the index is ready', () => {
+  it('keeps archive object bboxes disabled even on active camera tracks', () => {
     expect(
       shouldShowPlaybackObjects({
         showMetadata: true,
         atCameraDetection: true,
         detectionsReady: true,
       }),
-    ).toBe(true);
-  });
-
-  it('shows objects even when the global index is still empty', () => {
-    expect(
-      shouldShowPlaybackObjects({
-        showMetadata: true,
-        atCameraDetection: true,
-        detectionsReady: true,
-      }),
-    ).toBe(true);
+    ).toBe(false);
   });
 
   it('hides objects when this camera is off-track', () => {

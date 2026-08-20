@@ -7,10 +7,18 @@ export function resetPlaybackClockOwner(): void {
   playbackClockOwner = null;
 }
 
-/** First camera that is ready and not seeking owns the shared playhead. */
+/**
+ * First ready camera owns the shared playhead.
+ * Do not clear ownership on brief `seeking` — that lets another camera steal the clock
+ * and drives multi-cam A/B oscillation (frame + overlay flicker).
+ */
 export function shouldEmitPlaybackClock(ownerId: string, video: HTMLVideoElement): boolean {
-  if (video.seeking || video.readyState < 2) {
+  if (video.readyState < 2) {
     if (playbackClockOwner === ownerId) playbackClockOwner = null;
+    return false;
+  }
+  if (video.seeking) {
+    // Keep lock, but do not emit mid-seek.
     return false;
   }
   if (playbackClockOwner == null) playbackClockOwner = ownerId;
@@ -33,8 +41,10 @@ export function seekPlaybackVideo(
     opts?.segmentEndTs != null ? Math.min(Math.max(positionSec, segmentStartTs), Math.max(segmentStartTs, opts.segmentEndTs - 0.001)) : positionSec;
   const local = Math.max(0, clampedPosition - segmentStartTs);
   const paused = Boolean(opts?.scrubbing) || !opts?.playing;
+  // While playing, tolerate larger drift so follower cameras do not thrash seeks.
   const threshold = opts?.thresholdSec ?? (paused ? PAUSED_SEEK_THRESHOLD_SEC : 1.0);
 
+  if (video.seeking) return;
   if (Math.abs(video.currentTime - local) <= threshold) return;
   try {
     video.currentTime = local;

@@ -11,8 +11,6 @@ import {
 } from '../../api';
 import { useI18n } from '../../i18n';
 import {
-  hasActiveTrackAt,
-  objectsToOverlayFromIndex,
   overlayTimeLabel,
   resolvePlaybackOverlaySec,
   shouldShowPlaybackObjects,
@@ -132,10 +130,10 @@ export function usePlaybackCameraSlot(
     if (playing && !scrubbingRef.current) {
       if (v.seeking) return;
       const videoGlobal = current.startTs + v.currentTime;
-      if (Math.abs(position - videoGlobal) > 0.35) {
+      if (Math.abs(position - videoGlobal) > 1.0) {
         seekPlaybackVideo(v, position, current.startTs, {
           playing: true,
-          thresholdSec: 0.35,
+          thresholdSec: 1.0,
           segmentEndTs: current.endTs,
         });
         return;
@@ -172,21 +170,8 @@ export function usePlaybackCameraSlot(
     const onSeeked = () => {
       setVideoSeeking(false);
       publishVideoGlobal();
-      const expectedPosition = lastAppliedPositionRef.current;
-      const current = slotRef.current;
-      const v = ref.current;
-      if (expectedPosition != null && current && v && expectedPosition >= current.startTs && expectedPosition <= current.endTs) {
-        const local = Math.max(0, expectedPosition - current.startTs);
-        if (Math.abs(v.currentTime - local) > 0.15) {
-          seekPlaybackVideo(v, expectedPosition, current.startTs, {
-            playing,
-            scrubbing: scrubbingRef.current,
-            thresholdSec: 0.15,
-            segmentEndTs: current.endTs,
-          });
-          return;
-        }
-      }
+      // Avoid re-seek loops: browser landing slightly off target used to
+      // immediately seek again (0.15s), which fought the shared playhead.
       applySync();
     };
     const v = ref.current;
@@ -264,19 +249,11 @@ export function usePlaybackCameraMetadata({
       }),
     [positionSec, videoGlobalSec, playing, videoSeeking, scrubbing],
   );
-  const atCameraDetection = useMemo(
-    () => hasActiveTrackAt(detectionItems, overlaySec),
-    [detectionItems, overlaySec],
-  );
   const showObjects = shouldShowPlaybackObjects({
     showMetadata,
-    atCameraDetection,
+    atCameraDetection: false,
     detectionsReady,
   });
-  const optimisticObjects = useMemo(
-    () => objectsToOverlayFromIndex(detectionItems, overlaySec, frameSize),
-    [detectionItems, overlaySec, frameSize],
-  );
 
   const staticMeta = usePlaybackStaticMetadata({
     camera: cameraId,
@@ -325,23 +302,23 @@ export function usePlaybackCameraMetadata({
   }, [eventIntervals, overlaySec]);
 
   const meta = useMemo(() => {
-    // Strip API objects — overlay boxes come from detection-index step-hold only.
+    // Archive: never inject detection object bboxes — only zones/ROI/events/labels.
     const merged = mergePlaybackMetadata(staticMeta, dynamicMeta, { stripObjects: true });
     if (!showMetadata || !merged) return merged;
     const staticOnly = mergePlaybackMetadata(staticMeta, null, { stripObjects: true }) ?? merged;
-    const objects = showObjects ? optimisticObjects : [];
     return {
       ...staticOnly,
-      objects,
+      objects: [],
       signalization: Boolean(activeEvent),
       event_labels: activeEventLabel ? [activeEventLabel] : [],
       highlight_zone_name: highlightedZoneName,
       overlay: {
         ...staticOnly.overlay,
+        source_name: staticOnly.overlay?.source_name || cameraId,
         time_label: overlayTimeLabel(overlaySec),
       },
     };
-  }, [staticMeta, dynamicMeta, showMetadata, showObjects, optimisticObjects, overlaySec, activeEvent, activeEventLabel, highlightedZoneName]);
+  }, [staticMeta, dynamicMeta, showMetadata, overlaySec, activeEvent, activeEventLabel, highlightedZoneName, cameraId]);
 
   return { meta, loading, showObjects };
 }
@@ -447,7 +424,7 @@ export function PlaybackVideoSurface({
             mediaRef={mediaRef}
             meta={meta}
             showMetadata={showMetadata}
-            visible={!seeking}
+            visible={showMetadata}
             videoReady={videoReady}
             density={expanded ? 'full' : 'compact'}
           />
@@ -469,9 +446,7 @@ export function PlaybackVideoSurface({
       {recordingInProgress && slot?.url ? (
         <div className="playback-recording-banner">{t('playback.recordingInProgress')}</div>
       ) : null}
-      <div className="camera-card-overlay-top">
-        <span className="camera-name">{cameraLabel}</span>
-      </div>
+      {!showMetadata ? <div className="live-overlay-source">{cameraLabel}</div> : null}
       {onExpand ? (
         <div className="camera-card-overlay-actions">
           <button

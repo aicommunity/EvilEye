@@ -47,14 +47,23 @@ describe('seekPlaybackVideo', () => {
 });
 
 describe('shouldEmitPlaybackClock', () => {
-  it('lets the first ready camera own the clock, then a later one after seek reset', () => {
+  it('lets the first ready camera own the clock and keeps lock while that owner seeks', () => {
     resetPlaybackClockOwner();
     const cam1 = fakeVideo(0, { seeking: true, readyState: 1 });
     const cam4 = fakeVideo(0, { seeking: false, readyState: 4 });
     expect(shouldEmitPlaybackClock('Cam1', cam1)).toBe(false);
     expect(shouldEmitPlaybackClock('Cam4', cam4)).toBe(true);
+    // Cam4 is owner; while Cam4 seeks, do not hand the clock to Cam1.
+    expect(shouldEmitPlaybackClock('Cam4', fakeVideo(0, { seeking: true, readyState: 4 }))).toBe(false);
     expect(shouldEmitPlaybackClock('Cam1', fakeVideo(0, { seeking: false, readyState: 4 }))).toBe(false);
+    expect(shouldEmitPlaybackClock('Cam4', fakeVideo(0, { seeking: false, readyState: 4 }))).toBe(true);
     resetPlaybackClockOwner();
     expect(shouldEmitPlaybackClock('Cam1', fakeVideo(0, { seeking: false, readyState: 4 }))).toBe(true);
+  });
+
+  it('does not seek again while a seek is already in flight', () => {
+    const video = fakeVideo(10, { seeking: true });
+    seekPlaybackVideo(video, 1015, 1000, { playing: true, thresholdSec: 0.35 });
+    expect(video.currentTime).toBe(10);
   });
 });
