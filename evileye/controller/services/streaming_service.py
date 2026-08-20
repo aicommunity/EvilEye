@@ -304,19 +304,15 @@ class StreamingService:
         """Publish uncropped capture frame for split-editor preview.
 
         Broker keys: ``{pipeline}:full:{primary}`` and aliases ``{pipeline}:full:{each_id}``.
+
+        Only publishes when there is explicit ``:full:`` demand (split editor / ``?full=true``).
+        Crop/Live demand must not trigger full-frame encode — native JPEGs starve grid previews.
         """
         if image is None or primary_source_id is None:
             return False
         throttle_key = f"{self._pipeline_id}:full:{int(primary_source_id)}"
-        # Also publish when any logical sibling is being viewed.
         ids = list(source_ids or []) or [int(primary_source_id)]
-        demand = self._should_publish(throttle_key)
-        if not demand:
-            for sid in ids:
-                if self._should_publish(f"{self._pipeline_id}:{int(sid)}"):
-                    demand = True
-                    break
-        if not demand:
+        if not self._should_publish(throttle_key):
             return False
         try:
             image_for_encode = image.copy()

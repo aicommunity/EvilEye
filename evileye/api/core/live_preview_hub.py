@@ -78,6 +78,9 @@ class LivePreviewHub:
     def on_broker_publish(self, pipeline_id: str, payload: bytes, metadata: dict[str, Any]) -> None:
         if not payload or ":" not in pipeline_id:
             return
+        # Split-editor full frames are not shown on the Live grid WS.
+        if ":full:" in pipeline_id:
+            return
         loop = self._loop
         if loop is None or not loop.is_running():
             return

@@ -47,6 +47,45 @@ def test_server_process_manager_ttl_expires_to_idle():
     assert mgr.get_preview_demand_level("7:0", ttl_sec=20.0) == "idle"
 
 
+def test_full_demand_does_not_inherit_root_live_demand():
+    """Live touches root run id; that must not enable split full-frame encode."""
+    mgr = ServerProcessManager()
+    mgr.touch_preview_demand("7", level="grid")
+    mgr.touch_preview_demand("7:1", level="grid")
+    assert mgr.get_preview_demand_level("7") == "grid"
+    assert mgr.get_preview_demand_level("7:1") == "grid"
+    assert mgr.get_preview_demand_level("7:full:1") == "idle"
+
+
+def test_explicit_full_demand_is_honored():
+    mgr = ServerProcessManager()
+    mgr.touch_preview_demand("7:full:1", level="stream")
+    assert mgr.get_preview_demand_level("7:full:1") == "stream"
+
+
+def test_submit_full_frame_ignores_crop_sibling_demand():
+    service = StreamingService()
+
+    class _Mgr:
+        def is_alive(self):
+            return True
+
+        def has_preview_demand(self, pipeline_key):
+            # Crop demand only — no explicit :full: key.
+            return pipeline_key in {"7", "7:1", "7:2"}
+
+        def get_preview_demand_level(self, pipeline_key):
+            if ":full:" in pipeline_key:
+                return "idle"
+            return "grid"
+
+    service.configure(pipeline_id="7", publish_fps=5.0, server_process_manager=_Mgr())
+    import numpy as np
+
+    image = np.zeros((16, 16, 3), dtype=np.uint8)
+    assert service.submit_full_frame(image, primary_source_id=1, source_ids=[1, 2]) is False
+
+
 def test_should_publish_grid_fps_with_grid_demand():
     service = StreamingService()
     service.configure(pipeline_id="7", publish_fps=5.0, server_process_manager=_AliveServer("grid"))

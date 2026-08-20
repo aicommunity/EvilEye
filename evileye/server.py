@@ -220,6 +220,10 @@ class ServerProcessManager:
         level = self._demand_entry_level(key, ttl_sec=effective_ttl, now=now)
         if level is not None:
             return level
+        # Full-frame keys are opt-in (split editor / ?full=true). Do not inherit root
+        # Live/grid demand — that would encode native frames and starve crop previews.
+        if ":full:" in key:
+            return "idle"
         root_key = key.split(":", 1)[0]
         root_level = self._demand_entry_level(root_key, ttl_sec=effective_ttl, now=now)
         if root_level is not None:

@@ -58,6 +58,30 @@ def test_hub_fanout_subscribed_source():
     asyncio.run(_run())
 
 
+def test_hub_skips_full_frame_keys():
+    async def _run():
+        hub = get_live_preview_hub()
+        loop = asyncio.get_running_loop()
+        hub.start(loop)
+        sent_bytes: list[bytes] = []
+
+        class _FakeWs:
+            async def send_json(self, payload):
+                return None
+
+            async def send_bytes(self, payload: bytes):
+                sent_bytes.append(payload)
+
+        client = await hub.register(_FakeWs(), 7)
+        hub.set_client_sources(client, [1])
+        hub.on_broker_publish("7:full:1", b"full-jpeg", {"etag": "f1", "ts": 1.0, "full_frame": True})
+        hub.on_broker_publish("7:1", b"crop-jpeg", {"etag": "c1", "ts": 1.0})
+        await asyncio.sleep(0.1)
+        assert sent_bytes == [b"crop-jpeg"]
+
+    asyncio.run(_run())
+
+
 def test_hub_notify_mode_skips_binary(monkeypatch):
     monkeypatch.setenv("EVILEYE_WS_PREVIEW_MODE", "notify")
 
