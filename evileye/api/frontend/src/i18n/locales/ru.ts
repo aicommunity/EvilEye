@@ -125,6 +125,7 @@ const ru: Dict = {
     exportCsv: 'Экспорт CSV',
     loading: 'Загрузка…',
     searching: 'Идёт поиск…',
+    openCalendar: 'Открыть календарь',
     all: 'Все',
     actions: 'Действия',
     search: 'Поиск…',

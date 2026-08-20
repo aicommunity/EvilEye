@@ -125,6 +125,7 @@ const en: Dict = {
     exportCsv: 'Export CSV',
     loading: 'Loading…',
     searching: 'Searching…',
+    openCalendar: 'Open calendar',
     all: 'All',
     actions: 'Actions',
     search: 'Search…',

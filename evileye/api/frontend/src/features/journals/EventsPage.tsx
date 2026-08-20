@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
 import { journalsApi, type JournalGroupedRow, cacheGet, cacheSet, isAbortError } from '../../api';
-import { Button } from '../../components/ui';
+import { Button, DatePickerField } from '../../components/ui';
 import { useToast } from '../../components/ui/Toast';
 import { useI18n } from '../../i18n';
 import { useRunConfigFlags } from '../../hooks/useRunConfigFlags';
@@ -161,16 +161,11 @@ export function EventsPage() {
         <div className="journal-toolbar toolbar">
           <label className="toolbar-label">
             {t('journals.dateFrom')}
-            <input
-              type="date"
-              className="search-input"
-              value={dateFrom}
-              onChange={(e) => setDateFrom(e.target.value)}
-            />
+            <DatePickerField className="search-input" value={dateFrom} onChange={setDateFrom} />
           </label>
           <label className="toolbar-label">
             {t('journals.dateTo')}
-            <input type="date" className="search-input" value={dateTo} onChange={(e) => setDateTo(e.target.value)} />
+            <DatePickerField className="search-input" value={dateTo} onChange={setDateTo} />
           </label>
           <Button
             size="sm"

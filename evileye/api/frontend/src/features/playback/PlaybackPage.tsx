@@ -12,7 +12,7 @@ import {
   cacheSet,
   isAbortError,
 } from '../../api';
-import { Button } from '../../components/ui';
+import { Button, DatePickerField } from '../../components/ui';
 import { useToast } from '../../components/ui/Toast';
 import { useI18n } from '../../i18n';
 import { useRunConfigFlags } from '../../hooks/useRunConfigFlags';
@@ -691,13 +691,12 @@ export function PlaybackPage() {
             <p className="hint">{t('playback.hint')}</p>
           </div>
           <div className="toolbar playback-controls-toolbar">
-            <input
-              type="date"
-              className="search-input playback-date-input"
+            <DatePickerField
+              className="playback-date-input"
               value={date}
               max={today()}
-              onChange={(e) => {
-                const next = e.target.value;
+              aria-label={t('playback.title')}
+              onChange={(next) => {
                 if (!next) return;
                 dateChangeSourceRef.current = 'user';
                 const { start } = dayBoundsLocal(next);
