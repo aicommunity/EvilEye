@@ -38,6 +38,12 @@ describe('seekPlaybackVideo', () => {
     expect(video.currentTime).toBe(5);
     expect(video.pause).not.toHaveBeenCalled();
   });
+
+  it('clamps seek target to the current playable segment end', () => {
+    const video = fakeVideo(0, { duration: 10 });
+    seekPlaybackVideo(video, 1015, 1000, { playing: false, segmentEndTs: 1010 });
+    expect(video.currentTime).toBeCloseTo(9.999, 3);
+  });
 });
 
 describe('shouldEmitPlaybackClock', () => {

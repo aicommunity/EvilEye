@@ -7,33 +7,30 @@ const DEEP_LINK_TS = Number(process.env.E2E_PLAYBACK_DEEP_LINK_TS || '1787102416
 const DEEP_LINK_DATE = process.env.E2E_PLAYBACK_DEEP_LINK_DATE || '2026-08-19';
 const TODAY_DATE = process.env.E2E_PLAYBACK_TODAY || new Date().toISOString().slice(0, 10);
 
+async function loginViaApi(page: any) {
+  const res = await page.request
+    .post(BASE + '/api/v1/auth/login', {
+      data: { username: USER, password: PASS },
+    })
+    .catch(() => null);
+  if (!res) return false;
+  return res.ok();
+}
+
 async function maybeLogin(page: any) {
-  const loginVisible = await page
-    .locator('input[type="password"], input[name="password"], input[placeholder*="парол" i]')
-    .first()
-    .isVisible()
-    .catch(() => false);
+  const dialog = page.locator('.auth-modal-content').first();
+  const loginVisible = await dialog.isVisible().catch(() => false);
 
   if (!loginVisible) return;
 
-  const userInput = page
-    .locator(
-      'input[name="username"], input[name="email"], input[type="text"], input[placeholder*="логин" i], input[placeholder*="user" i]',
-    )
-    .first();
-  const passInput = page.locator('input[type="password"]').first();
+  const userInput = dialog.locator('input').nth(0);
+  const passInput = dialog.locator('input[type="password"]').first();
 
-  if (await userInput.isVisible().catch(() => false)) {
-    await userInput.fill(USER);
-  }
+  await userInput.fill(USER);
   await passInput.fill(PASS);
-  const submit = page.locator('button[type="submit"], button:has-text("Войти"), button:has-text("Login")').first();
-  if (await submit.isVisible().catch(() => false)) {
-    await submit.click();
-  } else {
-    await passInput.press('Enter').catch(() => undefined);
-  }
-  await page.waitForTimeout(1000);
+  const submit = dialog.locator('.auth-modal-footer button, button:has-text("Войти"), button:has-text("Login")').first();
+  await submit.click();
+  await page.waitForTimeout(1200);
 }
 
 async function ensurePlaybackControls(page: any) {
@@ -51,9 +48,10 @@ test.describe('playback regression smoke', () => {
     const ready = await page.request.get(BASE + '/ready').catch(() => null);
     test.skip(!ready?.ok(), 'server not running');
 
+    const apiLogged = await loginViaApi(page);
     const nav = await page.goto(`${BASE}/playback?t=${DEEP_LINK_TS}`, { waitUntil: 'domcontentloaded' }).catch(() => null);
     test.skip(!nav, 'playback page unreachable');
-    await maybeLogin(page);
+    if (!apiLogged) await maybeLogin(page);
 
     const dateInput = await ensurePlaybackControls(page);
     await expect(dateInput).toHaveValue(DEEP_LINK_DATE, { timeout: 20_000 });
@@ -72,9 +70,36 @@ test.describe('playback regression smoke', () => {
     const ready = await page.request.get(BASE + '/ready').catch(() => null);
     test.skip(!ready?.ok(), 'server not running');
 
-    const nav = await page.goto(`${BASE}/playback`, { waitUntil: 'domcontentloaded' }).catch(() => null);
+    const apiLogged = await loginViaApi(page);
+    const camsRes = await page.request.get(`${BASE}/api/v1/playback/cameras?date=${TODAY_DATE}`).catch(() => null);
+    test.skip(!camsRes?.ok(), 'playback cameras unavailable');
+    const camsJson = await camsRes!.json();
+    const camIds = (camsJson.items || []).map((c: any) => String(c.id || '')).filter(Boolean);
+    test.skip(!camIds.length, 'no playback cameras for today');
+
+    let targetCamera: string | null = null;
+    let targetTs: number | null = null;
+    for (const cam of camIds.slice(0, 5)) {
+      const segRes = await page.request
+        .get(
+          `${BASE}/api/v1/playback/segments?camera=${encodeURIComponent(cam)}&date=${TODAY_DATE}`,
+        )
+        .catch(() => null);
+      if (!segRes?.ok()) continue;
+      const segJson = await segRes.json();
+      const items = Array.isArray(segJson.items) ? segJson.items : [];
+      const pending = items.find((s: any) => s && s.playable === false);
+      if (pending) {
+        targetCamera = cam;
+        targetTs = Number(pending.start_ts || 0) + 1;
+        break;
+      }
+    }
+    test.skip(!(targetCamera && targetTs), 'no in-progress playback segment found for today');
+
+    const nav = await page.goto(`${BASE}/playback?t=${Math.floor(targetTs!)}`, { waitUntil: 'domcontentloaded' }).catch(() => null);
     test.skip(!nav, 'playback page unreachable');
-    await maybeLogin(page);
+    if (!apiLogged) await maybeLogin(page);
 
     const dateInput = await ensurePlaybackControls(page);
     await dateInput.fill(TODAY_DATE);
@@ -85,14 +110,39 @@ test.describe('playback regression smoke', () => {
       .poll(async () => page.locator('button.btn.btn-sm').filter({ hasText: /^Cam/ }).count())
       .toBeGreaterThan(0, { timeout: 20_000 });
 
-    const recordingBanner = page.locator('.playback-recording-banner, .camera-preview-empty').filter({
-      hasText: /Идёт запись|Recording in progress/i,
-    });
-    await expect(recordingBanner.first()).toBeVisible({ timeout: 20_000 });
+    await expect
+      .poll(async () =>
+        page.evaluate((cam) => {
+          const cards = Array.from(document.querySelectorAll('.playback-cell, .camera-card')) as HTMLElement[];
+          const card = cards.find((el) => (el.textContent || '').includes(cam));
+          const texts = card
+            ? Array.from(card.querySelectorAll('.playback-recording-banner, .camera-preview-empty')).map((x) =>
+                (x.textContent || '').trim(),
+              )
+            : [];
+          const videos = card ? (Array.from(card.querySelectorAll('video')) as HTMLVideoElement[]) : [];
+          const errored = videos.filter((v) => v.error != null).length;
+          const recordingHint = texts.some((t) => /Идёт запись|Recording in progress/i.test(t));
+          return { recordingHint, errored };
+        }, targetCamera),
+      )
+      .toEqual(expect.objectContaining({ recordingHint: true, errored: 0 }), { timeout: 20_000 });
 
-    const erroredVideos = await page.evaluate(() =>
-      Array.from(document.querySelectorAll('video')).filter((v) => (v as HTMLVideoElement).error != null).length,
-    );
-    expect(erroredVideos).toBe(0);
+    const finalState = await page.evaluate((cam) => {
+      const cards = Array.from(document.querySelectorAll('.playback-cell, .camera-card')) as HTMLElement[];
+      const card = cards.find((el) => (el.textContent || '').includes(cam));
+      const texts = card
+        ? Array.from(card.querySelectorAll('.playback-recording-banner, .camera-preview-empty')).map((x) =>
+            (x.textContent || '').trim(),
+          )
+        : [];
+      const videos = card ? (Array.from(card.querySelectorAll('video')) as HTMLVideoElement[]) : [];
+      return {
+        errored: videos.filter((v) => v.error != null).length,
+        recordingHint: texts.some((t) => /Идёт запись|Recording in progress/i.test(t)),
+      };
+    }, targetCamera);
+    expect(finalState.errored).toBe(0);
+    expect(finalState.recordingHint).toBe(true);
   });
 });

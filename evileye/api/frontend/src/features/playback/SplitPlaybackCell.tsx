@@ -245,6 +245,7 @@ export function SplitPlaybackCell({
       playing,
       scrubbing,
       thresholdSec: playing && !scrubbing ? 0.35 : undefined,
+      segmentEndTs: startTs + Math.max(0, video.duration || 0),
     });
     const videoWithVfc = video as HTMLVideoElement & {
       requestVideoFrameCallback?: (cb: () => void) => number;
@@ -278,6 +279,7 @@ export function SplitPlaybackCell({
             playing,
             scrubbing,
             thresholdSec: playing && !scrubbing ? 0.35 : undefined,
+            segmentEndTs: startTs + Math.max(0, video?.duration || 0),
           });
         }}
       />

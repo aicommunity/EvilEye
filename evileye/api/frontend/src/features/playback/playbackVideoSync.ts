@@ -25,10 +25,13 @@ export function seekPlaybackVideo(
     playing?: boolean;
     scrubbing?: boolean;
     thresholdSec?: number;
+    segmentEndTs?: number;
   },
 ): void {
   if (!video) return;
-  const local = Math.max(0, positionSec - segmentStartTs);
+  const clampedPosition =
+    opts?.segmentEndTs != null ? Math.min(Math.max(positionSec, segmentStartTs), Math.max(segmentStartTs, opts.segmentEndTs - 0.001)) : positionSec;
+  const local = Math.max(0, clampedPosition - segmentStartTs);
   const paused = Boolean(opts?.scrubbing) || !opts?.playing;
   const threshold = opts?.thresholdSec ?? (paused ? PAUSED_SEEK_THRESHOLD_SEC : 1.0);
 

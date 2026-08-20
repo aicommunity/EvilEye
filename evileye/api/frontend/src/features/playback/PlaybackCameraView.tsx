@@ -133,7 +133,11 @@ export function usePlaybackCameraSlot(
       if (v.seeking) return;
       const videoGlobal = current.startTs + v.currentTime;
       if (Math.abs(position - videoGlobal) > 0.35) {
-        seekPlaybackVideo(v, position, current.startTs, { playing: true, thresholdSec: 0.35 });
+        seekPlaybackVideo(v, position, current.startTs, {
+          playing: true,
+          thresholdSec: 0.35,
+          segmentEndTs: current.endTs,
+        });
         return;
       }
       if (!clockId || shouldEmitPlaybackClock(clockId, v)) {
@@ -145,6 +149,7 @@ export function usePlaybackCameraSlot(
     seekPlaybackVideo(v, position, current.startTs, {
       playing,
       scrubbing: scrubbingRef.current,
+      segmentEndTs: current.endTs,
     });
   };
 
@@ -177,6 +182,7 @@ export function usePlaybackCameraSlot(
             playing,
             scrubbing: scrubbingRef.current,
             thresholdSec: 0.15,
+            segmentEndTs: current.endTs,
           });
           return;
         }

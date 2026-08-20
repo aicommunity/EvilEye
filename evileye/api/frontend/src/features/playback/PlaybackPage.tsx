@@ -35,8 +35,14 @@ const SEGMENTS_LOAD_TIMEOUT_MS = 15_000;
 /** Half-width of the time range requested when seeking outside loaded data. */
 const SEEK_LOAD_HALF_SEC = 3600;
 
-function initialSegmentWindow(dateStr: string): { from: number; to: number } {
+function initialSegmentWindow(dateStr: string, anchorSec?: number | null): { from: number; to: number } {
   const { start, end } = dayBoundsLocal(dateStr);
+  if (anchorSec != null && Number.isFinite(anchorSec) && anchorSec >= start && anchorSec <= end) {
+    return {
+      from: Math.max(start, anchorSec - SEEK_LOAD_HALF_SEC),
+      to: Math.min(end, anchorSec + SEEK_LOAD_HALF_SEC),
+    };
+  }
   const nowSec = Date.now() / 1000;
   if (dateStr === today()) {
     const to = Math.min(end, nowSec);
@@ -440,7 +446,8 @@ export function PlaybackPage() {
       skipHardSegmentReloadRef.current = false;
       return;
     }
-    void loadSegments(selectedIds, initialSegmentWindow(date));
+    const deepLinkForDate = initialT != null && dateFromUnixSec(initialT) === date ? initialT : null;
+    void loadSegments(selectedIds, initialSegmentWindow(date, deepLinkForDate));
     // eslint-disable-next-line react-hooks/exhaustive-deps -- reload on date/selection only
   }, [date, selectedIds, camerasLoading]);
 
