@@ -169,3 +169,41 @@ def test_refresh_marks_foreign_pid_stopped(tmp_path, monkeypatch):
     assert record["alive"] is False
     assert record["state"] == "stopped"
     assert record["pid"] is None
+
+
+def test_skip_unchanged_runtime_snapshot_write(tmp_path, monkeypatch):
+    _patch_registry(tmp_path, monkeypatch)
+    writes = {"n": 0}
+    real_atomic = rr._atomic_write_text
+
+    def tracked(path, text, *, fsync=True):
+        writes["n"] += 1
+        return real_atomic(path, text, fsync=fsync)
+
+    monkeypatch.setattr(rr, "_atomic_write_text", tracked)
+    first = rr.save_runtime_snapshot(42, {"sources": [{"source_ids": [0], "is_working": True}], "config": {"a": 1}})
+    assert writes["n"] == 1
+    second = rr.update_runtime_snapshot(42, sources=[{"source_ids": [0], "is_working": True}], config={"a": 1})
+    assert writes["n"] == 1
+    assert second["updated_at"] == first["updated_at"]
+    rr.update_runtime_snapshot(42, sources=[{"source_ids": [0], "is_working": False}], config={"a": 1})
+    assert writes["n"] == 2
+
+
+def test_skip_unchanged_runtime_record_write(tmp_path, monkeypatch):
+    _patch_registry(tmp_path, monkeypatch)
+    monkeypatch.setattr(rr, "_is_pid_alive", lambda pid: False)
+    writes = {"n": 0}
+    real_atomic = rr._atomic_write_text
+
+    def tracked(path, text, *, fsync=True):
+        writes["n"] += 1
+        return real_atomic(path, text, fsync=fsync)
+
+    monkeypatch.setattr(rr, "_atomic_write_text", tracked)
+    rr.save_runtime_record({"id": 9, "pid": None, "state": "stopped", "alive": False, "name": "x"})
+    assert writes["n"] == 1
+    rr.save_runtime_record({"id": 9, "pid": None, "state": "stopped", "alive": False, "name": "x"})
+    assert writes["n"] == 1
+    rr.save_runtime_record({"id": 9, "pid": None, "state": "stopped", "alive": False, "name": "y"})
+    assert writes["n"] == 2

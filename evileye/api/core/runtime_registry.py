@@ -57,7 +57,7 @@ def _snapshot_path(rid: int) -> Path:
     return SNAPSHOT_DIR / f"{int(rid)}.json"
 
 
-def _atomic_write_text(path: Path, text: str) -> None:
+def _atomic_write_text(path: Path, text: str, *, fsync: bool = True) -> None:
     """Write ``text`` to ``path`` via temp file + ``os.replace`` (atomic on POSIX)."""
     path.parent.mkdir(parents=True, exist_ok=True)
     fd, tmp_name = tempfile.mkstemp(
@@ -69,7 +69,8 @@ def _atomic_write_text(path: Path, text: str) -> None:
         with os.fdopen(fd, "w", encoding="utf-8") as handle:
             handle.write(text)
             handle.flush()
-            os.fsync(handle.fileno())
+            if fsync:
+                os.fsync(handle.fileno())
         os.replace(tmp_name, path)
     except Exception:
         try:
@@ -77,6 +78,24 @@ def _atomic_write_text(path: Path, text: str) -> None:
         except OSError:
             pass
         raise
+
+
+_VOLATILE_KEYS = frozenset({"updated_at"})
+
+
+def _stable_payload(data: Dict) -> str:
+    """Canonical JSON for equality checks (ignore volatile timestamps)."""
+    filtered = {k: v for k, v in data.items() if k not in _VOLATILE_KEYS}
+    return json.dumps(filtered, ensure_ascii=False, sort_keys=True, separators=(",", ":"), default=str)
+
+
+def _unchanged_on_disk(path: Path, payload: str) -> bool:
+    if not path.exists():
+        return False
+    try:
+        return path.read_text(encoding="utf-8") == payload
+    except Exception:
+        return False
 
 
 def _is_pid_alive(pid: Optional[int]) -> bool:
@@ -252,10 +271,17 @@ def save_runtime_record(record: Dict) -> Dict:
     _ensure_dirs()
     normalized = refresh_runtime_record(record)
     normalized["id"] = int(normalized["id"])
+    path = _record_path(normalized["id"])
+    # Preserve previous updated_at when content is unchanged to avoid churn.
+    existing = load_runtime_record(int(normalized["id"]), refresh_state=False)
+    if existing is not None and _stable_payload(existing) == _stable_payload(normalized):
+        return existing
     normalized.setdefault("updated_at", time.time())
     payload = json.dumps(normalized, ensure_ascii=False, indent=2)
     with _registry_lock():
-        _atomic_write_text(_record_path(normalized["id"]), payload)
+        if _unchanged_on_disk(path, payload):
+            return normalized
+        _atomic_write_text(path, payload)
     _corrupt_record_logged.discard(normalized["id"])
     return normalized
 
@@ -264,10 +290,17 @@ def save_runtime_snapshot(rid: int, snapshot: Dict) -> Dict:
     _ensure_dirs()
     normalized = dict(snapshot)
     normalized["id"] = int(rid)
+    path = _snapshot_path(rid)
+    existing = load_runtime_snapshot(int(rid))
+    if existing is not None and _stable_payload(existing) == _stable_payload(normalized):
+        return existing
     normalized["updated_at"] = time.time()
-    payload = json.dumps(normalized, ensure_ascii=False, indent=2)
+    # Compact JSON + no fsync: snapshots are rewritten often by the pipeline.
+    payload = json.dumps(normalized, ensure_ascii=False, separators=(",", ":"), default=str)
     with _registry_lock():
-        _atomic_write_text(_snapshot_path(rid), payload)
+        if _unchanged_on_disk(path, payload):
+            return normalized
+        _atomic_write_text(path, payload, fsync=False)
     _corrupt_snapshot_logged.discard(int(rid))
     return normalized
 
@@ -304,6 +337,8 @@ def delete_runtime_snapshot(rid: int) -> bool:
 def update_runtime_snapshot(rid: int, **updates) -> Dict:
     existing = load_runtime_snapshot(rid) or {}
     merged = {**existing, **updates}
+    if existing and _stable_payload(existing) == _stable_payload(merged):
+        return existing
     return save_runtime_snapshot(rid, merged)
 
 
