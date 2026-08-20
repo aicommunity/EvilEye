@@ -120,15 +120,14 @@ def test_list_camera_summaries_returns_stale_while_inflight(monkeypatch: pytest.
     first = server_state.list_camera_summaries(scope="current")
     assert calls["n"] == 1
 
-    # Expire cache so the next call wants to recompute.
+    # Expire both fresh and stale so next call is a sync miss that can block.
     time.sleep(0.02)
 
-    # Start recomputation in background.
     t = threading.Thread(target=server_state.list_camera_summaries, kwargs={"scope": "current"})
     t.start()
     assert compute_started.wait(timeout=1.0)
 
-    # While inflight recompute is ongoing, we should get stale (previous) value immediately.
+    # While inflight recompute is ongoing, followers wait briefly then get prior value.
     stale = server_state.list_camera_summaries(scope="current")
     assert stale == first
     assert calls["n"] == 2  # No third expensive call started.
@@ -136,6 +135,57 @@ def test_list_camera_summaries_returns_stale_while_inflight(monkeypatch: pytest.
     release.set()
     t.join(timeout=2.0)
     assert t.is_alive() is False
+
+
+def test_list_camera_summaries_swr_refreshes_in_background(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(server_state, "_STATE_CACHE_TTL_SEC", 0.05)
+    monkeypatch.setattr(server_state, "_STATE_STALE_WHILE_REFRESH_TTL_SEC", 5.0)
+
+    calls = {"n": 0}
+    release = threading.Event()
+    started = threading.Event()
+
+    fake_run = {
+        "id": 1,
+        "state": "running",
+        "pipeline_class": "PipelineSurveillance",
+        "name": "run1",
+        "alive": True,
+        "sources": [{"source_id": 0, "source_name": "Cam1", "source_type": "ip", "address": "rtsp://x"}],
+    }
+
+    def fake_runs(scope, *, discover=False):
+        calls["n"] += 1
+        if calls["n"] >= 2:
+            started.set()
+            release.wait(timeout=2.0)
+            return [{**fake_run, "name": "run1-refreshed"}]
+        return [fake_run]
+
+    monkeypatch.setattr(server_state, "_runs_for_camera_summaries", fake_runs)
+    monkeypatch.setattr(server_state, "_camera_health", lambda *a, **k: (True, 0.1, True, False))
+
+    first = server_state.list_camera_summaries(scope="current")
+    assert first[0]["run_name"] == "run1"
+    time.sleep(0.06)  # expire fresh, keep stale
+
+    t0 = time.perf_counter()
+    second = server_state.list_camera_summaries(scope="current")
+    elapsed_ms = (time.perf_counter() - t0) * 1000
+    assert second == first  # immediate stale
+    assert elapsed_ms < 100
+    assert started.wait(timeout=1.0)
+    release.set()
+
+    deadline = time.time() + 1.0
+    third = second
+    while time.time() < deadline:
+        third = server_state.list_camera_summaries(scope="current")
+        if third and third[0].get("run_name") == "run1-refreshed":
+            break
+        time.sleep(0.01)
+    assert third[0]["run_name"] == "run1-refreshed"
+    assert calls["n"] == 2
 
 
 def test_list_camera_summaries_uses_slim_path_not_full_summary(monkeypatch: pytest.MonkeyPatch) -> None:

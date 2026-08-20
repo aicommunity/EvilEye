@@ -375,65 +375,68 @@ def _is_run_active(run: Dict[str, Any]) -> bool:
 def list_active_run_summaries() -> list[Dict[str, Any]]:
     now = time.time()
     with _active_run_summaries_cache_lock:
-        if isinstance(_active_run_summaries_cache.value, list):
-            if now < _active_run_summaries_cache.expires_at:
-                return _active_run_summaries_cache.value
-            if now < _active_run_summaries_cache.stale_expires_at:
-                return _active_run_summaries_cache.value
-
-        if _active_run_summaries_cache.computing:
+        has_value = isinstance(_active_run_summaries_cache.value, list)
+        decision = _swr_decide(_active_run_summaries_cache, now=now, has_value=has_value)
+        cached = _active_run_summaries_cache.value if has_value else None
+        if decision in {"fresh", "stale"}:
+            return list(cached or [])
+        if decision == "wait":
             if _active_run_summaries_cache.inflight_event is not None:
                 _active_run_summaries_cache.inflight_event.wait(timeout=_STATE_FOLLOWER_WAIT_SEC)
             if isinstance(_active_run_summaries_cache.value, list):
                 return _active_run_summaries_cache.value
             return []
+        spawn_bg = decision == "stale_bg"
+        stale_return = list(cached or []) if spawn_bg else None
 
-        _active_run_summaries_cache.computing = True
-        _active_run_summaries_cache.inflight_event = threading.Event()
-        _active_run_summaries_cache.inflight_event.clear()
+    def _compute() -> list[Dict[str, Any]]:
+        started_at = time.monotonic()
+        runs: list[Dict[str, Any]] = []
+        computed_ok = False
+        try:
+            stubs = _combined_runtime_stubs(discover=False)
+            active_ids = [rid for rid, stub in stubs.items() if _is_run_active(stub)]
+            for rid in active_ids:
+                record = _combined_runtime_record(rid)
+                if record is None:
+                    continue
+                runs.append(_run_summary(record))
+            runs.sort(
+                key=lambda item: (
+                    _current_run_candidate_key(item),
+                    int(item.get("id") or 0),
+                ),
+                reverse=True,
+            )
+            computed_ok = True
+            return runs
+        finally:
+            total = time.monotonic() - started_at
+            if total >= _STATE_LATENCY_WARN_SEC:
+                logger.warning("list_active_run_summaries slow: %.3fs (runs=%d)", total, len(runs))
+            with _active_run_summaries_cache_lock:
+                ev = _active_run_summaries_cache.inflight_event
+                _active_run_summaries_cache.inflight_event = None
+                _active_run_summaries_cache.computing = False
+                ts = time.time()
+                if computed_ok:
+                    _active_run_summaries_cache.value = runs
+                    _active_run_summaries_cache.expires_at = ts + _STATE_CACHE_TTL_SEC
+                    _active_run_summaries_cache.stale_expires_at = (
+                        ts + _STATE_STALE_WHILE_REFRESH_TTL_SEC
+                    )
+                else:
+                    _active_run_summaries_cache.value = None
+                    _active_run_summaries_cache.expires_at = 0.0
+                    _active_run_summaries_cache.stale_expires_at = 0.0
+                if ev is not None:
+                    ev.set()
 
-    started_at = time.monotonic()
-    runs: list[Dict[str, Any]] = []
-    computed_ok = False
-    try:
-        stubs = _combined_runtime_stubs(discover=False)
-        active_ids = [rid for rid, stub in stubs.items() if _is_run_active(stub)]
-        for rid in active_ids:
-            record = _combined_runtime_record(rid)
-            if record is None:
-                continue
-            runs.append(_run_summary(record))
-        runs.sort(
-            key=lambda item: (
-                _current_run_candidate_key(item),
-                int(item.get("id") or 0),
-            ),
-            reverse=True,
-        )
-        computed_ok = True
-        return runs
-    finally:
-        total = time.monotonic() - started_at
-        if total >= _STATE_LATENCY_WARN_SEC:
-            logger.warning("list_active_run_summaries slow: %.3fs (runs=%d)", total, len(runs))
+    if spawn_bg:
+        threading.Thread(target=_compute, daemon=True, name="active-runs-swr").start()
+        return stale_return or []
 
-        with _active_run_summaries_cache_lock:
-            ev = _active_run_summaries_cache.inflight_event
-            _active_run_summaries_cache.inflight_event = None
-            _active_run_summaries_cache.computing = False
-            ts = time.time()
-            if computed_ok:
-                _active_run_summaries_cache.value = runs
-                _active_run_summaries_cache.expires_at = ts + _STATE_CACHE_TTL_SEC
-                _active_run_summaries_cache.stale_expires_at = (
-                    ts + _STATE_STALE_WHILE_REFRESH_TTL_SEC
-                )
-            else:
-                _active_run_summaries_cache.value = None
-                _active_run_summaries_cache.expires_at = 0.0
-                _active_run_summaries_cache.stale_expires_at = 0.0
-            if ev is not None:
-                ev.set()
+    return _compute()
 
 
 def get_current_config_path() -> Optional[str]:
@@ -451,71 +454,68 @@ def get_current_config_path() -> Optional[str]:
 def get_current_run_summary() -> Optional[Dict[str, Any]]:
     now = time.time()
     with _current_run_cache_lock:
-        if _current_run_cache.value is not None:
-            cached = _current_run_cache.value
-            cached_value: Dict[str, Any] | None = (
-                None if cached is _CACHED_NONE else cached
-            )
-            if now < _current_run_cache.expires_at:
-                return cached_value
-            if now < _current_run_cache.stale_expires_at:
-                return cached_value
-
-        if _current_run_cache.computing:
+        has_value = _current_run_cache.value is not None
+        decision = _swr_decide(_current_run_cache, now=now, has_value=has_value)
+        cached = _current_run_cache.value
+        cached_value: Dict[str, Any] | None = None if cached is _CACHED_NONE else cached  # type: ignore[assignment]
+        if decision in {"fresh", "stale"}:
+            return cached_value if has_value else None
+        if decision == "wait":
             if _current_run_cache.inflight_event is not None:
                 _current_run_cache.inflight_event.wait(timeout=_STATE_FOLLOWER_WAIT_SEC)
             cached = _current_run_cache.value
             return None if cached is _CACHED_NONE else cached
+        spawn_bg = decision == "stale_bg"
+        stale_return = cached_value if spawn_bg and has_value else None
 
-        _current_run_cache.computing = True
-        _current_run_cache.inflight_event = threading.Event()
-        _current_run_cache.inflight_event.clear()
-
-    started_at = time.monotonic()
-    computed_ok = False
-    result: Optional[Dict[str, Any]] = None
-    try:
-        stubs = _combined_runtime_stubs(discover=False)
-        if not stubs:
-            result = None
-        else:
-            active = [stub for stub in stubs.values() if _is_run_active(stub)]
-            pool = active or list(stubs.values())
-            best = max(pool, key=_stub_candidate_key)
-            rid = int(best.get("id") or 0)
-            if not rid:
+    def _compute() -> Optional[Dict[str, Any]]:
+        started_at = time.monotonic()
+        computed_ok = False
+        result: Optional[Dict[str, Any]] = None
+        try:
+            stubs = _combined_runtime_stubs(discover=False)
+            if not stubs:
                 result = None
             else:
-                record = _combined_runtime_record(rid)
-                if record is None:
+                active = [stub for stub in stubs.values() if _is_run_active(stub)]
+                pool = active or list(stubs.values())
+                best = max(pool, key=_stub_candidate_key)
+                rid = int(best.get("id") or 0)
+                if not rid:
                     result = None
                 else:
-                    result = _run_summary(record)
+                    record = _combined_runtime_record(rid)
+                    if record is None:
+                        result = None
+                    else:
+                        result = _run_summary(record)
+            computed_ok = True
+            return result
+        finally:
+            total = time.monotonic() - started_at
+            if total >= _STATE_LATENCY_WARN_SEC:
+                logger.warning("get_current_run_summary slow: %.3fs", total)
+            with _current_run_cache_lock:
+                ev = _current_run_cache.inflight_event
+                _current_run_cache.inflight_event = None
+                _current_run_cache.computing = False
+                ts = time.time()
+                if computed_ok:
+                    _current_run_cache.value = result if result is not None else _CACHED_NONE
+                    _current_run_cache.expires_at = ts + _STATE_CACHE_TTL_SEC
+                    _current_run_cache.stale_expires_at = ts + _STATE_STALE_WHILE_REFRESH_TTL_SEC
+                else:
+                    _current_run_cache.value = None
+                    _current_run_cache.expires_at = 0.0
+                    _current_run_cache.stale_expires_at = 0.0
+                if ev is not None:
+                    ev.set()
 
-        computed_ok = True
-        return result
-    finally:
-        total = time.monotonic() - started_at
-        if total >= _STATE_LATENCY_WARN_SEC:
-            logger.warning("get_current_run_summary slow: %.3fs", total)
+    if spawn_bg:
+        threading.Thread(target=_compute, daemon=True, name="current-run-swr").start()
+        return stale_return
 
-        with _current_run_cache_lock:
-            ev = _current_run_cache.inflight_event
-            _current_run_cache.inflight_event = None
-            _current_run_cache.computing = False
-            ts = time.time()
-            if computed_ok:
-                _current_run_cache.value = result if result is not None else _CACHED_NONE
-                _current_run_cache.expires_at = ts + _STATE_CACHE_TTL_SEC
-                _current_run_cache.stale_expires_at = (
-                    ts + _STATE_STALE_WHILE_REFRESH_TTL_SEC
-                )
-            else:
-                _current_run_cache.value = None
-                _current_run_cache.expires_at = 0.0
-                _current_run_cache.stale_expires_at = 0.0
-            if ev is not None:
-                ev.set()
+    return _compute()
 
 
 def list_history_run_summaries(*, exclude_current: bool = True) -> list[Dict[str, Any]]:
@@ -605,6 +605,37 @@ def _runs_for_camera_summaries(scope: str, *, discover: bool = False) -> list[Di
     return runs
 
 
+def _swr_decide(
+    item: "_TtlCacheItem",
+    *,
+    now: float,
+    has_value: bool,
+) -> str:
+    """Return decision for stale-while-revalidate caches.
+
+    - ``fresh``: serve cached value
+    - ``stale_bg``: serve cached value and caller should start background refresh
+    - ``stale``: serve cached value (refresh already in flight)
+    - ``miss``: caller should compute synchronously (marks computing)
+    - ``wait``: wait briefly for inflight then serve whatever is cached
+    """
+    if has_value and now < item.expires_at:
+        return "fresh"
+    if has_value and now < item.stale_expires_at:
+        if item.computing:
+            return "stale"
+        item.computing = True
+        item.inflight_event = threading.Event()
+        item.inflight_event.clear()
+        return "stale_bg"
+    if item.computing:
+        return "wait"
+    item.computing = True
+    item.inflight_event = threading.Event()
+    item.inflight_event.clear()
+    return "miss"
+
+
 def list_camera_summaries(*, scope: str = "current") -> list[Dict[str, Any]]:
     now = time.time()
     with _camera_summaries_cache_lock:
@@ -613,82 +644,86 @@ def list_camera_summaries(*, scope: str = "current") -> list[Dict[str, Any]]:
             item = _TtlCacheItem()
             _camera_summaries_cache[scope] = item
 
-        if isinstance(item.value, list):
-            # Fresh / stale window: return cached value without starting new compute.
-            if now < item.expires_at:
-                return item.value
-            if now < item.stale_expires_at:
-                return item.value
-
-        # If another call is already computing, never start another discovery burst.
-        if item.computing:
+        has_value = isinstance(item.value, list)
+        decision = _swr_decide(item, now=now, has_value=has_value)
+        cached = item.value if has_value else None
+        if decision in {"fresh", "stale"}:
+            return list(cached or [])
+        if decision == "wait":
             if item.inflight_event is not None:
                 item.inflight_event.wait(timeout=_STATE_FOLLOWER_WAIT_SEC)
             if isinstance(item.value, list):
                 return item.value
             return []
+        # miss or stale_bg: computing flag already set
+        spawn_bg = decision == "stale_bg"
+        stale_return = list(cached or []) if spawn_bg else None
 
-        item.computing = True
-        item.inflight_event = threading.Event()
-        item.inflight_event.clear()
-
-    started_at = time.monotonic()
-    cameras: list[Dict[str, Any]] = []
-    computed_ok = False
-    try:
-        runs = _runs_for_camera_summaries(scope, discover=False)
-
-        for run in runs:
-            if not run:
-                continue
-            for source in run.get("sources", []):
-                sid = source.get("source_id")
-                preview, age, is_working, reconnecting = _camera_health(run, sid)
-                cameras.append(
-                    {
-                        "run_id": run["id"],
-                        "run_name": run.get("name"),
-                        "run_state": run.get("state"),
-                        "pipeline_class": run.get("pipeline_class"),
-                        "source_id": sid,
-                        "source_name": source.get("source_name"),
-                        "source_type": source.get("source_type"),
-                        "address": source.get("address"),
-                        "preview_available": preview,
-                        "is_working": is_working,
-                        "last_frame_age_sec": age,
-                        "reconnecting": reconnecting,
-                        "alive": bool(run.get("alive")),
-                    }
+    def _compute() -> list[Dict[str, Any]]:
+        started_at = time.monotonic()
+        cameras: list[Dict[str, Any]] = []
+        computed_ok = False
+        try:
+            runs = _runs_for_camera_summaries(scope, discover=False)
+            for run in runs:
+                if not run:
+                    continue
+                for source in run.get("sources", []):
+                    sid = source.get("source_id")
+                    preview, age, is_working, reconnecting = _camera_health(run, sid)
+                    cameras.append(
+                        {
+                            "run_id": run["id"],
+                            "run_name": run.get("name"),
+                            "run_state": run.get("state"),
+                            "pipeline_class": run.get("pipeline_class"),
+                            "source_id": sid,
+                            "source_name": source.get("source_name"),
+                            "source_type": source.get("source_type"),
+                            "address": source.get("address"),
+                            "preview_available": preview,
+                            "is_working": is_working,
+                            "last_frame_age_sec": age,
+                            "reconnecting": reconnecting,
+                            "alive": bool(run.get("alive")),
+                        }
+                    )
+            cameras.sort(key=lambda row: (row.get("run_id") or 0, str(row.get("source_name") or "")))
+            total = time.monotonic() - started_at
+            if total >= _STATE_LATENCY_WARN_SEC:
+                logger.warning(
+                    "list_camera_summaries(%s) slow: %.3fs (cameras=%d)",
+                    scope,
+                    total,
+                    len(cameras),
                 )
+            computed_ok = True
+            return cameras
+        finally:
+            with _camera_summaries_cache_lock:
+                item.computing = False
+                ev = item.inflight_event
+                item.inflight_event = None
+                if computed_ok:
+                    item.value = cameras
+                    ts = time.time()
+                    item.expires_at = ts + _STATE_CACHE_TTL_SEC
+                    item.stale_expires_at = ts + _STATE_STALE_WHILE_REFRESH_TTL_SEC
+                else:
+                    item.expires_at = 0.0
+                    item.stale_expires_at = 0.0
+                if ev is not None:
+                    ev.set()
 
-        cameras.sort(key=lambda item: (item.get("run_id") or 0, str(item.get("source_name") or "")))
-        total = time.monotonic() - started_at
-        if total >= _STATE_LATENCY_WARN_SEC:
-            logger.warning(
-                "list_camera_summaries(%s) slow: %.3fs (cameras=%d)",
-                scope,
-                total,
-                len(cameras),
-            )
-        computed_ok = True
-        return cameras
-    finally:
-        with _camera_summaries_cache_lock:
-            item.computing = False
-            ev = item.inflight_event
-            item.inflight_event = None
-            if computed_ok:
-                item.value = cameras
-                ts = time.time()
-                item.expires_at = ts + _STATE_CACHE_TTL_SEC
-                item.stale_expires_at = ts + _STATE_STALE_WHILE_REFRESH_TTL_SEC
-            else:
-                # Keep stale value (if any) but make sure callers can retry soon.
-                item.expires_at = 0.0
-                item.stale_expires_at = 0.0
-            if ev is not None:
-                ev.set()
+    if spawn_bg:
+        threading.Thread(
+            target=_compute,
+            daemon=True,
+            name=f"cameras-swr-{scope}",
+        ).start()
+        return stale_return or []
+
+    return _compute()
 
 
 _journal_stats_cache: tuple[float, dict[str, Any]] | None = None
@@ -838,124 +873,131 @@ def _journal_stats() -> dict[str, Any]:
         return {"available": False}
 
 
+def _overview_placeholder() -> Dict[str, Any]:
+    return {
+        "timestamp": time.time(),
+        "server": {"status": "ok", "log_files": [], "journal_stats": {"available": False}},
+        "current_run": None,
+        "active_runs": [],
+        "cameras": [],
+        "latest_logs": [],
+    }
+
+
 def build_overview() -> Dict[str, Any]:
     now = time.time()
     with _overview_cache_lock:
-        if isinstance(_overview_cache.value, dict):
-            if now < _overview_cache.expires_at:
-                return _overview_cache.value
-            if now < _overview_cache.stale_expires_at:
-                return _overview_cache.value
-
-        if _overview_cache.computing:
+        has_value = isinstance(_overview_cache.value, dict)
+        decision = _swr_decide(_overview_cache, now=now, has_value=has_value)
+        cached = _overview_cache.value if has_value else None
+        if decision in {"fresh", "stale"}:
+            return cached  # type: ignore[return-value]
+        if decision == "wait":
             if _overview_cache.inflight_event is not None:
                 _overview_cache.inflight_event.wait(timeout=_STATE_FOLLOWER_WAIT_SEC)
             if isinstance(_overview_cache.value, dict):
                 return _overview_cache.value
-            # Cold-cache follower: return quickly to avoid blocking threadpool.
-            return {
-                "timestamp": time.time(),
-                "server": {"status": "ok", "log_files": [], "journal_stats": {"available": False}},
-                "current_run": None,
-                "active_runs": [],
-                "cameras": [],
-                "latest_logs": [],
-            }
+            return _overview_placeholder()
+        spawn_bg = decision == "stale_bg"
+        stale_return = cached if spawn_bg else None
 
-        _overview_cache.computing = True
-        _overview_cache.inflight_event = threading.Event()
-        _overview_cache.inflight_event.clear()
-
-    started_at = time.monotonic()
-    computed_ok = False
-    result: Dict[str, Any] | None = None
-    try:
-        current_run = get_current_run_summary()
-        active_runs = list_active_run_summaries()
-        # Avoid extra nested `list_camera_summaries()` call here to prevent
-        # duplicate expensive run/camera discovery work.
-        active_cameras: list[Dict[str, Any]] = []
-        if current_run:
-            for source in current_run.get("sources", []):
-                sid = source.get("source_id")
-                preview, age, is_working, reconnecting = _camera_health(current_run, sid)
-                active_cameras.append(
+    def _compute() -> Dict[str, Any]:
+        started_at = time.monotonic()
+        computed_ok = False
+        result: Dict[str, Any] | None = None
+        try:
+            current_run = get_current_run_summary()
+            active_runs = list_active_run_summaries()
+            # Avoid extra nested `list_camera_summaries()` call here to prevent
+            # duplicate expensive run/camera discovery work.
+            active_cameras: list[Dict[str, Any]] = []
+            if current_run:
+                for source in current_run.get("sources", []):
+                    sid = source.get("source_id")
+                    preview, age, is_working, reconnecting = _camera_health(current_run, sid)
+                    active_cameras.append(
+                        {
+                            "run_id": current_run["id"],
+                            "run_name": current_run.get("name"),
+                            "run_state": current_run.get("state"),
+                            "pipeline_class": current_run.get("pipeline_class"),
+                            "source_id": sid,
+                            "source_name": source.get("source_name"),
+                            "source_type": source.get("source_type"),
+                            "address": source.get("address"),
+                            "preview_available": preview,
+                            "is_working": is_working,
+                            "last_frame_age_sec": age,
+                            "reconnecting": reconnecting,
+                            "alive": bool(current_run.get("alive")),
+                        }
+                    )
+                active_cameras.sort(
+                    key=lambda item: (item.get("run_id") or 0, str(item.get("source_name") or ""))
+                )
+            log_files = _log_files()
+            latest_logs = []
+            for path in log_files[:3]:
+                latest_logs.append(
                     {
-                        "run_id": current_run["id"],
-                        "run_name": current_run.get("name"),
-                        "run_state": current_run.get("state"),
-                        "pipeline_class": current_run.get("pipeline_class"),
-                        "source_id": sid,
-                        "source_name": source.get("source_name"),
-                        "source_type": source.get("source_type"),
-                        "address": source.get("address"),
-                        "preview_available": preview,
-                        "is_working": is_working,
-                        "last_frame_age_sec": age,
-                        "reconnecting": reconnecting,
-                        "alive": bool(current_run.get("alive")),
+                        "name": path.name,
+                        "updated_at": path.stat().st_mtime,
+                        "tail": _read_log_tail(path, lines=10),
                     }
                 )
-            active_cameras.sort(
-                key=lambda item: (item.get("run_id") or 0, str(item.get("source_name") or ""))
-            )
-        log_files = _log_files()
-        latest_logs = []
-        for path in log_files[:3]:
-            latest_logs.append(
-                {
-                    "name": path.name,
-                    "updated_at": path.stat().st_mtime,
-                    "tail": _read_log_tail(path, lines=10),
-                }
-            )
 
-        current_state = current_run.get("state") if current_run else "stopped"
-        journal_stats = _journal_stats()
+            current_state = current_run.get("state") if current_run else "stopped"
+            journal_stats = _journal_stats()
 
-        result = {
-            "timestamp": time.time(),
-            "server": {
-                "status": "ok",
-                "current_run_id": current_run.get("id") if current_run else None,
-                "current_run_state": current_state,
-                "active_runs_total": len(active_runs),
-                "cameras_total": len(active_cameras),
-                "web_previews_available": sum(
-                    1 for camera in active_cameras if camera.get("preview_available")
-                ),
-                "log_files": [path.name for path in log_files[:10]],
-                "journal_stats": journal_stats,
-            },
-            "current_run": current_run,
-            "active_runs": active_runs,
-            "cameras": active_cameras,
-            "latest_logs": latest_logs,
-        }
-        total = time.monotonic() - started_at
-        if total >= _STATE_LATENCY_WARN_SEC:
-            logger.warning("build_overview slow: %.3fs (cameras=%d)", total, len(active_cameras))
+            result = {
+                "timestamp": time.time(),
+                "server": {
+                    "status": "ok",
+                    "current_run_id": current_run.get("id") if current_run else None,
+                    "current_run_state": current_state,
+                    "active_runs_total": len(active_runs),
+                    "cameras_total": len(active_cameras),
+                    "web_previews_available": sum(
+                        1 for camera in active_cameras if camera.get("preview_available")
+                    ),
+                    "log_files": [path.name for path in log_files[:10]],
+                    "journal_stats": journal_stats,
+                },
+                "current_run": current_run,
+                "active_runs": active_runs,
+                "cameras": active_cameras,
+                "latest_logs": latest_logs,
+            }
+            total = time.monotonic() - started_at
+            if total >= _STATE_LATENCY_WARN_SEC:
+                logger.warning("build_overview slow: %.3fs (cameras=%d)", total, len(active_cameras))
 
-        computed_ok = True
-        return result
-    finally:
-        with _overview_cache_lock:
-            _overview_cache.computing = False
-            ev = _overview_cache.inflight_event
-            _overview_cache.inflight_event = None
+            computed_ok = True
+            return result
+        finally:
+            with _overview_cache_lock:
+                _overview_cache.computing = False
+                ev = _overview_cache.inflight_event
+                _overview_cache.inflight_event = None
 
-            ts = time.time()
-            if computed_ok and isinstance(result, dict):
-                _overview_cache.value = result
-                _overview_cache.expires_at = ts + _STATE_CACHE_TTL_SEC
-                _overview_cache.stale_expires_at = ts + _STATE_STALE_WHILE_REFRESH_TTL_SEC
-            else:
-                _overview_cache.value = None
-                _overview_cache.expires_at = 0.0
-                _overview_cache.stale_expires_at = 0.0
+                ts = time.time()
+                if computed_ok and isinstance(result, dict):
+                    _overview_cache.value = result
+                    _overview_cache.expires_at = ts + _STATE_CACHE_TTL_SEC
+                    _overview_cache.stale_expires_at = ts + _STATE_STALE_WHILE_REFRESH_TTL_SEC
+                else:
+                    _overview_cache.value = None
+                    _overview_cache.expires_at = 0.0
+                    _overview_cache.stale_expires_at = 0.0
 
-            if ev is not None:
-                ev.set()
+                if ev is not None:
+                    ev.set()
+
+    if spawn_bg:
+        threading.Thread(target=_compute, daemon=True, name="overview-swr").start()
+        return stale_return if isinstance(stale_return, dict) else _overview_placeholder()
+
+    return _compute()
 
 
 def build_runtime_history() -> Dict[str, Any]:
