@@ -21,13 +21,18 @@ const STATS_TTL_MS = 20_000;
 const PREVIEW_DEMAND_MS = 5_000;
 const HEALTH_TICK_MS = 1_000;
 
+/** Last non-empty Live camera list in this tab (survives section remount). */
+let lastGoodLiveCameras: StateCamera[] = [];
+
 export function LivePage() {
   const { showError } = useToast();
   const { t } = useI18n();
   const { refresh } = useAuth();
   const cachedCams = cacheGet<{ items: StateCamera[] }>(CAMERAS_CACHE_KEY);
   const cachedStats = cacheGet<{ available: boolean; events_total?: number; objects_total?: number }>(STATS_CACHE_KEY);
-  const [cameras, setCameras] = useState<StateCamera[]>(() => cachedCams?.items ?? []);
+  const [cameras, setCameras] = useState<StateCamera[]>(
+    () => cachedCams?.items?.length ? cachedCams.items : lastGoodLiveCameras,
+  );
   const [camerasLoading, setCamerasLoading] = useState(() => !(cachedCams?.items?.length));
   const [camerasPolledAtMs, setCamerasPolledAtMs] = useState(() => Date.now());
   const [healthTick, setHealthTick] = useState(0);
@@ -59,23 +64,32 @@ export function LivePage() {
       setCamerasLoading(false);
     }
     try {
-      const [camCurrent, st] = await Promise.all([
-        stateApi.cameras('current', { signal: ac.signal }),
-        journalsApi.stats(undefined, { signal: ac.signal }).catch(() => null),
-      ]);
+      const camCurrent = await stateApi.cameras('current', { signal: ac.signal });
       if (ac.signal.aborted) return;
       let camRes = camCurrent;
       if (!(camCurrent.items ?? []).length) {
         camRes = await stateApi.cameras('active', { signal: ac.signal });
         if (ac.signal.aborted) return;
       }
-      cacheSet(CAMERAS_CACHE_KEY, camRes, CAMERAS_TTL_MS);
-      setCameras(camRes.items ?? []);
-      setCamerasPolledAtMs(Date.now());
-      if (st?.available) {
-        cacheSet(STATS_CACHE_KEY, st, STATS_TTL_MS);
-        setStats({ events: st.events_total, objects: st.objects_total });
+      const items = camRes.items ?? [];
+      if (items.length) {
+        lastGoodLiveCameras = items;
+        cacheSet(CAMERAS_CACHE_KEY, camRes, CAMERAS_TTL_MS);
+        setCameras(items);
+        setCamerasPolledAtMs(Date.now());
+      } else if (!camerasRef.current.length && !lastGoodLiveCameras.length) {
+        cacheSet(CAMERAS_CACHE_KEY, camRes, CAMERAS_TTL_MS);
+        setCameras([]);
+        setCamerasPolledAtMs(Date.now());
       }
+      void journalsApi
+        .stats(undefined, { signal: ac.signal })
+        .then((st) => {
+          if (ac.signal.aborted || !st?.available) return;
+          cacheSet(STATS_CACHE_KEY, st, STATS_TTL_MS);
+          setStats({ events: st.events_total, objects: st.objects_total });
+        })
+        .catch(() => undefined);
     } catch (e) {
       if (isAbortError(e) || ac.signal.aborted) return;
       if (e instanceof ApiError && e.status === 401) {

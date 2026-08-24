@@ -263,3 +263,44 @@ def test_build_overview_ttl_cache_hit(monkeypatch: pytest.MonkeyPatch) -> None:
     assert o1["server"]["current_run_state"] == "running"
     assert o1 == o2
 
+
+def test_camera_summaries_follower_wait_does_not_block_compute(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Followers must wait outside the cache lock, otherwise compute never finishes and UI gets []."""
+    started = threading.Event()
+    release = threading.Event()
+    results: list[list] = []
+
+    fake_run = {
+        "id": 1,
+        "state": "running",
+        "pipeline_class": "PipelineSurveillance",
+        "name": "run1",
+        "alive": True,
+        "sources": [{"source_id": 0, "source_name": "Cam1", "source_type": "ip", "address": "rtsp://x"}],
+    }
+
+    def fake_runs(scope, *, discover=False):
+        started.set()
+        release.wait(timeout=2.0)
+        return [fake_run]
+
+    monkeypatch.setattr(server_state, "_runs_for_camera_summaries", fake_runs)
+    monkeypatch.setattr(server_state, "_camera_health", lambda *a, **k: (True, 0.5, True, False))
+
+    def _call():
+        results.append(server_state.list_camera_summaries(scope="current"))
+
+    first = threading.Thread(target=_call)
+    first.start()
+    assert started.wait(timeout=1.0)
+    follower = threading.Thread(target=_call)
+    follower.start()
+    time.sleep(0.05)
+    release.set()
+    first.join(timeout=2.0)
+    follower.join(timeout=2.0)
+    assert first.is_alive() is False
+    assert follower.is_alive() is False
+    assert len(results) == 2
+    assert all(row and row[0]["source_name"] == "Cam1" for row in results)
+

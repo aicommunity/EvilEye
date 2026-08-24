@@ -690,6 +690,10 @@ def _swr_decide(
 
 def list_camera_summaries(*, scope: str = "current") -> list[Dict[str, Any]]:
     now = time.time()
+    wait_event: threading.Event | None = None
+    stale_while_wait: list[Dict[str, Any]] | None = None
+    spawn_bg = False
+    stale_return: list[Dict[str, Any]] | None = None
     with _camera_summaries_cache_lock:
         item = _camera_summaries_cache.get(scope)
         if item is None:
@@ -702,14 +706,25 @@ def list_camera_summaries(*, scope: str = "current") -> list[Dict[str, Any]]:
         if decision in {"fresh", "stale"}:
             return list(cached or [])
         if decision == "wait":
-            if item.inflight_event is not None:
-                item.inflight_event.wait(timeout=_STATE_FOLLOWER_WAIT_SEC)
+            wait_event = item.inflight_event
+            stale_while_wait = list(cached) if isinstance(cached, list) else None
+        else:
+            spawn_bg = decision == "stale_bg"
+            stale_return = list(cached or []) if spawn_bg else None
+
+    if wait_event is not None:
+        # Wait outside the cache lock so the in-flight compute can publish.
+        wait_event.wait(
+            timeout=1.5 if not stale_while_wait else _STATE_FOLLOWER_WAIT_SEC
+        )
+        with _camera_summaries_cache_lock:
+            if isinstance(item.value, list) and item.value:
+                return list(item.value)
+            if stale_while_wait:
+                return stale_while_wait
             if isinstance(item.value, list):
-                return item.value
-            return []
-        # miss or stale_bg: computing flag already set
-        spawn_bg = decision == "stale_bg"
-        stale_return = list(cached or []) if spawn_bg else None
+                return list(item.value)
+        return []
 
     def _compute() -> list[Dict[str, Any]]:
         started_at = time.monotonic()
@@ -753,11 +768,13 @@ def list_camera_summaries(*, scope: str = "current") -> list[Dict[str, Any]]:
             return cameras
         finally:
             with _camera_summaries_cache_lock:
-                item.computing = False
                 ev = item.inflight_event
                 item.inflight_event = None
+                item.computing = False
                 if computed_ok:
-                    item.value = cameras
+                    # Do not clobber a non-empty cache with a transient empty miss.
+                    if cameras or not (isinstance(item.value, list) and item.value):
+                        item.value = cameras
                     ts = time.time()
                     item.expires_at = ts + _STATE_CACHE_TTL_SEC
                     item.stale_expires_at = ts + _STATE_STALE_WHILE_REFRESH_TTL_SEC
