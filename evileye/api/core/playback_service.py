@@ -15,7 +15,7 @@ from evileye.video_recorder.session_sidecar import (
     read_session_sidecar_for_segment,
 )
 
-_data_dir_cache: tuple[str, float, str] | None = None
+_data_dir_cache: tuple[tuple[Any, ...], str] | None = None
 
 
 def _config_mtime(config_path: str | None) -> float:
@@ -27,28 +27,41 @@ def _config_mtime(config_path: str | None) -> float:
         return 0.0
 
 
-def _load_current_run_config() -> tuple[str, dict[str, Any]]:
-    """Return (config_path, params) for the current run, or ("", {})."""
+def _load_json_params(config_path: str) -> dict[str, Any]:
     try:
-        from evileye.api.core.server_state import get_current_run_summary
+        payload = json.loads(Path(config_path).read_text(encoding="utf-8"))
     except Exception:
-        return "", {}
-    current = get_current_run_summary()
-    if not isinstance(current, dict):
-        return "", {}
-    snapshot = current.get("runtime_snapshot")
-    if isinstance(snapshot, dict):
-        payload = snapshot.get("config")
-        if isinstance(payload, dict):
-            return str(current.get("config_path") or ""), payload
-    config_path = current.get("config_path")
+        return {}
+    return payload if isinstance(payload, dict) else {}
+
+
+def _load_current_run_config() -> tuple[str, dict[str, Any]]:
+    """Return (config_path, params) for the current run, or ("", {}).
+
+    Reads the on-disk JSON via ``get_current_config_path`` — never hydrates a
+    full run summary / runtime snapshot.
+    """
+    try:
+        from evileye.api.core.server_state import get_current_config_path
+
+        config_path = get_current_config_path() or ""
+    except Exception:
+        config_path = ""
     if not config_path:
         return "", {}
+    return str(config_path), _load_json_params(str(config_path))
+
+
+def _load_system_params() -> tuple[str, dict[str, Any]]:
     try:
-        payload = json.loads(Path(str(config_path)).read_text(encoding="utf-8"))
+        from evileye.core.paths import configs_dir
+
+        path = configs_dir() / "system.json"
     except Exception:
-        return str(config_path), {}
-    return str(config_path), payload if isinstance(payload, dict) else {}
+        return "", {}
+    if not path.is_file():
+        return "", {}
+    return str(path), _load_json_params(str(path))
 
 
 def _configured_data_dir_from_params(params: dict[str, Any]) -> str | None:
@@ -88,19 +101,28 @@ def _configured_data_dir_from_params(params: dict[str, Any]) -> str | None:
 def _resolve_configured_data_dir() -> str | None:
     global _data_dir_cache
     config_path, params = _load_current_run_config()
-    mtime = _config_mtime(config_path or None)
-    if _data_dir_cache and _data_dir_cache[0] == config_path and _data_dir_cache[1] == mtime:
-        return _data_dir_cache[2] or None
+    sys_path, sys_params = _load_system_params()
+    cache_key = (
+        config_path,
+        _config_mtime(config_path or None),
+        sys_path,
+        _config_mtime(sys_path or None),
+    )
+    if _data_dir_cache and _data_dir_cache[0] == cache_key:
+        return _data_dir_cache[1] or None
     configured = _configured_data_dir_from_params(params) if params else None
-    _data_dir_cache = (config_path, mtime, configured or "")
+    if not configured:
+        configured = _configured_data_dir_from_params(sys_params) if sys_params else None
+    _data_dir_cache = (cache_key, configured or "")
     return configured
 
 
 def data_dir() -> Path:
     """Root for Streams/Events media.
 
-    Preference: ``EVILEYE_DATA_DIR`` → current run ``database.image_dir`` /
-    ``record.out_dir`` → local ``EvilEyeData``.
+    Preference: ``EVILEYE_DATA_DIR`` → current-run JSON ``database.image_dir`` /
+    ``record.out_dir`` → ``configs/system.json`` → local ``EvilEyeData``.
+    Empty ``image_dir`` strings are ignored.
     """
     env = os.getenv("EVILEYE_DATA_DIR")
     if env not in (None, ""):
@@ -644,19 +666,19 @@ def _config_path_for_run(run_id: int | None) -> Optional[str]:
     if run_id is None:
         return None
     try:
-        from evileye.api.core.server_state import get_run_summary
+        from evileye.api.core.runtime_registry import load_runtime_record
 
-        summary = get_run_summary(int(run_id))
-        if summary:
-            return summary.get("config_path")
+        record = load_runtime_record(int(run_id), refresh_state=False)
+        if record and record.get("config_path"):
+            return str(record.get("config_path"))
     except Exception:
         pass
     try:
-        from evileye.api.core.runtime_registry import load_runtime_record
+        from evileye.api.core.config_run_access import get_config_run_manager
 
-        record = load_runtime_record(int(run_id))
-        if record:
-            return record.get("config_path")
+        record = get_config_run_manager().describe(int(run_id))
+        if record and record.get("config_path"):
+            return str(record.get("config_path"))
     except Exception:
         pass
     return None
