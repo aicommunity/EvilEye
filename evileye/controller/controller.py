@@ -1251,7 +1251,9 @@ class Controller(ControllerProcessingMixin):
             )
 
         server_cfg = self.params.get("server", {}) if isinstance(self.params, dict) else {}
-        relay_base_url = os.environ.get("EVILEYE_WEB_API_BASE")
+        from evileye.api.core.internal_unix import internal_relay_url
+
+        relay_base_url = internal_relay_url()
         relay_token = os.environ.get("EVILEYE_INTERNAL_TOKEN") or load_web_auth_config().internal_token
         default_workers = 2 if bool(server_cfg.get("enabled")) else 1
         default_render_workers = max(3, default_workers)
@@ -1279,16 +1281,15 @@ class Controller(ControllerProcessingMixin):
         # Initialize web server in a separate process if configured
         if managed_run and server_cfg.get("enabled", False):
             self.logger.info("Skipping embedded web server for managed runtime launch")
-            if self._streaming_service is not None and relay_base_url:
-                from evileye.api.core.public_base_url import canonicalize_relay_base_url
+            if self._streaming_service is not None:
+                from evileye.api.core.internal_unix import internal_relay_url
 
-                self._streaming_service.set_frame_relay(
-                    canonicalize_relay_base_url(relay_base_url), relay_token
-                )
+                unix_relay = internal_relay_url()
+                if unix_relay:
+                    self._streaming_service.set_frame_relay(unix_relay, relay_token)
         elif server_cfg.get("enabled", False) and str(server_cfg.get("execution_mode", "process")).lower() == "process":
             host = server_cfg.get("host", "127.0.0.1")
             port = int(server_cfg.get("port", 8181))
-            from evileye.api.core.public_base_url import canonicalize_relay_base_url, resolve_public_api_base_url
             from evileye.api.core.internal_unix import internal_relay_url
             from evileye.service_manager import is_web_os_service_active, is_web_os_service_enabled
 
@@ -1304,12 +1305,7 @@ class Controller(ControllerProcessingMixin):
             except SslConfigError as exc:
                 self.logger.error("Invalid TLS configuration for embedded web server: %s", exc)
                 raise
-            unix_relay = internal_relay_url()
-            scheme = "https" if ssl_certfile else "http"
-            local_relay = canonicalize_relay_base_url(f"{scheme}://127.0.0.1:{port}/api/v1")
-            inferred_base_url = unix_relay or canonicalize_relay_base_url(
-                relay_base_url or local_relay or resolve_public_api_base_url(port=port)
-            )
+            inferred_base_url = internal_relay_url()
             # Only skip when the OS service is actually running. If it is merely
             # enabled but dead (e.g. failed bind before reboot, no linger), fall
             # through so embedded HTTPS can still bind and avoid CONNECTION_REFUSED.

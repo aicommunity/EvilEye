@@ -16,6 +16,15 @@ from evileye.core.runtime_services import get_frame_broker
 from .jpeg_encoder import JpegEncoderBackend, create_jpeg_encoder
 
 
+def _unix_relay_url(url: str | None) -> str | None:
+    if not url:
+        return None
+    parsed = urlparse(url)
+    if parsed.scheme == "unix" and (parsed.path or url.startswith("unix://")):
+        return url
+    return None
+
+
 @dataclass
 class StreamFrameJob:
     pipeline_id: str
@@ -198,32 +207,8 @@ class FrameRelayClient:
             return self._post_unix(
                 pipeline_id, jpeg_bytes, source_id=source_id, metadata=metadata
             )
-        headers: dict[str, str] = {
-            "Content-Type": "image/jpeg",
-            "Connection": "keep-alive",
-        }
-        if self.token:
-            headers["X-EvilEye-Internal-Token"] = self.token
-        if metadata:
-            headers["X-EvilEye-Frame-Metadata"] = json.dumps(
-                metadata, ensure_ascii=False, separators=(",", ":")
-            )
-        path = self._request_path(pipeline_id, source_id)
-        try:
-            conn = self._get_conn()
-            conn.request("POST", path, body=jpeg_bytes, headers=headers)
-            resp = conn.getresponse()
-            resp.read()
-            if 200 <= resp.status < 300:
-                return True
-            self._log_publish_failure(RuntimeError(f"HTTP {resp.status}"))
-            if resp.status in {400, 401, 404, 405}:
-                self._close_conn()
-            return False
-        except Exception as exc:
-            self._close_conn()
-            self._log_publish_failure(exc)
-            return False
+        # Never POST frames to HTTPS/HTTP :8181 — that stalls the public TLS port.
+        return False
 
 
 def _downscale_image(image: Any, max_edge: int) -> Any:
@@ -305,7 +290,11 @@ class StreamingService:
                     self._frame_relay.close()
                 except Exception:
                     pass
-            self._frame_relay = FrameRelayClient(relay_base_url, token=relay_token) if relay_base_url else None
+            self._frame_relay = (
+                FrameRelayClient(_unix_relay_url(relay_base_url), token=relay_token)
+                if _unix_relay_url(relay_base_url)
+                else None
+            )
             self._encoder = create_jpeg_encoder(encoder_backend, jpeg_quality)
             self._worker_count = max(1, int(num_workers or 1))
             self._preview_max_edge = max(0, int(preview_max_edge or 0))
@@ -325,9 +314,12 @@ class StreamingService:
                     self._frame_relay.close()
                 except Exception:
                     pass
-            self._frame_relay = FrameRelayClient(relay_base_url, token=relay_token) if relay_base_url else None
-            if relay_base_url:
-                self.logger.info("Frame relay enabled: %s", relay_base_url)
+            unix_url = _unix_relay_url(relay_base_url)
+            self._frame_relay = FrameRelayClient(unix_url, token=relay_token) if unix_url else None
+            if unix_url:
+                self.logger.info("Frame relay enabled: %s", unix_url)
+            elif relay_base_url:
+                self.logger.warning("Ignoring non-unix frame relay URL: %s", relay_base_url)
             self._condition.notify_all()
 
     def submit_frame(
@@ -615,14 +607,10 @@ class StreamingService:
             "signalization": bool(job.signalization),
             "full_frame": bool(job.full_frame),
         }
-        extra_meta = dict(job.metadata or {})
-        if "objects" not in extra_meta:
-            extra_meta["objects"] = list(job.objects or [])
-        if "zones" not in extra_meta:
-            extra_meta["zones"] = list(job.zones or [])
-        if "signalization" not in extra_meta:
-            extra_meta["signalization"] = bool(job.signalization)
-        metadata.update(extra_meta)
+        extra_meta = job.metadata or {}
+        for key in ("event_labels", "overlay"):
+            if key in extra_meta:
+                metadata[key] = extra_meta[key]
         broker = get_frame_broker()
         if job.full_frame and job.source_id is not None:
             aliases = list(job.alias_source_ids or [job.source_id])

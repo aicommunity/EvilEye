@@ -79,3 +79,12 @@ def test_frame_relay_jpeg_and_metadata_header():
         assert meta["signalization"] is True
     finally:
         stop_internal_unix_server()
+
+
+def test_frame_relay_https_url_is_ignored():
+    client = FrameRelayClient("https://127.0.0.1:8181/api/v1", token="tok")
+    try:
+        assert client._unix_path() is None
+        assert client._post("1", b"\xff\xd8jpg", source_id=0, metadata={"objects": []}) is False
+    finally:
+        client.close()

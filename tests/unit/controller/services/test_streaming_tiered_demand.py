@@ -127,10 +127,10 @@ def test_has_consumers_false_without_demand_or_heartbeat():
 
 
 def test_relay_without_server_process_publishes_at_fps():
-    """OS-service Web UI: no ServerProcessManager, only HTTPS frame relay."""
+    """OS-service Web UI: no ServerProcessManager, only unix frame relay."""
     service = StreamingService()
     service.configure(pipeline_id="7", publish_fps=5.0, server_process_manager=None)
-    service.set_frame_relay("https://127.0.0.1:8181/api/v1", "token")
+    service.set_frame_relay("unix:///tmp/evileye-internal.sock", "token")
     seen = {}
 
     def _throttle(key, *, fps_override=None):
