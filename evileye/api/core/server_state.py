@@ -344,6 +344,58 @@ def list_run_summaries() -> list[Dict[str, Any]]:
     return [_run_summary(record) for record in _combined_runtime_records(discover=True).values()]
 
 
+def _stub_to_list_item(stub: Dict[str, Any]) -> Dict[str, Any]:
+    """UI list row from a registry stub: no snapshot, no config parse, no log scan."""
+    config_path = stub.get("config_path")
+    started = stub.get("started_at")
+    item = dict(stub)
+    item["config_name"] = Path(str(config_path)).name if config_path else None
+    try:
+        item["uptime_seconds"] = max(0.0, time.time() - float(started)) if started else None
+    except (TypeError, ValueError):
+        item["uptime_seconds"] = None
+    return item
+
+
+def _best_current_stub() -> Optional[Dict[str, Any]]:
+    stubs = _combined_runtime_stubs(discover=False)
+    if not stubs:
+        return None
+    active = [stub for stub in stubs.values() if _is_run_active(stub)]
+    pool = active or list(stubs.values())
+    return max(pool, key=_stub_candidate_key)
+
+
+def get_current_run_list_item() -> Optional[Dict[str, Any]]:
+    stub = _best_current_stub()
+    return _stub_to_list_item(stub) if stub else None
+
+
+def list_run_list_items(*, discover: bool = True) -> list[Dict[str, Any]]:
+    stubs = _combined_runtime_stubs(discover=discover)
+    items = [_stub_to_list_item(stub) for stub in stubs.values()]
+    items.sort(
+        key=lambda item: (float(item.get("updated_at") or 0.0), int(item.get("id") or 0)),
+        reverse=True,
+    )
+    return items
+
+
+def list_history_run_list_items(*, exclude_current: bool = True) -> list[Dict[str, Any]]:
+    stubs = _combined_runtime_stubs(discover=False)
+    current = _best_current_stub()
+    current_id = int(current.get("id") or 0) if current else None
+    items: list[Dict[str, Any]] = []
+    for rid, stub in stubs.items():
+        if _is_run_active(stub):
+            continue
+        if exclude_current and current_id is not None and rid == current_id:
+            continue
+        items.append(_stub_to_list_item(stub))
+    items.sort(key=lambda item: float(item.get("updated_at") or 0.0), reverse=True)
+    return items
+
+
 def get_run_summary(rid: int) -> Optional[Dict[str, Any]]:
     runtime = _combined_runtime_record(rid)
     if runtime is None:

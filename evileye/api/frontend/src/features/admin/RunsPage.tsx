@@ -7,6 +7,7 @@ import {
   cacheGet,
   cacheSet,
   isAbortError,
+  ApiError,
 } from '../../api';
 import { Badge, Button, Modal } from '../../components/ui';
 import { useToast } from '../../components/ui/Toast';
@@ -40,9 +41,9 @@ function storageModeLabel(
   run: Pick<StateRun, 'storage_mode' | 'database_enabled'>,
   t: (key: string) => string,
 ): string {
-  const mode = run.storage_mode ?? (run.database_enabled ? 'database' : 'json');
-  if (mode === 'database') return t('setup.storageDb');
-  if (mode === 'json') return t('setup.storageJson');
+  const mode = run.storage_mode;
+  if (mode === 'database' || run.database_enabled === true) return t('setup.storageDb');
+  if (mode === 'json' || run.database_enabled === false) return t('setup.storageJson');
   return '—';
 }
 
@@ -117,6 +118,9 @@ export function RunsPage() {
         hasDataRef.current = Boolean(cur) || rest.length > 0;
       } catch (e) {
         if (isAbortError(e) || signal?.aborted) return;
+        if (e instanceof ApiError && e.status === 503 && hasDataRef.current) {
+          return;
+        }
         showError(e instanceof Error ? e.message : t('runs.loadError'));
       } finally {
         if (!signal?.aborted) setLoading(false);
@@ -267,7 +271,20 @@ export function RunsPage() {
               <td>{r.pid ?? '—'}</td>
               <td>{formatUptime(r.uptime_seconds)}</td>
               <td>
-                <Button size="sm" variant="outline" onClick={() => setDetail({ run: r, archive: opts.archive })}>
+                <Button
+                  size="sm"
+                  variant="outline"
+                  onClick={() => {
+                    void (async () => {
+                      try {
+                        const full = await stateApi.run(r.id);
+                        setDetail({ run: full, archive: opts.archive });
+                      } catch {
+                        setDetail({ run: r, archive: opts.archive });
+                      }
+                    })();
+                  }}
+                >
                   {t('runs.view')}
                 </Button>
               </td>

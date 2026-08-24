@@ -207,3 +207,44 @@ def test_skip_unchanged_runtime_record_write(tmp_path, monkeypatch):
     assert writes["n"] == 1
     rr.save_runtime_record({"id": 9, "pid": None, "state": "stopped", "alive": False, "name": "y"})
     assert writes["n"] == 2
+
+
+def test_list_run_list_items_skips_run_summary(tmp_path, monkeypatch):
+    _patch_registry(tmp_path, monkeypatch)
+    from evileye.api.core import server_state as ss
+
+    now = time.time()
+    rr.save_runtime_record(
+        {
+            "id": 3,
+            "pid": None,
+            "state": "stopped",
+            "alive": False,
+            "updated_at": now,
+            "started_at": now - 10,
+            "config_path": "/tmp/poly-cameras-gst.json",
+            "name": "archived",
+        }
+    )
+    monkeypatch.setattr(ss, "maybe_discover_process_runtimes", lambda force=False: None)
+    monkeypatch.setattr(rr, "maybe_discover_process_runtimes", lambda force=False: None)
+
+    class _Mgr:
+        def list(self):
+            return {}
+
+        def describe(self, rid):
+            raise KeyError(rid)
+
+    monkeypatch.setattr(ss, "get_config_run_manager", lambda: _Mgr())
+    monkeypatch.setattr(
+        ss,
+        "_run_summary",
+        lambda record: (_ for _ in ()).throw(AssertionError("list must not hydrate summaries")),
+    )
+    items = ss.list_run_list_items(discover=False)
+    assert len(items) == 1
+    assert items[0]["id"] == 3
+    assert items[0]["config_name"] == "poly-cameras-gst.json"
+    assert items[0]["uptime_seconds"] is not None
+    assert "runtime_snapshot" not in items[0]

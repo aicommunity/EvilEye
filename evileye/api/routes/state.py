@@ -6,14 +6,15 @@ from evileye.api.core.server_state import (
     build_runtime_history,
     list_active_run_summaries,
     get_current_run_summary,
+    get_current_run_list_item,
     get_run_summary,
     list_camera_summaries,
     get_cached_overview,
     get_cached_camera_summaries,
     probe_cached_current_run_summary,
     probe_cached_active_run_summaries,
-    list_history_run_summaries,
-    list_run_summaries,
+    list_history_run_list_items,
+    list_run_list_items,
 )
 
 router = APIRouter(prefix="/api/v1/state", tags=["state"])
@@ -53,10 +54,10 @@ async def state_runs(scope: str = Query("current", pattern="^(current|active|his
             return {"current_run": get_current_run_summary(), "items": list_active_run_summaries()}
         if scope == "history":
             return {
-                "current_run": get_current_run_summary(),
-                "items": list_history_run_summaries(exclude_current=True),
+                "current_run": get_current_run_list_item(),
+                "items": list_history_run_list_items(exclude_current=True),
             }
-        return {"current_run": get_current_run_summary(), "items": list_run_summaries()}
+        return {"current_run": get_current_run_list_item(), "items": list_run_list_items()}
 
     def _cached() -> dict | None:
         if scope == "current":
@@ -73,14 +74,15 @@ async def state_runs(scope: str = Query("current", pattern="^(current|active|his
             return {"current_run": current, "items": active_items}
 
         if scope == "history":
-            ok_c, current = probe_cached_current_run_summary()
-            if not ok_c:
-                return None
-            # Items from history aren't cached currently; return partial to avoid UI hangs.
-            return {"current_run": current, "items": []}
+            return {
+                "current_run": get_current_run_list_item(),
+                "items": list_history_run_list_items(exclude_current=True),
+            }
 
-        # scope == "all": no safe stale cache probe for full lists yet.
-        return None
+        return {
+            "current_run": get_current_run_list_item(),
+            "items": list_run_list_items(discover=False),
+        }
 
     async with _STATE_HEAVY_ROUTE_SEMAPHORE:
         return await _to_thread_with_timeout_or_cached(
