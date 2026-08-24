@@ -155,18 +155,6 @@ def _current_config_path() -> str | None:
 
 
 def _load_runtime_params_uncached() -> dict[str, Any]:
-    try:
-        from evileye.api.core.server_state import get_current_run_summary
-
-        current = get_current_run_summary()
-        if isinstance(current, dict):
-            snapshot = current.get("runtime_snapshot")
-            if isinstance(snapshot, dict):
-                payload = snapshot.get("config")
-                if isinstance(payload, dict):
-                    return payload
-    except Exception:
-        pass
     config_path = _current_config_path()
     if not config_path:
         return {}
@@ -178,17 +166,10 @@ def _load_runtime_params_uncached() -> dict[str, Any]:
 
 
 def _runtime_params_snapshot_ts() -> float:
-    try:
-        from evileye.api.core.server_state import get_current_run_summary
-
-        current = get_current_run_summary()
-        if isinstance(current, dict):
-            snapshot = current.get("runtime_snapshot")
-            if isinstance(snapshot, dict):
-                return float(snapshot.get("updated_at") or 0.0)
-    except Exception:
-        pass
-    return 0.0
+    config_path = _current_config_path()
+    if not config_path:
+        return 0.0
+    return _config_mtime(config_path)
 
 
 def _runtime_params() -> dict[str, Any]:

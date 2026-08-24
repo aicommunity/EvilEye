@@ -61,12 +61,31 @@ def smoke_client(tmp_path, monkeypatch):
         ),
         encoding="utf-8",
     )
+    (tmp_path / "credentials.json").write_text(
+        json.dumps(
+            {
+                "web_auth": {
+                    "enabled": False,
+                    "users": [{"username": "test", "password": "test", "role": "admin"}],
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
     monkeypatch.chdir(tmp_path)
     monkeypatch.setattr(
         journal_service,
-        "get_current_run_summary",
-        lambda: {"config_path": str(config_path)},
+        "get_current_config_path",
+        lambda: str(config_path),
     )
+    journal_service._runtime_params_cache = None
+    journal_service._light_config_path_cache = None
+    journal_service._image_base_dir_cache = None
+    journal_service._json_source_cache.clear()
+    journal_service._grouped_row_cache = {"events": {}, "objects": {}}
+    journal_service._filters_meta_cache = None
+    journal_service._journal_stats_page_cache.clear()
+    journal_service._path_resolve_cache.clear()
     return TestClient(create_app()), date, found_preview.name, lost_preview.name, video_rel
 
 

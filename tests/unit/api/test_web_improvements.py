@@ -216,6 +216,7 @@ def test_journal_json_mode_when_database_disabled(tmp_path, monkeypatch):
 
 
 def test_journal_disabled_message(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
     config_path = tmp_path / "poly.json"
     config_path.write_text(json.dumps({"controller": {"use_database": False}}), encoding="utf-8")
     monkeypatch.setattr(
@@ -274,7 +275,7 @@ def test_journal_database_mode_falls_back_to_json_when_unreachable(tmp_path, mon
     assert payload["reason"] == "database_fallback_json"
 
 
-def test_journal_uses_runtime_snapshot_after_db_startup_fallback(tmp_path, monkeypatch):
+def test_journal_json_mode_from_on_disk_config(tmp_path, monkeypatch):
     base_dir = tmp_path / "EvilEyeData"
     metadata = base_dir / "Detections" / "2026-06-13" / "Metadata"
     metadata.mkdir(parents=True)
@@ -295,23 +296,10 @@ def test_journal_uses_runtime_snapshot_after_db_startup_fallback(tmp_path, monke
     )
     config_path = tmp_path / "poly.json"
     config_path.write_text(
-        json.dumps({"controller": {"use_database": True, "image_dir": str(base_dir)}}),
+        json.dumps({"controller": {"use_database": False, "image_dir": str(base_dir)}}),
         encoding="utf-8",
     )
     monkeypatch.setattr(journal_service, "get_current_config_path", lambda: str(config_path))
-    monkeypatch.setattr(
-        "evileye.api.core.server_state.get_current_run_summary",
-        lambda: {
-            "config_path": str(config_path),
-            "runtime_snapshot": {
-                "updated_at": 1.0,
-                "config": {
-                    "controller": {"use_database": False, "image_dir": str(base_dir)},
-                    "pipeline": {"sources": [{"source_names": ["Cam1"], "source_ids": [0]}]},
-                },
-            },
-        },
-    )
     journal_service._runtime_params_cache = None
     journal_service._light_config_path_cache = None
     journal_service._image_base_dir_cache = None
