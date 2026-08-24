@@ -60,7 +60,16 @@ pip install -e .          # или pip install evileye
 sudo apt install libturbojpeg   # рекомендуется
 evileye setup-web
 evileye deploy
-evileye run configs/my.json --no-gui
+# откройте http://127.0.0.1:8181 → войдите как admin с bootstrap-паролем из лога
+# смените пароль → выполните Basic Setup в «Настройка»
+# после сохранения настроек runtime можно запустить так:
+evileye run configs/system.json --no-gui
+```
+
+Если нужен только Web UI/backend без запуска runtime, поднимите сервер отдельно:
+
+```bash
+evileye server --host 0.0.0.0 --port 8181 --no-reload
 ```
 
 См. также [`WEB_UI_GUIDE.md`](WEB_UI_GUIDE.md), [`CLI_DEPLOY_COMMAND.md`](CLI_DEPLOY_COMMAND.md).

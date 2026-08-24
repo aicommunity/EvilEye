@@ -32,6 +32,10 @@ DEPLOY_DIR=$PWD ./monitor/scripts/install_timer.sh
 evileye deploy
 ```
 
+Важно: запускайте `deploy`, `server` и `run` из одной и той же site-директории.
+Текущая рабочая директория становится корнем сайта для `credentials.json`,
+`configs/`, `logs/`, `monitor/` и связанных runtime-файлов.
+
 ### Справка
 ```bash
 evileye deploy --help
@@ -71,24 +75,39 @@ Deployment completed successfully!
 ## Создаваемые файлы
 
 ### `credentials.json`
-Скопированный из `evileye/credentials_proto.json` файл с шаблоном учетных данных:
+Скопированный из `evileye/credentials_proto.json` файл с шаблоном учетных данных.
+`deploy` не создаёт bootstrap admin в открытом виде: первый web admin генерируется
+при первом старте сервера, пароль печатается в лог, после входа требуется его смена.
 
 ```json
 {
   "sources" : {
     "rtsp://name": {
       "username": "user",
-      "password": "password"
+      "password": ""
     }
   },
   "database": {
+    "user_name": "postgres",
+    "password": "",
+    "database_name": "evil_eye_db",
+    "host_name": "localhost",
+    "port": 5432,
     "admin_user_name": "postgres",
-    "admin_password": "your_db_password"
+    "admin_password": ""
   },
   "web_auth": {
-    "enabled": false,
-    "username": "admin",
-    "password": "change-me"
+    "enabled": true,
+    "session_secret": "",
+    "secure_cookies": false,
+    "internal_token": "",
+    "protection": {
+      "enabled": true,
+      "trust_proxy": false,
+      "trusted_proxy_ips": ["127.0.0.1"],
+      "whitelist_ips": ["127.0.0.1", "::1"]
+    },
+    "users": []
   }
 }
 ```
@@ -118,20 +137,30 @@ Deployment completed successfully!
    evileye deploy
    ```
 
-2. **Создание конфигурации:**
+2. **Поднять Web UI / backend:**
    ```bash
-   evileye create my_config --sources 2 --source-type video_file
+   evileye server --host 0.0.0.0 --port 8181 --no-reload
    ```
 
-3. **(Опционально) включить watchdog:**
+3. **Первый вход и Basic Setup:**
+   - открыть `http://<host>:8181`
+   - войти как `admin` с bootstrap-паролем из лога первого старта
+   - сменить пароль
+   - в разделе **Настройка** сохранить Basic Setup в `configs/system.json`
+
+4. **(Опционально) включить watchdog:**
    ```bash
    DEPLOY_DIR=$PWD ./monitor/scripts/install_timer.sh
    ```
 
-4. **Запуск системы:**
+5. **Запуск runtime (после настройки):**
    ```bash
-   evileye run configs/my_config.json
+   evileye run configs/system.json --no-gui
    ```
+
+`evileye deploy` подготавливает **site directory** для Web UI. Команда `evileye create`
+остаётся полезной для ручного config-first workflow, но больше не является обязательным
+первым шагом на новой машине.
 
 ## Безопасность
 
@@ -142,12 +171,13 @@ Deployment completed successfully!
 
 ## Интеграция с другими командами
 
-Команда `deploy` является первым шагом в рабочем процессе:
+Команда `deploy` является первым шагом в web-first рабочем процессе:
 
 1. `evileye deploy` - развертывание базовых файлов
-2. `evileye create` - создание конфигураций
-3. `evileye run` - запуск системы
-4. `evileye validate` - проверка конфигураций
+2. `evileye server` / OS service - запуск Web UI/backend
+3. Basic Setup в браузере - создание и сохранение `configs/system.json`
+4. `evileye run configs/system.json --no-gui` - запуск runtime
+5. `evileye validate` - проверка конфигураций при ручном редактировании
 
 ## Обработка ошибок
 

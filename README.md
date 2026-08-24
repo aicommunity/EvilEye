@@ -73,7 +73,10 @@ Typical site bring-up:
 pip install -e .          # or: pip install evileye
 evileye setup-web         # check + install missing Python pkgs; build SPA if needed
 evileye deploy            # credentials, configs/, monitor/ + ensure service-install
-# Open http://127.0.0.1:8181 → set admin password → Basic setup in Настройка
+# Start backend manually if needed: evileye server --host 0.0.0.0 --port 8181 --no-reload
+# Open http://127.0.0.1:8181 → login as admin with bootstrap password from first-start log
+# Change password → complete Basic setup in Настройка
+# Then run runtime if needed: evileye run configs/system.json --no-gui
 # Optional: evileye service-uninstall / watchdog via monitor/scripts/install_timer.sh
 ```
 
@@ -122,7 +125,7 @@ The `deploy` command creates the following structure in your current directory (
 ```
 your_project/
 ├── credentials.json          # Database and camera credentials
-├── configs/                  # Configuration files directory (empty)
+├── configs/                  # Configuration files directory (`system.json` ensured)
 ├── logs/                     # Application logs
 ├── monitor/                  # Watchdog scripts + systemd templates (not started)
 │   ├── scripts/
@@ -132,6 +135,8 @@ your_project/
 │   └── INSTALL_HINT.txt
 └── (service-install attempted at end — Web UI OS service)
 ```
+
+`deploy` is now the start of a **web-first** bootstrap flow. For a new machine you no longer need to create a runtime config manually before opening the Web UI.
 
 See [docs/CLI_DEPLOY_COMMAND.md](docs/CLI_DEPLOY_COMMAND.md) and [docs/CLI_SERVICE_COMMANDS.md](docs/CLI_SERVICE_COMMANDS.md).
 

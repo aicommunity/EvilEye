@@ -64,12 +64,13 @@
 
 ### Для новых пользователей
 
-1. Начните с [установки и настройки базы данных](DATABASE_SETUP_GUIDE.md)
-2. Изучите [команду deploy](CLI_DEPLOY_COMMAND.md) для развертывания системы
+1. Начните с [команды setup-web](CLI_SETUP_WEB.md) и [команды deploy](CLI_DEPLOY_COMMAND.md) для web-first запуска после `pip install evileye`
+2. Затем откройте [Web UI](WEB_UI_GUIDE.md) и пройдите first-run / Basic Setup
 3. Windows: [native pip](WINDOWS_NATIVE.md) или [Docker Desktop](WINDOWS_DOCKER_DEPLOYMENT.md)
 4. При контейнерном деплое на Linux см. [Docker-деплой (GPU)](DOCKER_DEPLOYMENT.md)
-5. Ознакомьтесь с [руководством по конфигурациям](CONFIGURATION_GUIDE.md) для понимания структуры конфигурационных файлов
-6. Изучите [создание конфигураций](CREATE_SCRIPT_README.md) для создания собственных конфигураций
+5. Если нужна PostgreSQL, затем переходите к [настройке базы данных](DATABASE_SETUP_GUIDE.md)
+6. Ознакомьтесь с [руководством по конфигурациям](CONFIGURATION_GUIDE.md) для понимания структуры `credentials.json`, `system.json` и ручных режимов запуска
+7. Изучите [создание конфигураций](CREATE_SCRIPT_README.md) для config-first сценариев и собственных конфигураций
 
 ### Для разработчиков
 

@@ -13,10 +13,12 @@ React SPA (Vite) served by FastAPI from `evileye/api/static/`.
 Recommended:
 
 ```bash
-pip install -e .
+pip install evileye   # или: pip install -e . для разработки
 # optional: sudo apt install libturbojpeg
 evileye setup-web
-evileye setup-web --check
+evileye deploy
+# open http://127.0.0.1:8181 → login as admin with bootstrap password from first-start log
+# change password → complete Basic Setup in Configure
 ```
 
 See [`CLI_SETUP_WEB.md`](CLI_SETUP_WEB.md).
@@ -44,10 +46,17 @@ Config mode Basic/Advanced is stored in `localStorage` key `evileye.config.mode`
 
 ## First-run / Basic setup
 
-1. `evileye deploy` ensures OS service (`service-install`) and creates `configs/system.json`.
-2. Open Web UI → log in as `admin` → forced password change when `must_change_password` is set.
-3. **Настройка**: Basic form → data directory, JSON vs PostgreSQL, sources, analytics, recording → Save / Save and run.
-4. APIs: `GET /api/v1/setup/status`, `GET|PUT /api/v1/setup/basic`, `POST /api/v1/setup/check-data-dir`, `POST /api/v1/setup/test-database`.
+1. Choose a dedicated site directory and run `evileye deploy` there. EvilEye uses the current working directory as site root (`credentials.json`, `configs/`, `logs/`, `monitor/`).
+2. `evileye deploy` prepares site files, monitor assets, and ensures `configs/system.json` exists.
+3. Start the backend via OS service or manually:
+   ```bash
+   evileye server --host 0.0.0.0 --port 8181 --no-reload
+   ```
+4. Open Web UI → log in as `admin` with the bootstrap password from the first-start log → forced password change when `must_change_password` is set.
+5. **Настройка**: Basic form → data directory, JSON vs PostgreSQL, sources, analytics, recording → Save / Save and run.
+6. APIs: `GET /api/v1/setup/status`, `GET|PUT /api/v1/setup/basic`, `POST /api/v1/setup/check-data-dir`, `POST /api/v1/setup/test-database`.
+
+`evileye run configs/system.json --no-gui` is the next step after setup when you want to launch the runtime/pipeline itself. It is not required just to bring up the Web UI/backend.
 
 Advanced Config Studio remains available after setup (or when a data directory is already present).
 
