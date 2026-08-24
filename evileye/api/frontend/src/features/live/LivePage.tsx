@@ -116,14 +116,17 @@ export function LivePage() {
 
   const previewWs = useLiveGridPreviewWs(primaryRunId, previewSourceIds);
 
-  // Keep preview demand warm while Live is open (per camera + run-level).
+  // Keep preview demand warm while Live is open (one touch per run).
   useEffect(() => {
     if (!cameras.length) return;
 
     const tick = () => {
+      const runIds = new Set<number>();
       for (const cam of cameras) {
-        if (!Number.isFinite(cam.run_id)) continue;
-        void streamStatus(cam.run_id, cam.source_id ?? null).catch(() => undefined);
+        if (Number.isFinite(cam.run_id)) runIds.add(cam.run_id);
+      }
+      for (const rid of runIds) {
+        void streamStatus(rid, null).catch(() => undefined);
       }
     };
     tick();

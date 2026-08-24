@@ -463,7 +463,6 @@ async def stream_status_touch(request: Request, rid: int, body: StreamStatusTouc
         level=body.level,
     )
     run_info = _resolve_run(rid)
-    _require_source_id_if_multi(run_info, body.source_id)
     return _stream_status_payload(rid, run_info, source_id=body.source_id)
 
 

@@ -86,7 +86,7 @@ function MobileLiveInner() {
     const rid = cam.run_id;
     const tick = () => {
       if (typeof document !== 'undefined' && document.hidden) return;
-      void streamStatus(rid, cam.source_id ?? null).catch(() => undefined);
+      void streamStatus(rid, null).catch(() => undefined);
     };
     tick();
     const id = window.setInterval(tick, 5_000);
