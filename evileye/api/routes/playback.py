@@ -13,6 +13,18 @@ from evileye.api.core.playback_metadata_service import DEFAULT_MATCH_SEC
 
 router = APIRouter(prefix="/api/v1/playback", tags=["playback"])
 
+_PLAYBACK_ROUTE_TIMEOUT_SEC = 2.0
+
+
+async def _to_thread_with_timeout(fn, *args, err_detail: str, **kwargs):
+    try:
+        return await asyncio.wait_for(
+            asyncio.to_thread(fn, *args, **kwargs),
+            timeout=_PLAYBACK_ROUTE_TIMEOUT_SEC,
+        )
+    except asyncio.TimeoutError:
+        raise HTTPException(status_code=503, detail=err_detail)
+
 
 @router.get("/cameras")
 async def playback_cameras(
@@ -20,9 +32,13 @@ async def playback_cameras(
     run_id: Optional[int] = Query(None),
 ) -> dict:
     if run_id is not None:
-        items = await asyncio.to_thread(svc.list_logical_cameras, run_id, date)
+        items = await _to_thread_with_timeout(
+            svc.list_logical_cameras, run_id, date, err_detail="playback_cameras timeout"
+        )
     else:
-        items = await asyncio.to_thread(svc.discover_cameras, date)
+        items = await _to_thread_with_timeout(
+            svc.discover_cameras, date, err_detail="playback_cameras timeout"
+        )
     return {"items": items}
 
 
@@ -36,11 +52,15 @@ async def playback_segments(
 ) -> dict:
     if cameras:
         cam_list = [c.strip() for c in cameras.split(",") if c.strip()]
-        by_camera = await asyncio.to_thread(svc.load_segments_batch, cam_list, from_ts, to_ts, date)
+        by_camera = await _to_thread_with_timeout(
+            svc.load_segments_batch, cam_list, from_ts, to_ts, date, err_detail="playback_segments timeout"
+        )
         return {"by_camera": by_camera, "items": [item for items in by_camera.values() for item in items]}
     if not camera:
         raise HTTPException(status_code=400, detail="camera or cameras query required")
-    items = await asyncio.to_thread(svc.load_segments, camera, from_ts, to_ts, date)
+    items = await _to_thread_with_timeout(
+        svc.load_segments, camera, from_ts, to_ts, date, err_detail="playback_segments timeout"
+    )
     return {"items": items}
 
 
@@ -58,8 +78,9 @@ async def playback_timeline(
     cam_list = [c.strip() for c in cameras.split(",") if c.strip()]
     if not cam_list:
         raise HTTPException(status_code=400, detail="cameras query required")
-    return await asyncio.to_thread(
+    return await _to_thread_with_timeout(
         build_timeline,
+        err_detail="playback_timeline timeout",
         date_folder=date,
         cameras=cam_list,
         run_id=run_id,

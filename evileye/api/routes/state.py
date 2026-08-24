@@ -116,7 +116,13 @@ async def state_history() -> dict:
 
 @router.get("/runs/{rid}")
 async def state_run(rid: int) -> dict:
-    item = await asyncio.to_thread(get_run_summary, rid)
+    try:
+        item = await asyncio.wait_for(
+            asyncio.to_thread(get_run_summary, rid),
+            timeout=_STATE_ROUTE_TIMEOUT_SEC,
+        )
+    except asyncio.TimeoutError:
+        raise HTTPException(status_code=503, detail="state_run timeout")
     if item is None:
         raise HTTPException(status_code=404, detail="Run not found")
     return item
