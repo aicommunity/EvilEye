@@ -123,6 +123,8 @@ venv.bak/
 
 # Node (frontend)
 evileye/api/frontend/node_modules/
+node_modules/
+test-results/
 
 # mkdocs documentation
 /site
