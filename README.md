@@ -25,8 +25,8 @@ pip install evileye
 # Optional but recommended for fast JPEG live preview:
 # sudo apt install libturbojpeg   # Debian/Ubuntu
 
-# Ensure Web UI Python deps + packaged SPA (builds frontend if static is missing)
-evileye setup-web
+# Ensure Web UI Python deps + packaged SPA (optional; also done by install-server if missing)
+# evileye setup-web
 ```
 
 #### From Source (Developers)
@@ -71,13 +71,12 @@ Typical site bring-up:
 
 ```text
 pip install -e .          # or: pip install evileye
-evileye setup-web         # check + install missing Python pkgs; build SPA if needed
-evileye deploy            # credentials, configs/, monitor/ + ensure service-install
-# Start backend manually if needed: evileye server --host 0.0.0.0 --port 8181 --no-reload
-# Open http://127.0.0.1:8181 → login as admin with bootstrap password from first-start log
+evileye deploy            # local site files only (no prompts, no OS service)
+evileye install-server    # only if you want the Web UI server (ensures setup-web, HTTPS, OS service)
+# Open http://127.0.0.1:8181 (or https://…) → login as admin with bootstrap password from first-start log
 # Change password → complete Basic setup in Настройка
 # Then run runtime if needed: evileye run configs/system.json --no-gui
-# Optional: evileye service-uninstall / watchdog via monitor/scripts/install_timer.sh
+# Optional: evileye uninstall-server / watchdog via monitor/scripts/install_timer.sh
 ```
 
 See also [docs/CLI_SERVICE_COMMANDS.md](docs/CLI_SERVICE_COMMANDS.md) and [docs/WEB_UI_GUIDE.md](docs/WEB_UI_GUIDE.md).
@@ -125,7 +124,7 @@ The `deploy` command creates the following structure in your current directory (
 ```
 your_project/
 ├── credentials.json          # Database and camera credentials
-├── configs/                  # Configuration files directory (`system.json` ensured)
+├── configs/                  # Configuration files directory
 ├── logs/                     # Application logs
 ├── monitor/                  # Watchdog scripts + systemd templates (not started)
 │   ├── scripts/
@@ -133,10 +132,9 @@ your_project/
 │   ├── incidents/
 │   ├── reports/
 │   └── INSTALL_HINT.txt
-└── (service-install attempted at end — Web UI OS service)
 ```
 
-`deploy` is now the start of a **web-first** bootstrap flow. For a new machine you no longer need to create a runtime config manually before opening the Web UI.
+`deploy` готовит **site directory** для web-first bootstrap. OS-сервис и HTTPS: `evileye install-server`. Для новой машины не нужно вручную создавать runtime-конфиг до открытия Web UI.
 
 See [docs/CLI_DEPLOY_COMMAND.md](docs/CLI_DEPLOY_COMMAND.md) and [docs/CLI_SERVICE_COMMANDS.md](docs/CLI_SERVICE_COMMANDS.md).
 
@@ -681,7 +679,7 @@ evileye server --log-level debug
 **Веб-интерфейс (frontend):** React SPA раздаётся FastAPI из `evileye/api/static/`.
 
 ```bash
-# Preferred: check deps and build SPA only if static is missing
+# Preferred: rebuild SPA only if static is missing (also runs from install-server)
 evileye setup-web
 evileye setup-web --check          # verify only
 evileye setup-web --scope system   # pip via sudo (asks confirmation)
@@ -751,9 +749,9 @@ The `evileye deploy` command:
 - `configs/` - Directory for your configuration files
 
 **Next Steps After Deploy:**
-1. Edit `credentials.json` with your actual credentials
-2. Create configurations using `evileye create`
-3. Run the system with `evileye run`
+1. `evileye install-server` (HTTPS + Web UI OS service)
+2. Open the Web UI, change the admin password, complete Basic setup
+3. Run runtime if needed: `evileye run configs/system.json --no-gui`
 
 ### Configuration Management
 
@@ -783,10 +781,10 @@ evileye list-configs
 mkdir my_surveillance_project
 cd my_surveillance_project
 evileye deploy
+evileye install-server
 
-# 2. Edit credentials.json with your actual credentials
-#    - Add camera usernames/passwords
-#    - Configure database connection
+# 2. Open the Web UI, change admin password, complete Basic setup
+#    (or edit credentials.json / create a config manually)
 
 # 3. Create configuration for 2 IP cameras
 evileye create surveillance_config --sources 2 --source-type ip_camera

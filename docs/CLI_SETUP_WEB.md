@@ -2,6 +2,8 @@
 
 Проверяет и при необходимости доустанавливает окружение Web UI: Python-пакеты API и собранный SPA в `evileye/api/static/`.
 
+`evileye install-server` вызывает тот же путь автоматически, если окружение ещё не готово. Отдельный `setup-web` нужен для явной проверки (`--check`) или принудительной пересборки (`--force` / `--build`).
+
 ## Зачем
 
 - `pip install evileye` уже тянет FastAPI/uvicorn/`PyTurboJPEG`, но:
@@ -55,16 +57,20 @@ sudo apt install libturbojpeg
 
 ## Типовой сценарий сайта
 
+Для **локальной работы** (файлы сайта, без OS-сервиса):
+
 ```text
 pip install -e .          # или pip install evileye
-sudo apt install libturbojpeg   # рекомендуется
-evileye setup-web
 evileye deploy
-# откройте http://127.0.0.1:8181 → войдите как admin с bootstrap-паролем из лога
-# смените пароль → выполните Basic Setup в «Настройка»
-# после сохранения настроек runtime можно запустить так:
-evileye run configs/system.json --no-gui
 ```
+
+Если нужен ещё и **сервер Web UI**:
+
+```text
+evileye install-server    # при необходимости сам вызовет setup-web, затем HTTPS + сервис
+```
+
+Явная проверка/пересборка SPA без установки сервиса: `evileye setup-web` / `evileye setup-web --check`.
 
 Если нужен только Web UI/backend без запуска runtime, поднимите сервер отдельно:
 
@@ -72,4 +78,4 @@ evileye run configs/system.json --no-gui
 evileye server --host 0.0.0.0 --port 8181 --no-reload
 ```
 
-См. также [`WEB_UI_GUIDE.md`](WEB_UI_GUIDE.md), [`CLI_DEPLOY_COMMAND.md`](CLI_DEPLOY_COMMAND.md).
+См. также [`WEB_UI_GUIDE.md`](WEB_UI_GUIDE.md), [`CLI_DEPLOY_COMMAND.md`](CLI_DEPLOY_COMMAND.md), [`CLI_SERVICE_COMMANDS.md`](CLI_SERVICE_COMMANDS.md).

@@ -6,7 +6,7 @@ Wants=network-online.target
 [Service]
 Type=simple
 WorkingDirectory={{WORKING_DIRECTORY}}
-ExecStart={{EVILEYE_BIN}} server --host {{HOST}} --port {{PORT}} --no-reload{{CONFIG_ARGS}}
+ExecStart={{EVILEYE_BIN}} server --host {{HOST}} --port {{PORT}} --no-reload{{CONFIG_ARGS}}{{SSL_ARGS}}
 Restart=on-failure
 RestartSec=5
 TimeoutStopSec=30

@@ -8,7 +8,7 @@
 
 - **[Руководство по настройке базы данных](DATABASE_SETUP_GUIDE.md)** - Подробное руководство по настройке PostgreSQL базы данных для EvilEye
 - **[Команда deploy](CLI_DEPLOY_COMMAND.md)** - Использование команды `evileye deploy` для развертывания системы
-- **[Команды service-install / service-uninstall](CLI_SERVICE_COMMANDS.md)** - OS-сервис Web UI (отдельно от watchdog)
+- **[Команды install-server / uninstall-server](CLI_SERVICE_COMMANDS.md)** - OS-сервис Web UI и HTTPS (отдельно от watchdog)
 - **[Команда setup-web](CLI_SETUP_WEB.md)** - Проверка и установка зависимостей Web UI (Python + SPA)
 - **[Docker-деплой (GPU)](DOCKER_DEPLOYMENT.md)** - Контейнер на Ultralytics/PyTorch/CUDA, данные на хосте, host-CLI обёртки
 - **[Windows: native pip](WINDOWS_NATIVE.md)** - Установка и watchdog без Docker
@@ -64,7 +64,7 @@
 
 ### Для новых пользователей
 
-1. Начните с [команды setup-web](CLI_SETUP_WEB.md) и [команды deploy](CLI_DEPLOY_COMMAND.md) для web-first запуска после `pip install evileye`
+1. Начните с [команды deploy](CLI_DEPLOY_COMMAND.md) для локальных файлов сайта. Если нужен сервер Web UI — [install-server](CLI_SERVICE_COMMANDS.md) (при необходимости сам вызовет [setup-web](CLI_SETUP_WEB.md)).
 2. Затем откройте [Web UI](WEB_UI_GUIDE.md) и пройдите first-run / Basic Setup
 3. Windows: [native pip](WINDOWS_NATIVE.md) или [Docker Desktop](WINDOWS_DOCKER_DEPLOYMENT.md)
 4. При контейнерном деплое на Linux см. [Docker-деплой (GPU)](DOCKER_DEPLOYMENT.md)

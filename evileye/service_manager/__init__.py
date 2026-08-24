@@ -21,6 +21,24 @@ from evileye.service_manager.state import (
 from evileye.service_manager.unit_render import render_unit_prefer_file
 
 
+def _resolve_service_ssl(
+    root: Path,
+    *,
+    ssl_certfile: Optional[str] = None,
+    ssl_keyfile: Optional[str] = None,
+) -> tuple[Optional[str], Optional[str]]:
+    from evileye.api.core.ssl_files import resolve_ssl_files
+
+    cert, key = resolve_ssl_files(cli_cert=ssl_certfile, cli_key=ssl_keyfile, site_dir=root)
+    return (str(cert) if cert else None, str(key) if key else None)
+
+
+def _web_ui_url(host: str, port: int, *, tls: bool) -> str:
+    display_host = host if host not in {"0.0.0.0", "::", "[::]"} else "127.0.0.1"
+    scheme = "https" if tls else "http"
+    return f"{scheme}://{display_host}:{port}"
+
+
 @dataclass
 class ServiceActionResult:
     ok: bool
@@ -72,7 +90,10 @@ def install_service(
     force_system: bool = False,
     dry_run: bool = False,
     ensure_minimal_config: bool = True,
+    ssl_certfile: Optional[str] = None,
+    ssl_keyfile: Optional[str] = None,
 ) -> ServiceActionResult:
+    from evileye.api.core.ssl_files import SslConfigError
     from evileye.core.paths import site_root
 
     root = Path(site_dir).resolve() if site_dir is not None else site_root()
@@ -85,6 +106,11 @@ def install_service(
 
     config_rel = _normalize_config_rel(config, root)
     evileye_bin = resolve_evileye_bin()
+    try:
+        cert_path, key_path = _resolve_service_ssl(root, ssl_certfile=ssl_certfile, ssl_keyfile=ssl_keyfile)
+    except SslConfigError as exc:
+        return ServiceActionResult(ok=False, message=str(exc), state={})
+    tls = bool(cert_path and key_path)
 
     if sys.platform.startswith("linux"):
         backend = linux_backend.resolve_mode(force_user=force_user, force_system=force_system)
@@ -96,6 +122,8 @@ def install_service(
             port=port,
             config=config_rel,
             user_mode=user_mode,
+            ssl_certfile=cert_path,
+            ssl_keyfile=key_path,
         )
         result = linux_backend.install_linux(
             unit_text=unit_text,
@@ -115,11 +143,12 @@ def install_service(
             "host": host,
             "port": port,
             "config": config_rel,
+            "ssl_certfile": cert_path,
             "installed_at": _utc_now(),
         }
         if not dry_run:
             save_state(state, root)
-        url = f"http://{host if host != '0.0.0.0' else '127.0.0.1'}:{port}"
+        url = _web_ui_url(host, port, tls=tls)
         return ServiceActionResult(
             ok=True,
             message=(
@@ -140,6 +169,8 @@ def install_service(
                 port=port,
                 config=config_rel,
                 dry_run=dry_run,
+                ssl_certfile=cert_path,
+                ssl_keyfile=key_path,
             )
         except windows_backend.WindowsServiceError as exc:
             # Still write launcher script for manual start when possible
@@ -163,11 +194,12 @@ def install_service(
             "host": host,
             "port": port,
             "config": config_rel,
+            "ssl_certfile": cert_path,
             "installed_at": _utc_now(),
         }
         if not dry_run:
             save_state(state, root)
-        url = f"http://127.0.0.1:{port}"
+        url = _web_ui_url("127.0.0.1", port, tls=tls)
         return ServiceActionResult(
             ok=True,
             message=f"Service installed ({win.backend}). Web UI: {url}",
@@ -193,7 +225,7 @@ def ensure_service(
     force_system: bool = False,
     dry_run: bool = False,
 ) -> ServiceActionResult:
-    """Idempotent install/update used by `evileye deploy`."""
+    """Idempotent install/update used by `evileye install-server`."""
     return install_service(
         site_dir=site_dir,
         config=config,

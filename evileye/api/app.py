@@ -104,8 +104,9 @@ class SecurityHeadersMiddleware(BaseHTTPMiddleware):
             "form-action 'self'"
         )
         response.headers.setdefault("Content-Security-Policy", csp)
-        auth = getattr(request.app.state, "web_auth", None)
-        if auth is not None and getattr(auth, "secure_cookies", False):
+        from evileye.api.core.ssl_files import hsts_enabled
+
+        if hsts_enabled():
             response.headers.setdefault("Strict-Transport-Security", "max-age=31536000; includeSubDomains")
         return response
 

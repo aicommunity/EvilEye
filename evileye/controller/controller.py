@@ -1290,6 +1290,18 @@ class Controller(ControllerProcessingMixin):
             port = int(server_cfg.get("port", 8181))
             from evileye.api.core.public_base_url import canonicalize_relay_base_url, resolve_public_api_base_url
 
+            ssl_certfile = ssl_keyfile = None
+            try:
+                from evileye.api.core.ssl_files import SslConfigError, apply_ssl_env, resolve_ssl_files
+                from evileye.core.paths import site_root
+
+                cert, key = resolve_ssl_files(server_cfg=server_cfg, site_dir=site_root())
+                apply_ssl_env(cert, key)
+                ssl_certfile = str(cert) if cert else None
+                ssl_keyfile = str(key) if key else None
+            except SslConfigError as exc:
+                self.logger.error("Invalid TLS configuration for embedded web server: %s", exc)
+                raise
             inferred_base_url = canonicalize_relay_base_url(
                 relay_base_url or resolve_public_api_base_url(port=port)
             )
@@ -1310,6 +1322,8 @@ class Controller(ControllerProcessingMixin):
                         host=host,
                         port=port,
                         log_level=server_cfg.get("log_level", "info"),
+                        ssl_certfile=ssl_certfile,
+                        ssl_keyfile=ssl_keyfile,
                     )
                     time.sleep(0.2)
                     if not self._server_process_manager.is_alive():

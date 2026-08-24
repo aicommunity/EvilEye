@@ -128,7 +128,13 @@ class FrameRelayClient:
 
         request = urllib.request.Request(url, data=data, headers=headers, method="POST")
         try:
-            with urllib.request.urlopen(request, timeout=self.timeout_sec) as response:
+            from evileye.api.core.ssl_files import ssl_context_for_relay
+
+            with urllib.request.urlopen(
+                request,
+                timeout=self.timeout_sec,
+                context=ssl_context_for_relay(url),
+            ) as response:
                 return 200 <= getattr(response, "status", 200) < 300
         except (urllib.error.URLError, TimeoutError, OSError) as exc:
             self._log_publish_failure(exc)

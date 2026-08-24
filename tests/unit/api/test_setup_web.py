@@ -60,6 +60,90 @@ def test_report_ok_requires_static_and_turbojpeg_native() -> None:
     )
     assert not report.ok
     assert report.needs_libturbojpeg()
+    assert report.can_serve_ui()
+
+
+def test_ensure_web_environment_skips_when_ready(monkeypatch: pytest.MonkeyPatch) -> None:
+    ready = sw.WebSetupReport(
+        items=[
+            sw.CheckItem("python:fastapi", True),
+            sw.CheckItem("python:uvicorn", True),
+            sw.CheckItem("python:pydantic", True),
+            sw.CheckItem("python:itsdangerous", True),
+            sw.CheckItem("python:turbojpeg", True),
+            sw.CheckItem("python:turbojpeg_native", True),
+            sw.CheckItem("static", True),
+        ]
+    )
+    monkeypatch.setattr(sw, "collect_web_setup_report", lambda **kwargs: ready)
+
+    def _fail_pip(*args, **kwargs):
+        raise AssertionError("pip should not run")
+
+    monkeypatch.setattr(sw, "pip_install", _fail_pip)
+    result = sw.ensure_web_environment()
+    assert result.ready
+    assert result.already_ok
+    assert not result.attempted_fix
+
+
+def test_ensure_web_for_server_skips_when_ready(monkeypatch: pytest.MonkeyPatch) -> None:
+    from evileye.cli import _ensure_web_environment_for_server
+
+    ready = sw.WebSetupReport(
+        items=[
+            sw.CheckItem("python:fastapi", True),
+            sw.CheckItem("python:uvicorn", True),
+            sw.CheckItem("python:pydantic", True),
+            sw.CheckItem("python:itsdangerous", True),
+            sw.CheckItem("python:turbojpeg", True),
+            sw.CheckItem("python:turbojpeg_native", True),
+            sw.CheckItem("static", True),
+        ]
+    )
+    monkeypatch.setattr(sw, "collect_web_setup_report", lambda **kwargs: ready)
+    called = {"n": 0}
+
+    def _should_not_run(**kwargs):
+        called["n"] += 1
+        raise AssertionError("ensure_web_environment should not run")
+
+    monkeypatch.setattr(sw, "ensure_web_environment", _should_not_run)
+    _ensure_web_environment_for_server()
+    assert called["n"] == 0
+
+
+def test_ensure_web_for_server_exits_when_fix_fails(monkeypatch: pytest.MonkeyPatch) -> None:
+    import typer
+    from evileye.cli import _ensure_web_environment_for_server
+
+    broken = sw.WebSetupReport(
+        items=[
+            sw.CheckItem("python:fastapi", False, "missing"),
+            sw.CheckItem("python:uvicorn", True),
+            sw.CheckItem("python:pydantic", True),
+            sw.CheckItem("python:itsdangerous", True),
+            sw.CheckItem("python:turbojpeg", True),
+            sw.CheckItem("python:turbojpeg_native", True),
+            sw.CheckItem("static", True),
+        ]
+    )
+    monkeypatch.setattr(sw, "collect_web_setup_report", lambda **kwargs: broken)
+    monkeypatch.setattr(
+        sw,
+        "ensure_web_environment",
+        lambda **kwargs: sw.EnsureWebResult(
+            ready=False,
+            already_ok=False,
+            attempted_fix=True,
+            opencv_preview=False,
+            report=broken,
+            error="pip failed",
+        ),
+    )
+    with pytest.raises(typer.Exit) as exc:
+        _ensure_web_environment_for_server()
+    assert exc.value.exit_code == 1
 
 
 def test_pip_install_user_scope(monkeypatch: pytest.MonkeyPatch) -> None:

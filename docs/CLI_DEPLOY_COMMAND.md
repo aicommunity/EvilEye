@@ -2,7 +2,9 @@
 
 ## Обзор
 
-Команда `evileye deploy` предназначена для быстрого развертывания базовых конфигурационных файлов EvilEye в текущей директории.
+Команда `evileye deploy` предназначена для быстрой **локальной подготовки** каталога сайта в текущей директории. Она **не задаёт вопросов**, **не настраивает HTTPS** и **не ставит OS-сервис**.
+
+Серверная часть (HTTPS + systemd / Windows task): [`evileye install-server`](CLI_SERVICE_COMMANDS.md).
 
 ## Функциональность
 
@@ -13,9 +15,7 @@
 3. **Разворачивает `monitor/`** — скрипты watchdog и шаблоны systemd (без запуска сервисов)
 4. **Создает `logs/`**, а также `monitor/incidents/` и `monitor/reports/`
 
-Команда **не** включает systemd timers watchdog и **не** запускает pipeline runtime.
-В конце `deploy` вызывает **ensure** `evileye service-install` (Web UI OS-сервис).
-Ошибка установки сервиса не отменяет deploy — сайт всё равно создаётся.
+Команда **не** включает systemd timers watchdog, **не** запускает pipeline runtime и **не** устанавливает Web UI как OS-сервис.
 
 Для активации watchdog отдельно:
 
@@ -23,7 +23,7 @@
 DEPLOY_DIR=$PWD ./monitor/scripts/install_timer.sh
 ```
 
-См. также [`CLI_SERVICE_COMMANDS.md`](CLI_SERVICE_COMMANDS.md) (`service-install` / `service-uninstall`).
+См. также [`CLI_SERVICE_COMMANDS.md`](CLI_SERVICE_COMMANDS.md) (`install-server` / `uninstall-server`).
 
 ## Использование
 
@@ -32,7 +32,7 @@ DEPLOY_DIR=$PWD ./monitor/scripts/install_timer.sh
 evileye deploy
 ```
 
-Важно: запускайте `deploy`, `server` и `run` из одной и той же site-директории.
+Важно: запускайте `deploy`, `install-server`, `server` и `run` из одной и той же site-директории.
 Текущая рабочая директория становится корнем сайта для `credentials.json`,
 `configs/`, `logs/`, `monitor/` и связанных runtime-файлов.
 
@@ -49,8 +49,10 @@ evileye deploy --help
 mkdir my_evileye_project
 cd my_evileye_project
 
-# Развертываем файлы
+# Развертываем файлы сайта (локальная подготовка, без вопросов)
 evileye deploy
+# Если нужен Web UI как сервис (HTTPS + OS-сервис) — отдельно:
+evileye install-server
 ```
 
 ### Результат выполнения
@@ -61,6 +63,7 @@ Created configs folder
 Deployed monitor assets (... scripts, ... systemd templates) → .../monitor
 Note: watchdog timers were not enabled; run install_timer.sh when ready
 Deployment completed successfully!
+Next: evileye install-server
 ```
 
 ### Повторный запуск (файлы уже существуют)
@@ -132,18 +135,19 @@ Deployment completed successfully!
 
 ## Рабочий процесс
 
-1. **Развертывание:**
+1. **Развертывание файлов сайта:**
    ```bash
    evileye deploy
    ```
 
-2. **Поднять Web UI / backend:**
+2. **HTTPS + OS-сервис Web UI:**
    ```bash
-   evileye server --host 0.0.0.0 --port 8181 --no-reload
+   evileye install-server
    ```
+   Либо вручную: `evileye server --host 0.0.0.0 --port 8181 --no-reload`
 
 3. **Первый вход и Basic Setup:**
-   - открыть `http://<host>:8181`
+   - открыть `http://<host>:8181` или `https://…` (если включили TLS)
    - войти как `admin` с bootstrap-паролем из лога первого старта
    - сменить пароль
    - в разделе **Настройка** сохранить Basic Setup в `configs/system.json`
@@ -173,8 +177,8 @@ Deployment completed successfully!
 
 Команда `deploy` является первым шагом в web-first рабочем процессе:
 
-1. `evileye deploy` - развертывание базовых файлов
-2. `evileye server` / OS service - запуск Web UI/backend
+1. `evileye deploy` - развертывание базовых файлов сайта (без вопросов)
+2. `evileye install-server` - HTTPS (опционально) и OS-сервис Web UI
 3. Basic Setup в браузере - создание и сохранение `configs/system.json`
 4. `evileye run configs/system.json --no-gui` - запуск runtime
 5. `evileye validate` - проверка конфигураций при ручном редактировании
@@ -243,12 +247,10 @@ evileye create advanced_config --sources 2 --detector-model /path/to/model.pt --
 
 ## Связанные команды
 
-Перед первым запуском Web UI на сайте:
+Перед первым запуском Web UI на сайте достаточно `evileye deploy` (локальные файлы).
+Если нужен ещё и сервер (OS-сервис + HTTPS), вызовите `evileye install-server` —
+он сам проверит окружение Web UI и при необходимости выполнит тот же путь, что `evileye setup-web`.
 
-```bash
-evileye setup-web
-```
-
-Подробности: [`CLI_SETUP_WEB.md`](CLI_SETUP_WEB.md).
+Подробности: [`CLI_SERVICE_COMMANDS.md`](CLI_SERVICE_COMMANDS.md), [`CLI_SETUP_WEB.md`](CLI_SETUP_WEB.md).
 
 

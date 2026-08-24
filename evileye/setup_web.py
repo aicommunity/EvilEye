@@ -82,6 +82,29 @@ class WebSetupReport:
     def needs_node(self) -> bool:
         return any(item.name in {"node", "npm"} and not item.ok for item in self.items)
 
+    def can_serve_ui(self) -> bool:
+        """API + SPA can start. Missing native TurboJPEG is allowed (OpenCV preview)."""
+        required = {
+            "python:fastapi",
+            "python:uvicorn",
+            "python:pydantic",
+            "python:itsdangerous",
+            "python:turbojpeg",
+            "static",
+        }
+        by_name = {item.name: item for item in self.items}
+        return all(by_name.get(name) is not None and by_name[name].ok for name in required)
+
+
+@dataclass
+class EnsureWebResult:
+    ready: bool
+    already_ok: bool
+    attempted_fix: bool
+    opencv_preview: bool
+    report: WebSetupReport
+    error: str = ""
+
 
 def _package_root() -> Path:
     return Path(__file__).resolve().parent
@@ -236,3 +259,71 @@ def build_frontend(
         if result.returncode != 0:
             stderr = (result.stderr or result.stdout or "").strip()
             raise RuntimeError(f"{' '.join(args)} failed ({result.returncode}): {stderr}")
+
+
+def ensure_web_environment(
+    *,
+    scope: str = "user",
+    force: bool = False,
+    build: Optional[bool] = None,
+    log: Optional[Callable[[str], None]] = None,
+) -> EnsureWebResult:
+    """Install missing Python web deps and/or build SPA if the environment is incomplete.
+
+    Native TurboJPEG is optional: preview can fall back to OpenCV.
+    """
+    scope_norm = (scope or "user").strip().lower()
+    if scope_norm not in {"user", "system"}:
+        raise ValueError("scope must be 'user' or 'system'")
+
+    report = collect_web_setup_report()
+    if report.can_serve_ui() and not force and build is not True:
+        return EnsureWebResult(
+            ready=True,
+            already_ok=True,
+            attempted_fix=False,
+            opencv_preview=report.needs_libturbojpeg(),
+            report=report,
+        )
+
+    attempted = False
+    try:
+        missing = report.missing_pip_packages()
+        if missing:
+            attempted = True
+            if log:
+                log(f"Installing Python packages ({scope_norm}): {', '.join(missing)}")
+            pip_install(missing, scope=scope_norm)
+
+        report_after_pip = collect_web_setup_report()
+        should_build = force or build is True or report.needs_frontend_build() or report_after_pip.needs_frontend_build()
+        if build is False:
+            should_build = False
+        if should_build:
+            if report_after_pip.needs_node() or report.needs_node():
+                raise RuntimeError(
+                    "Node.js/npm required to build the SPA. Install with: sudo apt install nodejs npm"
+                )
+            attempted = True
+            if log:
+                log("Building frontend (npm install && npm run build)…")
+            build_frontend()
+    except Exception as exc:
+        final = collect_web_setup_report()
+        return EnsureWebResult(
+            ready=False,
+            already_ok=False,
+            attempted_fix=attempted,
+            opencv_preview=final.needs_libturbojpeg(),
+            report=final,
+            error=str(exc),
+        )
+
+    final = collect_web_setup_report()
+    return EnsureWebResult(
+        ready=final.can_serve_ui(),
+        already_ok=False,
+        attempted_fix=attempted,
+        opencv_preview=final.needs_libturbojpeg(),
+        report=final,
+    )

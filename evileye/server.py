@@ -60,9 +60,15 @@ def _run_server_in_process(host, port, log_level, frame_queue, demand_queue, ssl
     Receives JPEG frames from the main process via *frame_queue* and
     serves them through the MJPEG streaming endpoint
     """
+    from evileye.api.core.ssl_files import apply_ssl_env, ssl_enabled
+
+    apply_ssl_env(ssl_certfile, ssl_keyfile)
     setup_evileye_logging(log_level=log_level.upper(), log_to_console=True, log_to_file=True)
     logger = get_module_logger("server.child")
-    logger.info(f"Web server child process starting on {host}:{port}")
+    scheme = "https" if ssl_enabled(ssl_certfile, ssl_keyfile) else "http"
+    logger.info(f"Web server child process starting on {scheme}://{host}:{port}")
+    if ssl_certfile:
+        logger.info("TLS certificate: %s", ssl_certfile)
 
     try:
         app = _create_app()
@@ -311,14 +317,23 @@ def run_api_server(host: str = "127.0.0.1", port: int = 8181,
                    config: str | None = None, workers: int = 1,
                    verbose: bool = False, ssl_certfile: str | None = None,
                    ssl_keyfile: str | None = None) -> None:
+    from evileye.api.core.ssl_files import apply_ssl_env, resolve_ssl_files, ssl_enabled
+
+    cert, key = resolve_ssl_files(cli_cert=ssl_certfile, cli_key=ssl_keyfile)
+    apply_ssl_env(cert, key)
+    ssl_certfile = str(cert) if cert else None
+    ssl_keyfile = str(key) if key else None
+
     logger = get_module_logger("server")
     effective_log_level = "debug" if verbose and log_level == "info" else log_level
     logger.info("=" * 60)
     logger.info("EvilEye API Server Initialization")
     logger.info("=" * 60)
-    logger.info(f"Starting EvilEye API server on {host}:{port}")
-    scheme = "https" if ssl_certfile and ssl_keyfile else "http"
+    scheme = "https" if ssl_enabled(ssl_certfile, ssl_keyfile) else "http"
+    logger.info(f"Starting EvilEye API server on {scheme}://{host}:{port}")
     logger.info(f"API documentation will be available at {scheme}://{host}:{port}/docs")
+    if ssl_certfile:
+        logger.info("TLS certificate: %s", ssl_certfile)
     if workers != 1:
         logger.warning(
             "workers=%s requested, but EvilEye API currently uses shared in-process state. "
@@ -384,10 +399,6 @@ def run_api_server(host: str = "127.0.0.1", port: int = 8181,
     logger.info("=" * 60)
 
     try:
-        if ssl_certfile:
-            os.environ["EVILEYE_SSL_CERTFILE"] = str(ssl_certfile)
-        if ssl_keyfile:
-            os.environ["EVILEYE_SSL_KEYFILE"] = str(ssl_keyfile)
         os.environ.setdefault("EVILEYE_HTTP_PORT", str(port))
         uvicorn_config = uvicorn.Config(
             app,

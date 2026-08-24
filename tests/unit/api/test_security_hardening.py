@@ -280,3 +280,44 @@ def test_internal_token_length_mismatch_is_401(secured_client):
         headers={"X-EvilEye-Internal-Token": "short"},
     )
     assert res.status_code == 401
+
+
+def _security_headers_client(tmp_path, monkeypatch, *, hsts_env=None, secure_cookies=True):
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.delenv("EVILEYE_ENV", raising=False)
+    if hsts_env is None:
+        monkeypatch.delenv("EVILEYE_HSTS", raising=False)
+    else:
+        monkeypatch.setenv("EVILEYE_HSTS", hsts_env)
+    creds = {
+        "web_auth": {
+            "enabled": True,
+            "session_secret": "test-session-secret-not-default-0123456789",
+            "internal_token": "test-internal-token",
+            "secure_cookies": secure_cookies,
+            "users": [
+                {
+                    "username": "admin",
+                    "password_hash": hash_password("correct-horse"),
+                    "role": "admin",
+                    "disabled": False,
+                }
+            ],
+        }
+    }
+    (tmp_path / "credentials.json").write_text(json.dumps(creds), encoding="utf-8")
+    from evileye.api.app import create_app
+
+    return TestClient(create_app())
+
+
+def test_hsts_absent_when_secure_cookies_without_flag(tmp_path, monkeypatch):
+    client = _security_headers_client(tmp_path, monkeypatch, secure_cookies=True)
+    res = client.get("/", follow_redirects=False)
+    assert "strict-transport-security" not in {k.lower() for k in res.headers}
+
+
+def test_hsts_present_when_env_set(tmp_path, monkeypatch):
+    client = _security_headers_client(tmp_path, monkeypatch, hsts_env="1", secure_cookies=False)
+    res = client.get("/", follow_redirects=False)
+    assert res.headers.get("strict-transport-security", "").startswith("max-age=")

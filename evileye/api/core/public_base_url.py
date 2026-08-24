@@ -44,8 +44,11 @@ def resolve_public_api_base_url(*, port: Optional[int] = None) -> str:
     Priority:
     1. EVILEYE_WEB_API_BASE env
     2. credentials.json server.public_base_url (with /api/v1 appended if needed)
-    3. http://127.0.0.1:{port}/api/v1
+    3. configs/system.json server.public_base_url
+    4. http(s)://127.0.0.1:{port}/api/v1  (https when TLS files/env are set)
     """
+    from evileye.api.core.ssl_files import SslConfigError, load_system_server_cfg, resolve_ssl_files, ssl_enabled
+
     env = (os.getenv("EVILEYE_WEB_API_BASE") or "").strip().rstrip("/")
     if env:
         base = env if env.endswith("/api/v1") else f"{env}/api/v1"
@@ -57,10 +60,22 @@ def resolve_public_api_base_url(*, port: Optional[int] = None) -> str:
     if configured:
         return configured if configured.endswith("/api/v1") else f"{configured}/api/v1"
 
+    sys_server = load_system_server_cfg()
+    configured = str(sys_server.get("public_base_url") or "").strip().rstrip("/")
+    if configured:
+        return configured if configured.endswith("/api/v1") else f"{configured}/api/v1"
+
     listen_port = port
     if listen_port is None:
         try:
-            listen_port = int(os.getenv("EVILEYE_HTTP_PORT") or server.get("port") or 8181)
+            listen_port = int(os.getenv("EVILEYE_HTTP_PORT") or server.get("port") or sys_server.get("port") or 8181)
         except (TypeError, ValueError):
             listen_port = 8181
-    return f"http://127.0.0.1:{listen_port}/api/v1"
+    scheme = "http"
+    try:
+        cert, key = resolve_ssl_files(server_cfg=sys_server)
+        if ssl_enabled(cert, key):
+            scheme = "https"
+    except SslConfigError:
+        pass
+    return f"{scheme}://127.0.0.1:{listen_port}/api/v1"

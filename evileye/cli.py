@@ -13,7 +13,7 @@ import subprocess
 import logging
 import signal
 from pathlib import Path
-from typing import Optional, Tuple
+from typing import List, Optional, Tuple
 from datetime import datetime, timedelta
 import time
 
@@ -713,14 +713,21 @@ def start_api(
 
     if config:
         cmd.extend(["--config", config])
-    if ssl_certfile:
-        cmd.extend(["--ssl-certfile", ssl_certfile])
-    if ssl_keyfile:
-        cmd.extend(["--ssl-keyfile", ssl_keyfile])
+    try:
+        from evileye.api.core.ssl_files import SslConfigError, resolve_ssl_files, ssl_enabled
+
+        cert, key = resolve_ssl_files(cli_cert=ssl_certfile, cli_key=ssl_keyfile)
+    except SslConfigError as exc:
+        logger.error("TLS configuration error: %s", exc)
+        console.print(f"[red]TLS configuration error: {exc}[/red]")
+        raise typer.Exit(1)
+    if cert and key:
+        cmd.extend(["--ssl-certfile", str(cert), "--ssl-keyfile", str(key)])
 
     try:
         logger.info(f"Starting web server (server.py): {' '.join(cmd)}")
-        console.print(f"[green]Starting web server on {host}:{port}[/green]")
+        scheme = "https" if ssl_enabled(cert, key) else "http"
+        console.print(f"[green]Starting web server on {scheme}://{host}:{port}[/green]")
         subprocess.run(cmd, check=True, cwd=os.getcwd())
     except subprocess.CalledProcessError as e:
         logger.error(f"Web server failed: {e}")
@@ -911,12 +918,14 @@ def _deploy_monitor_assets(site_dir: Path) -> None:
 @app.command()
 def deploy() -> None:
     """
-    Deploy EvilEye site files to the current directory.
+    Prepare EvilEye site files in the current directory (no prompts).
 
     This command:
     1. Copies credentials_proto.json to credentials.json (if missing)
     2. Creates configs/ and logs/ folders if missing
     3. Deploys monitor/watchdog scripts and systemd templates (does not start services)
+
+    Web UI OS service and HTTPS: `evileye install-server`.
     """
 
     current_dir = Path.cwd()
@@ -962,31 +971,57 @@ def deploy() -> None:
         console.print(f"[red]Error deploying monitor assets: {e}[/red]")
         raise typer.Exit(1)
 
-    # Step 4: Ensure OS service for Web UI (does not fail the whole deploy)
-    try:
-        from evileye.service_manager import ensure_service
-        from evileye.service_manager.minimal_config import ensure_system_config
-
-        ensure_system_config(current_dir)
-        svc = ensure_service(site_dir=current_dir, force_user=True)
-        if svc.ok:
-            console.print(f"[green]{svc.message}[/green]")
-        else:
-            console.print(f"[yellow]Service ensure skipped/failed: {svc.message}[/yellow]")
-            console.print("[dim]Run manually: evileye service-install[/dim]")
-    except Exception as e:
-        console.print(f"[yellow]Service ensure skipped: {e}[/yellow]")
-        console.print("[dim]Run manually: evileye service-install[/dim]")
-
     console.print("[green]Deployment completed successfully![/green]")
     console.print(
-        "[dim]Next: open the Web UI, set admin password, complete Basic setup. "
-        "Optional watchdog: monitor/scripts/install_timer.sh[/dim]"
+        "[dim]Local site files are ready. For the Web UI OS service (and HTTPS): "
+        "evileye install-server[/dim]"
     )
 
 
-@app.command("service-install")
-def service_install(
+def _print_web_setup_failures(report) -> None:
+    for item in report.items:
+        if item.ok:
+            continue
+        if item.name == "python:turbojpeg_native":
+            continue
+        console.print(f"[yellow]  {item.name}:[/yellow] {item.detail}")
+
+
+def _print_ensure_web_result(result) -> None:
+    from evileye import setup_web as sw
+
+    if result.error:
+        console.print(f"[red]Web UI setup failed: {result.error}[/red]")
+    if result.opencv_preview:
+        console.print(f"[yellow]{sw.LIBTURBOJPEG_HINT}[/yellow]")
+        console.print("[yellow]Preview will use OpenCV fallback until libturbojpeg is installed.[/yellow]")
+    if result.ready:
+        console.print("[green]Web UI environment is ready.[/green]")
+        return
+    _print_web_setup_failures(result.report)
+    console.print("[red]Web UI setup incomplete. Fix the checks above, or run: evileye setup-web[/red]")
+
+
+def _ensure_web_environment_for_server() -> None:
+    """If Web UI deps/SPA are missing, run the same fix path as `evileye setup-web`."""
+    from evileye import setup_web as sw
+
+    report = sw.collect_web_setup_report()
+    if report.can_serve_ui():
+        if report.needs_libturbojpeg():
+            console.print(f"[yellow]{sw.LIBTURBOJPEG_HINT}[/yellow]")
+        return
+    console.print("[yellow]Web UI environment is not ready. Running setup-web…[/yellow]")
+    _print_web_setup_failures(report)
+    result = sw.ensure_web_environment(scope="user", log=lambda msg: console.print(f"[blue]{msg}[/blue]"))
+    _print_ensure_web_result(result)
+    if not result.ready:
+        raise typer.Exit(1)
+    console.print("[green]Web UI environment check passed; continuing with server install.[/green]")
+
+
+@app.command("install-server")
+def install_server(
     config: Optional[Path] = typer.Argument(
         None,
         help="Optional config name/path for auto-run after server start",
@@ -996,36 +1031,74 @@ def service_install(
     user: bool = typer.Option(False, "--user", help="Force systemd --user unit (Linux)"),
     system: bool = typer.Option(False, "--system", help="Force system unit (may need sudo)"),
     dry_run: bool = typer.Option(False, "--dry-run", help="Print unit/plan without applying"),
+    no_tls: bool = typer.Option(False, "--no-tls", help="Skip HTTPS and keep HTTP"),
+    non_interactive: bool = typer.Option(False, "--non-interactive", help="Do not prompt; TLS only with explicit flags"),
+    tls_self_signed: bool = typer.Option(False, "--tls-self-signed", help="Issue a local mini-CA + leaf certificate"),
+    tls_ip: Optional[List[str]] = typer.Option(None, "--tls-ip", help="SAN IP address (repeatable)"),
+    tls_dns: Optional[List[str]] = typer.Option(None, "--tls-dns", help="SAN DNS name (repeatable)"),
+    ssl_certfile: Optional[str] = typer.Option(None, "--ssl-certfile", help="TLS certificate file (PEM)"),
+    ssl_keyfile: Optional[str] = typer.Option(None, "--ssl-keyfile", help="TLS private key file (PEM)"),
+    tls_force: bool = typer.Option(False, "--tls-force", help="Overwrite certs/ if files already exist"),
 ) -> None:
     """
-    Install and start EvilEye as an OS service (Web UI server).
+    Configure HTTPS (optional) and install EvilEye as an OS service (Web UI).
 
+    Run from the site directory after `evileye deploy`.
+    If the Web UI environment is incomplete, runs the same setup as `evileye setup-web`
+    and continues only after a successful re-check.
     Without CONFIG starts `evileye server` only (minimal post-install mode).
-    Re-running updates the unit and restarts (idempotent ensure).
-    Use `evileye service-uninstall` to remove the service.
+    Re-running updates TLS config (if asked) and the unit (idempotent).
+    Use `evileye uninstall-server` to remove the service.
     """
+    from evileye.api.core.ssl_files import SslConfigError
     from evileye.service_manager import install_service
+    from evileye.service_manager.minimal_config import ensure_system_config
+    from evileye.utils.tls_cert import TlsCertError
+    from evileye.utils.tls_deploy_wizard import print_https_hints, run_tls_deploy_step
 
+    site_dir = Path.cwd()
     cfg = str(config) if config is not None else None
-    # Default to user unit when neither flag set on non-root installs
     force_user = user or (not system)
     force_system = system
     if user and system:
         console.print("[red]Cannot combine --user and --system[/red]")
         raise typer.Exit(1)
 
+    _ensure_web_environment_for_server()
+
+    ensure_system_config(site_dir)
+    try:
+        tls_result = run_tls_deploy_step(
+            site_dir=site_dir,
+            console=console,
+            no_tls=no_tls,
+            non_interactive=non_interactive,
+            tls_self_signed=tls_self_signed,
+            tls_ips=tls_ip or [],
+            tls_dns=tls_dns or [],
+            ssl_certfile=ssl_certfile,
+            ssl_keyfile=ssl_keyfile,
+            tls_force=tls_force,
+        )
+    except (TlsCertError, SslConfigError) as exc:
+        console.print(f"[red]HTTPS setup failed: {exc}[/red]")
+        raise typer.Exit(1)
+    print_https_hints(console, tls_result)
+
     try:
         result = install_service(
-            site_dir=Path.cwd(),
+            site_dir=site_dir,
             config=cfg,
             host=host,
             port=port,
             force_user=force_user and not force_system,
             force_system=force_system,
             dry_run=dry_run,
+            ssl_certfile=ssl_certfile,
+            ssl_keyfile=ssl_keyfile,
         )
     except Exception as e:
-        console.print(f"[red]service-install failed: {e}[/red]")
+        console.print(f"[red]install-server failed: {e}[/red]")
         raise typer.Exit(1)
 
     if dry_run and result.unit_text:
@@ -1041,17 +1114,42 @@ def service_install(
             raise typer.Exit(1)
 
 
-@app.command("service-uninstall")
-def service_uninstall(
+@app.command("tls-cert", hidden=True)
+def tls_cert(
+    out_dir: Path = typer.Option(Path("certs"), "--out-dir", help="Directory for ca.crt / server.crt / keys"),
+    tls_ip: Optional[List[str]] = typer.Option(None, "--ip", help="SAN IP address (repeatable)"),
+    tls_dns: Optional[List[str]] = typer.Option(None, "--dns", help="SAN DNS name (repeatable)"),
+    days: int = typer.Option(825, "--days", help="Leaf certificate validity in days"),
+    force: bool = typer.Option(False, "--force", help="Overwrite existing files"),
+) -> None:
+    """Issue a local mini-CA and SAN leaf certificate (advanced / CI)."""
+    from evileye.utils.tls_cert import TlsCertError, generate_minica_leaf
+
+    try:
+        paths = generate_minica_leaf(
+            out_dir,
+            ips=tls_ip or [],
+            dns_names=tls_dns or [],
+            days=days,
+            force=force,
+        )
+    except TlsCertError as exc:
+        console.print(f"[red]{exc}[/red]")
+        raise typer.Exit(1)
+    console.print(f"[green]Wrote {paths['server_crt']} and {paths['ca_crt']}[/green]")
+
+
+@app.command("uninstall-server")
+def uninstall_server(
     dry_run: bool = typer.Option(False, "--dry-run", help="Show what would be removed"),
 ) -> None:
-    """Stop and remove the EvilEye OS service installed by service-install."""
+    """Stop and remove the EvilEye OS service installed by install-server."""
     from evileye.service_manager import uninstall_service
 
     try:
         result = uninstall_service(site_dir=Path.cwd(), dry_run=dry_run)
     except Exception as e:
-        console.print(f"[red]service-uninstall failed: {e}[/red]")
+        console.print(f"[red]uninstall-server failed: {e}[/red]")
         raise typer.Exit(1)
 
     console.print(f"[green]{result.message}[/green]")
@@ -1179,12 +1277,14 @@ def setup_web(
         console.print("[red]Web UI environment check failed.[/red]")
         raise typer.Exit(1)
 
-    if report.ok and not force and build is not True:
+    if report.can_serve_ui() and not force and build is not True:
+        if report.needs_libturbojpeg():
+            console.print(f"[yellow]{sw.LIBTURBOJPEG_HINT}[/yellow]")
         console.print("[green]Web UI environment already ready; nothing to do.[/green]")
         console.print("[dim]Use --force to rebuild SPA or reinstall packages.[/dim]")
         raise typer.Exit(0)
 
-    if scope_norm == "system" and not check:
+    if scope_norm == "system":
         confirm = typer.confirm(
             "Install missing Python packages system-wide with sudo?",
             default=False,
@@ -1193,72 +1293,15 @@ def setup_web(
             console.print("[yellow]Aborted (system scope not confirmed).[/yellow]")
             raise typer.Exit(1)
 
-    missing = report.missing_pip_packages()
-    if missing or force:
-        # On --force, still only install packages that fail import unless force wants all web pkgs
-        to_install = missing if missing else ([] if not force else [])
-        if force and not to_install:
-            # Re-check: force with everything ok → skip pip
-            pass
-        if to_install:
-            console.print(f"[blue]Installing Python packages ({scope_norm}): {', '.join(to_install)}[/blue]")
-            try:
-                sw.pip_install(to_install, scope=scope_norm)
-            except Exception as exc:
-                console.print(f"[red]pip install failed: {exc}[/red]")
-                raise typer.Exit(1)
-
-    # Re-check turbojpeg native after pip
-    report_after_pip = sw.collect_web_setup_report()
-    if report_after_pip.needs_libturbojpeg():
-        console.print(f"[yellow]{sw.LIBTURBOJPEG_HINT}[/yellow]")
-
-    should_build = force or build is True or report.needs_frontend_build() or report_after_pip.needs_frontend_build()
-    if build is False:
-        should_build = False
-
-    if should_build:
-        if report_after_pip.needs_node() or report.needs_node():
-            console.print(
-                "[red]Node.js/npm required to build the SPA. "
-                "Install with: sudo apt install nodejs npm[/red]"
-            )
-            raise typer.Exit(1)
-        console.print("[blue]Building frontend (npm install && npm run build)…[/blue]")
-        try:
-            sw.build_frontend()
-        except Exception as exc:
-            console.print(f"[red]Frontend build failed: {exc}[/red]")
-            raise typer.Exit(1)
-
-    final = sw.collect_web_setup_report()
-    if final.ok:
-        console.print("[green]Web UI setup completed successfully.[/green]")
+    result = sw.ensure_web_environment(
+        scope=scope_norm,
+        force=force,
+        build=build,
+        log=lambda msg: console.print(f"[blue]{msg}[/blue]"),
+    )
+    _print_ensure_web_result(result)
+    if result.ready:
         raise typer.Exit(0)
-
-    if final.needs_libturbojpeg():
-        console.print(f"[yellow]{sw.LIBTURBOJPEG_HINT}[/yellow]")
-        # Native lib missing: SPA/API still usable with OpenCV fallback.
-        if all(
-            item.ok
-            for item in final.items
-            if item.name != "python:turbojpeg_native"
-            and item.name in {
-                "python:fastapi",
-                "python:uvicorn",
-                "python:pydantic",
-                "python:itsdangerous",
-                "python:turbojpeg",
-                "static",
-            }
-        ):
-            console.print(
-                "[yellow]Setup finished with TurboJPEG native library missing "
-                "(preview will use OpenCV fallback).[/yellow]"
-            )
-            raise typer.Exit(0)
-
-    console.print("[red]Web UI setup incomplete.[/red]")
     raise typer.Exit(1)
 
 

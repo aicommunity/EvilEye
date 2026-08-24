@@ -33,12 +33,17 @@ def _build_start_script(
     host: str,
     port: int,
     config: Optional[str],
+    ssl_certfile: Optional[str] = None,
+    ssl_keyfile: Optional[str] = None,
 ) -> str:
     config_arg = f' --config "{config}"' if config else ""
+    ssl_arg = ""
+    if ssl_certfile and ssl_keyfile:
+        ssl_arg = f' --ssl-certfile "{ssl_certfile}" --ssl-keyfile "{ssl_keyfile}"'
     return (
         f'@echo off\r\n'
         f'cd /d "{site_dir}"\r\n'
-        f'"{python_exe}" -m evileye.cli_wrapper server --host {host} --port {port} --no-reload{config_arg}\r\n'
+        f'"{python_exe}" -m evileye.cli_wrapper server --host {host} --port {port} --no-reload{config_arg}{ssl_arg}\r\n'
     )
 
 
@@ -50,6 +55,8 @@ def install_windows(
     config: Optional[str] = None,
     service_name: str = "EvilEye",
     dry_run: bool = False,
+    ssl_certfile: Optional[str] = None,
+    ssl_keyfile: Optional[str] = None,
 ) -> WindowsInstallResult:
     """Install via launcher .bat + Scheduled Task (best-effort, no NSSM)."""
     site_dir = site_dir.resolve()
@@ -57,7 +64,13 @@ def install_windows(
     script_path = scripts / "evileye-server.bat"
     python_exe = sys.executable
     script_body = _build_start_script(
-        site_dir, python_exe=python_exe, host=host, port=port, config=config
+        site_dir,
+        python_exe=python_exe,
+        host=host,
+        port=port,
+        config=config,
+        ssl_certfile=ssl_certfile,
+        ssl_keyfile=ssl_keyfile,
     )
     backend = "windows-task"
 

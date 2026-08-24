@@ -15,9 +15,10 @@ Recommended:
 ```bash
 pip install evileye   # или: pip install -e . для разработки
 # optional: sudo apt install libturbojpeg
-evileye setup-web
 evileye deploy
-# open http://127.0.0.1:8181 → login as admin with bootstrap password from first-start log
+evileye install-server
+# open http://127.0.0.1:8181 (or https://… if TLS was configured)
+# login as admin with bootstrap password from first-start log
 # change password → complete Basic Setup in Configure
 ```
 
@@ -47,11 +48,12 @@ Config mode Basic/Advanced is stored in `localStorage` key `evileye.config.mode`
 ## First-run / Basic setup
 
 1. Choose a dedicated site directory and run `evileye deploy` there. EvilEye uses the current working directory as site root (`credentials.json`, `configs/`, `logs/`, `monitor/`).
-2. `evileye deploy` prepares site files, monitor assets, and ensures `configs/system.json` exists.
+2. `evileye deploy` prepares site files and monitor assets (no prompts) — этого достаточно для локальной работы. Если нужен сервер Web UI, `evileye install-server` при необходимости запускает `setup-web`, затем HTTPS и OS-сервис.
 3. Start the backend via OS service or manually:
    ```bash
    evileye server --host 0.0.0.0 --port 8181 --no-reload
    ```
+   If `server.ssl_*` is set, the same command listens with TLS (or pass `--ssl-certfile` / `--ssl-keyfile`). Open `https://127.0.0.1:8181` (`curl -k` until `certs/ca.crt` is trusted).
 4. Open Web UI → log in as `admin` with the bootstrap password from the first-start log → forced password change when `must_change_password` is set.
 5. **Настройка**: Basic form → data directory, JSON vs PostgreSQL, sources, analytics, recording → Save / Save and run.
 6. APIs: `GET /api/v1/setup/status`, `GET|PUT /api/v1/setup/basic`, `POST /api/v1/setup/check-data-dir`, `POST /api/v1/setup/test-database`.
