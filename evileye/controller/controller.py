@@ -1289,6 +1289,8 @@ class Controller(ControllerProcessingMixin):
             host = server_cfg.get("host", "127.0.0.1")
             port = int(server_cfg.get("port", 8181))
             from evileye.api.core.public_base_url import canonicalize_relay_base_url, resolve_public_api_base_url
+            from evileye.api.core.internal_unix import internal_relay_url
+            from evileye.service_manager import is_web_os_service_active, is_web_os_service_enabled
 
             ssl_certfile = ssl_keyfile = None
             try:
@@ -1302,10 +1304,23 @@ class Controller(ControllerProcessingMixin):
             except SslConfigError as exc:
                 self.logger.error("Invalid TLS configuration for embedded web server: %s", exc)
                 raise
-            inferred_base_url = canonicalize_relay_base_url(
-                relay_base_url or resolve_public_api_base_url(port=port)
+            unix_relay = internal_relay_url()
+            scheme = "https" if ssl_certfile else "http"
+            local_relay = canonicalize_relay_base_url(f"{scheme}://127.0.0.1:{port}/api/v1")
+            inferred_base_url = unix_relay or canonicalize_relay_base_url(
+                relay_base_url or local_relay or resolve_public_api_base_url(port=port)
             )
-            if not self._can_bind_embedded_server(host, port):
+            # Only skip when the OS service is actually running. If it is merely
+            # enabled but dead (e.g. failed bind before reboot, no linger), fall
+            # through so embedded HTTPS can still bind and avoid CONNECTION_REFUSED.
+            if is_web_os_service_active():
+                self.logger.info(
+                    "Skipping embedded web server: OS service evileye.service is active "
+                    "(Web UI is served separately, including HTTPS)"
+                )
+                if self._streaming_service is not None:
+                    self._streaming_service.set_frame_relay(inferred_base_url, relay_token)
+            elif not self._can_bind_embedded_server(host, port):
                 self.logger.info(
                     "Skipping embedded web server because %s:%s is already in use",
                     host,
@@ -1314,6 +1329,12 @@ class Controller(ControllerProcessingMixin):
                 if self._streaming_service is not None:
                     self._streaming_service.set_frame_relay(inferred_base_url, relay_token)
             else:
+                if is_web_os_service_enabled():
+                    self.logger.warning(
+                        "OS service evileye.service is enabled but not active; "
+                        "starting embedded web server as fallback (port %s)",
+                        port,
+                    )
                 try:
                     from evileye.server import ServerProcessManager
 

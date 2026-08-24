@@ -54,15 +54,26 @@ def patch_system_ssl(
     public_base_url: str | None = None,
     clear: bool = False,
 ) -> None:
+    """Merge TLS paths into configs/system.json without rewriting unrelated keys.
+
+    Never touches credentials.json (users/passwords). If system.json exists but
+    is not valid JSON, raise instead of replacing the file.
+    """
     path = configs_dir(site_dir) / "system.json"
-    payload: dict = {}
+    payload: dict
     if path.is_file():
         try:
             loaded = json.loads(path.read_text(encoding="utf-8"))
-            if isinstance(loaded, dict):
-                payload = loaded
-        except Exception:
-            payload = {}
+        except Exception as exc:
+            raise SslConfigError(
+                f"Cannot update TLS settings: {path} is not valid JSON ({exc}). "
+                "Fix the file; install-server will not overwrite it."
+            ) from exc
+        if not isinstance(loaded, dict):
+            raise SslConfigError(f"Cannot update TLS settings: {path} root must be a JSON object.")
+        payload = loaded
+    else:
+        payload = {}
     server = payload.get("server")
     if not isinstance(server, dict):
         server = {}
@@ -80,10 +91,11 @@ def patch_system_ssl(
             server["ssl_certfile"] = str(certfile.resolve())
             server["ssl_keyfile"] = str(keyfile.resolve())
     if public_base_url:
-        server["public_base_url"] = public_base_url.rstrip("/")
-    elif clear:
-        # Keep existing public_base_url unless disabling TLS on a self-signed deploy.
-        pass
+        existing = str(server.get("public_base_url") or "").strip()
+        if not existing:
+            server["public_base_url"] = public_base_url.rstrip("/")
+        elif existing.startswith("http://") and public_base_url.startswith("https://"):
+            server["public_base_url"] = public_base_url.rstrip("/")
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(payload, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
 

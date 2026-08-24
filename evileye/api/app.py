@@ -164,6 +164,13 @@ async def lifespan(_app: FastAPI):
     _app.state.live_preview_hub = hub
 
     try:
+        from evileye.api.core.internal_unix import start_internal_unix_server
+
+        start_internal_unix_server(getattr(_app.state.web_auth, "internal_token", "") or "")
+    except Exception as exc:
+        logger.warning("Internal unix frame relay not started: %s", exc)
+
+    try:
         from evileye.core.mp_session_registry import cleanup_stale_sessions
 
         cleaned = cleanup_stale_sessions()
@@ -216,6 +223,12 @@ async def lifespan(_app: FastAPI):
             from evileye.api.core.live_preview_hub import get_live_preview_hub
 
             await get_live_preview_hub().stop()
+        except Exception:
+            pass
+        try:
+            from evileye.api.core.internal_unix import stop_internal_unix_server
+
+            stop_internal_unix_server()
         except Exception:
             pass
         logger.info("FastAPI lifespan shutdown")

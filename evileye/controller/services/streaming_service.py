@@ -1,14 +1,14 @@
 from __future__ import annotations
 
+import http.client
 import json
 import os
+import socket
 import threading
 import time
-import urllib.error
-import urllib.parse
-import urllib.request
 from dataclasses import dataclass
 from typing import Any, Optional
+from urllib.parse import urlparse
 
 from evileye.core.logger import get_module_logger
 from evileye.core.runtime_services import get_frame_broker
@@ -32,18 +32,20 @@ class StreamFrameJob:
 
 
 class FrameRelayClient:
-    """Non-blocking frame relay: encode workers enqueue; a dedicated thread POSTs (drop-old)."""
+    """Latest-frame relay. Unix socket is fire-and-forget (never HTTPS)."""
 
-    def __init__(self, base_url: str, *, token: str | None = None, timeout_sec: float = 0.5):
+    def __init__(self, base_url: str, *, token: str | None = None, timeout_sec: float = 0.2):
         self.base_url = base_url.rstrip("/")
         self.token = token or ""
-        self.timeout_sec = max(0.1, float(timeout_sec))
+        self.timeout_sec = max(0.05, float(timeout_sec))
         self.logger = get_module_logger("frame_relay")
         self._last_warn_ts = 0.0
         self._lock = threading.Lock()
         self._pending: dict[str, tuple[str, bytes, int | None, dict[str, Any] | None]] = {}
         self._wake = threading.Event()
         self._stop = threading.Event()
+        self._conn: http.client.HTTPConnection | None = None
+        self._unix_sock: socket.socket | None = None
         self._thread = threading.Thread(target=self._loop, daemon=True, name="FrameRelay")
         self._thread.start()
 
@@ -52,6 +54,23 @@ class FrameRelayClient:
         self._wake.set()
         if self._thread.is_alive():
             self._thread.join(timeout=2.0)
+        self._close_conn()
+
+    def _close_conn(self) -> None:
+        conn = self._conn
+        self._conn = None
+        if conn is not None:
+            try:
+                conn.close()
+            except Exception:
+                pass
+        us = self._unix_sock
+        self._unix_sock = None
+        if us is not None:
+            try:
+                us.close()
+            except OSError:
+                pass
 
     def publish_jpeg(
         self,
@@ -68,6 +87,14 @@ class FrameRelayClient:
         return True
 
     def _log_publish_failure(self, exc: Exception) -> None:
+        # EAGAIN / timeout = drop-old under load; do not alarm every 30s.
+        if isinstance(exc, (TimeoutError, socket.timeout, BlockingIOError)):
+            self.logger.debug("Frame relay dropped (busy): %s", exc)
+            return
+        err = getattr(exc, "errno", None)
+        if err in {11, 32, 104}:  # EAGAIN, EPIPE, ECONNRESET
+            self.logger.debug("Frame relay dropped: %s", exc)
+            return
         now = time.time()
         if now - self._last_warn_ts >= 30.0:
             self.logger.warning("Frame relay publish failed: %s", exc)
@@ -90,6 +117,75 @@ class FrameRelayClient:
                 except Exception as exc:
                     self._log_publish_failure(exc)
 
+    def _unix_path(self) -> str | None:
+        parsed = urlparse(self.base_url)
+        if parsed.scheme != "unix":
+            return None
+        return parsed.path or None
+
+    def _request_path(self, pipeline_id: str, source_id: int | None) -> str:
+        query = f"?source_id={source_id}" if source_id is not None else ""
+        parsed = urlparse(self.base_url)
+        prefix = (parsed.path or "").rstrip("/") or "/api/v1"
+        return f"{prefix}/internal/frames/{pipeline_id}{query}"
+
+    def _get_unix_sock(self) -> socket.socket:
+        if self._unix_sock is not None:
+            return self._unix_sock
+        path = self._unix_path()
+        if not path:
+            raise RuntimeError("not a unix relay url")
+        sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+        sock.settimeout(self.timeout_sec)
+        sock.connect(path)
+        self._unix_sock = sock
+        return sock
+
+    def _get_conn(self) -> http.client.HTTPConnection:
+        if self._conn is not None:
+            return self._conn
+        parsed = urlparse(self.base_url)
+        host = parsed.hostname or "127.0.0.1"
+        port = parsed.port or (443 if parsed.scheme == "https" else 80)
+        if parsed.scheme == "https":
+            from evileye.api.core.ssl_files import ssl_context_for_relay
+
+            self._conn = http.client.HTTPSConnection(
+                host,
+                port,
+                timeout=self.timeout_sec,
+                context=ssl_context_for_relay(self.base_url),
+            )
+        else:
+            self._conn = http.client.HTTPConnection(host, port, timeout=self.timeout_sec)
+        return self._conn
+
+    def _post_unix(
+        self,
+        pipeline_id: str,
+        jpeg_bytes: bytes,
+        *,
+        source_id: int | None,
+        metadata: dict[str, Any] | None,
+    ) -> bool:
+        from evileye.api.core.internal_unix import encode_frame_packet
+
+        packet = encode_frame_packet(
+            token=self.token,
+            rid=pipeline_id,
+            source_id=source_id,
+            jpeg_bytes=jpeg_bytes,
+            metadata=metadata,
+        )
+        try:
+            sock = self._get_unix_sock()
+            sock.sendall(packet)
+            return True
+        except Exception as exc:
+            self._close_conn()
+            self._log_publish_failure(exc)
+            return False
+
     def _post(
         self,
         pipeline_id: str,
@@ -98,45 +194,34 @@ class FrameRelayClient:
         source_id: int | None = None,
         metadata: dict[str, Any] | None = None,
     ) -> bool:
-        query = f"?source_id={source_id}" if source_id is not None else ""
-        url = f"{self.base_url}/internal/frames/{pipeline_id}{query}"
-        headers: dict[str, str] = {}
+        if self._unix_path():
+            return self._post_unix(
+                pipeline_id, jpeg_bytes, source_id=source_id, metadata=metadata
+            )
+        headers: dict[str, str] = {
+            "Content-Type": "image/jpeg",
+            "Connection": "keep-alive",
+        }
         if self.token:
             headers["X-EvilEye-Internal-Token"] = self.token
-
         if metadata:
-            boundary = "----EvilEyeFrameBoundary"
-            meta_bytes = json.dumps(metadata, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
-            chunks = [
-                f"--{boundary}\r\nContent-Disposition: form-data; name=\"metadata\"\r\n"
-                f"Content-Type: application/json\r\n\r\n".encode("utf-8"),
-                meta_bytes,
-                b"\r\n",
-                (
-                    f"--{boundary}\r\nContent-Disposition: form-data; name=\"frame\"; "
-                    f"filename=\"frame.jpg\"\r\nContent-Type: image/jpeg\r\n\r\n"
-                ).encode("utf-8"),
-                jpeg_bytes,
-                b"\r\n",
-                f"--{boundary}--\r\n".encode("utf-8"),
-            ]
-            data = b"".join(chunks)
-            headers["Content-Type"] = f"multipart/form-data; boundary={boundary}"
-        else:
-            data = jpeg_bytes
-            headers["Content-Type"] = "image/jpeg"
-
-        request = urllib.request.Request(url, data=data, headers=headers, method="POST")
+            headers["X-EvilEye-Frame-Metadata"] = json.dumps(
+                metadata, ensure_ascii=False, separators=(",", ":")
+            )
+        path = self._request_path(pipeline_id, source_id)
         try:
-            from evileye.api.core.ssl_files import ssl_context_for_relay
-
-            with urllib.request.urlopen(
-                request,
-                timeout=self.timeout_sec,
-                context=ssl_context_for_relay(url),
-            ) as response:
-                return 200 <= getattr(response, "status", 200) < 300
-        except (urllib.error.URLError, TimeoutError, OSError) as exc:
+            conn = self._get_conn()
+            conn.request("POST", path, body=jpeg_bytes, headers=headers)
+            resp = conn.getresponse()
+            resp.read()
+            if 200 <= resp.status < 300:
+                return True
+            self._log_publish_failure(RuntimeError(f"HTTP {resp.status}"))
+            if resp.status in {400, 401, 404, 405}:
+                self._close_conn()
+            return False
+        except Exception as exc:
+            self._close_conn()
             self._log_publish_failure(exc)
             return False
 
@@ -353,7 +438,9 @@ class StreamingService:
         if has_server_preview_demand:
             level = self._get_preview_demand_level(throttle_key)
             return self._fps_for_demand_level(level) > 0.0
-        if has_relay and has_server_preview_demand:
+        # External OS Web UI (install-server): no ServerProcessManager demand queue —
+        # keep publishing over HTTPS relay so Live preview works.
+        if has_relay and self._publish_fps > 0.0:
             return True
         heartbeat_fps = self._get_heartbeat_fps()
         if has_server_process and heartbeat_fps > 0.0:
@@ -438,12 +525,8 @@ class StreamingService:
                 return False
             return self._throttle_ok(throttle_key, fps_override=fps)
 
-        if has_relay and has_server_preview_demand:
-            level = self._get_preview_demand_level(throttle_key)
-            fps = self._fps_for_demand_level(level)
-            if fps <= 0.0:
-                return False
-            return self._throttle_ok(throttle_key, fps_override=fps)
+        if has_relay and self._publish_fps > 0.0:
+            return self._throttle_ok(throttle_key, fps_override=self._publish_fps)
 
         heartbeat_fps = self._get_heartbeat_fps()
         if has_server_process and heartbeat_fps > 0.0:

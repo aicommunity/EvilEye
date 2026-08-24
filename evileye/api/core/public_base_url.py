@@ -24,19 +24,24 @@ def _load_credentials() -> dict[str, Any]:
 
 
 def canonicalize_relay_base_url(url: str) -> str:
-    """Replace bind-all hosts with loopback so urllib can connect."""
+    """Replace bind-all hosts with loopback so urllib can connect.
+
+    Always ends with ``/api/v1`` so frame POST hits the internal API, not SPA.
+    """
     raw = (url or "").strip()
     if not raw:
         return raw
     parsed = urlparse(raw)
     host = (parsed.hostname or "").lower()
-    if host not in _BIND_ALL_HOSTS:
-        return raw.rstrip("/")
-    port = parsed.port
-    if port is None:
-        port = 443 if parsed.scheme == "https" else 80
-    netloc = f"127.0.0.1:{port}"
-    return urlunparse(parsed._replace(netloc=netloc)).rstrip("/")
+    if host in _BIND_ALL_HOSTS:
+        port = parsed.port
+        if port is None:
+            port = 443 if parsed.scheme == "https" else 80
+        parsed = parsed._replace(netloc=f"127.0.0.1:{port}")
+    out = urlunparse(parsed).rstrip("/")
+    if out.endswith("/api/v1"):
+        return out
+    return f"{out}/api/v1"
 
 
 def resolve_public_api_base_url(*, port: Optional[int] = None) -> str:

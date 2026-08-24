@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import sys
 from dataclasses import dataclass
 from datetime import datetime, timezone
@@ -80,6 +81,69 @@ def service_status(site_dir: Path | None = None) -> dict[str, Any]:
     return out
 
 
+def is_web_os_service_enabled() -> bool:
+    """True when systemd unit evileye.service is enabled (user or system)."""
+    if not sys.platform.startswith("linux"):
+        return False
+    try:
+        return linux_backend.is_enabled_linux("systemd-user") or linux_backend.is_enabled_linux(
+            "systemd-system"
+        )
+    except Exception:
+        return False
+
+
+def is_web_os_service_active() -> bool:
+    """True when systemd unit evileye.service is running (user or system)."""
+    if not sys.platform.startswith("linux"):
+        return False
+    try:
+        return linux_backend.is_active_linux("systemd-user") or linux_backend.is_active_linux(
+            "systemd-system"
+        )
+    except Exception:
+        return False
+
+
+def _probe_port_scheme(port: int, host: str = "127.0.0.1") -> str:
+    """Return 'https', 'http', or 'closed'."""
+    import socket
+    import ssl
+
+    try:
+        raw = socket.create_connection((host, port), timeout=1.5)
+    except OSError:
+        return "closed"
+    try:
+        ctx = ssl.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
+        ctx.check_hostname = False
+        ctx.verify_mode = ssl.CERT_NONE
+        try:
+            with ctx.wrap_socket(raw, server_hostname=host) as tls:
+                tls.do_handshake()
+                return "https"
+        except ssl.SSLError:
+            return "http"
+    finally:
+        try:
+            raw.close()
+        except OSError:
+            pass
+
+
+def _has_existing_web_users(root: Path) -> bool:
+    creds = root / "credentials.json"
+    if not creds.is_file():
+        return False
+    try:
+        payload = json.loads(creds.read_text(encoding="utf-8"))
+    except Exception:
+        return False
+    web_auth = payload.get("web_auth") if isinstance(payload, dict) else None
+    users = web_auth.get("users") if isinstance(web_auth, dict) else None
+    return isinstance(users, list) and bool(users)
+
+
 def install_service(
     *,
     site_dir: Path | None = None,
@@ -149,13 +213,55 @@ def install_service(
         if not dry_run:
             save_state(state, root)
         url = _web_ui_url(host, port, tls=tls)
+        notes = [
+            f"Service installed ({backend}): {result.unit_path}",
+            f"Web UI: {url}",
+        ]
+        if backend == "systemd-user" and not dry_run:
+            linger_hint = getattr(result, "start_error", "") or ""
+            if linger_hint.startswith("could not enable linger") or linger_hint.startswith(
+                "loginctl not found"
+            ):
+                notes.append(
+                    "User linger is off: after reboot the Web UI will not start until login. "
+                    f"Fix: loginctl enable-linger $USER ({linger_hint})"
+                )
+            else:
+                notes.append(
+                    "User linger enabled (or already on): user unit starts at boot without GUI login."
+                )
+        if not dry_run and not getattr(result, "start_ok", True):
+            scheme = _probe_port_scheme(port)
+            notes.append(
+                "The OS service did not start (port busy or systemd error). "
+                "ERR_SSL_PROTOCOL_ERROR means the browser used HTTPS against a process still speaking HTTP "
+                "(usually `evileye run` started before TLS). Restart that runtime from this site dir "
+                "or stop it, then: systemctl --user restart evileye"
+            )
+            if scheme == "http":
+                notes.append(f"Port {port} currently answers HTTP, not TLS.")
+            elif result.start_error:
+                notes.append(result.start_error.split("\n")[0][:300])
+            return ServiceActionResult(
+                ok=False,
+                message="\n".join(notes),
+                state=state,
+                unit_text=unit_text,
+                dry_run=dry_run,
+                warn_only=True,
+            )
+        if not dry_run and tls:
+            scheme = _probe_port_scheme(port)
+            if scheme == "http":
+                notes.append(
+                    f"Port {port} still speaks HTTP. Restart `evileye run` so it loads certs from "
+                    "configs/system.json, or stop it so this TLS service can bind."
+                )
+        if not _has_existing_web_users(root):
+            notes.append("Change the bootstrap admin password on first login.")
         return ServiceActionResult(
             ok=True,
-            message=(
-                f"Service installed ({backend}): {result.unit_path}\n"
-                f"Web UI: {url}\n"
-                "Change the bootstrap admin password on first login."
-            ),
+            message="\n".join(notes),
             state=state,
             unit_text=unit_text,
             dry_run=dry_run,

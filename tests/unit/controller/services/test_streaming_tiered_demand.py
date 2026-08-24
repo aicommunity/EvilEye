@@ -124,3 +124,23 @@ def test_has_consumers_false_without_demand_or_heartbeat():
     service = StreamingService()
     service.configure(pipeline_id="7", publish_fps=5.0, server_process_manager=_AliveServer("idle"))
     assert service.has_consumers(0) is False
+
+
+def test_relay_without_server_process_publishes_at_fps():
+    """OS-service Web UI: no ServerProcessManager, only HTTPS frame relay."""
+    service = StreamingService()
+    service.configure(pipeline_id="7", publish_fps=5.0, server_process_manager=None)
+    service.set_frame_relay("https://127.0.0.1:8181/api/v1", "token")
+    seen = {}
+
+    def _throttle(key, *, fps_override=None):
+        seen["fps_override"] = fps_override
+        return True
+
+    service._throttle_ok = _throttle  # type: ignore[method-assign]
+    try:
+        assert service.has_consumers(0) is True
+        assert service._should_publish("7:0") is True
+        assert seen["fps_override"] == 5.0
+    finally:
+        service.set_frame_relay(None)

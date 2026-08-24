@@ -28,6 +28,12 @@ evileye install-server      # только если нужен сервер Web 
 успешной повторной проверки**. Отсутствие системной `libturbojpeg` не блокирует установку
 (preview через OpenCV). Если починить окружение нельзя (нет npm для сборки SPA и т.п.) — выход с кодом 1, сервис не ставится.
 
+`install-server` **не** перезаписывает `credentials.json` (пользователи и пароли) и не заменяет весь `configs/system.json`: в него дописываются только `server.ssl_*` (и `public_base_url`, если его ещё не было).
+
+Если после включения HTTPS браузер показывает `ERR_SSL_PROTOCOL_ERROR`, на порту отвечает **HTTP** (часто встроенный сервер `evileye run`, стартовавший до TLS). Перезапустите runtime из каталога сайта или остановите его и выполните `systemctl --user restart evileye`.
+
+`ERR_CONNECTION_REFUSED` значит на порту никто не слушает: unit `enabled`, но не `active` (после ребута без linger или после падения bind). Проверка: `systemctl --user status evileye`, затем `systemctl --user start evileye`. Для user-unit `install-server` включает `loginctl enable-linger`, чтобы сервис поднимался после перезагрузки без интерактивного входа.
+
 Без конфига (минимальный post-install режим):
 
 ```bash
@@ -73,7 +79,7 @@ evileye install-server --non-interactive --tls-self-signed --tls-ip 192.168.1.50
 
 ### Linux
 
-- User: `~/.config/systemd/user/evileye.service`
+- User: `~/.config/systemd/user/evileye.service` (при установке включается `loginctl enable-linger`, иначе после reboot unit не стартует без логина)
 - System: `/etc/systemd/system/evileye.service`
 - Шаблон: [`deploy/service/evileye.service.in`](../deploy/service/evileye.service.in)
 

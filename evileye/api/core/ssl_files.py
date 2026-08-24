@@ -85,8 +85,13 @@ def resolve_ssl_files(
         return _validate_pair(env_c, env_k)
 
     cfg = dict(server_cfg or ())
-    if not cfg:
-        cfg = load_system_server_cfg(root)
+    sys_cfg = load_system_server_cfg(root)
+    # Pipeline configs often have server.enabled/host/port without ssl_*.
+    # Still honor certs written by install-server into configs/system.json.
+    if not str(cfg.get("ssl_certfile") or "").strip():
+        cfg["ssl_certfile"] = sys_cfg.get("ssl_certfile")
+    if not str(cfg.get("ssl_keyfile") or "").strip():
+        cfg["ssl_keyfile"] = sys_cfg.get("ssl_keyfile")
     cfg_c = _normalize_path(cfg.get("ssl_certfile"), root=root)
     cfg_k = _normalize_path(cfg.get("ssl_keyfile"), root=root)
     return _validate_pair(cfg_c, cfg_k)

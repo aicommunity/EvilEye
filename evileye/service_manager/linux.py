@@ -21,6 +21,8 @@ class LinuxInstallResult:
     service_name: str
     unit_text: str
     dry_run: bool = False
+    start_ok: bool = True
+    start_error: str = ""
 
 
 def _run(cmd: list[str], *, check: bool = True) -> subprocess.CompletedProcess:
@@ -63,6 +65,24 @@ def systemctl_prefix(backend: str) -> list[str]:
     return ["systemctl"]
 
 
+def ensure_user_linger() -> tuple[bool, str]:
+    """Enable systemd user linger so user units start at boot without a login.
+
+    Returns (ok, message). Best-effort: failure does not abort install.
+    """
+    if shutil.which("loginctl") is None:
+        return False, "loginctl not found; user services may not start after reboot"
+    user = os.environ.get("USER") or Path.home().name
+    show = _run(["loginctl", "show-user", user, "-p", "Linger"], check=False)
+    if "Linger=yes" in (show.stdout or ""):
+        return True, "linger already enabled"
+    proc = _run(["loginctl", "enable-linger", user], check=False)
+    if proc.returncode != 0:
+        err = (proc.stderr or proc.stdout or "").strip() or f"exit {proc.returncode}"
+        return False, f"could not enable linger for {user}: {err}"
+    return True, f"linger enabled for {user}"
+
+
 def install_linux(
     *,
     unit_text: str,
@@ -87,9 +107,22 @@ def install_linux(
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(unit_text, encoding="utf-8")
 
+    if backend == "systemd-user":
+        linger_ok, linger_msg = ensure_user_linger()
+        if not linger_ok:
+            # Keep going; start may still work in this session.
+            result.start_error = linger_msg
+
     prefix = systemctl_prefix(backend)
     _run([*prefix, "daemon-reload"])
-    _run([*prefix, "enable", "--now", f"{service_name}.service"])
+    _run([*prefix, "enable", f"{service_name}.service"])
+    start = _run([*prefix, "restart", f"{service_name}.service"], check=False)
+    result.start_ok = start.returncode == 0
+    start_err = (start.stderr or start.stdout or "").strip()
+    if start_err:
+        result.start_error = (
+            f"{result.start_error}; {start_err}" if result.start_error else start_err
+        )
     return result
 
 
@@ -127,7 +160,13 @@ def uninstall_linux(
     return removed
 
 
+def is_enabled_linux(backend: str, service_name: str = "evileye") -> bool:
+    prefix = systemctl_prefix(backend)
+    proc = _run([*prefix, "is-enabled", f"{service_name}.service"], check=False)
+    return (proc.stdout or "").strip() in {"enabled", "enabled-runtime", "linked", "linked-runtime"}
+
+
 def is_active_linux(backend: str, service_name: str = "evileye") -> bool:
     prefix = systemctl_prefix(backend)
     proc = _run([*prefix, "is-active", f"{service_name}.service"], check=False)
-    return proc.stdout.strip() == "active"
+    return (proc.stdout or "").strip() == "active"

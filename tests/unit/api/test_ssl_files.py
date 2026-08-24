@@ -32,6 +32,24 @@ def test_resolve_relative_paths_from_site_root(tmp_path: Path, monkeypatch):
     assert ssl_enabled(cert, key)
 
 
+def test_resolve_ssl_merges_system_json_when_pipeline_server_has_no_ssl(tmp_path: Path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.delenv("EVILEYE_SSL_CERTFILE", raising=False)
+    monkeypatch.delenv("EVILEYE_SSL_KEYFILE", raising=False)
+    _write_pair(tmp_path)
+    (tmp_path / "configs").mkdir()
+    (tmp_path / "configs" / "system.json").write_text(
+        '{"server": {"ssl_certfile": "certs/server.crt", "ssl_keyfile": "certs/server.key"}}',
+        encoding="utf-8",
+    )
+    cert, key = resolve_ssl_files(
+        server_cfg={"enabled": True, "host": "0.0.0.0", "port": 8181},
+        site_dir=tmp_path,
+    )
+    assert cert == (tmp_path / "certs" / "server.crt").resolve()
+    assert key == (tmp_path / "certs" / "server.key").resolve()
+
+
 def test_half_pair_raises(tmp_path: Path, monkeypatch):
     monkeypatch.chdir(tmp_path)
     monkeypatch.delenv("EVILEYE_SSL_CERTFILE", raising=False)

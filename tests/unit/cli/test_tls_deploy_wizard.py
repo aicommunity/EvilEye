@@ -44,3 +44,24 @@ def test_tls_self_signed_non_interactive(tmp_path: Path):
     payload = json.loads((tmp_path / "configs" / "system.json").read_text(encoding="utf-8"))
     assert payload["server"]["ssl_certfile"] == "certs/server.crt"
     assert payload["server"]["public_base_url"] == "https://127.0.0.1:8181"
+
+
+def test_patch_system_ssl_preserves_existing_pipeline(tmp_path: Path):
+    from evileye.utils.tls_deploy_wizard import patch_system_ssl
+
+    (tmp_path / "configs").mkdir()
+    (tmp_path / "certs").mkdir()
+    cert = tmp_path / "certs" / "server.crt"
+    key = tmp_path / "certs" / "server.key"
+    cert.write_text("-----BEGIN CERTIFICATE-----\nMIIB\n-----END CERTIFICATE-----\n", encoding="utf-8")
+    key.write_text("-----BEGIN PRIVATE KEY-----\nMIIB\n-----END PRIVATE KEY-----\n", encoding="utf-8")
+    original = {
+        "pipeline": {"sources": [{"source_ids": [0]}]},
+        "server": {"enabled": True, "port": 8181, "public_base_url": "https://keep.example:8181"},
+    }
+    (tmp_path / "configs" / "system.json").write_text(json.dumps(original), encoding="utf-8")
+    patch_system_ssl(tmp_path, certfile=cert, keyfile=key, public_base_url="https://127.0.0.1:8181")
+    payload = json.loads((tmp_path / "configs" / "system.json").read_text(encoding="utf-8"))
+    assert payload["pipeline"]["sources"][0]["source_ids"] == [0]
+    assert payload["server"]["ssl_certfile"] == "certs/server.crt"
+    assert payload["server"]["public_base_url"] == "https://keep.example:8181"

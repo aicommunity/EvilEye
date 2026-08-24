@@ -16,6 +16,11 @@ def test_canonicalize_relay_base_url_replaces_bind_all():
     )
 
 
+def test_canonicalize_relay_base_url_appends_api_v1():
+    assert canonicalize_relay_base_url("https://127.0.0.1:8181") == "https://127.0.0.1:8181/api/v1"
+    assert canonicalize_relay_base_url("https://10.245.1.2:8181/") == "https://10.245.1.2:8181/api/v1"
+
+
 def test_resolve_public_api_base_url_defaults_to_loopback(tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
     monkeypatch.delenv("EVILEYE_WEB_API_BASE", raising=False)
