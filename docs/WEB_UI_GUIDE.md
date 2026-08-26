@@ -24,6 +24,8 @@ evileye install-server
 
 See [`CLI_SETUP_WEB.md`](CLI_SETUP_WEB.md).
 
+Deployment with or without a reverse proxy (Traefik, direct `:8181` TLS/HTTP): [`WEB_UI_REVERSE_PROXY.md`](WEB_UI_REVERSE_PROXY.md).
+
 ## Routes
 
 | Path | Permission | Description |

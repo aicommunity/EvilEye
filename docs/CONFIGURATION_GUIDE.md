@@ -217,9 +217,11 @@ evileye deploy-samples
 
 ### HTTPS для web API
 
-Предпочтительный путь — интерактивный шаг `evileye install-server` после `evileye deploy` (самоподпись с SAN IP/DNS или существующие PEM). Сертификаты пишутся в `certs/`, пути — в `server.ssl_certfile` / `server.ssl_keyfile`. Let’s Encrypt и nginx не требуются.
+Предпочтительный путь без внешнего proxy — интерактивный шаг `evileye install-server` после `evileye deploy` (самоподпись с SAN IP/DNS или существующие PEM). Сертификаты пишутся в `certs/`, пути — в `server.ssl_certfile` / `server.ssl_keyfile`.
 
-Порт по умолчанию остаётся **8181** (TLS на том же порту). HTTP и HTTPS одновременно на одном порту uvicorn не умеет.
+Если публичный HTTPS даёт **Traefik** (или другой reverse-proxy), EvilEye за ним должен слушать **HTTP** на 8181 (пустые `ssl_*`), с `public_base_url` = публичный `https://…`, `trust_proxy` и `secure_cookies: true`. Подробно: [WEB_UI_REVERSE_PROXY.md](WEB_UI_REVERSE_PROXY.md). Не проксируйте Traefik → HTTPS uvicorn (double-TLS).
+
+Порт по умолчанию остаётся **8181** (TLS на том же порту, если включён на uvicorn). HTTP и HTTPS одновременно на одном порту uvicorn не умеет.
 
 Веб-сервер также принимает TLS напрямую:
 

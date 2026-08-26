@@ -14,6 +14,7 @@
 - **[Windows: native pip](WINDOWS_NATIVE.md)** - Установка и watchdog без Docker
 - **[Windows: Docker Desktop](WINDOWS_DOCKER_DEPLOYMENT.md)** - Compose + PowerShell + Docker watchdog
 - **[Web UI](WEB_UI_GUIDE.md)** - React SPA, first-run, API
+- **[Web UI за Traefik / без proxy](WEB_UI_REVERSE_PROXY.md)** - HTTP/HTTPS на uvicorn vs TLS на Traefik, trust_proxy, типичные ошибки
 - **[Руководство по конфигурациям](CONFIGURATION_GUIDE.md)** - Полное описание структуры конфигурационных файлов, всех параметров и примеры конфигураций
 
 ### Архитектура системы
@@ -37,6 +38,7 @@
 - **[Post-refactor gate](../reports/mp_refactor_gate/e2e_gate_summary.md)** - E2E/soak после R0–R6
 - **[Руководство по рефакторингу GUI](GUI_REFACTORING_GUIDE.md)** - Архитектура GUI системы, компоненты и лучшие практики
 - **[Web UI](WEB_UI_GUIDE.md)** - React SPA, маршруты, сборка, API streaming/playback/editors
+- **[Web UI за Traefik / без proxy](WEB_UI_REVERSE_PROXY.md)** - схемы с reverse-proxy и без
 - **[Руководство по Dependency Injection](DEPENDENCY_INJECTION_GUIDE.md)** - Подробное описание механизма Dependency Injection, DIContainer и DependencyRegistry с примерами использования
 
 ### Что нового по мультипроцессному режиму
