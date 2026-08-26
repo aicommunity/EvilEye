@@ -116,7 +116,7 @@ const DETECTION_PRIORITY_PAD_SEC = 900;
 /** Coalesce playhead-driven detection windows (avoid refetch every RAF tick). */
 const DETECTION_POSITION_QUANT_SEC = 600;
 const VIEWPORT_DEBOUNCE_MS = 500;
-const SEEK_SETTLE_HOLD_MS = 800;
+const SEEK_SETTLE_HOLD_MS = 250;
 
 function useDebouncedValue<T>(value: T, delayMs: number): T {
   const [debounced, setDebounced] = useState(value);

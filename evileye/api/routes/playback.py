@@ -45,20 +45,22 @@ _detections_inflight_lock = asyncio.Lock()
 _detections_inflight_count = 0
 _detections_inflight_count_lock = threading.Lock()
 
-# Cap concurrent /playback/media responses. Browsers open several Range GETs per
-# <video>; keep headroom under LimitNOFILE without starving Live↔Playback remounts.
-def _max_playback_media_clients() -> int:
+# Observability only: never block /playback/media on a semaphore.
+# Hard caps + wait caused click lag (up to wait_sec) and black tiles (503) under
+# normal multi-cam Range traffic; the browser already limits connections per host.
+def _media_inflight_warn_at() -> int:
     import os
 
     try:
-        return max(1, int(os.getenv("EVILEYE_MAX_PLAYBACK_MEDIA_CLIENTS", "128") or 128))
+        return max(1, int(os.getenv("EVILEYE_MAX_PLAYBACK_MEDIA_CLIENTS", "96") or 96))
     except (TypeError, ValueError):
-        return 128
+        return 96
 
 
-_media_slots = asyncio.Semaphore(_max_playback_media_clients())
 _media_inflight = 0
 _media_inflight_lock = threading.Lock()
+_media_inflight_warn_lock = threading.Lock()
+_media_inflight_last_warn_at = 0.0
 
 
 def detections_inflight_count() -> int:
@@ -806,52 +808,34 @@ async def playback_media(request: Request, path: str = Query(...)):
         else:
             assert_name_allowed(access, cam_name)
 
-    try:
-        await asyncio.wait_for(_media_slots.acquire(), timeout=0.15)
-    except asyncio.TimeoutError:
-        logger.warning(
-            "playback media busy inflight=%s max=%s path=%s",
-            media_inflight_count(),
-            _max_playback_media_clients(),
-            path,
-        )
-        raise HTTPException(
-            status_code=503,
-            detail="playback_media busy",
-            headers={"Retry-After": "1"},
-        )
-
-    global _media_inflight
+    global _media_inflight, _media_inflight_last_warn_at
     with _media_inflight_lock:
         _media_inflight += 1
+        inflight_now = _media_inflight
+    warn_at = _media_inflight_warn_at()
+    if inflight_now >= warn_at:
+        now = time.time()
+        with _media_inflight_warn_lock:
+            if now - _media_inflight_last_warn_at >= 5.0:
+                _media_inflight_last_warn_at = now
+                logger.warning(
+                    "playback media high inflight=%s warn_at=%s path=%s",
+                    inflight_now,
+                    warn_at,
+                    path,
+                )
     released = False
+    release_lock = threading.Lock()
 
-    def _release_media_slot() -> None:
+    def _release_media_inflight() -> None:
         nonlocal released
-        if released:
-            return
-        released = True
+        with release_lock:
+            if released:
+                return
+            released = True
         global _media_inflight
         with _media_inflight_lock:
             _media_inflight = max(0, _media_inflight - 1)
-        try:
-            _media_slots.release()
-        except ValueError:
-            pass
-
-    # Release early when the client aborts (common on Live↔Playback / remount).
-    # FileResponse finally also releases; _release_media_slot is idempotent.
-    async def _watch_disconnect() -> None:
-        try:
-            while not released:
-                if await request.is_disconnected():
-                    _release_media_slot()
-                    return
-                await asyncio.sleep(0.5)
-        except asyncio.CancelledError:
-            return
-
-    watcher = asyncio.create_task(_watch_disconnect(), name="playback-media-disconnect")
 
     try:
         try:
@@ -862,20 +846,18 @@ async def playback_media(request: Request, path: str = Query(...)):
             raise HTTPException(status_code=404, detail="Media not found")
         media_type = mimetypes.guess_type(str(resolved))[0] or "application/octet-stream"
 
-        class _ReleasingFileResponse(FileResponse):
+        class _TrackedFileResponse(FileResponse):
             async def __call__(self, scope, receive, send):  # type: ignore[no-untyped-def]
                 try:
                     await super().__call__(scope, receive, send)
                 finally:
-                    watcher.cancel()
-                    _release_media_slot()
+                    _release_media_inflight()
 
-        return _ReleasingFileResponse(
+        return _TrackedFileResponse(
             str(resolved),
             media_type=media_type,
             headers={"Accept-Ranges": "bytes", "Cache-Control": "public, max-age=3600"},
         )
     except Exception:
-        watcher.cancel()
-        _release_media_slot()
+        _release_media_inflight()
         raise

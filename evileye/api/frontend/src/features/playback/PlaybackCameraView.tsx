@@ -19,7 +19,7 @@ import { PlaybackBusyHint } from './PlaybackBusyHint';
 import { PlaybackMediaWithOverlay } from './PlaybackMediaWithOverlay';
 import { mergePlaybackMetadata } from './mergePlaybackMetadata';
 import { playbackDebugInc } from './playbackDebug';
-import { drainVideoElement } from './drainVideo';
+import { drainVideoElement, reloadVideoMedia } from './drainVideo';
 import { seekPlaybackVideo, shouldEmitPlaybackClock, isPastDecodedEof, seekingAgeMs, SEEKING_STUCK_MS, resetPlaybackClockOwner } from './playbackVideoSync';
 import { usePlaybackMetadata } from './usePlaybackMetadata';
 import { usePlaybackStaticMetadata } from './usePlaybackStaticMetadata';
@@ -192,6 +192,12 @@ export function usePlaybackCameraSlot(
       return;
     }
 
+    // During seek-settle, do not abort an in-flight seek — that stacks Range GETs
+    // and freezes the timeline under multi-cam load.
+    if (scrubbingRef.current && v.seeking && seekingAgeMs(v) < SEEKING_STUCK_MS) {
+      return;
+    }
+
     seekPlaybackVideo(v, position, current.startTs, {
       playing,
       scrubbing: scrubbingRef.current,
@@ -251,6 +257,16 @@ export function usePlaybackCameraSlot(
     const onError = () => {
       setVideoSeeking(false);
       playbackDebugInc('playRejects');
+      // 503 / aborted Range → black tile until src is re-requested.
+      const el = ref.current;
+      if (el && slotRef.current) {
+        window.setTimeout(() => {
+          if (ref.current !== el || !slotRef.current) return;
+          if (reloadVideoMedia(el)) {
+            applySync();
+          }
+        }, 400);
+      }
     };
     const v = ref.current;
     if (!v) return;
@@ -344,11 +360,7 @@ export function usePlaybackCameraSlot(
           });
         }
         if (pausedZombieTicks >= 6 && v.readyState < 2) {
-          try {
-            v.load();
-          } catch {
-            /* ignore */
-          }
+          reloadVideoMedia(v);
           kick();
         }
         return;
@@ -367,25 +379,30 @@ export function usePlaybackCameraSlot(
           segmentEndTs: current.endTs,
         });
         if (stuckSeekAttempts === 2 || stuckSeekAttempts >= 4) {
-          try {
-            v.load();
-          } catch {
-            /* ignore */
-          }
+          reloadVideoMedia(v);
           kick();
         }
         return;
       }
 
-      if (!playingRef.current) return;
+      // Paused archive can stay black after a failed Range (readyState 0, not seeking).
+      if (!playingRef.current) {
+        if (v.readyState < 2 && current) {
+          stuckSeekAttempts += 1;
+          if (stuckSeekAttempts >= 3) {
+            stuckSeekAttempts = 0;
+            reloadVideoMedia(v);
+            kick();
+          }
+        } else {
+          stuckSeekAttempts = 0;
+        }
+        return;
+      }
       if (v.readyState >= 2) return;
       if (!(v.currentTime > 2) || pullbacks >= 4) {
         if (pullbacks >= 4 && v.readyState < 2) {
-          try {
-            v.load();
-          } catch {
-            /* ignore */
-          }
+          reloadVideoMedia(v);
           kick();
         }
         return;
@@ -400,11 +417,7 @@ export function usePlaybackCameraSlot(
     }, 700);
     const hardTimer = window.setTimeout(() => {
       if (!playingRef.current || v.readyState >= 2) return;
-      try {
-        v.load();
-      } catch {
-        /* ignore */
-      }
+      reloadVideoMedia(v);
       kick();
     }, 2800);
     return () => {

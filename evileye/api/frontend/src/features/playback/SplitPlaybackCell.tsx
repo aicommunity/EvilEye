@@ -9,7 +9,7 @@ import { PlaybackBusyHint } from './PlaybackBusyHint';
 import { usePlaybackCameraMetadata } from './PlaybackCameraView';
 import { playbackDebugInc } from './playbackDebug';
 import { seekPlaybackVideo, seekingAgeMs, SEEKING_STUCK_MS, shouldEmitPlaybackClock } from './playbackVideoSync';
-import { drainVideoElement } from './drainVideo';
+import { drainVideoElement, reloadVideoMedia } from './drainVideo';
 
 export function SplitPlaybackCell({
   videoUrl,
@@ -252,11 +252,7 @@ export function SplitPlaybackCell({
           drawFrame();
         }
         if (pausedZombieTicks >= 6 && video.readyState < 2) {
-          try {
-            video.load();
-          } catch {
-            /* ignore */
-          }
+          reloadVideoMedia(video);
         }
         return;
       }
@@ -275,12 +271,19 @@ export function SplitPlaybackCell({
         });
         drawFrame();
         if (stuckAttempts === 2 || stuckAttempts >= 4) {
-          try {
-            video.load();
-          } catch {
-            /* ignore */
-          }
+          reloadVideoMedia(video);
         }
+        return;
+      }
+      if (!playingRef.current && video.readyState < 2) {
+        stuckAttempts += 1;
+        if (stuckAttempts >= 3) {
+          stuckAttempts = 0;
+          reloadVideoMedia(video);
+          drawFrame();
+        }
+      } else if (!video.seeking) {
+        stuckAttempts = 0;
       }
     }, 700);
     return () => window.clearInterval(timer);
@@ -323,6 +326,23 @@ export function SplitPlaybackCell({
     const onError = () => {
       setSeeking(false);
       playbackDebugInc('playRejects');
+      const el = video;
+      window.setTimeout(() => {
+        if (videoRef.current !== el || !videoUrl) return;
+        if (reloadVideoMedia(el)) {
+          seekPlaybackVideo(el, getPositionRef.current(), startTsRef.current, {
+            playing: playingRef.current,
+            scrubbing: scrubbingRef.current,
+            force: true,
+            thresholdSec: 0,
+            segmentEndTs:
+              Number.isFinite(el.duration) && el.duration > 0
+                ? startTsRef.current + el.duration
+                : undefined,
+          });
+          drawFrame();
+        }
+      }, 400);
     };
     video.addEventListener('seeking', onSeeking);
     video.addEventListener('seeked', onSeeked);
@@ -351,6 +371,8 @@ export function SplitPlaybackCell({
     if (!video || !videoUrl) return;
     const stuck = video.seeking && seekingAgeMs(video) >= SEEKING_STUCK_MS;
     if (video.seeking && !scrubbing && !stuck) return;
+    // Settle/drag: finish the current seek before issuing another Range.
+    if (scrubbing && video.seeking && !stuck) return;
     seekPlaybackVideo(video, getPositionRef.current(), startTs, {
       playing,
       scrubbing,
