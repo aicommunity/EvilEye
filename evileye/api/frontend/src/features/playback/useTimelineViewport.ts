@@ -44,6 +44,12 @@ export function useTimelineViewport() {
     setLoadedTo((prev) => (prev == null ? to : Math.max(prev, to)));
   }, []);
 
+  /** Replace loaded coverage (hard-load); do not expand past a fresh request window. */
+  const setLoadedRange = useCallback((from: number, to: number) => {
+    setLoadedFrom(from);
+    setLoadedTo(to);
+  }, []);
+
   const needsLoad = useCallback(
     (vf: number, vt: number, dateStr: string) => {
       const { start } = dayBoundsLocal(dateStr);
@@ -96,6 +102,7 @@ export function useTimelineViewport() {
     setView,
     resetToData,
     expandLoaded,
+    setLoadedRange,
     needsLoad,
     zoomAt,
     panBySec,

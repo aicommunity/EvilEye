@@ -27,6 +27,7 @@ import { useTimelineViewport } from './useTimelineViewport';
 import { readPlaybackSession, usePlaybackSessionPersist } from './usePlaybackSession';
 import { fitColsForCount } from '../layout/fitGrid';
 import {
+  DAY_LOAD_BUFFER_SEC,
   localDateString,
   mergeSegments,
   dayBoundsLocal,
@@ -64,6 +65,24 @@ function initialSegmentWindow(dateStr: string, anchorSec?: number | null): { fro
     return { from, to };
   }
   return { from: Math.max(start, end - INITIAL_WINDOW_SEC), to: end };
+}
+
+/** Prefer covering the current viewport (+ buffer) so hard-load does not leave visible gaps. */
+function hardLoadSegmentWindow(
+  dateStr: string,
+  anchorSec: number | null | undefined,
+  viewFrom: number | null,
+  viewTo: number | null,
+): { from: number; to: number } {
+  if (viewFrom != null && viewTo != null && viewTo > viewFrom) {
+    const { start } = dayBoundsLocal(dateStr);
+    const upper = dayViewUpperBound(dateStr);
+    return {
+      from: Math.max(start, viewFrom - DAY_LOAD_BUFFER_SEC),
+      to: Math.min(upper, viewTo + DAY_LOAD_BUFFER_SEC),
+    };
+  }
+  return initialSegmentWindow(dateStr, anchorSec);
 }
 
 function dateFromUnixSec(sec: number): string {
@@ -205,6 +224,7 @@ export function PlaybackPage() {
   selectedIdsRef.current = selectedIds;
   const camerasAbortRef = useRef<AbortController | null>(null);
   const segmentsAbortRef = useRef<AbortController | null>(null);
+  const ensureAdjacentLoadRef = useRef<(vf: number, vt: number) => void>(() => {});
 
   useEffect(() => {
     if (sessionViewRestoredRef.current || initialT != null || !sessionSnap) return;
@@ -376,8 +396,13 @@ export function PlaybackPage() {
           const allSegs = Object.values(incoming).flat();
           const from = allSegs.length ? Math.min(...allSegs.map((s) => s.start_ts)) : opts?.from;
           const to = allSegs.length ? Math.max(...allSegs.map((s) => s.end_ts)) : opts?.to;
+          const coverFrom = opts?.from ?? from;
+          const coverTo = opts?.to ?? to;
+          if (coverFrom != null && coverTo != null && coverTo > coverFrom) {
+            if (!opts?.merge) viewport.setLoadedRange(coverFrom, coverTo);
+            else viewport.expandLoaded(coverFrom, coverTo);
+          }
           if (from != null && to != null) {
-            viewport.expandLoaded(from, to);
             ctrl.setRange(
               opts?.merge ? Math.min(ctrl.fromSec ?? from, from) : from,
               opts?.merge ? Math.max(ctrl.toSec ?? to, to) : to,
@@ -413,6 +438,9 @@ export function PlaybackPage() {
             const target = initialT != null ? initialT : ctrl.getPosition();
             const snapped = snapPositionToPlayable(allSegs, target);
             if (Math.abs(snapped - ctrl.getPosition()) > 0.5) ctrl.seek(snapped);
+          }
+          if (!opts?.merge && viewport.viewFrom != null && viewport.viewTo != null) {
+            ensureAdjacentLoadRef.current(viewport.viewFrom, viewport.viewTo);
           }
           return;
         }
@@ -484,8 +512,13 @@ export function PlaybackPage() {
         const allSegs = Object.values(incoming).flat();
         const from = allSegs.length ? Math.min(...allSegs.map((s) => s.start_ts)) : opts?.from;
         const to = allSegs.length ? Math.max(...allSegs.map((s) => s.end_ts)) : opts?.to;
+        const coverFrom = opts?.from ?? from;
+        const coverTo = opts?.to ?? to;
+        if (coverFrom != null && coverTo != null && coverTo > coverFrom) {
+          if (!opts?.merge) viewport.setLoadedRange(coverFrom, coverTo);
+          else viewport.expandLoaded(coverFrom, coverTo);
+        }
         if (from != null && to != null) {
-          viewport.expandLoaded(from, to);
           ctrl.setRange(
             opts?.merge ? Math.min(ctrl.fromSec ?? from, from) : from,
             opts?.merge ? Math.max(ctrl.toSec ?? to, to) : to,
@@ -519,6 +552,9 @@ export function PlaybackPage() {
           const target = initialT != null ? initialT : ctrl.getPosition();
           const snapped = snapPositionToPlayable(allSegs, target);
           if (Math.abs(snapped - ctrl.getPosition()) > 0.5) ctrl.seek(snapped);
+        }
+        if (!opts?.merge && viewport.viewFrom != null && viewport.viewTo != null) {
+          ensureAdjacentLoadRef.current(viewport.viewFrom, viewport.viewTo);
         }
       } catch (e) {
         if (isAbortError(e)) {
@@ -559,7 +595,10 @@ export function PlaybackPage() {
       return;
     }
     const deepLinkForDate = initialT != null && dateFromUnixSec(initialT) === date ? initialT : null;
-    void loadSegments(selectedIds, initialSegmentWindow(date, deepLinkForDate));
+    void loadSegments(
+      selectedIds,
+      hardLoadSegmentWindow(date, deepLinkForDate, viewport.viewFrom, viewport.viewTo),
+    );
     // eslint-disable-next-line react-hooks/exhaustive-deps -- reload on date/selection only
   }, [date, selectedIds, camerasLoading]);
 
@@ -579,6 +618,7 @@ export function PlaybackPage() {
     },
     [loadSegments, viewport, date],
   );
+  ensureAdjacentLoadRef.current = ensureAdjacentLoad;
 
   const onViewChange = useCallback(
     (vf: number, vt: number) => {
@@ -820,7 +860,10 @@ export function PlaybackPage() {
                   onClick={() => {
                     const deepLink =
                       initialT != null && dateFromUnixSec(initialT) === date ? initialT : null;
-                    void loadSegments(selectedIds, initialSegmentWindow(date, deepLink));
+                    void loadSegments(
+                      selectedIds,
+                      hardLoadSegmentWindow(date, deepLink, viewport.viewFrom, viewport.viewTo),
+                    );
                   }}
                 >
                   {t('playback.retryLoad')}
