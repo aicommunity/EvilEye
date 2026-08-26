@@ -208,9 +208,9 @@ export function SplitPlaybackCell({
     const video = videoRef.current;
     if (!video) return;
     video.playbackRate = speed;
-    if (playing) void video.play().catch(() => null);
-    else video.pause();
-  }, [playing, speed, videoUrl]);
+    if (playing && !scrubbing) void video.play().catch(() => null);
+    else if (!playing) video.pause();
+  }, [playing, scrubbing, speed, videoUrl]);
 
   useEffect(() => {
     const video = videoRef.current;
@@ -219,6 +219,9 @@ export function SplitPlaybackCell({
     const onSeeked = () => {
       setSeeking(false);
       setVideoGlobalSec(startTs + video.currentTime);
+      if (playing && !scrubbing && video.paused) {
+        void video.play().catch(() => null);
+      }
     };
     const onTime = () => {
       if (video.readyState >= 2) setVideoGlobalSec(startTs + video.currentTime);

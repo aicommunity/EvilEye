@@ -310,6 +310,7 @@ function NormalPlaybackCell({
           onVideoReady={applySync}
           onVideoDimensions={setFrameSize}
           playing={playing}
+          scrubbing={scrubbing}
           speed={speed}
           playMode={playMode}
           loading={loading}

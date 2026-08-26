@@ -136,6 +136,8 @@ export function usePlaybackCameraSlot(
           thresholdSec: 1.0,
           segmentEndTs: current.endTs,
         });
+        // Seek-storm / src change can leave the element paused while UI still plays.
+        if (v.paused) void v.play().catch(() => null);
         return;
       }
       if (!clockId || shouldEmitPlaybackClock(clockId, v)) {
@@ -154,10 +156,9 @@ export function usePlaybackCameraSlot(
   useEffect(() => {
     const onTimeUpdate = () => {
       publishVideoGlobal();
-      if (scrubbingRef.current) {
-        applySync();
-        return;
-      }
+      // While scrubbing/seek-settling, pin from the position effect — not every
+      // timeupdate. Re-seeking here fights playback and can leave video.paused.
+      if (scrubbingRef.current) return;
       if (playing) {
         const v = ref.current;
         const current = slotRef.current;
@@ -172,7 +173,11 @@ export function usePlaybackCameraSlot(
       publishVideoGlobal();
       // Avoid re-seek loops: browser landing slightly off target used to
       // immediately seek again (0.15s), which fought the shared playhead.
-      applySync();
+      if (!scrubbingRef.current) applySync();
+      const v = ref.current;
+      if (v && playing && !scrubbingRef.current && v.paused) {
+        void v.play().catch(() => null);
+      }
     };
     const v = ref.current;
     if (!v) return;
@@ -338,6 +343,7 @@ export function PlaybackVideoSurface({
   onVideoReady,
   onVideoDimensions,
   playing,
+  scrubbing = false,
   speed,
   playMode = 'normal',
   loading = false,
@@ -358,6 +364,7 @@ export function PlaybackVideoSurface({
   onVideoReady?: () => void;
   onVideoDimensions?: (size: FrameSize) => void;
   playing: boolean;
+  scrubbing?: boolean;
   speed: number;
   playMode?: PlaybackPlayMode;
   loading?: boolean;
@@ -387,9 +394,10 @@ export function PlaybackVideoSurface({
     v.playbackRate = speed;
     // Keep playing during in-flight seeks; pausing here made archive video look
     // like a slideshow whenever metadata/detection sync triggered seek events.
-    if (playing) void v.play().catch(() => null);
-    else v.pause();
-  }, [playing, speed, slot?.url, videoRef]);
+    // Re-run when scrubbing ends so play resumes after timeline seek-while-play.
+    if (playing && !scrubbing) void v.play().catch(() => null);
+    else if (!playing) v.pause();
+  }, [playing, scrubbing, speed, slot?.url, videoRef]);
 
   const previewClass = expanded ? 'expanded-camera-frame' : 'camera-preview';
 
