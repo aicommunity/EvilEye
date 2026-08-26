@@ -10,6 +10,7 @@ import {
   defaultTimelineView,
   panView,
   zoomViewAt,
+  zoomViewWithinDay,
 } from './timelineMath';
 
 export function useTimelineViewport() {
@@ -67,17 +68,21 @@ export function useTimelineViewport() {
   const zoomAt = useCallback(
     (anchorUnix: number, factor: number, dateStr?: string) => {
       if (viewFrom == null || viewTo == null) return;
-      const maxSpan = dateStr ? dayViewSpanSec(dateStr) : MAX_VIEW_SPAN_SEC;
+      if (dateStr) {
+        const next = zoomViewWithinDay(viewFrom, viewTo, anchorUnix, factor, dateStr);
+        setViewFrom(next.viewFrom);
+        setViewTo(next.viewTo);
+        return next;
+      }
       const next = zoomViewAt(viewFrom, viewTo, anchorUnix, factor, {
-        maxSpan,
-        dataMin: loadedFrom ?? undefined,
-        dataMax: loadedTo ?? undefined,
+        maxSpan: MAX_VIEW_SPAN_SEC,
+        minSpan: MIN_VIEW_SPAN_SEC,
       });
       setViewFrom(next.viewFrom);
       setViewTo(next.viewTo);
       return next;
     },
-    [viewFrom, viewTo, loadedFrom, loadedTo],
+    [viewFrom, viewTo],
   );
 
   const panBySec = useCallback(

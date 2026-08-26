@@ -3,6 +3,7 @@ import type { PlaybackEventInterval, PlaybackEventMarker, PlaybackSegment } from
 import { useI18n } from '../../i18n';
 import { EventMarkers } from './EventMarkers';
 import {
+  MIN_VIEW_SPAN_SEC,
   PAN_CLICK_SLOP_PX,
   buildTimelineDateBoundaries,
   buildTimelineTicks,
@@ -10,7 +11,7 @@ import {
   dayViewSpanSec,
   snapTimelineSeek,
   unixAtClientX,
-  zoomViewAt,
+  zoomViewWithinDay,
 } from './timelineMath';
 
 const TIMELINE_HEIGHT_PX = 92;
@@ -51,27 +52,64 @@ export function Timeline({
     startViewTo: number;
     moved: boolean;
   } | null>(null);
+  const viewRef = useRef({ viewFrom, viewTo, position, date });
+  viewRef.current = { viewFrom, viewTo, position, date };
+  const pendingZoomRef = useRef<{ viewFrom: number; viewTo: number } | null>(null);
+  const zoomRafRef = useRef<number | null>(null);
+  const onViewChangeRef = useRef(onViewChange);
+  onViewChangeRef.current = onViewChange;
 
   useEffect(() => {
     const el = rootRef.current;
     if (!el) return;
+    const flushZoom = () => {
+      zoomRafRef.current = null;
+      const pending = pendingZoomRef.current;
+      pendingZoomRef.current = null;
+      if (!pending) return;
+      const cur = viewRef.current;
+      if (
+        cur.viewFrom != null &&
+        cur.viewTo != null &&
+        Math.abs(pending.viewFrom - cur.viewFrom) < 1e-6 &&
+        Math.abs(pending.viewTo - cur.viewTo) < 1e-6
+      ) {
+        return;
+      }
+      onViewChangeRef.current(pending.viewFrom, pending.viewTo);
+    };
     const onWheel = (e: WheelEvent) => {
-      if (viewFrom == null || viewTo == null || viewTo <= viewFrom) return;
+      const cur = viewRef.current;
+      const baseFrom = pendingZoomRef.current?.viewFrom ?? cur.viewFrom;
+      const baseTo = pendingZoomRef.current?.viewTo ?? cur.viewTo;
+      if (baseFrom == null || baseTo == null || baseTo <= baseFrom) return;
       e.preventDefault();
-      const maxSpan = dayViewSpanSec(date);
-      const span = viewTo - viewFrom;
+      const maxSpan = dayViewSpanSec(cur.date);
+      const span = baseTo - baseFrom;
       const factor = Math.exp(e.deltaY * 0.0015);
-      // Hard stop: zoom-out does nothing when already at full day.
       if (factor > 1 && span >= maxSpan - 1) return;
+      if (factor < 1 && span <= MIN_VIEW_SPAN_SEC + 1) return;
       const rect = el.getBoundingClientRect();
-      const anchor = unixAtClientX(e.clientX, rect, viewFrom, viewTo);
-      const next = zoomViewAt(viewFrom, viewTo, anchor, factor, { maxSpan });
-      if (Math.abs(next.viewFrom - viewFrom) < 1e-6 && Math.abs(next.viewTo - viewTo) < 1e-6) return;
-      onViewChange(next.viewFrom, next.viewTo);
+      // Keep the playhead visually stable when it is on-screen; otherwise zoom at cursor.
+      const playheadInView = cur.position >= baseFrom && cur.position <= baseTo;
+      const anchor = playheadInView ? cur.position : unixAtClientX(e.clientX, rect, baseFrom, baseTo);
+      const next = zoomViewWithinDay(baseFrom, baseTo, anchor, factor, cur.date);
+      if (Math.abs(next.viewFrom - baseFrom) < 1e-6 && Math.abs(next.viewTo - baseTo) < 1e-6) return;
+      pendingZoomRef.current = next;
+      // One view update per animation frame — avoids flooding React/API on trackpad inertia.
+      if (zoomRafRef.current == null) {
+        zoomRafRef.current = window.requestAnimationFrame(flushZoom);
+      }
     };
     el.addEventListener('wheel', onWheel, { passive: false });
-    return () => el.removeEventListener('wheel', onWheel);
-  }, [viewFrom, viewTo, onViewChange, date]);
+    return () => {
+      el.removeEventListener('wheel', onWheel);
+      if (zoomRafRef.current != null) {
+        window.cancelAnimationFrame(zoomRafRef.current);
+        zoomRafRef.current = null;
+      }
+    };
+  }, [date]);
 
   if (viewFrom == null || viewTo == null || viewTo <= viewFrom) {
     return (

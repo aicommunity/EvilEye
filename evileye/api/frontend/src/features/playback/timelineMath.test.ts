@@ -3,11 +3,13 @@ import {
   DEFAULT_TIMELINE_WINDOW_SEC,
   DETECTION_SNAP_MAX_SEC,
   MAX_VIEW_SPAN_SEC,
+  MIN_VIEW_SPAN_SEC,
   buildTimelineDateBoundaries,
   clampViewToDayBounds,
   clipRangeToView,
   dayBoundsLocal,
   dayViewSpanSec,
+  dayViewUpperBound,
   defaultTimelineView,
   pickContainingSegment,
   pickLastPlayableSegment,
@@ -19,6 +21,7 @@ import {
   snapTimelineSeek,
   snapUnixToDetections,
   zoomViewAt,
+  zoomViewWithinDay,
 } from './timelineMath';
 
 describe('snapUnixToDetections', () => {
@@ -84,16 +87,42 @@ describe('zoom day hard stop', () => {
     expect(MAX_VIEW_SPAN_SEC).toBe(24 * 3600);
   });
 
+  it('keeps closest zoom at least 5 minutes', () => {
+    expect(MIN_VIEW_SPAN_SEC).toBe(5 * 60);
+  });
+
   it('stops zooming out once the view already spans the day', () => {
     const date = '2026-08-18';
     const { start } = dayBoundsLocal(date);
-    const upper = start + dayViewSpanSec(date, start + 12 * 3600) - 1;
     const span = dayViewSpanSec(date, start + 12 * 3600);
     const from = start;
     const to = start + span - 1;
     const next = zoomViewAt(from, to, (from + to) / 2, 2, { maxSpan: span });
     expect(next.viewTo - next.viewFrom).toBeLessThanOrEqual(span + 1e-6);
     expect(Math.abs(next.viewFrom - from) < 1 || Math.abs(next.viewTo - next.viewFrom - span) < 2).toBe(true);
+  });
+
+  it('does not cross midnight when zooming out near the day edge', () => {
+    const date = '2026-08-18';
+    const { start } = dayBoundsLocal(date);
+    const noon = start + 12 * 3600;
+    // Narrow window near midnight; zoom-out around left edge used to push viewFrom < start
+    // and switch the calendar day via resolveTimelineViewChange.
+    const from = start + 60;
+    const to = from + 20 * 60;
+    const next = zoomViewWithinDay(from, to, from + 30, 8, date, noon);
+    expect(next.viewFrom).toBeGreaterThanOrEqual(start);
+    expect(next.viewTo).toBeLessThanOrEqual(dayViewUpperBound(date, noon));
+    expect(next.viewTo - next.viewFrom).toBeLessThanOrEqual(dayViewSpanSec(date, noon) + 1e-6);
+  });
+
+  it('refuses to zoom in closer than MIN_VIEW_SPAN_SEC', () => {
+    const date = '2026-08-18';
+    const { start } = dayBoundsLocal(date);
+    const from = start + 3600;
+    const to = from + MIN_VIEW_SPAN_SEC;
+    const next = zoomViewWithinDay(from, to, (from + to) / 2, 0.5, date, start + 12 * 3600);
+    expect(next.viewTo - next.viewFrom).toBeGreaterThanOrEqual(MIN_VIEW_SPAN_SEC - 1e-6);
   });
 
   it('builds date-boundary ticks at local midnights', () => {

@@ -1,6 +1,7 @@
 import type { PlaybackSegment } from '../../api';
 
-export const MIN_VIEW_SPAN_SEC = 120;
+/** Closest zoom: full timeline width covers at least this many seconds. */
+export const MIN_VIEW_SPAN_SEC = 5 * 60;
 export const MAX_VIEW_SPAN_SEC = 24 * 3600;
 export const DEFAULT_TIMELINE_WINDOW_SEC = 7200;
 export const DAY_LOAD_BUFFER_SEC = 3 * 3600;
@@ -86,6 +87,47 @@ export function zoomViewAt(
     min: limits?.dataMin,
     max: limits?.dataMax,
   });
+}
+
+/**
+ * Wheel zoom constrained to a single calendar day.
+ * Never crosses midnight (avoids accidental date switch → empty timeline).
+ * When zooming out to the day span, snaps to exact [dayStart, dayUpper].
+ */
+export function zoomViewWithinDay(
+  viewFrom: number,
+  viewTo: number,
+  anchorUnix: number,
+  factor: number,
+  dateStr: string,
+  nowSec?: number,
+): { viewFrom: number; viewTo: number } {
+  const { start } = dayBoundsLocal(dateStr);
+  const upper = dayViewUpperBound(dateStr, nowSec);
+  const daySpan = dayViewSpanSec(dateStr, nowSec);
+  const span = viewTo - viewFrom;
+  if (!(span > 0) || !Number.isFinite(factor) || factor <= 0) {
+    return { viewFrom, viewTo };
+  }
+  // Hard stops before computing a new window.
+  if (factor > 1 && span >= daySpan - 1) {
+    return { viewFrom: start, viewTo: upper };
+  }
+  if (factor < 1 && span <= MIN_VIEW_SPAN_SEC + 1) {
+    return clampViewToDayBounds(viewFrom, viewTo, dateStr, nowSec);
+  }
+
+  const next = zoomViewAt(viewFrom, viewTo, anchorUnix, factor, {
+    minSpan: MIN_VIEW_SPAN_SEC,
+    maxSpan: daySpan,
+  });
+  let clamped = clampViewToDayBounds(next.viewFrom, next.viewTo, dateStr, nowSec);
+  const nextSpan = clamped.viewTo - clamped.viewFrom;
+  // Zoom-out that hits the day ceiling: lock to full day so the window stops jumping.
+  if (factor > 1 && nextSpan >= daySpan - 1) {
+    clamped = { viewFrom: start, viewTo: upper };
+  }
+  return clamped;
 }
 
 export function panView(
