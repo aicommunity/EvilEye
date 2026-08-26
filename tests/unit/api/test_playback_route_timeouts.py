@@ -153,3 +153,48 @@ def test_playback_timeout_without_cache_raises_503(monkeypatch):
         assert exc.value.detail == "playback_segments timeout"
 
     asyncio.run(_run())
+
+
+def test_playback_events_timeout_raises_503(monkeypatch):
+    monkeypatch.setattr(playback_routes, "playback_route_timeout_sec", lambda: 0.15)
+    playback_routes._memory_cache.clear()
+
+    def _slow(*_a, **_k):
+        import time
+
+        time.sleep(1.0)
+        return []
+
+    monkeypatch.setattr(playback_routes.svc, "load_event_intervals", _slow)
+    monkeypatch.setattr(playback_routes.svc, "load_event_markers", lambda *_a, **_k: [])
+
+    class _Access:
+        unrestricted = True
+        allowed_names = set()
+        visible_names = None
+
+    class _Req:
+        pass
+
+    monkeypatch.setattr(playback_routes, "resolve_camera_access", lambda _r: _Access())
+    monkeypatch.setattr(
+        playback_routes,
+        "_require_cameras",
+        lambda access, names, single=False: list(names),
+    )
+
+    async def _run():
+        with pytest.raises(HTTPException) as exc:
+            await playback_routes.playback_events(
+                _Req(),
+                from_ts=None,
+                to_ts=None,
+                camera="Cam1",
+                cameras=None,
+                date="2026-08-26",
+                limit=500,
+            )
+        assert exc.value.status_code == 503
+        assert exc.value.detail == "playback_events timeout"
+
+    asyncio.run(_run())

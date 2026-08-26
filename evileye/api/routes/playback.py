@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 import mimetypes
 import threading
 import time
@@ -22,12 +23,15 @@ from evileye.api.core.camera_access import (
 from evileye.api.core.playback_metadata_service import DEFAULT_MATCH_SEC
 from evileye.api.core.route_timeouts import playback_route_timeout_sec
 
+logger = logging.getLogger("evileye.api.playback")
+
 router = APIRouter(prefix="/api/v1/playback", tags=["playback"])
 
 _memory_lock = threading.Lock()
 # key -> (expires_at_or_None, value). expires_at None = sticky timeout fallback only.
 _memory_cache: dict[str, tuple[float | None, Any]] = {}
 _TIMELINE_HAPPY_TTL_SEC = 45.0
+_TIMELINE_SLOT_WAIT_SEC = 15.0
 # Keep light endpoints off the default pool so timeline rebuilds cannot starve /cameras.
 _light_pool = ThreadPoolExecutor(max_workers=4, thread_name_prefix="playback-light")
 _timeline_slots = asyncio.Semaphore(2)
@@ -58,6 +62,7 @@ async def _to_thread_with_timeout_or_cached(
     err_detail: str,
     on_timeout: Callable[[], None] | None = None,
     executor: ThreadPoolExecutor | None = None,
+    log_ctx: dict[str, Any] | None = None,
 ):
     timeout = playback_route_timeout_sec()
     try:
@@ -67,6 +72,13 @@ async def _to_thread_with_timeout_or_cached(
             return await asyncio.wait_for(fut, timeout=timeout)
         return await asyncio.wait_for(asyncio.to_thread(value_fn), timeout=timeout)
     except asyncio.TimeoutError:
+        logger.warning(
+            "playback route timeout detail=%s timeout_sec=%s executor=%s %s",
+            err_detail,
+            timeout,
+            "light" if executor is _light_pool else "default",
+            " ".join(f"{k}={v}" for k, v in (log_ctx or {}).items()),
+        )
         if on_timeout is not None:
             try:
                 on_timeout()
@@ -304,13 +316,26 @@ async def playback_timeline(
         if cached is not None:
             _on_timeout()
             return cached
-        await _timeline_slots.acquire()
+        try:
+            await asyncio.wait_for(_timeline_slots.acquire(), timeout=_TIMELINE_SLOT_WAIT_SEC)
+        except asyncio.TimeoutError:
+            logger.warning(
+                "playback route timeout detail=playback_timeline slot_busy date=%s n_cameras=%s",
+                date,
+                len(cam_list),
+            )
+            stale = _cached()
+            if stale is not None:
+                _on_timeout()
+                return stale
+            raise HTTPException(status_code=503, detail="playback_timeline slot busy")
     try:
         payload = await _to_thread_with_timeout_or_cached(
             _load,
             _cached,
             err_detail="playback_timeline timeout",
             on_timeout=_on_timeout,
+            log_ctx={"date": date, "n_cameras": len(cam_list), "route": "timeline"},
         )
     finally:
         _timeline_slots.release()
@@ -334,25 +359,36 @@ async def playback_events(
         _require_cameras(access, [camera], single=True)
     if cam_list:
         cam_list = _require_cameras(access, cam_list, single=False)
-    intervals = await asyncio.to_thread(
-        svc.load_event_intervals,
-        from_ts,
-        to_ts,
-        camera,
-        cam_list or None,
-        date=date,
-        limit=limit,
+
+    def _load():
+        intervals = svc.load_event_intervals(
+            from_ts,
+            to_ts,
+            camera,
+            cam_list or None,
+            date=date,
+            limit=limit,
+        )
+        legacy_markers = svc.load_event_markers(
+            from_ts,
+            to_ts,
+            camera,
+            cam_list or None,
+            date=date,
+            limit=limit,
+        )
+        return {"items": intervals, "legacy_markers": legacy_markers}
+
+    return await _to_thread_with_timeout_or_cached(
+        _load,
+        lambda: None,
+        err_detail="playback_events timeout",
+        log_ctx={
+            "date": date,
+            "n_cameras": len(cam_list) if cam_list else (1 if camera else 0),
+            "route": "events",
+        },
     )
-    legacy_markers = await asyncio.to_thread(
-        svc.load_event_markers,
-        from_ts,
-        to_ts,
-        camera,
-        cam_list or None,
-        date=date,
-        limit=limit,
-    )
-    return {"items": intervals, "legacy_markers": legacy_markers}
 
 
 @router.get("/metadata")
@@ -375,43 +411,59 @@ async def playback_metadata(
         raise HTTPException(status_code=400, detail="ts query required unless static_only=true")
     if cameras:
         cam_list = _require_cameras(access, [c.strip() for c in cameras.split(",") if c.strip()], single=False)
-        by_camera = await asyncio.to_thread(
-            metadata_svc.build_playback_metadata_batch,
-            cameras=cam_list,
-            ts=effective_ts,
-            date=date,
-            run_id=run_id,
-            window_sec=window,
-            static_only=static_only,
-            frame_w=frame_w,
-            frame_h=frame_h,
+
+        def _batch():
+            return {
+                "by_camera": metadata_svc.build_playback_metadata_batch(
+                    cameras=cam_list,
+                    ts=effective_ts,
+                    date=date,
+                    run_id=run_id,
+                    window_sec=window,
+                    static_only=static_only,
+                    frame_w=frame_w,
+                    frame_h=frame_h,
+                )
+            }
+
+        return await _to_thread_with_timeout_or_cached(
+            _batch,
+            lambda: None,
+            err_detail="playback_metadata timeout",
+            log_ctx={"date": date, "n_cameras": len(cam_list), "route": "metadata"},
         )
-        return {"by_camera": by_camera}
     if not camera:
         raise HTTPException(status_code=400, detail="camera or cameras query required")
     _require_cameras(access, [camera], single=True)
-    if static_only:
-        payload = await asyncio.to_thread(
-            metadata_svc.build_playback_static_metadata,
-            camera=camera,
-            run_id=run_id,
-            source_id=source_id,
-            frame_w=frame_w,
-            frame_h=frame_h,
-        )
-    else:
-        payload = await asyncio.to_thread(
-            metadata_svc.build_playback_metadata,
-            camera=camera,
-            ts=effective_ts,
-            date=date,
-            run_id=run_id,
-            window_sec=window,
-            source_id=source_id,
-            frame_w=frame_w,
-            frame_h=frame_h,
-        )
-    return {"metadata": payload}
+
+    def _one():
+        if static_only:
+            payload = metadata_svc.build_playback_static_metadata(
+                camera=camera,
+                run_id=run_id,
+                source_id=source_id,
+                frame_w=frame_w,
+                frame_h=frame_h,
+            )
+        else:
+            payload = metadata_svc.build_playback_metadata(
+                camera=camera,
+                ts=effective_ts,
+                date=date,
+                run_id=run_id,
+                window_sec=window,
+                source_id=source_id,
+                frame_w=frame_w,
+                frame_h=frame_h,
+            )
+        return {"metadata": payload}
+
+    return await _to_thread_with_timeout_or_cached(
+        _one,
+        lambda: None,
+        err_detail="playback_metadata timeout",
+        log_ctx={"date": date, "n_cameras": 1, "route": "metadata"},
+    )
 
 
 @router.get("/detections")
@@ -441,29 +493,45 @@ async def playback_detections(
             date = dt.now().strftime("%Y-%m-%d")
     if cameras:
         cam_list = _require_cameras(access, [c.strip() for c in cameras.split(",") if c.strip()], single=False)
-        by_camera = await asyncio.to_thread(
-            metadata_svc.load_detection_index_batch,
-            cameras=cam_list,
+
+        def _batch():
+            by_camera = metadata_svc.load_detection_index_batch(
+                cameras=cam_list,
+                date_folder=date,
+                run_id=run_id,
+                from_ts=from_ts,
+                to_ts=to_ts,
+                ticks_only=ticks_only,
+            )
+            return {"by_camera": by_camera, "items": [item for items in by_camera.values() for item in items]}
+
+        return await _to_thread_with_timeout_or_cached(
+            _batch,
+            lambda: None,
+            err_detail="playback_detections timeout",
+            log_ctx={"date": date, "n_cameras": len(cam_list), "route": "detections"},
+        )
+    if not camera:
+        raise HTTPException(status_code=400, detail="camera or cameras query required")
+    _require_cameras(access, [camera], single=True)
+
+    def _one():
+        items = metadata_svc.load_detection_index(
+            camera=camera,
             date_folder=date,
             run_id=run_id,
             from_ts=from_ts,
             to_ts=to_ts,
             ticks_only=ticks_only,
         )
-        return {"by_camera": by_camera, "items": [item for items in by_camera.values() for item in items]}
-    if not camera:
-        raise HTTPException(status_code=400, detail="camera or cameras query required")
-    _require_cameras(access, [camera], single=True)
-    items = await asyncio.to_thread(
-        metadata_svc.load_detection_index,
-        camera=camera,
-        date_folder=date,
-        run_id=run_id,
-        from_ts=from_ts,
-        to_ts=to_ts,
-        ticks_only=ticks_only,
+        return {"items": items}
+
+    return await _to_thread_with_timeout_or_cached(
+        _one,
+        lambda: None,
+        err_detail="playback_detections timeout",
+        log_ctx={"date": date, "n_cameras": 1, "route": "detections"},
     )
-    return {"items": items}
 
 
 @router.get("/media")

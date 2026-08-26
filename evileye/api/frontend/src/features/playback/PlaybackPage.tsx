@@ -20,6 +20,11 @@ import { useRunConfigFlags } from '../../hooks/useRunConfigFlags';
 import { Timeline } from './Timeline';
 import { PlaybackGrid } from './PlaybackGrid';
 import { ExpandedPlaybackView } from './ExpandedPlaybackView';
+import {
+  playbackDebugMarkSettleEnter,
+  playbackDebugMarkSettleExit,
+  playbackDebugSetMeta,
+} from './playbackDebug';
 import { usePlaybackController } from './usePlaybackController';
 import { useDetectionIndex } from './useDetectionIndex';
 import { usePlaybackLayout } from './usePlaybackLayout';
@@ -209,8 +214,14 @@ export function PlaybackPage() {
 
   useEffect(() => {
     ctrl.setScrubbing(seekSettling);
+    playbackDebugSetMeta({
+      scrubbing: seekSettling,
+      playing: ctrl.playing,
+      positionSec: ctrl.positionSec,
+      selectedIds,
+    });
     // eslint-disable-next-line react-hooks/exhaustive-deps -- controller setters are stable
-  }, [seekSettling]);
+  }, [seekSettling, ctrl.playing, ctrl.positionSec, selectedIds]);
 
   const togglePlay = useCallback(() => {
     if (ctrl.playing && seekSettleTimerRef.current != null) {
@@ -685,10 +696,13 @@ export function PlaybackPage() {
         : sec;
       ctrl.seek(target);
       setSeekSettling(true);
+      playbackDebugMarkSettleEnter();
       if (seekSettleTimerRef.current != null) window.clearTimeout(seekSettleTimerRef.current);
       seekSettleTimerRef.current = window.setTimeout(() => {
         setSeekSettling(false);
         seekSettleTimerRef.current = null;
+        playbackDebugMarkSettleExit();
+        ctrl.beginClockGrace();
       }, SEEK_SETTLE_HOLD_MS);
       // Defer timeline fetch until after settle so seek-while-play does not
       // saturate worker threads (cameras/timeline timeouts wipe the UI).

@@ -7,7 +7,8 @@ import { useMediaLetterbox } from '../overlay/useMediaLetterbox';
 import { useI18n } from '../../i18n';
 import { PlaybackBusyHint } from './PlaybackBusyHint';
 import { usePlaybackCameraMetadata } from './PlaybackCameraView';
-import { seekPlaybackVideo, shouldEmitPlaybackClock } from './playbackVideoSync';
+import { playbackDebugInc } from './playbackDebug';
+import { seekPlaybackVideo, seekingAgeMs, SEEKING_STUCK_MS, shouldEmitPlaybackClock } from './playbackVideoSync';
 
 export function SplitPlaybackCell({
   videoUrl,
@@ -208,9 +209,50 @@ export function SplitPlaybackCell({
     const video = videoRef.current;
     if (!video) return;
     video.playbackRate = speed;
-    if (playing && !scrubbing) void video.play().catch(() => null);
-    else video.pause();
+    if (playing && !scrubbing) {
+      playbackDebugInc('playCalls');
+      void video.play().catch(() => playbackDebugInc('playRejects'));
+    } else {
+      if (scrubbing) playbackDebugInc('pauseFromScrub');
+      video.pause();
+    }
   }, [playing, scrubbing, speed, videoUrl]);
+
+  useEffect(() => {
+    if (scrubbing || !playing) return;
+    const video = videoRef.current;
+    if (!video) return;
+    let stuckAttempts = 0;
+    const timer = window.setInterval(() => {
+      if (playing && !scrubbing && video.paused) {
+        playbackDebugInc('playCalls');
+        void video.play().catch(() => playbackDebugInc('playRejects'));
+      }
+      if (video.seeking && seekingAgeMs(video) >= SEEKING_STUCK_MS) {
+        playbackDebugInc('seekingStuckRecoveries');
+        stuckAttempts += 1;
+        seekPlaybackVideo(video, getPositionRef.current(), startTs, {
+          playing: true,
+          force: true,
+          scrubbing: true,
+          thresholdSec: 0,
+          segmentEndTs:
+            Number.isFinite(video.duration) && video.duration > 0 ? startTs + video.duration : undefined,
+        });
+        drawFrame();
+        if (stuckAttempts >= 2 && video.readyState < 3) {
+          playbackDebugInc('watchdogLoad');
+          try {
+            video.load();
+          } catch {
+            /* ignore */
+          }
+        }
+      }
+    }, 700);
+    return () => window.clearInterval(timer);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [scrubbing, playing, videoUrl, startTs]);
 
   useEffect(() => {
     const video = videoRef.current;
@@ -259,10 +301,12 @@ export function SplitPlaybackCell({
   useEffect(() => {
     const video = videoRef.current;
     if (!video || !videoUrl) return;
-    if (video.seeking && !scrubbing) return;
+    const stuck = video.seeking && seekingAgeMs(video) >= SEEKING_STUCK_MS;
+    if (video.seeking && !scrubbing && !stuck) return;
     seekPlaybackVideo(video, getPositionRef.current(), startTs, {
       playing,
       scrubbing,
+      force: stuck,
       thresholdSec: playing && !scrubbing ? 1.0 : undefined,
       segmentEndTs:
         Number.isFinite(video.duration) && video.duration > 0 ? startTs + video.duration : undefined,

@@ -26,6 +26,16 @@ See [`CLI_SETUP_WEB.md`](CLI_SETUP_WEB.md).
 
 Deployment with or without a reverse proxy (Traefik, direct `:8181` TLS/HTTP): [`WEB_UI_REVERSE_PROXY.md`](WEB_UI_REVERSE_PROXY.md).
 
+### Playback diagnostics
+
+On `/playback`, enable verbose seek/play diagnostics:
+
+```js
+localStorage.setItem('playbackDebug', '1'); location.reload();
+// or: window.__playbackDebug.setEnabled(true)
+window.__playbackDebug.snapshot();
+```
+
 ## Routes
 
 | Path | Permission | Description |

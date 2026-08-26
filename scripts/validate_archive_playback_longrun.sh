@@ -60,6 +60,15 @@ npx @playwright/test test tests/e2e/web_smoke.spec.ts --reporter=line
 echo "Running Playwright playback seek smoke"
 E2E_PLAYBACK_DATES="$E2E_PLAYBACK_DATES" npx @playwright/test test tests/e2e/playback_seek_smoke.spec.ts --reporter=line
 
+RUN_SEEKPLAY_STRESS="${RUN_SEEKPLAY_STRESS:-1}"
+if [[ "$RUN_SEEKPLAY_STRESS" == "1" ]]; then
+  echo "Running Playwright seek-while-play stress"
+  E2E_SEEKPLAY_DATE="${E2E_SEEKPLAY_DATE:-$E2E_LONGRUN_DATE}" \
+    npx @playwright/test test tests/e2e/playback_seek_while_play_stress.spec.ts --reporter=line
+else
+  echo "Skipping seek-while-play stress (RUN_SEEKPLAY_STRESS=0)"
+fi
+
 if [[ "$RUN_LONGRUN" == "1" ]]; then
   echo "Running Playwright playback long-run seeks (${E2E_LONGRUN_SEC}s) on ${E2E_LONGRUN_DATE}"
   E2E_LONGRUN_SEC="$E2E_LONGRUN_SEC" E2E_LONGRUN_STEP_MS="$E2E_LONGRUN_STEP_MS" E2E_LONGRUN_DATE="$E2E_LONGRUN_DATE" npx @playwright/test test tests/e2e/playback_longrun_seek.spec.ts --reporter=line

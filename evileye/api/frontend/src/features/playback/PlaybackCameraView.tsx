@@ -18,7 +18,14 @@ import {
 import { PlaybackBusyHint } from './PlaybackBusyHint';
 import { PlaybackMediaWithOverlay } from './PlaybackMediaWithOverlay';
 import { mergePlaybackMetadata } from './mergePlaybackMetadata';
-import { seekPlaybackVideo, shouldEmitPlaybackClock, isPastDecodedEof } from './playbackVideoSync';
+import { playbackDebugInc } from './playbackDebug';
+import {
+  seekPlaybackVideo,
+  shouldEmitPlaybackClock,
+  isPastDecodedEof,
+  seekingAgeMs,
+  SEEKING_STUCK_MS,
+} from './playbackVideoSync';
 import { usePlaybackMetadata } from './usePlaybackMetadata';
 import { usePlaybackStaticMetadata } from './usePlaybackStaticMetadata';
 import { isPositionInRecordingSegment, pickPlayableSegmentForPosition, isPlayableSegment } from './timelineMath';
@@ -97,6 +104,7 @@ export function usePlaybackCameraSlot(
         pathRef.current = null;
         slotRef.current = null;
         setSlot(null);
+        playbackDebugInc('slotNullWipes');
       }
     } else if (seg.path !== pathRef.current) {
       segmentChanged = true;
@@ -162,7 +170,19 @@ export function usePlaybackCameraSlot(
     }
 
     if (playing && !scrubbingRef.current) {
-      if (v.seeking) return;
+      const stuckSeeking = v.seeking && seekingAgeMs(v) >= SEEKING_STUCK_MS;
+      if (v.seeking && !stuckSeeking) return;
+      if (stuckSeeking) {
+        playbackDebugInc('seekingStuckRecoveries');
+        seekPlaybackVideo(v, position, current.startTs, {
+          playing: true,
+          force: true,
+          thresholdSec: 0,
+          segmentEndTs: current.endTs,
+        });
+        if (v.paused) void v.play().catch(() => null);
+        return;
+      }
       const videoGlobal = current.startTs + v.currentTime;
       if (Math.abs(position - videoGlobal) > 1.0) {
         seekPlaybackVideo(v, position, current.startTs, {
@@ -276,22 +296,57 @@ export function usePlaybackCameraSlot(
   // After seek-settle, pin + resume. Avoid immediate load() (aborts in-flight
   // decode); only reload if still HAVE_NOTHING after a short grace.
   // Some mp4s report a longer duration than decodable media — pull back if stuck.
+  // Also recover forever-seeking and paused-while-playing after seek storms.
   useEffect(() => {
     if (scrubbing || !playing) return;
     const v = ref.current;
     if (!v) return;
+    let stuckSeekAttempts = 0;
     const kick = () => {
+      playbackDebugInc('watchdogKick');
       applySync();
-      if (v.paused || v.readyState < 2) void v.play().catch(() => null);
+      if (v.paused || v.readyState < 2) {
+        playbackDebugInc('playCalls');
+        void v.play().catch(() => {
+          playbackDebugInc('playRejects');
+        });
+      }
     };
     kick();
     v.addEventListener('canplay', kick);
     const softTimer = window.setTimeout(kick, 200);
     let pullbacks = 0;
     const watchdog = window.setInterval(() => {
+      const current = slotRef.current;
+      if (playing && !scrubbingRef.current && v.paused) {
+        playbackDebugInc('playCalls');
+        void v.play().catch(() => playbackDebugInc('playRejects'));
+      }
+      if (v.seeking && seekingAgeMs(v) >= SEEKING_STUCK_MS && current) {
+        playbackDebugInc('seekingStuckRecoveries');
+        stuckSeekAttempts += 1;
+        seekPlaybackVideo(v, getPositionRef.current(), current.startTs, {
+          playing: true,
+          force: true,
+          scrubbing: true,
+          thresholdSec: 0,
+          segmentEndTs: current.endTs,
+        });
+        if (stuckSeekAttempts >= 2 && v.readyState < 3) {
+          playbackDebugInc('watchdogLoad');
+          try {
+            v.load();
+          } catch {
+            /* ignore */
+          }
+          kick();
+        }
+        return;
+      }
       if (v.readyState >= 2) return;
       if (!(v.currentTime > 2) || pullbacks >= 4) {
         if (pullbacks >= 4 && v.readyState < 2) {
+          playbackDebugInc('watchdogLoad');
           try {
             v.load();
           } catch {
@@ -311,6 +366,7 @@ export function usePlaybackCameraSlot(
     }, 700);
     const hardTimer = window.setTimeout(() => {
       if (v.readyState >= 2) return;
+      playbackDebugInc('watchdogLoad');
       try {
         v.load();
       } catch {
@@ -512,8 +568,13 @@ export function PlaybackVideoSurface({
     v.playbackRate = speed;
     // Pause while seek-settling so media does not drift ahead of the playhead;
     // resume play only after scrubbing clears.
-    if (playing && !scrubbing) void v.play().catch(() => null);
-    else v.pause();
+    if (playing && !scrubbing) {
+      playbackDebugInc('playCalls');
+      void v.play().catch(() => playbackDebugInc('playRejects'));
+    } else {
+      if (scrubbing) playbackDebugInc('pauseFromScrub');
+      v.pause();
+    }
   }, [playing, scrubbing, speed, slot?.url, videoRef]);
 
   const previewClass = expanded ? 'expanded-camera-frame' : 'camera-preview';
