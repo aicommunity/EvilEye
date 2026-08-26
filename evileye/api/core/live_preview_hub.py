@@ -1,18 +1,32 @@
-"""Fan-out grid preview JPEGs to WebSocket subscribers."""
+"""Fan-out grid preview JPEGs to WebSocket subscribers.
+
+Per-client latest-wins queues avoid head-of-line blocking: a slow WAN client
+cannot stall delivery to everyone else on the shared fan-out loop.
+"""
 
 from __future__ import annotations
 
 import asyncio
+import logging
 import os
 from dataclasses import dataclass, field
 from typing import Any, Optional
 
 from fastapi import WebSocket
 
+logger = logging.getLogger(__name__)
+
 
 def _preview_mode() -> str:
     mode = (os.getenv("EVILEYE_WS_PREVIEW_MODE", "binary") or "binary").strip().lower()
     return mode if mode in {"binary", "notify"} else "binary"
+
+
+def _send_timeout_sec() -> float:
+    try:
+        return max(0.2, float(os.getenv("EVILEYE_WS_PREVIEW_SEND_TIMEOUT_SEC", "2.0") or 2.0))
+    except Exception:
+        return 2.0
 
 
 @dataclass
@@ -21,6 +35,13 @@ class LivePreviewClient:
     run_id: int
     source_ids: set[int] = field(default_factory=set)
     last_etag: dict[int, str] = field(default_factory=dict)
+    # source_id -> (header, payload_or_None for notify mode); latest-wins.
+    pending: dict[int, tuple[dict[str, Any], bytes | None]] = field(default_factory=dict)
+    send_event: Optional[asyncio.Event] = None
+    sender_task: Optional[asyncio.Task] = None
+    closed: bool = False
+    send_timeouts: int = 0
+    replaced_pending: int = 0
 
 
 class LivePreviewHub:
@@ -31,7 +52,15 @@ class LivePreviewHub:
         self._loop: Optional[asyncio.AbstractEventLoop] = None
         self._fanout_task: Optional[asyncio.Task] = None
         self._demand_callback = None
-        self._stats = {"clients": 0, "bytes_sent": 0, "messages": 0, "dropped": 0}
+        self._stats = {
+            "clients": 0,
+            "bytes_sent": 0,
+            "messages": 0,
+            "dropped": 0,
+            "client_timeouts": 0,
+            "client_replaced": 0,
+            "clients_kicked": 0,
+        }
 
     def set_demand_callback(self, callback) -> None:
         """Optional callback(run_id: int) to refresh grid demand while clients are fed."""
@@ -56,6 +85,8 @@ class LivePreviewHub:
             except asyncio.CancelledError:
                 pass
             self._fanout_task = None
+        for client in list(self._clients):
+            self.unregister(client)
 
     def stats(self) -> dict[str, Any]:
         return {
@@ -63,16 +94,28 @@ class LivePreviewHub:
             "clients": len(self._clients),
             "max_clients": self._max_clients,
             "mode": _preview_mode(),
+            "send_timeout_sec": _send_timeout_sec(),
         }
 
     async def register(self, websocket: WebSocket, run_id: int) -> LivePreviewClient | None:
         if len(self._clients) >= self._max_clients:
             return None
         client = LivePreviewClient(websocket=websocket, run_id=run_id)
+        client.send_event = asyncio.Event()
+        loop = self._loop or asyncio.get_running_loop()
+        client.sender_task = loop.create_task(self._client_sender(client))
         self._clients.append(client)
         return client
 
     def unregister(self, client: LivePreviewClient) -> None:
+        client.closed = True
+        if client.send_event is not None:
+            client.send_event.set()
+        task = client.sender_task
+        if task is not None and not task.done():
+            task.cancel()
+        client.sender_task = None
+        client.pending.clear()
         self._clients = [c for c in self._clients if c is not client]
 
     def on_broker_publish(self, pipeline_id: str, payload: bytes, metadata: dict[str, Any]) -> None:
@@ -95,6 +138,67 @@ class LivePreviewHub:
         except asyncio.QueueFull:
             self._stats["dropped"] += 1
 
+    def _enqueue_client_frame(
+        self,
+        client: LivePreviewClient,
+        source_id: int,
+        header: dict[str, Any],
+        payload: bytes | None,
+        etag: str,
+    ) -> None:
+        if client.closed:
+            return
+        if source_id in client.pending:
+            client.replaced_pending += 1
+            self._stats["client_replaced"] += 1
+        if etag:
+            client.last_etag[source_id] = etag
+        client.pending[source_id] = (header, payload)
+        if client.send_event is not None:
+            client.send_event.set()
+
+    async def _client_sender(self, client: LivePreviewClient) -> None:
+        timeout = _send_timeout_sec()
+        try:
+            while not client.closed:
+                if client.send_event is None:
+                    return
+                await client.send_event.wait()
+                if client.closed:
+                    return
+                client.send_event.clear()
+                while client.pending and not client.closed:
+                    batch = dict(client.pending)
+                    client.pending.clear()
+                    for _source_id, (header, payload) in batch.items():
+                        try:
+                            await asyncio.wait_for(client.websocket.send_json(header), timeout=timeout)
+                            if payload is not None:
+                                await asyncio.wait_for(
+                                    client.websocket.send_bytes(payload),
+                                    timeout=timeout,
+                                )
+                                self._stats["bytes_sent"] += len(payload)
+                            self._stats["messages"] += 1
+                        except asyncio.TimeoutError:
+                            client.send_timeouts += 1
+                            self._stats["client_timeouts"] += 1
+                            self._stats["clients_kicked"] += 1
+                            logger.warning(
+                                "live preview client send timeout (run_id=%s timeouts=%s); unregistering",
+                                client.run_id,
+                                client.send_timeouts,
+                            )
+                            self.unregister(client)
+                            return
+                        except asyncio.CancelledError:
+                            raise
+                        except Exception:
+                            self.unregister(client)
+                            return
+        except asyncio.CancelledError:
+            return
+
     async def _fanout_loop(self) -> None:
         while True:
             pipeline_id, payload, metadata = await self._queue.get()
@@ -115,6 +219,7 @@ class LivePreviewHub:
                     "etag": etag,
                     "content_type": "image/jpeg",
                 }
+                wire_payload: bytes | None = None
             else:
                 header = {
                     "type": "preview",
@@ -124,24 +229,17 @@ class LivePreviewHub:
                     "content_type": "image/jpeg",
                     "byte_length": len(payload),
                 }
+                wire_payload = payload
             delivered = False
             for client in list(self._clients):
-                if client.run_id != run_id:
+                if client.closed or client.run_id != run_id:
                     continue
                 if client.source_ids and source_id not in client.source_ids:
                     continue
                 if etag and client.last_etag.get(source_id) == etag:
                     continue
-                client.last_etag[source_id] = etag
-                try:
-                    await client.websocket.send_json(header)
-                    if mode == "binary":
-                        await client.websocket.send_bytes(payload)
-                        self._stats["bytes_sent"] += len(payload)
-                    self._stats["messages"] += 1
-                    delivered = True
-                except Exception:
-                    self.unregister(client)
+                self._enqueue_client_frame(client, source_id, header, wire_payload, etag)
+                delivered = True
             if delivered and self._demand_callback is not None:
                 try:
                     self._demand_callback(run_id)

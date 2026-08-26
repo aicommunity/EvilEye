@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { streamSnapshotUrl, type StateCamera, type StreamMetadata } from '../../api';
 import { Button, Badge } from '../../components/ui';
 import { useI18n } from '../../i18n';
@@ -70,19 +70,29 @@ export function CameraTile({
   const imgRef = useRef<HTMLImageElement>(null);
   const [imgLoaded, setImgLoaded] = useState(0);
 
-  const mode = useMemo(
-    () =>
+  const [mode, setMode] = useState<PreviewMode>(() =>
+    resolvePreviewMode(camera, false, {
+      previewFrameAgeSec,
+      camerasPolledAtMs,
+    }),
+  );
+  useEffect(() => {
+    setMode((prev) =>
       resolvePreviewMode(camera, previewError, {
         previewFrameAgeSec,
         camerasPolledAtMs,
+        previousMode: prev,
       }),
-    [camera, previewError, previewFrameAgeSec, camerasPolledAtMs, healthTick],
-  );
+    );
+  }, [camera, previewError, previewFrameAgeSec, camerasPolledAtMs, healthTick]);
   const running = camera.run_state === 'running';
-  // Keep overlays strictly bound to fresh preview frames; stale snapshots can
-  // make metadata appear ahead of the person/object by several seconds.
-  const wantOverlay = running && active && mode === 'live';
-  const meta = useRunMetadataWs(wantOverlay ? camera.run_id : null, camera.source_id ?? null);
+  // Keep metadata WS subscribed while the run is active so brief stale does not
+  // tear down overlays. Hide only on offline / hard error / capture reconnect.
+  const wantMetaSub = running && active && mode !== 'offline';
+  const showOverlay =
+    wantMetaSub && mode !== 'error' && camera.reconnecting !== true && (mode === 'live' || mode === 'stale');
+  const overlayDimmed = mode === 'stale';
+  const meta = useRunMetadataWs(wantMetaSub ? camera.run_id : null, camera.source_id ?? null);
   const wantSnapshot = running && active && !useMjpeg && !previewWsActive;
   const wantWsPreview = running && active && !useMjpeg && previewWsActive && previewBlobUrl;
 
@@ -176,11 +186,12 @@ export function CameraTile({
                 onError={onImgError}
                 onLoad={onImgLoad}
               />
-              {wantOverlay ? (
+              {showOverlay ? (
                 <OverlayCanvas
                   meta={meta as StreamMetadata | null}
                   layoutBox={layoutBox}
                   density={gridMode ? 'compact' : 'full'}
+                  dimmed={overlayDimmed}
                 />
               ) : null}
             </>
@@ -262,11 +273,12 @@ export function CameraTile({
                 onError={onImgError}
                 onLoad={onImgLoad}
               />
-              {wantOverlay ? (
+              {showOverlay ? (
                 <OverlayCanvas
                   meta={meta as StreamMetadata | null}
                   layoutBox={layoutBox}
                   density="full"
+                  dimmed={overlayDimmed}
                 />
               ) : null}
             </>

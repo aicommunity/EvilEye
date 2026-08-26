@@ -1,12 +1,24 @@
 import type { StateCamera } from '../../api';
 
-export const LIVE_STALE_SEC = 5;
+/** Enter stale when effective frame age exceeds this (seconds). */
+export const LIVE_STALE_ENTER_SEC = 12;
+/** Leave stale (back to live) only when age drops below this (hysteresis). */
+export const LIVE_STALE_EXIT_SEC = 5;
+/** @deprecated Prefer LIVE_STALE_ENTER_SEC; kept for callers/tests. */
+export const LIVE_STALE_SEC = LIVE_STALE_ENTER_SEC;
+
+export type PreviewMode = 'live' | 'snapshot' | 'stale' | 'error' | 'offline';
 
 export type PreviewHealthOpts = {
   /** Age in seconds derived from the latest WS preview frame timestamp. */
   previewFrameAgeSec?: number | null;
   /** Wall-clock ms when `/state/cameras` response was last applied in the UI. */
   camerasPolledAtMs?: number;
+  /**
+   * Previous resolved mode for age hysteresis. Without it, ENTER threshold is used
+   * (avoids green↔yellow flicker around the boundary).
+   */
+  previousMode?: PreviewMode;
 };
 
 /** Estimate current preview frame age using WS timestamps and/or last API poll. */
@@ -31,7 +43,12 @@ export function previewFrameAgeSecFromTs(tsSec: number | undefined | null, nowMs
   return Math.max(0, nowMs / 1000 - tsSec);
 }
 
-export type PreviewMode = 'live' | 'snapshot' | 'stale' | 'error' | 'offline';
+function staleByAge(age: number | null, previousMode?: PreviewMode): boolean {
+  if (age == null) return false;
+  const wasStale = previousMode === 'stale' || previousMode === 'error';
+  if (wasStale) return age >= LIVE_STALE_EXIT_SEC;
+  return age > LIVE_STALE_ENTER_SEC;
+}
 
 export function resolvePreviewMode(
   camera: StateCamera,
@@ -44,14 +61,14 @@ export function resolvePreviewMode(
 
   const wsAge = opts?.previewFrameAgeSec;
   const age = effectiveFrameAgeSec(camera, opts);
-  const staleByAge = age != null && age > LIVE_STALE_SEC;
+  const ageStale = staleByAge(age, opts?.previousMode);
 
   // `preview_available` comes from `/state/cameras` polling and can lag behind WS preview.
   // If we have a fresh WS preview age, prefer that over potentially stale API flags.
   const wsHasFreshness = wsAge != null && Number.isFinite(wsAge);
   const previewAvailableOk = camera.preview_available !== false || wsHasFreshness;
 
-  if (!previewAvailableOk || staleByAge || camera.is_working === false) {
+  if (!previewAvailableOk || ageStale || camera.is_working === false) {
     return 'stale';
   }
   return 'live';

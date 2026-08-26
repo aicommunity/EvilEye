@@ -1,6 +1,11 @@
 import { describe, expect, it } from 'vitest';
 import type { StateCamera } from '../../api';
-import { effectiveFrameAgeSec, resolvePreviewMode } from './liveHealth';
+import {
+  effectiveFrameAgeSec,
+  LIVE_STALE_ENTER_SEC,
+  LIVE_STALE_EXIT_SEC,
+  resolvePreviewMode,
+} from './liveHealth';
 
 function cam(partial: Partial<StateCamera> = {}): StateCamera {
   return {
@@ -33,16 +38,38 @@ describe('effectiveFrameAgeSec', () => {
 });
 
 describe('resolvePreviewMode', () => {
-  it('marks stale when effective age exceeds threshold', () => {
+  it('stays live when age is between exit and enter thresholds', () => {
+    // age ≈ 6.5 — above EXIT but below ENTER
     const mode = resolvePreviewMode(cam({ last_frame_age_sec: 4.5 }), false, {
+      camerasPolledAtMs: Date.now() - 2000,
+    });
+    expect(mode).toBe('live');
+  });
+
+  it('marks stale when effective age exceeds enter threshold', () => {
+    const mode = resolvePreviewMode(cam({ last_frame_age_sec: LIVE_STALE_ENTER_SEC }), false, {
       camerasPolledAtMs: Date.now() - 2000,
     });
     expect(mode).toBe('stale');
   });
 
+  it('uses hysteresis: stays stale until age drops below exit', () => {
+    const stillStale = resolvePreviewMode(cam({ last_frame_age_sec: LIVE_STALE_EXIT_SEC }), false, {
+      camerasPolledAtMs: Date.now(),
+      previousMode: 'stale',
+    });
+    expect(stillStale).toBe('stale');
+
+    const recovered = resolvePreviewMode(cam({ last_frame_age_sec: LIVE_STALE_EXIT_SEC - 0.5 }), false, {
+      camerasPolledAtMs: Date.now(),
+      previousMode: 'stale',
+    });
+    expect(recovered).toBe('live');
+  });
+
   it('stays live when WS preview is fresh even if API age is stale', () => {
     const mode = resolvePreviewMode(
-      cam({ last_frame_age_sec: 12, preview_available: true, is_working: true }),
+      cam({ last_frame_age_sec: 20, preview_available: true, is_working: true }),
       false,
       { previewFrameAgeSec: 0.5, camerasPolledAtMs: Date.now() - 10_000 },
     );
@@ -51,7 +78,7 @@ describe('resolvePreviewMode', () => {
 
   it('ignores preview_available false when WS preview is fresh', () => {
     const mode = resolvePreviewMode(
-      cam({ last_frame_age_sec: 12, preview_available: false, is_working: true }),
+      cam({ last_frame_age_sec: 20, preview_available: false, is_working: true }),
       false,
       { previewFrameAgeSec: 0.5, camerasPolledAtMs: Date.now() - 10_000 },
     );

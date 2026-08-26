@@ -112,6 +112,18 @@ Grid click = select only (no MJPEG). Double-click / expand button opens in-grid 
 
 Expand flow: UI posts `stream:status` with `level=stream` (pre-warm), polls until `has_frame` (or ~5s timeout), then attaches `<img src=…/stream.mjpg>`. Loading / error + Retry are shown if the stream fails. MJPEG no longer returns 409 when the broker is still empty — the generator waits for the first JPEG up to `EVILEYE_MJPEG_IDLE_SEC`.
 
+### Camera status dots (Live grid)
+
+| Color | Mode | Meaning |
+|-------|------|---------|
+| Green | `live` | Preview frame age within hysteresis window |
+| Yellow | `stale` / `error` | Preview lagging, capture reconnect, or image load error |
+| Grey | `offline` | Run not `running` |
+
+UI thresholds (client): enter yellow when effective frame age **> 12 s**; return to green only when age **< 5 s** (hysteresis). Metadata WS stays subscribed while the run is active; overlays stay visible (dimmed) during brief stale and are cleared on offline / hard error / capture reconnect.
+
+**WAN tip:** set `EVILEYE_WS_PREVIEW_MODE=notify` so the hub sends small JSON notifies and clients fetch snapshots via HTTP (avoids large binary JPEG over a high-latency link). Hub fan-out uses per-client latest-wins queues and `EVILEYE_WS_PREVIEW_SEND_TIMEOUT_SEC` so one slow client cannot stall others.
+
 ### Users API (admin)
 
 | Method | Path | Notes |
@@ -133,8 +145,10 @@ Settings page (`/settings`): language, date format, visible cameras, change pass
 |-----|---------|---------|
 | `EVILEYE_PREVIEW_HEARTBEAT_FPS` | `0` | Encode while server alive but no UI demand |
 | `EVILEYE_PREVIEW_GRID_FPS` | `2.0` | Encode FPS for grid / snapshot / live WS demand |
+| `EVILEYE_PREVIEW_DEMAND_TTL_SEC` | `45` | Drop encode to idle after last demand touch |
 | `EVILEYE_MAX_LIVE_WS_CLIENTS` | `32` | Cap for `/ws/live` subscribers (close `4429` when full) |
-| `EVILEYE_WS_PREVIEW_MODE` | `binary` | `binary` = JPEG over WS; `notify` = JSON notify + client fetches snapshot |
+| `EVILEYE_WS_PREVIEW_MODE` | `binary` | `binary` = JPEG over WS; `notify` = JSON notify + client fetches snapshot (**prefer `notify` on WAN**) |
+| `EVILEYE_WS_PREVIEW_SEND_TIMEOUT_SEC` | `2.0` | Per-client WS send timeout; slow clients are dropped so they cannot block fan-out |
 | `EVILEYE_MAX_MJPEG_CLIENTS` | `8` | Cap concurrent MJPEG streams |
 | `EVILEYE_MJPEG_IDLE_SEC` | `8` | Close MJPEG if no frames |
 | `EVILEYE_DATA_DIR` | `EvilEyeData` | Streams / Events root |
@@ -143,8 +157,9 @@ Config: `server.publish_fps` (stream level), `server.preview_encode_workers`, `s
 
 ## Performance notes
 
-- **Tiered demand:** `idle` / `grid` / `stream`. Closing the Live tab drops encode to idle after demand TTL (~20s).
-- **Live camera health:** `GET /api/v1/state/cameras` includes `is_working`, `last_frame_age_sec`, `reconnecting`.
+- **Tiered demand:** `idle` / `grid` / `stream`. Closing the Live tab drops encode to idle after demand TTL (`EVILEYE_PREVIEW_DEMAND_TTL_SEC`, default 45s).
+- **Live camera health:** `GET /api/v1/state/cameras` includes `is_working`, `last_frame_age_sec`, `reconnecting`. UI status dots use hysteresis (12s enter / 5s exit); metadata overlays are not torn down on brief stale.
+- **Live preview hub:** per-client latest-wins queues; hub stats include `dropped`, `client_timeouts`, `client_replaced`, `clients_kicked`.
 - **MJPEG refcount:** each stream connection acquires a broker ref; soft `stream:stop` is a no-op (disconnect releases). On MJPEG release demand is forced back to `grid`.
 - **Playback:** logical cameras from run config (`Cam2`/`Cam3`, not composite `Cam2-Cam3`); split crop via canvas + `src_coords`; selection in `localStorage` (`evileye.playback.layout.v1`); auto-load segments; timeline segment blocks.
 - **Journals / logs / WS metadata:** unchanged cadence (poll/SSE/backoff).

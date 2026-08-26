@@ -17,11 +17,14 @@ export function OverlayCanvas({
   layoutBox,
   density = 'full',
   renderMode = 'live',
+  dimmed = false,
 }: {
   meta: StreamMetadata | null;
   layoutBox?: OverlayLayoutBox;
   density?: OverlayDensity;
   renderMode?: OverlayRenderMode;
+  /** Soften overlay while preview is briefly stale (keep last boxes visible). */
+  dimmed?: boolean;
 }) {
   const payload = meta;
   const hasContent = Boolean(
@@ -43,6 +46,7 @@ export function OverlayCanvas({
         width: layoutBox.width || '100%',
         height: layoutBox.height || '100%',
         pointerEvents: 'none',
+        opacity: dimmed ? 0.45 : undefined,
       }
     : {
         position: 'absolute',
@@ -50,6 +54,7 @@ export function OverlayCanvas({
         width: '100%',
         height: '100%',
         pointerEvents: 'none',
+        opacity: dimmed ? 0.45 : undefined,
       };
 
   const isPlayback = renderMode === 'playback';
