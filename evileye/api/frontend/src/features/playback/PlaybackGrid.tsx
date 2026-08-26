@@ -135,22 +135,14 @@ function PlaybackCell({
   const mediaRef = useRef<HTMLDivElement>(null);
   const [videoReady, setVideoReady] = useState(0);
   const [frameSize, setFrameSize] = useState<FrameSize | null>(null);
-  const { ref, preloadRef, slot, applySync, videoGlobalSec, videoSeeking, recordingInProgress } = usePlaybackCameraSlot(
-    segments,
-    getPosition,
-    positionSec,
-    playing,
-    playMode,
-    scrubbing,
-    onVideoClock,
-    id,
-  );
+  const { ref, preloadRef, slot, applySync, videoGlobalSec, videoSeeking, recordingInProgress, mediaEpoch } =
+    usePlaybackCameraSlot(segments, getPosition, positionSec, playing, playMode, scrubbing, onVideoClock, id);
   const split = Boolean(camera?.split && camera?.src_coords && camera.src_coords.length === 4);
 
   useEffect(() => {
     setFrameSize(null);
     setVideoReady(0);
-  }, [slot?.url]);
+  }, [slot?.url, mediaEpoch]);
 
   if (split && slot?.url && camera?.src_coords) {
     return (
@@ -178,6 +170,7 @@ function PlaybackCell({
         frameSize={frameSize}
         onFrameSize={setFrameSize}
         detectionsReady={detectionsReady}
+        mediaEpoch={mediaEpoch}
       />
     );
   }
@@ -190,6 +183,7 @@ function PlaybackCell({
       videoRef={ref}
       preloadRef={preloadRef}
       slot={slot}
+      mediaEpoch={mediaEpoch}
       applySync={applySync}
       videoReady={videoReady}
       setVideoReady={setVideoReady}
@@ -222,6 +216,7 @@ function NormalPlaybackCell({
   videoRef,
   preloadRef,
   slot,
+  mediaEpoch = 0,
   applySync,
   videoReady,
   setVideoReady,
@@ -250,6 +245,7 @@ function NormalPlaybackCell({
   videoRef: RefObject<HTMLVideoElement | null>;
   preloadRef: RefObject<HTMLVideoElement | null>;
   slot: ReturnType<typeof usePlaybackCameraSlot>['slot'];
+  mediaEpoch?: number;
   applySync: () => void;
   videoReady: number;
   setVideoReady: Dispatch<SetStateAction<number>>;
@@ -300,6 +296,7 @@ function NormalPlaybackCell({
           videoRef={videoRef}
           preloadRef={preloadRef}
           slot={slot}
+          mediaEpoch={mediaEpoch}
           mediaRef={mediaRef}
           meta={meta}
           showMetadata={showMetadata}

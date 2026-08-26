@@ -111,9 +111,11 @@ function parseDeepLinkTime(raw: string | null): number | null {
 
 const CAMERAS_TTL_MS = 30_000;
 const SEGMENTS_TTL_MS = 60_000;
-/** Padding around viewport/position for the priority detection fetch. */
+/** Padding around viewport for the priority detection fetch. */
 const DETECTION_PRIORITY_PAD_SEC = 900;
-const VIEWPORT_DEBOUNCE_MS = 350;
+/** Coalesce playhead-driven detection windows (avoid refetch every RAF tick). */
+const DETECTION_POSITION_QUANT_SEC = 600;
+const VIEWPORT_DEBOUNCE_MS = 500;
 const SEEK_SETTLE_HOLD_MS = 800;
 
 function useDebouncedValue<T>(value: T, delayMs: number): T {
@@ -123,6 +125,11 @@ function useDebouncedValue<T>(value: T, delayMs: number): T {
     return () => window.clearTimeout(id);
   }, [value, delayMs]);
   return debounced;
+}
+
+function quantizeFloor(sec: number, step: number): number {
+  if (!(step > 0) || !Number.isFinite(sec)) return sec;
+  return Math.floor(sec / step) * step;
 }
 
 function camerasCacheKey(date: string, runId: number | null): string {
@@ -178,19 +185,18 @@ export function PlaybackPage() {
   const priorityDetectionWindow = useMemo(() => {
     const { start } = dayBoundsLocal(date);
     const upper = dayViewUpperBound(date);
-    // Keep priority fetch local to playhead/viewport — do not expand to ctrl.fromSec/toSec
-    // (loaded segment bounds span the whole day and would force a full-day rebuild).
-    const anchors: number[] = [
-      ctrl.positionSec - SEEK_LOAD_HALF_SEC,
-      ctrl.positionSec + SEEK_LOAD_HALF_SEC,
-    ];
-    if (debouncedViewFrom != null) anchors.push(debouncedViewFrom - DETECTION_PRIORITY_PAD_SEC);
-    if (debouncedViewTo != null) anchors.push(debouncedViewTo + DETECTION_PRIORITY_PAD_SEC);
-    const finite = anchors.filter((v) => Number.isFinite(v));
-    if (!finite.length) return null;
+    // Prefer the (debounced) timeline viewport — do NOT track live playhead every tick:
+    // that aborted/restarted /detections continuously and saturated the API (EMFILE).
+    if (debouncedViewFrom != null && debouncedViewTo != null && debouncedViewTo > debouncedViewFrom) {
+      return {
+        fromSec: Math.max(start, debouncedViewFrom - DETECTION_PRIORITY_PAD_SEC),
+        toSec: Math.min(upper, debouncedViewTo + DETECTION_PRIORITY_PAD_SEC),
+      };
+    }
+    const qPos = quantizeFloor(ctrl.positionSec, DETECTION_POSITION_QUANT_SEC);
     return {
-      fromSec: Math.max(start, Math.min(...finite)),
-      toSec: Math.min(upper, Math.max(...finite)),
+      fromSec: Math.max(start, qPos - SEEK_LOAD_HALF_SEC),
+      toSec: Math.min(upper, qPos + DETECTION_POSITION_QUANT_SEC + SEEK_LOAD_HALF_SEC),
     };
   }, [date, ctrl.positionSec, debouncedViewFrom, debouncedViewTo]);
 

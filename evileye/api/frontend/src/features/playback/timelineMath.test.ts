@@ -22,6 +22,7 @@ import {
   snapUnixToDetections,
   zoomViewAt,
   zoomViewWithinDay,
+  panViewWithinDay,
 } from './timelineMath';
 
 describe('snapUnixToDetections', () => {
@@ -123,6 +124,18 @@ describe('zoom day hard stop', () => {
     const to = from + MIN_VIEW_SPAN_SEC;
     const next = zoomViewWithinDay(from, to, (from + to) / 2, 0.5, date, start + 12 * 3600);
     expect(next.viewTo - next.viewFrom).toBeGreaterThanOrEqual(MIN_VIEW_SPAN_SEC - 1e-6);
+  });
+
+  it('keeps pan inside the day without crossing midnight', () => {
+    const date = '2026-08-18';
+    const { start } = dayBoundsLocal(date);
+    const noon = start + 12 * 3600;
+    const from = start + 60;
+    const to = from + 3600;
+    const next = panViewWithinDay(from, to, -7200, date, noon);
+    expect(next.viewFrom).toBeGreaterThanOrEqual(start);
+    expect(next.viewTo).toBeLessThanOrEqual(dayViewUpperBound(date, noon));
+    expect(next.viewTo - next.viewFrom).toBeCloseTo(to - from, 5);
   });
 
   it('builds date-boundary ticks at local midnights', () => {

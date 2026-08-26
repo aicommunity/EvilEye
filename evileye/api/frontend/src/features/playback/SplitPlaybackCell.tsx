@@ -35,6 +35,7 @@ export function SplitPlaybackCell({
   frameSize: frameSizeProp,
   onFrameSize,
   detectionsReady = true,
+  mediaEpoch: mediaEpochProp = 0,
 }: {
   videoUrl: string;
   srcCoords: [number, number, number, number];
@@ -60,6 +61,7 @@ export function SplitPlaybackCell({
   frameSize?: FrameSize | null;
   onFrameSize?: (size: FrameSize) => void;
   detectionsReady?: boolean;
+  mediaEpoch?: number;
 }) {
   const { t } = useI18n();
   const videoRef = useRef<HTMLVideoElement>(null);
@@ -71,6 +73,8 @@ export function SplitPlaybackCell({
   const [seeking, setSeeking] = useState(false);
   const [videoGlobalSec, setVideoGlobalSec] = useState<number | null>(null);
   const [localFrameSize, setLocalFrameSize] = useState<FrameSize | null>(null);
+  const [localEpoch, setLocalEpoch] = useState(0);
+  const mediaEpoch = mediaEpochProp + localEpoch;
   const parentVideoSize = frameSizeProp ?? localFrameSize;
   const onVideoClockRef = useRef(onVideoClock);
   onVideoClockRef.current = onVideoClock;
@@ -223,11 +227,32 @@ export function SplitPlaybackCell({
     const video = videoRef.current;
     if (!video) return;
     let stuckAttempts = 0;
+    let pausedZombieTicks = 0;
+    let remounted = false;
     const timer = window.setInterval(() => {
       if (playing && !scrubbing && video.paused) {
+        pausedZombieTicks += 1;
         playbackDebugInc('playCalls');
         void video.play().catch(() => playbackDebugInc('playRejects'));
+        if (pausedZombieTicks === 2) {
+          seekPlaybackVideo(video, getPositionRef.current(), startTs, {
+            playing: true,
+            force: true,
+            scrubbing: true,
+            thresholdSec: 0,
+            segmentEndTs:
+              Number.isFinite(video.duration) && video.duration > 0 ? startTs + video.duration : undefined,
+          });
+          drawFrame();
+        }
+        if (pausedZombieTicks >= 6 && video.readyState < 2 && !remounted) {
+          remounted = true;
+          playbackDebugInc('watchdogLoad');
+          setLocalEpoch((n) => n + 1);
+        }
+        return;
       }
+      pausedZombieTicks = 0;
       if (video.seeking && seekingAgeMs(video) >= SEEKING_STUCK_MS) {
         playbackDebugInc('seekingStuckRecoveries');
         stuckAttempts += 1;
@@ -240,19 +265,23 @@ export function SplitPlaybackCell({
             Number.isFinite(video.duration) && video.duration > 0 ? startTs + video.duration : undefined,
         });
         drawFrame();
-        if (stuckAttempts >= 2 && video.readyState < 3) {
-          playbackDebugInc('watchdogLoad');
+        if (stuckAttempts === 2) {
           try {
             video.load();
           } catch {
             /* ignore */
           }
         }
+        if (stuckAttempts >= 4 && !remounted) {
+          remounted = true;
+          playbackDebugInc('watchdogLoad');
+          setLocalEpoch((n) => n + 1);
+        }
       }
     }, 700);
     return () => window.clearInterval(timer);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [scrubbing, playing, videoUrl, startTs]);
+  }, [scrubbing, playing, videoUrl, startTs, mediaEpoch]);
 
   useEffect(() => {
     const video = videoRef.current;
@@ -296,7 +325,7 @@ export function SplitPlaybackCell({
       video.removeEventListener('timeupdate', onTime);
       video.removeEventListener('loadeddata', onSeeked);
     };
-  }, [videoUrl, playing, scrubbing, startTs, cameraId]);
+  }, [videoUrl, playing, scrubbing, startTs, cameraId, mediaEpoch]);
 
   useEffect(() => {
     const video = videoRef.current;
@@ -322,13 +351,14 @@ export function SplitPlaybackCell({
       paint();
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [positionSec, videoUrl, startTs, playing, scrubbing]);
+  }, [positionSec, videoUrl, startTs, playing, scrubbing, mediaEpoch]);
 
   const previewClass = expanded ? 'expanded-camera-frame' : 'camera-preview';
 
   const inner = (
     <div ref={mediaRef} className="split-playback-container" style={{ position: 'relative' }}>
       <video
+        key={`split-media-${mediaEpoch}`}
         ref={videoRef}
         src={videoUrl}
         preload="auto"

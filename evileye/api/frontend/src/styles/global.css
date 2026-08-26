@@ -2742,6 +2742,22 @@ body {
   cursor: grabbing;
 }
 
+.playback-timeline.is-interacting {
+  cursor: grabbing;
+  filter: brightness(1.12) saturate(0.72);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, #fff 35%, transparent);
+}
+
+.playback-timeline.is-interacting::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background: color-mix(in srgb, #fff 18%, transparent);
+  pointer-events: none;
+  z-index: 1;
+  border-radius: inherit;
+}
+
 .timeline-hover-line {
   position: absolute;
   top: 0;

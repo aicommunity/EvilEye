@@ -128,14 +128,17 @@ export function useDetectionIndex({
       return;
     }
 
+    // Round to whole seconds so tiny float jitter from parents does not abort/refetch.
+    const fromSec = Math.floor(priorityFromSec);
+    const toSec = Math.ceil(priorityToSec);
     const ac = new AbortController();
     setPriorityLoading(true);
 
     void fetchDetections(cameras, {
       date,
       runId,
-      fromSec: priorityFromSec,
-      toSec: priorityToSec,
+      fromSec,
+      toSec,
       ticksOnly: false,
       signal: ac.signal,
     })
@@ -152,7 +155,14 @@ export function useDetectionIndex({
       });
 
     return () => ac.abort();
-  }, [cameraKey, date, runId, priorityFromSec, priorityToSec, enabled]);
+  }, [
+    cameraKey,
+    date,
+    runId,
+    priorityFromSec == null ? null : Math.floor(priorityFromSec),
+    priorityToSec == null ? null : Math.ceil(priorityToSec),
+    enabled,
+  ]);
 
   useEffect(() => {
     if (

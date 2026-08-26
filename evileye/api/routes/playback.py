@@ -34,7 +34,11 @@ _TIMELINE_HAPPY_TTL_SEC = 45.0
 _TIMELINE_SLOT_WAIT_SEC = 15.0
 # Keep light endpoints off the default pool so timeline rebuilds cannot starve /cameras.
 _light_pool = ThreadPoolExecutor(max_workers=4, thread_name_prefix="playback-light")
+# Heavy journal scans — tiny pool + semaphore so wheel/seek storms cannot open unbounded work.
+_detections_pool = ThreadPoolExecutor(max_workers=2, thread_name_prefix="playback-det")
 _timeline_slots = asyncio.Semaphore(2)
+_detections_slots = asyncio.Semaphore(2)
+_DETECTIONS_HAPPY_TTL_SEC = 30.0
 
 
 def _remember(key: str, value: Any, *, ttl_sec: float | None = None) -> None:
@@ -76,7 +80,7 @@ async def _to_thread_with_timeout_or_cached(
             "playback route timeout detail=%s timeout_sec=%s executor=%s %s",
             err_detail,
             timeout,
-            "light" if executor is _light_pool else "default",
+            "light" if executor is _light_pool else ("detections" if executor is _detections_pool else "default"),
             " ".join(f"{k}={v}" for k, v in (log_ctx or {}).items()),
         )
         if on_timeout is not None:
@@ -491,47 +495,82 @@ async def playback_detections(
             from datetime import datetime as dt
 
             date = dt.now().strftime("%Y-%m-%d")
-    if cameras:
-        cam_list = _require_cameras(access, [c.strip() for c in cameras.split(",") if c.strip()], single=False)
 
-        def _batch():
-            by_camera = metadata_svc.load_detection_index_batch(
-                cameras=cam_list,
+    # Quantize window so near-identical wheel/seek requests share one cache key.
+    q_from = int(from_ts // 60) * 60 if from_ts is not None else None
+    q_to = int(to_ts // 60) * 60 if to_ts is not None else None
+
+    try:
+        await asyncio.wait_for(_detections_slots.acquire(), timeout=2.0)
+    except asyncio.TimeoutError:
+        raise HTTPException(status_code=503, detail="playback_detections busy")
+
+    try:
+        if cameras:
+            cam_list = _require_cameras(access, [c.strip() for c in cameras.split(",") if c.strip()], single=False)
+            mem_key = (
+                f"playback:detections:{date}:{run_id}:{q_from}:{q_to}:"
+                f"{'ticks' if ticks_only else 'full'}:{','.join(cam_list)}"
+            )
+
+            def _batch():
+                by_camera = metadata_svc.load_detection_index_batch(
+                    cameras=cam_list,
+                    date_folder=date,
+                    run_id=run_id,
+                    from_ts=from_ts,
+                    to_ts=to_ts,
+                    ticks_only=ticks_only,
+                )
+                return {"by_camera": by_camera, "items": [item for items in by_camera.values() for item in items]}
+
+            fresh = _recall(mem_key, require_fresh=True)
+            if fresh is not None:
+                return fresh
+
+            result = await _to_thread_with_timeout_or_cached(
+                _batch,
+                lambda: _recall(mem_key),
+                err_detail="playback_detections timeout",
+                executor=_detections_pool,
+                log_ctx={"date": date, "n_cameras": len(cam_list), "route": "detections"},
+            )
+            _remember(mem_key, result, ttl_sec=_DETECTIONS_HAPPY_TTL_SEC)
+            return result
+        if not camera:
+            raise HTTPException(status_code=400, detail="camera or cameras query required")
+        _require_cameras(access, [camera], single=True)
+        mem_key = (
+            f"playback:detections:{date}:{run_id}:{q_from}:{q_to}:"
+            f"{'ticks' if ticks_only else 'full'}:{camera}"
+        )
+
+        def _one():
+            items = metadata_svc.load_detection_index(
+                camera=camera,
                 date_folder=date,
                 run_id=run_id,
                 from_ts=from_ts,
                 to_ts=to_ts,
                 ticks_only=ticks_only,
             )
-            return {"by_camera": by_camera, "items": [item for items in by_camera.values() for item in items]}
+            return {"items": items}
 
-        return await _to_thread_with_timeout_or_cached(
-            _batch,
-            lambda: None,
+        fresh = _recall(mem_key, require_fresh=True)
+        if fresh is not None:
+            return fresh
+
+        result = await _to_thread_with_timeout_or_cached(
+            _one,
+            lambda: _recall(mem_key),
             err_detail="playback_detections timeout",
-            log_ctx={"date": date, "n_cameras": len(cam_list), "route": "detections"},
+            executor=_detections_pool,
+            log_ctx={"date": date, "n_cameras": 1, "route": "detections"},
         )
-    if not camera:
-        raise HTTPException(status_code=400, detail="camera or cameras query required")
-    _require_cameras(access, [camera], single=True)
-
-    def _one():
-        items = metadata_svc.load_detection_index(
-            camera=camera,
-            date_folder=date,
-            run_id=run_id,
-            from_ts=from_ts,
-            to_ts=to_ts,
-            ticks_only=ticks_only,
-        )
-        return {"items": items}
-
-    return await _to_thread_with_timeout_or_cached(
-        _one,
-        lambda: None,
-        err_detail="playback_detections timeout",
-        log_ctx={"date": date, "n_cameras": 1, "route": "detections"},
-    )
+        _remember(mem_key, result, ttl_sec=_DETECTIONS_HAPPY_TTL_SEC)
+        return result
+    finally:
+        _detections_slots.release()
 
 
 @router.get("/media")

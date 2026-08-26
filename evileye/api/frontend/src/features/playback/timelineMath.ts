@@ -142,6 +142,18 @@ export function panView(
   });
 }
 
+/** Pan clamped to a single calendar day (no midnight cross / date switch). */
+export function panViewWithinDay(
+  viewFrom: number,
+  viewTo: number,
+  deltaSec: number,
+  dateStr: string,
+  nowSec?: number,
+): { viewFrom: number; viewTo: number } {
+  const shifted = panView(viewFrom, viewTo, deltaSec);
+  return clampViewToDayBounds(shifted.viewFrom, shifted.viewTo, dateStr, nowSec);
+}
+
 export function unixAtClientX(
   clientX: number,
   rect: { left: number; width: number },

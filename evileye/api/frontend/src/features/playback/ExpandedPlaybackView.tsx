@@ -56,16 +56,17 @@ export function ExpandedPlaybackView({
   const mediaRef = useRef<HTMLDivElement>(null);
   const [videoReady, setVideoReady] = useState(0);
   const [frameSize, setFrameSize] = useState<FrameSize | null>(null);
-  const { ref, preloadRef, slot, applySync, videoGlobalSec, videoSeeking, recordingInProgress } = usePlaybackCameraSlot(
-    segments,
-    getPosition,
-    positionSec,
-    playing,
-    playMode,
-    scrubbing,
-    onVideoClock,
-    cameraId,
-  );
+  const { ref, preloadRef, slot, applySync, videoGlobalSec, videoSeeking, recordingInProgress, mediaEpoch } =
+    usePlaybackCameraSlot(
+      segments,
+      getPosition,
+      positionSec,
+      playing,
+      playMode,
+      scrubbing,
+      onVideoClock,
+      cameraId,
+    );
   const { meta, loading } = usePlaybackCameraMetadata({
     cameraId,
     camera,
@@ -87,7 +88,7 @@ export function ExpandedPlaybackView({
   useEffect(() => {
     setFrameSize(null);
     setVideoReady(0);
-  }, [slot?.url]);
+  }, [slot?.url, mediaEpoch]);
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
@@ -146,12 +147,14 @@ export function ExpandedPlaybackView({
             frameSize={frameSize}
             onFrameSize={setFrameSize}
             detectionsReady={detectionsReady}
+            mediaEpoch={mediaEpoch}
           />
         ) : (
           <PlaybackVideoSurface
             videoRef={ref}
             preloadRef={preloadRef}
             slot={slot}
+            mediaEpoch={mediaEpoch}
             mediaRef={mediaRef}
             meta={meta}
             showMetadata={showMetadata}
