@@ -57,6 +57,14 @@ export function formatDateParts(d: Date, pattern: DateFormat): string {
   return `${day}-${month}-${year}`;
 }
 
+/** Month-day (or day-month) without year, following the active DateFormat order. */
+export function formatDatePartsNoYear(d: Date, pattern: DateFormat): string {
+  const day = pad2(d.getDate());
+  const month = pad2(d.getMonth() + 1);
+  if (pattern === 'YYYY-MM-DD' || pattern === 'MM-DD-YYYY') return `${month}-${day}`;
+  return `${day}-${month}`;
+}
+
 export function formatTimeParts(d: Date): string {
   return `${pad2(d.getHours())}:${pad2(d.getMinutes())}:${pad2(d.getSeconds())}`;
 }
@@ -70,6 +78,7 @@ type I18nCtx = {
   setDateFormat: (format: DateFormat) => void;
   t: (key: string, vars?: Record<string, string | number>) => string;
   formatDateTime: (value: number | Date | string | null | undefined) => string;
+  formatDateTimeNoYear: (value: number | Date | string | null | undefined) => string;
   formatDate: (value: number | Date | string | null | undefined) => string;
   formatTime: (value: number | Date | string | null | undefined) => string;
 };
@@ -170,6 +179,12 @@ export function I18nProvider({ children }: { children: ReactNode }) {
     return `${formatDateParts(d, dateFormatRef.current)} ${formatTimeParts(d)}`;
   }, []);
 
+  const formatDateTimeNoYear = useCallback((value: number | Date | string | null | undefined) => {
+    const d = toDate(value);
+    if (!d) return '—';
+    return `${formatDatePartsNoYear(d, dateFormatRef.current)} ${formatTimeParts(d)}`;
+  }, []);
+
   const value = useMemo(
     () => ({
       lang,
@@ -180,10 +195,23 @@ export function I18nProvider({ children }: { children: ReactNode }) {
       setDateFormat,
       t,
       formatDateTime,
+      formatDateTimeNoYear,
       formatDate,
       formatTime,
     }),
-    [lang, localeTag, dateLocaleTag, dateFormat, setLang, setDateFormat, t, formatDateTime, formatDate, formatTime],
+    [
+      lang,
+      localeTag,
+      dateLocaleTag,
+      dateFormat,
+      setLang,
+      setDateFormat,
+      t,
+      formatDateTime,
+      formatDateTimeNoYear,
+      formatDate,
+      formatTime,
+    ],
   );
   return createElement(Ctx.Provider, { value }, children);
 }

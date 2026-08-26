@@ -522,3 +522,84 @@ export function buildTimelineDateBoundaries(from: number, to: number): number[] 
   }
   return out;
 }
+
+export type TimeInterval = { from: number; to: number };
+
+const LOADED_TOUCH_EPS_SEC = 1;
+const MIN_UNCOVERED_SEC = 1;
+
+/** Merge overlapping / touching intervals; never fills a real gap. */
+export function mergeLoadedIntervals(
+  intervals: TimeInterval[],
+  added: TimeInterval,
+  touchEps = LOADED_TOUCH_EPS_SEC,
+): TimeInterval[] {
+  if (!(added.to > added.from) || !Number.isFinite(added.from) || !Number.isFinite(added.to)) {
+    return intervals.filter((i) => i.to > i.from).sort((a, b) => a.from - b.from);
+  }
+  const all = [...intervals, added]
+    .filter((i) => i.to > i.from && Number.isFinite(i.from) && Number.isFinite(i.to))
+    .sort((a, b) => a.from - b.from);
+  const out: TimeInterval[] = [];
+  for (const cur of all) {
+    const last = out[out.length - 1];
+    if (!last || cur.from > last.to + touchEps) {
+      out.push({ from: cur.from, to: cur.to });
+    } else {
+      last.to = Math.max(last.to, cur.to);
+    }
+  }
+  return out;
+}
+
+/** Subtract loaded coverage from need; returns uncovered gaps (sorted). */
+export function uncoveredIntervals(
+  need: TimeInterval,
+  loaded: TimeInterval[],
+  opts?: { marginSec?: number; minGapSec?: number },
+): TimeInterval[] {
+  if (!(need.to > need.from)) return [];
+  const margin = opts?.marginSec ?? 0;
+  const minGap = opts?.minGapSec ?? MIN_UNCOVERED_SEC;
+  const cov = loaded
+    .map((i) => ({ from: i.from - margin, to: i.to + margin }))
+    .filter((i) => i.to > i.from)
+    .sort((a, b) => a.from - b.from);
+  let gaps: TimeInterval[] = [{ from: need.from, to: need.to }];
+  for (const c of cov) {
+    const next: TimeInterval[] = [];
+    for (const g of gaps) {
+      if (c.to <= g.from || c.from >= g.to) {
+        next.push(g);
+        continue;
+      }
+      if (c.from > g.from) next.push({ from: g.from, to: Math.min(g.to, c.from) });
+      if (c.to < g.to) next.push({ from: Math.max(g.from, c.to), to: g.to });
+    }
+    gaps = next;
+  }
+  return gaps.filter((g) => g.to - g.from >= minGap);
+}
+
+export function intervalsExtent(intervals: TimeInterval[]): TimeInterval | null {
+  const ok = intervals.filter((i) => i.to > i.from);
+  if (!ok.length) return null;
+  return {
+    from: Math.min(...ok.map((i) => i.from)),
+    to: Math.max(...ok.map((i) => i.to)),
+  };
+}
+
+/**
+ * Midnight boundaries inside the view plus always-on edge labels at from/to.
+ * Dedupes an edge that coincides with an existing midnight tick.
+ */
+export function buildTimelineDateLabels(from: number, to: number): number[] {
+  if (!(to > from) || !Number.isFinite(from) || !Number.isFinite(to)) return [];
+  const midnights = buildTimelineDateBoundaries(from, to);
+  const out: number[] = [...midnights];
+  const nearExisting = (ts: number) => out.some((x) => Math.abs(x - ts) < 60);
+  if (!nearExisting(from)) out.push(from);
+  if (!nearExisting(to)) out.push(to);
+  return out.sort((a, b) => a - b);
+}

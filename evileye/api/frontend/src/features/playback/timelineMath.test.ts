@@ -5,12 +5,16 @@ import {
   MAX_VIEW_SPAN_SEC,
   MIN_VIEW_SPAN_SEC,
   buildTimelineDateBoundaries,
+  buildTimelineDateLabels,
   clampViewToDayBounds,
   clipRangeToView,
   dayBoundsLocal,
   dayViewSpanSec,
   dayViewUpperBound,
   defaultTimelineView,
+  intervalsExtent,
+  mergeLoadedIntervals,
+  uncoveredIntervals,
   pickContainingSegment,
   pickLastPlayableSegment,
   pickPlayableSegmentForPosition,
@@ -248,5 +252,107 @@ describe('segment picking', () => {
   it('snaps off the phantom index tail near segment end', () => {
     const long = [{ path: 'long.mp4', start_ts: 1000, end_ts: 1000 + 1818, duration_ms: 1_818_000, playable: true }];
     expect(snapPositionToPlayable(long, 1000 + 1810)).toBe(1000 + 1818 - 60);
+  });
+});
+
+describe('loaded interval coverage', () => {
+  it('does not fill a gap when merging disjoint windows', () => {
+    const evening = mergeLoadedIntervals([], { from: 20_000, to: 22_000 });
+    const both = mergeLoadedIntervals(evening, { from: 8_000, to: 10_000 });
+    expect(both).toEqual([
+      { from: 8_000, to: 10_000 },
+      { from: 20_000, to: 22_000 },
+    ]);
+    const midNeed = uncoveredIntervals({ from: 8_000, to: 22_000 }, both, { marginSec: 0 });
+    expect(midNeed.length).toBe(1);
+    expect(midNeed[0].from).toBe(10_000);
+    expect(midNeed[0].to).toBe(20_000);
+  });
+
+  it('merges overlapping / touching windows', () => {
+    const a = mergeLoadedIntervals([], { from: 100, to: 200 });
+    const b = mergeLoadedIntervals(a, { from: 199, to: 300 });
+    expect(b).toEqual([{ from: 100, to: 300 }]);
+  });
+
+  it('extent is min/max without implying contiguous coverage', () => {
+    const intervals = [
+      { from: 8_000, to: 10_000 },
+      { from: 20_000, to: 22_000 },
+    ];
+    expect(intervalsExtent(intervals)).toEqual({ from: 8_000, to: 22_000 });
+    expect(uncoveredIntervals({ from: 8_000, to: 22_000 }, intervals).length).toBeGreaterThan(0);
+  });
+});
+
+describe('buildTimelineDateLabels', () => {
+  it('always labels both edges of an intra-day view', () => {
+    const date = '2026-08-18';
+    const { start } = dayBoundsLocal(date);
+    const from = start + 10 * 3600;
+    const to = start + 12 * 3600;
+    const labels = buildTimelineDateLabels(from, to);
+    expect(labels[0]).toBe(from);
+    expect(labels[labels.length - 1]).toBe(to);
+    expect(labels.length).toBeGreaterThanOrEqual(2);
+  });
+});
+
+describe('loaded interval coverage', () => {
+  it('does not fill the gap when merging disjoint windows', () => {
+    const evening = mergeLoadedIntervals([], { from: 20_000, to: 22_000 });
+    const both = mergeLoadedIntervals(evening, { from: 8_000, to: 10_000 });
+    expect(both).toEqual([
+      { from: 8_000, to: 10_000 },
+      { from: 20_000, to: 22_000 },
+    ]);
+    expect(intervalsExtent(both)).toEqual({ from: 8_000, to: 22_000 });
+  });
+
+  it('merges overlapping / touching windows', () => {
+    const a = mergeLoadedIntervals([], { from: 100, to: 200 });
+    const b = mergeLoadedIntervals(a, { from: 200, to: 300 });
+    expect(b).toEqual([{ from: 100, to: 300 }]);
+  });
+
+  it('reports mid-day uncovered after evening+morning loads', () => {
+    const loaded = mergeLoadedIntervals(
+      mergeLoadedIntervals([], { from: 20_000, to: 22_000 }),
+      { from: 8_000, to: 10_000 },
+    );
+    const gaps = uncoveredIntervals({ from: 8_000, to: 22_000 }, loaded);
+    expect(gaps.length).toBe(1);
+    expect(gaps[0].from).toBe(10_000);
+    expect(gaps[0].to).toBe(20_000);
+  });
+
+  it('treats margin as soft coverage near edges', () => {
+    const loaded = [{ from: 10_000, to: 12_000 }];
+    const gaps = uncoveredIntervals({ from: 10_000 - 100, to: 12_000 + 100 }, loaded, {
+      marginSec: 600,
+    });
+    expect(gaps).toEqual([]);
+  });
+});
+
+describe('buildTimelineDateLabels', () => {
+  it('always labels both edges of an intra-day view', () => {
+    const date = '2026-08-18';
+    const { start } = dayBoundsLocal(date);
+    const from = start + 10 * 3600;
+    const to = from + 2 * 3600;
+    const labels = buildTimelineDateLabels(from, to);
+    expect(labels[0]).toBe(from);
+    expect(labels[labels.length - 1]).toBe(to);
+    expect(labels.length).toBeGreaterThanOrEqual(2);
+  });
+
+  it('dedupes an edge that coincides with midnight', () => {
+    const date = '2026-08-18';
+    const { start } = dayBoundsLocal(date);
+    const to = start + 2 * 3600;
+    const labels = buildTimelineDateLabels(start, to);
+    expect(labels.filter((x) => Math.abs(x - start) < 1)).toHaveLength(1);
+    expect(labels).toContain(to);
   });
 });

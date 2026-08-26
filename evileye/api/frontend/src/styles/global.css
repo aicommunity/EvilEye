@@ -2770,11 +2770,12 @@ body {
   transform: translateX(-50%);
 }
 
-.timeline-hover-tooltip {
+.timeline-hover-tooltip,
+.timeline-playhead-tooltip {
   position: absolute;
-  bottom: 100%;
+  top: auto;
+  bottom: 4px;
   transform: translateX(-50%);
-  margin-bottom: 4px;
   padding: 2px 6px;
   font-size: 0.72rem;
   background: var(--bg-card);
@@ -2783,6 +2784,12 @@ body {
   pointer-events: none;
   white-space: nowrap;
   z-index: 5;
+}
+
+.timeline-playhead-tooltip {
+  z-index: 6;
+  font-weight: 600;
+  border-color: var(--accent);
 }
 
 .timeline-event-intervals-canvas {

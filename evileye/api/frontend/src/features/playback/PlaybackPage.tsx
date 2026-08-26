@@ -644,9 +644,11 @@ export function PlaybackPage() {
 
   const ensureAdjacentLoad = useCallback(
     (vf: number, vt: number) => {
-      const { needFrom, needTo, needed } = viewport.needsLoad(vf, vt, date);
-      if (!needed) return;
+      const { needFrom, needTo, needed, gaps } = viewport.needsLoad(vf, vt, date);
+      if (!needed || !gaps.length) return;
       if (loadTimerRef.current) window.clearTimeout(loadTimerRef.current);
+      // Request the uncovered span only (bounding box of gaps). expandLoaded will
+      // mark that window without falsely filling older disjoint coverage.
       loadTimerRef.current = window.setTimeout(() => {
         void loadSegments(selectedIdsRef.current, {
           from: needFrom,

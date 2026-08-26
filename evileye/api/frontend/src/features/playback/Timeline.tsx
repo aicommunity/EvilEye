@@ -5,7 +5,7 @@ import { EventMarkers } from './EventMarkers';
 import {
   MIN_VIEW_SPAN_SEC,
   PAN_CLICK_SLOP_PX,
-  buildTimelineDateBoundaries,
+  buildTimelineDateLabels,
   buildTimelineTicks,
   clipRangeToView,
   dayViewSpanSec,
@@ -18,6 +18,8 @@ import {
 const TIMELINE_HEIGHT_PX = 92;
 /** Commit wheel zoom to parent only after the gesture settles. */
 const ZOOM_COMMIT_MS = 160;
+/** Hide hover tooltip when it would sit on top of the playhead label. */
+const HOVER_PLAYHEAD_HIDE_SEC = 2;
 
 type ViewWindow = { viewFrom: number; viewTo: number };
 
@@ -46,7 +48,7 @@ export function Timeline({
   onViewChange: (viewFrom: number, viewTo: number) => void;
   onPanningChange?: (panning: boolean) => void;
 }) {
-  const { t, formatDateTime, formatDate, formatTime } = useI18n();
+  const { t, formatDateTimeNoYear, formatDate, formatTime } = useI18n();
   const rootRef = useRef<HTMLDivElement>(null);
   const [panning, setPanning] = useState(false);
   const [hoverSec, setHoverSec] = useState<number | null>(null);
@@ -160,8 +162,13 @@ export function Timeline({
   const span = displayTo - displayFrom;
   const pct = hasView ? ((position - displayFrom) / span) * 100 : 0;
   const ticks = hasView ? buildTimelineTicks(displayFrom, displayTo) : [];
-  const dateTicks = hasView ? buildTimelineDateBoundaries(displayFrom, displayTo) : [];
+  const dateTicks = hasView ? buildTimelineDateLabels(displayFrom, displayTo) : [];
   const noData = segments.length === 0 && markers.length === 0;
+  const playheadInView = hasView && position >= displayFrom && position <= displayTo;
+  const showHoverTooltip =
+    hoverSec != null &&
+    !panning &&
+    !(playheadInView && Math.abs(hoverSec - position) < HOVER_PLAYHEAD_HIDE_SEC);
 
   const seekAtClientX = (clientX: number) => {
     if (!hasView) return;
@@ -357,7 +364,7 @@ export function Timeline({
               />
             );
           })}
-          {hoverSec != null && !panning ? (
+          {showHoverTooltip && hoverSec != null ? (
             <>
               <div
                 className="timeline-hover-line"
@@ -368,9 +375,15 @@ export function Timeline({
                 className="timeline-hover-tooltip"
                 style={{ left: `${Math.max(0, Math.min(100, ((hoverSec - displayFrom) / span) * 100))}%` }}
               >
-                {formatDateTime(hoverSec)}
+                {formatDateTimeNoYear(hoverSec)}
               </div>
             </>
+          ) : hoverSec != null && !panning ? (
+            <div
+              className="timeline-hover-line"
+              style={{ left: `${Math.max(0, Math.min(100, ((hoverSec - displayFrom) / span) * 100))}%` }}
+              aria-hidden
+            />
           ) : null}
           <div
             className="timeline-playhead"
@@ -384,6 +397,14 @@ export function Timeline({
               pointerEvents: 'none',
             }}
           />
+          {playheadInView ? (
+            <div
+              className="timeline-playhead-tooltip"
+              style={{ left: `${Math.max(0, Math.min(100, pct))}%` }}
+            >
+              {formatDateTimeNoYear(position)}
+            </div>
+          ) : null}
           {!interacting ? (
             <EventMarkers markers={markers} from={displayFrom} to={displayTo} onSelect={(m) => onSeek(m.ts)} />
           ) : null}

@@ -1,4 +1,4 @@
-import { useCallback, useState } from 'react';
+import { useCallback, useMemo, useState } from 'react';
 import {
   DAY_LOAD_BUFFER_SEC,
   MAX_VIEW_SPAN_SEC,
@@ -8,16 +8,25 @@ import {
   dayViewSpanSec,
   dayViewUpperBound,
   defaultTimelineView,
+  intervalsExtent,
+  mergeLoadedIntervals,
   panView,
+  uncoveredIntervals,
   zoomViewAt,
   zoomViewWithinDay,
+  type TimeInterval,
 } from './timelineMath';
+
+const LOAD_COVERAGE_MARGIN_SEC = 600;
 
 export function useTimelineViewport() {
   const [viewFrom, setViewFrom] = useState<number | null>(null);
   const [viewTo, setViewTo] = useState<number | null>(null);
-  const [loadedFrom, setLoadedFrom] = useState<number | null>(null);
-  const [loadedTo, setLoadedTo] = useState<number | null>(null);
+  const [loadedIntervals, setLoadedIntervals] = useState<TimeInterval[]>([]);
+
+  const extent = useMemo(() => intervalsExtent(loadedIntervals), [loadedIntervals]);
+  const loadedFrom = extent?.from ?? null;
+  const loadedTo = extent?.to ?? null;
 
   const setView = useCallback((from: number, to: number, dateStr?: string) => {
     const maxSpan = dateStr ? dayViewSpanSec(dateStr) : MAX_VIEW_SPAN_SEC;
@@ -29,26 +38,28 @@ export function useTimelineViewport() {
   const resetToData = useCallback((dataFrom: number | null, dataTo: number | null, date: string) => {
     // Honest loaded range: unknown until segments return (do not fake full-day loaded).
     if (dataFrom != null && dataTo != null && dataTo > dataFrom) {
-      setLoadedFrom(dataFrom);
-      setLoadedTo(dataTo);
+      setLoadedIntervals([{ from: dataFrom, to: dataTo }]);
     } else {
-      setLoadedFrom(null);
-      setLoadedTo(null);
+      setLoadedIntervals([]);
     }
     const next = defaultTimelineView(date, { dataFrom, dataTo });
     setViewFrom(next.viewFrom);
     setViewTo(next.viewTo);
   }, []);
 
+  /** Add request coverage without filling gaps between disjoint windows. */
   const expandLoaded = useCallback((from: number, to: number) => {
-    setLoadedFrom((prev) => (prev == null ? from : Math.min(prev, from)));
-    setLoadedTo((prev) => (prev == null ? to : Math.max(prev, to)));
+    if (!(to > from)) return;
+    setLoadedIntervals((prev) => mergeLoadedIntervals(prev, { from, to }));
   }, []);
 
   /** Replace loaded coverage (hard-load); do not expand past a fresh request window. */
   const setLoadedRange = useCallback((from: number, to: number) => {
-    setLoadedFrom(from);
-    setLoadedTo(to);
+    if (!(to > from)) {
+      setLoadedIntervals([]);
+      return;
+    }
+    setLoadedIntervals([{ from, to }]);
   }, []);
 
   const needsLoad = useCallback(
@@ -57,12 +68,22 @@ export function useTimelineViewport() {
       const upper = dayViewUpperBound(dateStr);
       const needFrom = Math.max(start, vf - DAY_LOAD_BUFFER_SEC);
       const needTo = Math.min(upper, vt + DAY_LOAD_BUFFER_SEC);
-      if (loadedFrom == null || loadedTo == null) return { needFrom, needTo, needed: true };
-      const margin = 600;
-      const needed = needFrom < loadedFrom - margin || needTo > loadedTo + margin;
-      return { needFrom, needTo, needed };
+      const gaps = uncoveredIntervals(
+        { from: needFrom, to: needTo },
+        loadedIntervals,
+        { marginSec: LOAD_COVERAGE_MARGIN_SEC },
+      );
+      if (!gaps.length) {
+        return { needFrom, needTo, needed: false, gaps: [] as TimeInterval[] };
+      }
+      return {
+        needFrom: Math.min(...gaps.map((g) => g.from)),
+        needTo: Math.max(...gaps.map((g) => g.to)),
+        needed: true,
+        gaps,
+      };
     },
-    [loadedFrom, loadedTo],
+    [loadedIntervals],
   );
 
   const zoomAt = useCallback(
@@ -104,6 +125,7 @@ export function useTimelineViewport() {
     viewTo,
     loadedFrom,
     loadedTo,
+    loadedIntervals,
     setView,
     resetToData,
     expandLoaded,
