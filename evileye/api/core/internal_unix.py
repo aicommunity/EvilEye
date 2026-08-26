@@ -138,7 +138,7 @@ def start_internal_unix_server(token: str) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
     sock.bind(str(path))
-    sock.listen(2)
+    sock.listen(128)
     try:
         path.chmod(0o600)
     except OSError:

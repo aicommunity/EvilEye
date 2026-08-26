@@ -4,6 +4,7 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import json
+import logging
 import time
 from typing import Optional, Callable
 
@@ -15,6 +16,7 @@ from evileye.api.core.runtime_registry import load_runtime_record
 from evileye.api.security import current_user, load_web_auth_config, permissions_for_role
 from evileye.core.runtime_services import get_frame_broker
 
+logger = logging.getLogger("evileye.api.realtime")
 router = APIRouter(prefix="/api/v1", tags=["realtime"])
 
 _WS_MIN_INTERVAL_SEC = 0.5
@@ -63,9 +65,12 @@ async def _authorize_live_ws(websocket: WebSocket) -> bool:
     guard = get_rate_guard()
     ip = guard.client_ip(websocket)
     if get_ip_ban_store().is_banned(ip):
+        logger.warning("ws rejected code=4403 reason=banned bucket=ws_live_grid ip=%s", ip)
+        guard.note_ws_reject("banned")
         await websocket.close(code=4403)
         return False
-    if guard.record_ws_connect(websocket):
+    if guard.record_ws_connect(websocket, bucket="ws_live_grid"):
+        logger.warning("ws rejected code=4403 reason=ws_live_flood bucket=ws_live_grid ip=%s", ip)
         await websocket.close(code=4403)
         return False
 
@@ -87,6 +92,8 @@ async def _authorize_live_ws(websocket: WebSocket) -> bool:
         return False
     granted = set(user.get("permissions") or permissions_for_role(str(user.get("role") or "user")))
     if "live:view" not in granted and "system:admin" not in granted:
+        logger.warning("ws rejected code=4403 reason=permission bucket=ws_live_grid ip=%s", ip)
+        guard.note_ws_reject("permission")
         await websocket.close(code=4403)
         return False
     return True
@@ -157,9 +164,12 @@ async def run_metadata_ws(websocket: WebSocket, rid: int, source_id: Optional[in
     guard = get_rate_guard()
     ip = guard.client_ip(websocket)
     if get_ip_ban_store().is_banned(ip):
+        logger.warning("ws rejected code=4403 reason=banned bucket=ws_metadata ip=%s", ip)
+        guard.note_ws_reject("banned")
         await websocket.close(code=4403)
         return
-    if guard.record_ws_connect(websocket):
+    if guard.record_ws_connect(websocket, bucket="ws_metadata"):
+        logger.warning("ws rejected code=4403 reason=ws_metadata_flood bucket=ws_metadata ip=%s", ip)
         await websocket.close(code=4403)
         return
 
@@ -180,6 +190,8 @@ async def run_metadata_ws(websocket: WebSocket, rid: int, source_id: Optional[in
             return
         granted = set(user.get("permissions") or permissions_for_role(str(user.get("role") or "user")))
         if "live:view" not in granted and "system:admin" not in granted:
+            logger.warning("ws rejected code=4403 reason=permission bucket=ws_metadata ip=%s", ip)
+            guard.note_ws_reject("permission")
             await websocket.close(code=4403)
             return
 

@@ -152,6 +152,9 @@ export function usePlaybackMetadata({
     return () => {
       if (timerRef.current != null) window.clearTimeout(timerRef.current);
       timerRef.current = null;
+      abortRef.current?.abort();
+      abortRef.current = null;
+      inflightKeyRef.current = null;
     };
   }, [
     camera,

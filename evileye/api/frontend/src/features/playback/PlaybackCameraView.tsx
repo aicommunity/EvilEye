@@ -19,6 +19,7 @@ import { PlaybackBusyHint } from './PlaybackBusyHint';
 import { PlaybackMediaWithOverlay } from './PlaybackMediaWithOverlay';
 import { mergePlaybackMetadata } from './mergePlaybackMetadata';
 import { playbackDebugInc } from './playbackDebug';
+import { drainVideoElement } from './drainVideo';
 import { seekPlaybackVideo, shouldEmitPlaybackClock, isPastDecodedEof, seekingAgeMs, SEEKING_STUCK_MS, resetPlaybackClockOwner } from './playbackVideoSync';
 import { usePlaybackMetadata } from './usePlaybackMetadata';
 import { usePlaybackStaticMetadata } from './usePlaybackStaticMetadata';
@@ -64,6 +65,8 @@ export function usePlaybackCameraSlot(
   segmentsRef.current = segments;
   const scrubbingRef = useRef(scrubbing);
   scrubbingRef.current = scrubbing;
+  const playingRef = useRef(playing);
+  playingRef.current = playing;
   const onVideoClockRef = useRef(onVideoClock);
   onVideoClockRef.current = onVideoClock;
   const [videoGlobalSec, setVideoGlobalSec] = useState<number | null>(null);
@@ -91,7 +94,6 @@ export function usePlaybackCameraSlot(
     const segs = segmentsRef.current;
     setRecordingInProgress(isPositionInRecordingSegment(segs, position));
     const seg = pickPlayableSegmentForPosition(segs, position);
-    const nxt = nextSegment(segs, seg);
     const preload = preloadRef.current;
     let segmentChanged = false;
 
@@ -114,20 +116,14 @@ export function usePlaybackCameraSlot(
       setSlot(nextSlot);
     }
 
-    if (preload) {
-      if (nxt) {
-        const nextUrl = playbackApi.mediaUrl(nxt.path);
-        if (preload.getAttribute('src') !== nextUrl) {
-          preload.setAttribute('src', nextUrl);
-          preload.preload = 'auto';
-          try {
-            preload.load();
-          } catch {
-            /* ignore */
-          }
-        }
-      } else if (preload.getAttribute('src')) {
-        preload.removeAttribute('src');
+    // Never warm a next-segment <video>: each src holds a /playback/media slot
+    // for the whole Range lifetime and stacks under Live↔Playback remounts.
+    if (preload?.getAttribute('src')) {
+      preload.removeAttribute('src');
+      try {
+        preload.load();
+      } catch {
+        /* ignore */
       }
     }
 
@@ -209,7 +205,7 @@ export function usePlaybackCameraSlot(
       // While scrubbing/seek-settling, pin from position/loadeddata — not every
       // timeupdate (that fought playback and left elements paused).
       if (scrubbingRef.current) return;
-      if (playing) {
+      if (playingRef.current) {
         const v = ref.current;
         const current = slotRef.current;
         if (v?.seeking) return;
@@ -220,7 +216,7 @@ export function usePlaybackCameraSlot(
     };
     const resumeIfNeeded = () => {
       const v = ref.current;
-      if (!v || !playing || scrubbingRef.current) return;
+      if (!v || !playingRef.current || scrubbingRef.current) return;
       if (v.paused || v.readyState < 2) {
         void v.play().catch(() => null);
       }
@@ -242,7 +238,7 @@ export function usePlaybackCameraSlot(
       const current = slotRef.current;
       if (!current) return;
       const nxt = nextSegment(segmentsRef.current, pickPlayableSegmentForPosition(segmentsRef.current, current.startTs));
-      if (nxt && playing && !scrubbingRef.current) {
+      if (nxt && playingRef.current && !scrubbingRef.current) {
         onVideoClockRef.current?.(nxt.start_ts);
         return;
       }
@@ -252,11 +248,16 @@ export function usePlaybackCameraSlot(
         segmentEndTs: current.endTs,
       });
     };
+    const onError = () => {
+      setVideoSeeking(false);
+      playbackDebugInc('playRejects');
+    };
     const v = ref.current;
     if (!v) return;
     const onSeeking = () => setVideoSeeking(true);
     v.addEventListener('seeking', onSeeking);
     v.addEventListener('seeked', onSeeked);
+    v.addEventListener('error', onError);
     setVideoSeeking(v.seeking);
     v.addEventListener('timeupdate', onTimeUpdate);
     v.addEventListener('loadeddata', onSeeked);
@@ -270,15 +271,27 @@ export function usePlaybackCameraSlot(
     return () => {
       v.removeEventListener('seeking', onSeeking);
       v.removeEventListener('seeked', onSeeked);
+      v.removeEventListener('error', onError);
       v.removeEventListener('timeupdate', onTimeUpdate);
       v.removeEventListener('loadeddata', onSeeked);
       v.removeEventListener('loadedmetadata', onCanPlay);
       v.removeEventListener('canplay', onCanPlay);
       v.removeEventListener('ended', onEnded);
     };
-    // mediaEpoch must rebind — key remount creates a new <video> with the same URL.
+    // Only rebind when the media element identity changes — NOT on scrubbing/playing
+    // (those used to re-seek every settle and stack "Ищем кадр").
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [playing, segments, slot?.url, playMode, scrubbing, mediaEpoch]);
+  }, [slot?.url, mediaEpoch]);
+
+  // Release Range GETs only when the element is actually going away.
+  useEffect(() => {
+    const videoEl = ref;
+    const preloadEl = preloadRef;
+    return () => {
+      drainVideoElement(videoEl.current);
+      drainVideoElement(preloadEl.current);
+    };
+  }, []);
 
   useEffect(() => {
     setVideoGlobalSec(null);
@@ -291,43 +304,36 @@ export function usePlaybackCameraSlot(
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [positionSec, playMode, scrubbing]);
 
-  // After seek-settle, pin + resume. Prefer force-seek / load() over remount —
-  // remount loops leave overlay clock advancing (RAF) while the new element shows a stale frame
-  // and flickers the "seeking frame" hint.
+  // Recover stuck seeking even while paused (archive scrub). Prefer force-seek /
+  // load() — remount opens a new /media Range while the old one may still hold a slot.
   useEffect(() => {
-    if (scrubbing || !playing) return;
+    if (scrubbing) return;
     const v = ref.current;
     if (!v) return;
     let stuckSeekAttempts = 0;
     let pausedZombieTicks = 0;
-    let remounted = false;
     const kick = () => {
       playbackDebugInc('watchdogKick');
       applySync();
-      if (v.paused || v.readyState < 2) {
+      if (playingRef.current && !scrubbingRef.current && (v.paused || v.readyState < 2)) {
         playbackDebugInc('playCalls');
         void v.play().catch(() => {
           playbackDebugInc('playRejects');
         });
       }
     };
-    const hardRemountOnce = () => {
-      if (remounted) return;
-      remounted = true;
-      playbackDebugInc('watchdogLoad');
-      setMediaEpoch((n) => n + 1);
-    };
-    kick();
-    v.addEventListener('canplay', kick);
+    if (playing) {
+      kick();
+      v.addEventListener('canplay', kick);
+    }
     const softTimer = window.setTimeout(kick, 200);
     let pullbacks = 0;
     const watchdog = window.setInterval(() => {
       const current = slotRef.current;
-      if (playing && !scrubbingRef.current && v.paused) {
+      if (playingRef.current && !scrubbingRef.current && v.paused) {
         pausedZombieTicks += 1;
         playbackDebugInc('playCalls');
         void v.play().catch(() => playbackDebugInc('playRejects'));
-        // Soft recover first: force seek + play before remounting.
         if (pausedZombieTicks === 2 && current) {
           seekPlaybackVideo(v, getPositionRef.current(), current.startTs, {
             playing: true,
@@ -338,7 +344,12 @@ export function usePlaybackCameraSlot(
           });
         }
         if (pausedZombieTicks >= 6 && v.readyState < 2) {
-          hardRemountOnce();
+          try {
+            v.load();
+          } catch {
+            /* ignore */
+          }
+          kick();
         }
         return;
       }
@@ -347,14 +358,15 @@ export function usePlaybackCameraSlot(
       if (v.seeking && seekingAgeMs(v) >= SEEKING_STUCK_MS && current) {
         playbackDebugInc('seekingStuckRecoveries');
         stuckSeekAttempts += 1;
+        setVideoSeeking(false);
         seekPlaybackVideo(v, getPositionRef.current(), current.startTs, {
-          playing: true,
+          playing: playingRef.current,
           force: true,
           scrubbing: true,
           thresholdSec: 0,
           segmentEndTs: current.endTs,
         });
-        if (stuckSeekAttempts === 2) {
+        if (stuckSeekAttempts === 2 || stuckSeekAttempts >= 4) {
           try {
             v.load();
           } catch {
@@ -362,12 +374,10 @@ export function usePlaybackCameraSlot(
           }
           kick();
         }
-        if (stuckSeekAttempts >= 4) {
-          hardRemountOnce();
-        }
         return;
       }
 
+      if (!playingRef.current) return;
       if (v.readyState >= 2) return;
       if (!(v.currentTime > 2) || pullbacks >= 4) {
         if (pullbacks >= 4 && v.readyState < 2) {
@@ -388,10 +398,8 @@ export function usePlaybackCameraSlot(
       }
       void v.play().catch(() => null);
     }, 700);
-    // Do NOT remount solely because readyState is low briefly after seek — that
-    // caused black cameras + flickering "seeking frame" while the clock kept running.
     const hardTimer = window.setTimeout(() => {
-      if (v.readyState >= 2) return;
+      if (!playingRef.current || v.readyState >= 2) return;
       try {
         v.load();
       } catch {

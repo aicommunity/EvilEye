@@ -161,6 +161,7 @@ export function useLiveGridPreviewWs(runId: number | null, sourceIds: number[]) 
           window.clearInterval(pingTimer);
           pingTimer = null;
         }
+        // Keep last blob URLs until unmount or a newer frame arrives (avoid empty flash).
         if (!cancelled) {
           setFailed(true);
           const delay = Math.min(30000, 1000 * 2 ** reconnectAttemptRef.current);

@@ -294,16 +294,22 @@ def _read_log_tail(path: Path, *, lines: int = 120) -> list[str]:
     return payload[-lines:]
 
 
-def _run_summary(record: Dict[str, Any]) -> Dict[str, Any]:
+def _run_summary(record: Dict[str, Any], *, include_logs: bool = True) -> Dict[str, Any]:
     from evileye.api.core.log_service import resolve_run_log_files
 
     config_summary = load_config_summary(record.get("config_path"))
-    runtime_snapshot = load_runtime_snapshot(int(record.get("id") or 0)) if record.get("id") is not None else None
     rid = record.get("id")
+    rid_int = int(rid) if rid is not None else None
+    if include_logs:
+        runtime_snapshot = load_runtime_snapshot(rid_int) if rid_int is not None else None
+        log_info = resolve_run_log_files(record)
+    else:
+        # Hot path (overview / active list): skip log glob + full snapshot hydrate.
+        runtime_snapshot = _slim_snapshot_for_cameras(rid_int)
+        log_info = {}
     latest_frame_exists = _preview_frame_available(rid)
     config_path = record.get("config_path")
     config_name = Path(config_path).name if config_path else None
-    log_info = resolve_run_log_files(record)
     effective_params = effective_params_for_run(config_path, runtime_snapshot)
     database_enabled = use_database_from_params(effective_params)
     storage_mode = storage_mode_from_params(effective_params)
@@ -452,7 +458,7 @@ def list_active_run_summaries() -> list[Dict[str, Any]]:
                 record = _combined_runtime_record(rid)
                 if record is None:
                     continue
-                runs.append(_run_summary(record))
+                runs.append(_run_summary(record, include_logs=False))
             runs.sort(
                 key=lambda item: (
                     _current_run_candidate_key(item),
@@ -540,7 +546,7 @@ def get_current_run_summary() -> Optional[Dict[str, Any]]:
                     if record is None:
                         result = None
                     else:
-                        result = _run_summary(record)
+                        result = _run_summary(record, include_logs=False)
             computed_ok = True
             return result
         finally:

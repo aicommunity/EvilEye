@@ -162,8 +162,10 @@ Settings page (`/settings`): language, date format, visible cameras, change pass
 | `EVILEYE_WS_PREVIEW_MODE` | `binary` | `binary` = JPEG over WS; `notify` = JSON notify + client fetches snapshot (**prefer `notify` on WAN**) |
 | `EVILEYE_WS_PREVIEW_SEND_TIMEOUT_SEC` | `2.0` | Per-client WS send timeout; slow clients are dropped so they cannot block fan-out |
 | `EVILEYE_MAX_MJPEG_CLIENTS` | `8` | Cap concurrent MJPEG streams |
+| `EVILEYE_MAX_PLAYBACK_MEDIA_CLIENTS` | `128` | Cap concurrent `/playback/media` Range responses (disconnect releases early) |
 | `EVILEYE_MJPEG_IDLE_SEC` | `8` | Close MJPEG if no frames |
-| `EVILEYE_PLAYBACK_ROUTE_TIMEOUT_SEC` | `15` | Max wait for playback cameras/segments/timeline; on timeout serve stale index/memory cache when available |
+| `EVILEYE_PLAYBACK_ROUTE_TIMEOUT_SEC` | `15` | Max wait for playback cameras/segments/timeline; stale fallback when available |
+| `EVILEYE_PLAYBACK_DETECTIONS_TIMEOUT_SEC` | `45` | Max wait for coalesced `/playback/detections` journal scans |
 | `EVILEYE_STATE_ROUTE_TIMEOUT_SEC` | `8` | Max wait for `/state/*` heavy routes; on timeout serve in-process cache when available |
 | `EVILEYE_DATA_DIR` | `EvilEyeData` | Streams / Events root |
 

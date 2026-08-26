@@ -11,6 +11,7 @@ import { ExpandedCameraView } from './ExpandedCameraView';
 import { LiveAlertsRail } from './LiveAlertsRail';
 import { useLiveLayout } from './useLiveLayout';
 import { useLiveGridPreviewWs } from './useLiveGridPreviewWs';
+import { cancelPreviewDemandGrace, startPreviewDemandGrace } from './previewDemandGrace';
 import { fitColsForCount } from '../layout/fitGrid';
 
 const CAMERAS_CACHE_KEY = 'state:cameras:current';
@@ -128,12 +129,28 @@ export function LivePage() {
   );
 
   const previewWs = useLiveGridPreviewWs(primaryRunId, previewSourceIds);
+  const [activeSources, setActiveSources] = useState<Array<{ runId: number; sourceId: number | null }>>([]);
+  const activeSourcesRef = useRef(activeSources);
+  activeSourcesRef.current = activeSources;
 
-  // Keep preview demand warm while Live is open (one touch per run).
+  // Keep preview demand warm for visible tiles only (C3). On leave, short grace.
   useEffect(() => {
+    cancelPreviewDemandGrace();
     if (!cameras.length) return;
 
     const tick = () => {
+      const active = activeSourcesRef.current;
+      if (active.length) {
+        const seen = new Set<string>();
+        for (const { runId, sourceId } of active) {
+          const key = `${runId}:${sourceId ?? 'all'}`;
+          if (seen.has(key)) continue;
+          seen.add(key);
+          void streamStatus(runId, sourceId).catch(() => undefined);
+        }
+        return;
+      }
+      // Cold start before IO: touch each run once.
       const runIds = new Set<number>();
       for (const cam of cameras) {
         if (Number.isFinite(cam.run_id)) runIds.add(cam.run_id);
@@ -144,7 +161,14 @@ export function LivePage() {
     };
     tick();
     const id = window.setInterval(tick, PREVIEW_DEMAND_MS);
-    return () => window.clearInterval(id);
+    return () => {
+      window.clearInterval(id);
+      const runIds = new Set<number>();
+      for (const cam of cameras) {
+        if (Number.isFinite(cam.run_id)) runIds.add(cam.run_id);
+      }
+      startPreviewDemandGrace(runIds);
+    };
   }, [cameras]);
 
   const ordered = useMemo(() => {
@@ -227,6 +251,7 @@ export function LivePage() {
               previewWsActive={previewWs.connected}
               camerasPolledAtMs={camerasPolledAtMs}
               healthTick={healthTick}
+              onActiveSourcesChange={setActiveSources}
               loading={camerasLoading}
             />
           </div>

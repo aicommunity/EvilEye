@@ -32,9 +32,16 @@ class ProtectionConfig:
     auth_fail_max: int = 30
     auth_fail_window_sec: float = 60
     auth_fail_ban_sec: float = 900
-    ws_connect_max: int = 20
+    ws_connect_max: int = 60
     ws_connect_window_sec: float = 60
     ws_ban_sec: float = 600
+    # Soft reconnect window: Live↔Playback remounts should not trip flood ban.
+    ws_reconnect_grace_sec: float = 5.0
+    # Separate buckets so metadata WS storms do not ban the live grid socket.
+    ws_live_max: int = 30
+    ws_metadata_max: int = 40
+    ws_live_window_sec: float = 60
+    ws_metadata_window_sec: float = 60
     internal_fail_max: int = 15
     internal_fail_window_sec: float = 60
     internal_fail_ban_sec: float = 3600
@@ -88,6 +95,11 @@ def load_protection_config(web_auth_section: dict[str, Any] | None = None) -> Pr
         "ws_connect_max",
         "ws_connect_window_sec",
         "ws_ban_sec",
+        "ws_reconnect_grace_sec",
+        "ws_live_max",
+        "ws_metadata_max",
+        "ws_live_window_sec",
+        "ws_metadata_window_sec",
         "internal_fail_max",
         "internal_fail_window_sec",
         "internal_fail_ban_sec",
@@ -108,6 +120,7 @@ class RateGuard:
         self.config = config or ProtectionConfig()
         self._lock = threading.Lock()
         self._events: dict[tuple[str, str], Deque[float]] = defaultdict(deque)
+        self._ws_reject_counts: dict[str, int] = {}
 
     def configure(self, config: ProtectionConfig) -> None:
         self.config = config
@@ -227,16 +240,70 @@ class RateGuard:
             reason="auth_fail_storm",
         )
 
-    def record_ws_connect(self, request: Any) -> bool:
+    def record_ws_connect(self, request: Any, *, bucket: str = "ws_connect") -> bool:
+        """Record a WS connect. bucket: ws_live_grid | ws_metadata | ws_connect (legacy)."""
         ip = self.client_ip(request)
-        return self.record(
-            "ws_connect",
-            ip,
-            max_events=self.config.ws_connect_max,
-            window_sec=self.config.ws_connect_window_sec,
-            ban_sec=self.config.ws_ban_sec,
-            reason="ws_connect_flood",
-        )
+        if not self.config.enabled or not ip or ip == "unknown":
+            return False
+        if self.is_whitelisted(ip):
+            return False
+        if bucket == "ws_live_grid":
+            max_events = int(self.config.ws_live_max)
+            window_sec = float(self.config.ws_live_window_sec)
+            reason = "ws_live_flood"
+        elif bucket == "ws_metadata":
+            max_events = int(self.config.ws_metadata_max)
+            window_sec = float(self.config.ws_metadata_window_sec)
+            reason = "ws_metadata_flood"
+        else:
+            max_events = int(self.config.ws_connect_max)
+            window_sec = float(self.config.ws_connect_window_sec)
+            reason = "ws_connect_flood"
+            bucket = "ws_connect"
+        now = time.time()
+        grace = float(self.config.ws_reconnect_grace_sec or 0.0)
+        with self._lock:
+            q = self._events[(bucket, ip)]
+            self._prune(q, window_sec, now)
+            # Live↔Playback remount opens sockets in a burst; coalesce within grace.
+            if grace > 0 and q and (now - q[-1]) < grace:
+                return False
+            q.append(now)
+            exceeded = len(q) >= max_events
+        if exceeded:
+            logger.warning(
+                "ws_connect_flood bucket=%s ip=%s events=%s window_sec=%s ban_sec=%s",
+                bucket,
+                ip,
+                max_events,
+                window_sec,
+                self.config.ws_ban_sec,
+            )
+            get_ip_ban_store().add_ban(
+                ip,
+                reason=reason,
+                source="auto",
+                created_by="system",
+                duration_sec=self.config.ws_ban_sec,
+                allow_cidr=False,
+                hit_count=max_events,
+            )
+            self.reset_bucket(bucket, ip)
+            self._bump_ws_reject(reason)
+            return True
+        return False
+
+    def _bump_ws_reject(self, reason: str) -> None:
+        with self._lock:
+            self._ws_reject_counts[reason] = int(self._ws_reject_counts.get(reason, 0)) + 1
+
+    def note_ws_reject(self, reason: str) -> None:
+        """Count non-flood WS close reasons (banned / permission)."""
+        self._bump_ws_reject(reason)
+
+    def ws_reject_counts(self) -> dict[str, int]:
+        with self._lock:
+            return dict(self._ws_reject_counts)
 
     def record_internal_fail(self, request: Any) -> bool:
         ip = self.client_ip(request)

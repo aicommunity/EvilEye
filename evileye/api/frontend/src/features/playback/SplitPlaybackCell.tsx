@@ -9,6 +9,7 @@ import { PlaybackBusyHint } from './PlaybackBusyHint';
 import { usePlaybackCameraMetadata } from './PlaybackCameraView';
 import { playbackDebugInc } from './playbackDebug';
 import { seekPlaybackVideo, seekingAgeMs, SEEKING_STUCK_MS, shouldEmitPlaybackClock } from './playbackVideoSync';
+import { drainVideoElement } from './drainVideo';
 
 export function SplitPlaybackCell({
   videoUrl,
@@ -78,6 +79,12 @@ export function SplitPlaybackCell({
   const parentVideoSize = frameSizeProp ?? localFrameSize;
   const onVideoClockRef = useRef(onVideoClock);
   onVideoClockRef.current = onVideoClock;
+  const playingRef = useRef(playing);
+  playingRef.current = playing;
+  const scrubbingRef = useRef(scrubbing);
+  scrubbingRef.current = scrubbing;
+  const startTsRef = useRef(startTs);
+  startTsRef.current = startTs;
 
   const metadataFrameSize = useMemo(
     () => resolvePlaybackFrameSize(camera, parentVideoSize),
@@ -223,14 +230,13 @@ export function SplitPlaybackCell({
   }, [playing, scrubbing, speed, videoUrl]);
 
   useEffect(() => {
-    if (scrubbing || !playing) return;
+    if (scrubbing) return;
     const video = videoRef.current;
     if (!video) return;
     let stuckAttempts = 0;
     let pausedZombieTicks = 0;
-    let remounted = false;
     const timer = window.setInterval(() => {
-      if (playing && !scrubbing && video.paused) {
+      if (playingRef.current && !scrubbingRef.current && video.paused) {
         pausedZombieTicks += 1;
         playbackDebugInc('playCalls');
         void video.play().catch(() => playbackDebugInc('playRejects'));
@@ -245,10 +251,12 @@ export function SplitPlaybackCell({
           });
           drawFrame();
         }
-        if (pausedZombieTicks >= 6 && video.readyState < 2 && !remounted) {
-          remounted = true;
-          playbackDebugInc('watchdogLoad');
-          setLocalEpoch((n) => n + 1);
+        if (pausedZombieTicks >= 6 && video.readyState < 2) {
+          try {
+            video.load();
+          } catch {
+            /* ignore */
+          }
         }
         return;
       }
@@ -256,8 +264,9 @@ export function SplitPlaybackCell({
       if (video.seeking && seekingAgeMs(video) >= SEEKING_STUCK_MS) {
         playbackDebugInc('seekingStuckRecoveries');
         stuckAttempts += 1;
+        setSeeking(false);
         seekPlaybackVideo(video, getPositionRef.current(), startTs, {
-          playing: true,
+          playing: playingRef.current,
           force: true,
           scrubbing: true,
           thresholdSec: 0,
@@ -265,17 +274,12 @@ export function SplitPlaybackCell({
             Number.isFinite(video.duration) && video.duration > 0 ? startTs + video.duration : undefined,
         });
         drawFrame();
-        if (stuckAttempts === 2) {
+        if (stuckAttempts === 2 || stuckAttempts >= 4) {
           try {
             video.load();
           } catch {
             /* ignore */
           }
-        }
-        if (stuckAttempts >= 4 && !remounted) {
-          remounted = true;
-          playbackDebugInc('watchdogLoad');
-          setLocalEpoch((n) => n + 1);
         }
       }
     }, 700);
@@ -289,16 +293,17 @@ export function SplitPlaybackCell({
     const onSeeking = () => setSeeking(true);
     const onSeeked = () => {
       setSeeking(false);
-      setVideoGlobalSec(startTs + video.currentTime);
+      const st = startTsRef.current;
+      setVideoGlobalSec(st + video.currentTime);
       // Pin after load even while scrubbing (new segment src starts at t=0 otherwise).
-      seekPlaybackVideo(video, getPositionRef.current(), startTs, {
-        playing,
-        scrubbing,
-        thresholdSec: playing && !scrubbing ? 1.0 : undefined,
+      seekPlaybackVideo(video, getPositionRef.current(), st, {
+        playing: playingRef.current,
+        scrubbing: scrubbingRef.current,
+        thresholdSec: playingRef.current && !scrubbingRef.current ? 1.0 : undefined,
         segmentEndTs:
-          Number.isFinite(video.duration) && video.duration > 0 ? startTs + video.duration : undefined,
+          Number.isFinite(video.duration) && video.duration > 0 ? st + video.duration : undefined,
       });
-      if (playing && !scrubbing && video.paused) {
+      if (playingRef.current && !scrubbingRef.current && video.paused) {
         void video.play().catch(() => null);
       }
       drawFrame();
@@ -308,24 +313,38 @@ export function SplitPlaybackCell({
       videoWithVfc.requestVideoFrameCallback?.(() => drawFrame());
     };
     const onTime = () => {
-      if (video.readyState >= 2) setVideoGlobalSec(startTs + video.currentTime);
-      if (video.seeking || scrubbing) return;
-      if (playing && shouldEmitPlaybackClock(cameraId, video)) {
-        onVideoClockRef.current?.(startTs + video.currentTime);
+      const st = startTsRef.current;
+      if (video.readyState >= 2) setVideoGlobalSec(st + video.currentTime);
+      if (video.seeking || scrubbingRef.current) return;
+      if (playingRef.current && shouldEmitPlaybackClock(cameraId, video)) {
+        onVideoClockRef.current?.(st + video.currentTime);
       }
+    };
+    const onError = () => {
+      setSeeking(false);
+      playbackDebugInc('playRejects');
     };
     video.addEventListener('seeking', onSeeking);
     video.addEventListener('seeked', onSeeked);
     video.addEventListener('timeupdate', onTime);
     video.addEventListener('loadeddata', onSeeked);
+    video.addEventListener('error', onError);
     setSeeking(video.seeking);
     return () => {
       video.removeEventListener('seeking', onSeeking);
       video.removeEventListener('seeked', onSeeked);
       video.removeEventListener('timeupdate', onTime);
       video.removeEventListener('loadeddata', onSeeked);
+      video.removeEventListener('error', onError);
     };
-  }, [videoUrl, playing, scrubbing, startTs, cameraId, mediaEpoch]);
+  }, [videoUrl, cameraId, mediaEpoch]);
+
+  useEffect(() => {
+    const el = videoRef;
+    return () => {
+      drainVideoElement(el.current);
+    };
+  }, []);
 
   useEffect(() => {
     const video = videoRef.current;

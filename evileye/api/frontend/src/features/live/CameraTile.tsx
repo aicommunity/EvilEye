@@ -5,6 +5,7 @@ import { useI18n } from '../../i18n';
 import { OverlayCanvas } from '../overlay/OverlayCanvas';
 import { useImageLetterbox } from '../overlay/useMediaLetterbox';
 import { resolvePreviewMode, type PreviewMode } from './liveHealth';
+import { wantLiveSnapshotPoll, wantLiveWsPreview } from './livePreviewPrefer';
 import { useRunMetadataWs } from './useRunMetadataWs';
 
 const LIVE_SNAPSHOT_MS = 3000;
@@ -93,8 +94,23 @@ export function CameraTile({
     wantMetaSub && mode !== 'error' && camera.reconnecting !== true && (mode === 'live' || mode === 'stale');
   const overlayDimmed = mode === 'stale';
   const meta = useRunMetadataWs(wantMetaSub ? camera.run_id : null, camera.source_id ?? null);
-  const wantSnapshot = running && active && !useMjpeg && !previewWsActive;
-  const wantWsPreview = running && active && !useMjpeg && previewWsActive && previewBlobUrl;
+  // Keep snapshot polling until the first WS blob arrives — otherwise onopen
+  // (connected=true) blanks the tile after Live remount from Playback.
+  const hasWsFrame = Boolean(previewBlobUrl);
+  const wantSnapshot = wantLiveSnapshotPoll({
+    running,
+    active,
+    useMjpeg,
+    previewWsActive,
+    hasWsFrame,
+  });
+  const wantWsPreview = wantLiveWsPreview({
+    running,
+    active,
+    useMjpeg,
+    previewWsActive,
+    hasWsFrame,
+  });
 
   useEffect(() => {
     setPreviewError(false);

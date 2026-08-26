@@ -723,6 +723,9 @@ export function PlaybackPage() {
   useEffect(() => {
     return () => {
       if (seekSettleTimerRef.current != null) window.clearTimeout(seekSettleTimerRef.current);
+      if (loadTimerRef.current != null) window.clearTimeout(loadTimerRef.current);
+      camerasAbortRef.current?.abort();
+      segmentsAbortRef.current?.abort();
     };
   }, []);
 

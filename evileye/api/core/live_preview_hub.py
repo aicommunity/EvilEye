@@ -183,6 +183,14 @@ class LivePreviewHub:
                         except asyncio.TimeoutError:
                             client.send_timeouts += 1
                             self._stats["client_timeouts"] += 1
+                            # Soft: allow a couple of slow sends before kick (WAN / busy tab).
+                            if client.send_timeouts < 3:
+                                logger.debug(
+                                    "live preview client send timeout (run_id=%s timeouts=%s); retrying",
+                                    client.run_id,
+                                    client.send_timeouts,
+                                )
+                                continue
                             self._stats["clients_kicked"] += 1
                             logger.warning(
                                 "live preview client send timeout (run_id=%s timeouts=%s); unregistering",

@@ -193,7 +193,15 @@ class FrameRelayClient:
         except Exception as exc:
             self._close_conn()
             self._log_publish_failure(exc)
-            return False
+            # One immediate reconnect + resend so API sock recreate recovers fast.
+            try:
+                sock = self._get_unix_sock()
+                sock.sendall(packet)
+                return True
+            except Exception as retry_exc:
+                self._close_conn()
+                self._log_publish_failure(retry_exc)
+                return False
 
     def _post(
         self,
