@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
-import { journalsApi, type JournalGroupedRow, cacheGet, cacheSet, isAbortError } from '../../api';
+import { journalsApi, type JournalGroupedRow, cacheGet, cacheSet, formatApiError, isAbortError } from '../../api';
 import { Button, DatePickerField } from '../../components/ui';
 import { useToast } from '../../components/ui/Toast';
 import { useI18n } from '../../i18n';
@@ -133,7 +133,7 @@ export function EventsPage() {
       a.click();
       URL.revokeObjectURL(href);
     } catch (e) {
-      showError(e instanceof Error ? e.message : t('common.error'));
+      showError(formatApiError(e, t));
     } finally {
       setExporting(false);
     }

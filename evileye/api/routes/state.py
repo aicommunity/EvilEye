@@ -7,6 +7,7 @@ from evileye.api.core.camera_access import (
     filter_sources_list,
     resolve_camera_access,
 )
+from evileye.api.core.route_timeouts import state_route_timeout_sec
 from evileye.api.core.server_state import (
     build_overview,
     build_runtime_history,
@@ -25,8 +26,11 @@ from evileye.api.core.server_state import (
 
 router = APIRouter(prefix="/api/v1/state", tags=["state"])
 
-_STATE_ROUTE_TIMEOUT_SEC = 2.0
 _STATE_HEAVY_ROUTE_SEMAPHORE = asyncio.Semaphore(3)
+
+
+def _state_timeout() -> float:
+    return state_route_timeout_sec()
 
 
 async def _to_thread_with_timeout_or_cached(value_fn, cached_fn, *, timeout_sec: float, err_detail: str):
@@ -71,7 +75,7 @@ async def state_overview(request: Request) -> dict:
         payload = await _to_thread_with_timeout_or_cached(
             build_overview,
             get_cached_overview,
-            timeout_sec=_STATE_ROUTE_TIMEOUT_SEC,
+            timeout_sec=_state_timeout(),
             err_detail="state_overview timeout",
         )
     return _filter_overview(payload, resolve_camera_access(request))
@@ -124,7 +128,7 @@ async def state_runs(
         payload = await _to_thread_with_timeout_or_cached(
             _load,
             _cached,
-            timeout_sec=_STATE_ROUTE_TIMEOUT_SEC,
+            timeout_sec=_state_timeout(),
             err_detail=f"state_runs({scope}) timeout",
         )
     access = resolve_camera_access(request)
@@ -150,7 +154,7 @@ async def state_history(request: Request) -> dict:
         payload = await _to_thread_with_timeout_or_cached(
             _load,
             _cached,
-            timeout_sec=_STATE_ROUTE_TIMEOUT_SEC,
+            timeout_sec=_state_timeout(),
             err_detail="state_history timeout",
         )
     access = resolve_camera_access(request)
@@ -165,13 +169,24 @@ async def state_history(request: Request) -> dict:
 
 @router.get("/runs/{rid}")
 async def state_run(rid: int, request: Request) -> dict:
-    try:
-        item = await asyncio.wait_for(
-            asyncio.to_thread(get_run_summary, rid),
-            timeout=_STATE_ROUTE_TIMEOUT_SEC,
+    def _cached_run():
+        ok, current = probe_cached_current_run_summary()
+        if ok and isinstance(current, dict) and current.get("id") == rid:
+            return current
+        ok_a, items = probe_cached_active_run_summaries()
+        if ok_a:
+            for item in items or []:
+                if isinstance(item, dict) and item.get("id") == rid:
+                    return item
+        return None
+
+    async with _STATE_HEAVY_ROUTE_SEMAPHORE:
+        item = await _to_thread_with_timeout_or_cached(
+            lambda: get_run_summary(rid),
+            _cached_run,
+            timeout_sec=_state_timeout(),
+            err_detail="state_run timeout",
         )
-    except asyncio.TimeoutError:
-        raise HTTPException(status_code=503, detail="state_run timeout")
     if item is None:
         raise HTTPException(status_code=404, detail="Run not found")
     return _filter_run_summary(item, resolve_camera_access(request)) or item
@@ -192,7 +207,7 @@ async def state_cameras(
         items = await _to_thread_with_timeout_or_cached(
             _load,
             _cached,
-            timeout_sec=_STATE_ROUTE_TIMEOUT_SEC,
+            timeout_sec=_state_timeout(),
             err_detail="state_cameras timeout",
         )
     access = resolve_camera_access(request)

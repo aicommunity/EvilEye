@@ -151,6 +151,8 @@ Settings page (`/settings`): language, date format, visible cameras, change pass
 | `EVILEYE_WS_PREVIEW_SEND_TIMEOUT_SEC` | `2.0` | Per-client WS send timeout; slow clients are dropped so they cannot block fan-out |
 | `EVILEYE_MAX_MJPEG_CLIENTS` | `8` | Cap concurrent MJPEG streams |
 | `EVILEYE_MJPEG_IDLE_SEC` | `8` | Close MJPEG if no frames |
+| `EVILEYE_PLAYBACK_ROUTE_TIMEOUT_SEC` | `15` | Max wait for playback cameras/segments/timeline; on timeout serve stale index/memory cache when available |
+| `EVILEYE_STATE_ROUTE_TIMEOUT_SEC` | `8` | Max wait for `/state/*` heavy routes; on timeout serve in-process cache when available |
 | `EVILEYE_DATA_DIR` | `EvilEyeData` | Streams / Events root |
 
 Config: `server.publish_fps` (stream level), `server.preview_encode_workers`, `server.preview_max_edge`.
@@ -161,7 +163,8 @@ Config: `server.publish_fps` (stream level), `server.preview_encode_workers`, `s
 - **Live camera health:** `GET /api/v1/state/cameras` includes `is_working`, `last_frame_age_sec`, `reconnecting`. UI status dots use hysteresis (12s enter / 5s exit); metadata overlays are not torn down on brief stale.
 - **Live preview hub:** per-client latest-wins queues; hub stats include `dropped`, `client_timeouts`, `client_replaced`, `clients_kicked`.
 - **MJPEG refcount:** each stream connection acquires a broker ref; soft `stream:stop` is a no-op (disconnect releases). On MJPEG release demand is forced back to `grid`.
-- **Playback:** logical cameras from run config (`Cam2`/`Cam3`, not composite `Cam2-Cam3`); split crop via canvas + `src_coords`; selection in `localStorage` (`evileye.playback.layout.v1`); auto-load segments; timeline segment blocks.
+- **Playback:** logical cameras from run config (`Cam2`/`Cam3`, not composite `Cam2-Cam3`); split crop via canvas + `src_coords`; selection in `localStorage` (`evileye.playback.layout.v1`); auto-load segments; timeline segment blocks. Heavy routes use `EVILEYE_PLAYBACK_ROUTE_TIMEOUT_SEC` with stale segment-index / memory fallback (503 only when no data).
+- **State routes:** `EVILEYE_STATE_ROUTE_TIMEOUT_SEC` with existing in-process cache fallback.
 - **Journals / logs / WS metadata:** unchanged cadence (poll/SSE/backoff).
 
 ## Disk layout (playback)

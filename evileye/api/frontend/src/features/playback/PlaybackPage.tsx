@@ -10,6 +10,7 @@ import {
   type PlaybackSegment,
   cacheGet,
   cacheSet,
+  formatApiError,
   isAbortError,
 } from '../../api';
 import { Button, DatePickerField } from '../../components/ui';
@@ -43,7 +44,7 @@ function today(): string {
 }
 
 const INITIAL_WINDOW_SEC = 7200;
-const SEGMENTS_LOAD_TIMEOUT_MS = 15_000;
+const SEGMENTS_LOAD_TIMEOUT_MS = 60_000;
 /** Half-width of the time range requested when seeking outside loaded data. */
 const SEEK_LOAD_HALF_SEC = 3600;
 
@@ -119,6 +120,7 @@ export function PlaybackPage() {
   const [eventIntervals, setEventIntervals] = useState<PlaybackEventInterval[]>([]);
   const [segmentsLoaded, setSegmentsLoaded] = useState(false);
   const [segmentsLoading, setSegmentsLoading] = useState(false);
+  const [segmentsError, setSegmentsError] = useState<string | null>(null);
   const [showMetadata, setShowMetadata] = useState(true);
   const [, setTimelinePanning] = useState(false);
   const [seekSettling, setSeekSettling] = useState(false);
@@ -310,7 +312,7 @@ export function PlaybackPage() {
         setSegmentsLoaded(false);
       } catch (e) {
         if (isAbortError(e) || cancelled) return;
-        showError(e instanceof Error ? e.message : t('playback.unavailable'));
+        showError(formatApiError(e, t));
       } finally {
         if (!cancelled && !ac.signal.aborted) setCamerasLoading(false);
       }
@@ -319,16 +321,21 @@ export function PlaybackPage() {
       cancelled = true;
       ac.abort();
     };
-  }, [date, runId, runResolved, showError, urlCamera, setSelectedIds, softRefreshCameras]);
+  }, [date, runId, runResolved, showError, urlCamera, setSelectedIds, softRefreshCameras, t]);
 
   const loadSegments = useCallback(
     async (camsOverride?: string[], opts?: { from?: number; to?: number; merge?: boolean; date?: string }) => {
       segmentsAbortRef.current?.abort();
       const ac = new AbortController();
       segmentsAbortRef.current = ac;
-      const timeoutId = window.setTimeout(() => ac.abort(), SEGMENTS_LOAD_TIMEOUT_MS);
+      let timedOut = false;
+      const timeoutId = window.setTimeout(() => {
+        timedOut = true;
+        ac.abort();
+      }, SEGMENTS_LOAD_TIMEOUT_MS);
       const isInitialLoad = !opts?.merge;
       let didSetSegmentsLoading = false;
+      setSegmentsError(null);
       try {
         const nextSelected = camsOverride ?? selectedIdsRef.current;
         if (!nextSelected.length) {
@@ -503,13 +510,22 @@ export function PlaybackPage() {
         }
       } catch (e) {
         if (isAbortError(e)) {
-          if (isInitialLoad) {
+          // Ignore aborts from a newer loadSegments call superseding this one.
+          if (segmentsAbortRef.current !== ac) return;
+          if (isInitialLoad && timedOut) {
             setSegmentsLoaded(true);
-            showError(t('playback.unavailable'));
+            const msg = t('playback.loadTimeout');
+            setSegmentsError(msg);
+            showError(msg);
           }
           return;
         }
-        showError(e instanceof Error ? e.message : t('playback.unavailable'));
+        const msg = formatApiError(e, t);
+        if (isInitialLoad) {
+          setSegmentsLoaded(true);
+          setSegmentsError(msg);
+        }
+        showError(msg);
       } finally {
         window.clearTimeout(timeoutId);
         if (didSetSegmentsLoading) setSegmentsLoading(false);
@@ -681,6 +697,7 @@ export function PlaybackPage() {
   else if (!cameras.length) gridEmpty = t('playback.noCamerasForDate');
   else if (!selectedIds.length) gridEmpty = t('playback.selectCameras');
   else if (segmentsLoading || (!segmentsLoaded && cameras.length > 0)) gridEmpty = t('playback.loadingSegment');
+  else if (segmentsError && !Object.values(segmentsByCam).some((s) => s.length)) gridEmpty = segmentsError;
 
   return (
     <section className={`panel active playback-page${mode === 'fit' ? ' playback-page--fit' : ''}`}>
@@ -781,7 +798,22 @@ export function PlaybackPage() {
               detectionsReady={detectionsReady}
             />
           ) : gridEmpty ? (
-            <p className="empty">{gridEmpty}</p>
+            <div className="empty" style={{ display: 'grid', gap: 12, justifyItems: 'start' }}>
+              <p style={{ margin: 0 }}>{gridEmpty}</p>
+              {segmentsError ? (
+                <Button
+                  size="sm"
+                  variant="outline"
+                  onClick={() => {
+                    const deepLink =
+                      initialT != null && dateFromUnixSec(initialT) === date ? initialT : null;
+                    void loadSegments(selectedIds, initialSegmentWindow(date, deepLink));
+                  }}
+                >
+                  {t('playback.retryLoad')}
+                </Button>
+              ) : null}
+            </div>
           ) : (
             <PlaybackGrid
               cameras={selectedIds}

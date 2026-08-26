@@ -1,6 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { stateApi, journalsApi, streamStatus, type StateCamera, cacheGet, cacheSet, isAbortError } from '../../api';
-import { ApiError } from '../../api';
+import { stateApi, journalsApi, streamStatus, type StateCamera, cacheGet, cacheSet, formatApiError, isAbortError, ApiError } from '../../api';
 import { useAuth } from '../../auth/AuthContext';
 import { Button } from '../../components/ui';
 import { StreamOverlay } from '../../components/StreamOverlay';
@@ -96,7 +95,7 @@ export function LivePage() {
         void refresh();
         return;
       }
-      showError(e instanceof Error ? e.message : t('live.empty'));
+      showError(formatApiError(e, t));
     } finally {
       if (camerasLoadingTimerRef.current != null) {
         window.clearTimeout(camerasLoadingTimerRef.current);

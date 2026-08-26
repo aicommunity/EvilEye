@@ -96,6 +96,36 @@ def read_segment_index_if_fresh(date_folder: str) -> dict[str, list[dict[str, An
     return {str(k): list(v or []) for k, v in by_camera.items()}
 
 
+def read_segment_index_stale(date_folder: str) -> dict[str, list[dict[str, Any]]] | None:
+    """Return on-disk segment index even when mtime is stale (SWR fallback)."""
+    from evileye.api.core import playback_service as svc
+
+    streams_dir = svc.data_dir() / "Streams" / date_folder
+    index_path = segment_index_path(streams_dir)
+    data = _read_json(index_path)
+    if not data or int(data.get("version") or 0) != INDEX_VERSION:
+        return None
+    by_camera = data.get("by_camera") or {}
+    if not isinstance(by_camera, dict):
+        return None
+    return {str(k): list(v or []) for k, v in by_camera.items()}
+
+
+def schedule_segment_index_refresh(date_folder: str, cameras: list[str] | None = None) -> None:
+    """Best-effort background rebuild so the next request is fast."""
+    import threading
+
+    cam_list = [c for c in (cameras or []) if c]
+
+    def _job() -> None:
+        try:
+            ensure_segment_index(date_folder=date_folder, cameras=cam_list or None)
+        except Exception as exc:
+            logger.debug("background segment index refresh failed for %s: %s", date_folder, exc)
+
+    threading.Thread(target=_job, name=f"seg-index-{date_folder}", daemon=True).start()
+
+
 def upsert_segment_index_camera(
     date_folder: str,
     camera: str,

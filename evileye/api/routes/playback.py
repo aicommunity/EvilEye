@@ -2,7 +2,9 @@ from __future__ import annotations
 
 import asyncio
 import mimetypes
-from typing import Optional
+import threading
+from copy import deepcopy
+from typing import Any, Callable, Optional
 
 from fastapi import APIRouter, HTTPException, Query, Request
 from fastapi.responses import FileResponse
@@ -16,19 +18,44 @@ from evileye.api.core.camera_access import (
     resolve_camera_access,
 )
 from evileye.api.core.playback_metadata_service import DEFAULT_MATCH_SEC
+from evileye.api.core.route_timeouts import playback_route_timeout_sec
 
 router = APIRouter(prefix="/api/v1/playback", tags=["playback"])
 
-_PLAYBACK_ROUTE_TIMEOUT_SEC = 2.0
+_memory_lock = threading.Lock()
+_memory_cache: dict[str, Any] = {}
 
 
-async def _to_thread_with_timeout(fn, *args, err_detail: str, **kwargs):
+def _remember(key: str, value: Any) -> None:
+    with _memory_lock:
+        _memory_cache[key] = deepcopy(value)
+
+
+def _recall(key: str) -> Any | None:
+    with _memory_lock:
+        cached = _memory_cache.get(key)
+        return deepcopy(cached) if cached is not None else None
+
+
+async def _to_thread_with_timeout_or_cached(
+    value_fn: Callable[[], Any],
+    cached_fn: Callable[[], Any | None],
+    *,
+    err_detail: str,
+    on_timeout: Callable[[], None] | None = None,
+):
+    timeout = playback_route_timeout_sec()
     try:
-        return await asyncio.wait_for(
-            asyncio.to_thread(fn, *args, **kwargs),
-            timeout=_PLAYBACK_ROUTE_TIMEOUT_SEC,
-        )
+        return await asyncio.wait_for(asyncio.to_thread(value_fn), timeout=timeout)
     except asyncio.TimeoutError:
+        if on_timeout is not None:
+            try:
+                on_timeout()
+            except Exception:
+                pass
+        cached = cached_fn()
+        if cached is not None:
+            return cached
         raise HTTPException(status_code=503, detail=err_detail)
 
 
@@ -62,20 +89,71 @@ def _camera_name_from_media_path(path: str) -> str | None:
     return None
 
 
+def _stale_segments_by_camera(
+    date: str | None,
+    cameras: list[str],
+    from_ts: float | None,
+    to_ts: float | None,
+) -> dict[str, list[dict[str, Any]]] | None:
+    if not date:
+        return None
+    from evileye.api.core.playback_timeline_index import (
+        filter_segments_window,
+        read_segment_index_stale,
+    )
+
+    stale = read_segment_index_stale(date)
+    if stale is None:
+        return None
+    return {
+        cam: filter_segments_window(stale.get(cam) or [], from_ts, to_ts)
+        for cam in cameras
+    }
+
+
+def _stale_timeline(
+    date: str,
+    cameras: list[str],
+    from_ts: float | None,
+    to_ts: float | None,
+) -> dict[str, Any] | None:
+    from evileye.api.core.playback_timeline_index import (
+        filter_segments_window,
+        read_segment_index_stale,
+    )
+
+    stale = read_segment_index_stale(date)
+    if stale is None:
+        return None
+    by_camera: dict[str, Any] = {}
+    for cam in cameras:
+        by_camera[cam] = {
+            "segments": filter_segments_window(stale.get(cam) or [], from_ts, to_ts),
+            "detection_ticks": [],
+            "events": [],
+        }
+    return {"date": date, "by_camera": by_camera, "stale": True}
+
+
 @router.get("/cameras")
 async def playback_cameras(
     request: Request,
     date: Optional[str] = None,
     run_id: Optional[int] = Query(None),
 ) -> dict:
-    if run_id is not None:
-        items = await _to_thread_with_timeout(
-            svc.list_logical_cameras, run_id, date, err_detail="playback_cameras timeout"
-        )
-    else:
-        items = await _to_thread_with_timeout(
-            svc.discover_cameras, date, err_detail="playback_cameras timeout"
-        )
+    cache_key = f"playback:cameras:{run_id}:{date}"
+
+    def _load():
+        if run_id is not None:
+            return svc.list_logical_cameras(run_id, date)
+        return svc.discover_cameras(date)
+
+    items = await _to_thread_with_timeout_or_cached(
+        _load,
+        lambda: _recall(cache_key),
+        err_detail="playback_cameras timeout",
+    )
+    _remember(cache_key, items)
     access = resolve_camera_access(request)
     filtered = filter_by_source_name(items or [], access, key="id", use_visible=True)
     return {"items": filtered}
@@ -93,16 +171,61 @@ async def playback_segments(
     access = resolve_camera_access(request)
     if cameras:
         cam_list = _require_cameras(access, [c.strip() for c in cameras.split(",") if c.strip()], single=False)
-        by_camera = await _to_thread_with_timeout(
-            svc.load_segments_batch, cam_list, from_ts, to_ts, date, err_detail="playback_segments timeout"
+        mem_key = f"playback:segments:{date}:{from_ts}:{to_ts}:{','.join(cam_list)}"
+
+        def _load():
+            return svc.load_segments_batch(cam_list, from_ts, to_ts, date)
+
+        def _cached():
+            mem = _recall(mem_key)
+            if mem is not None:
+                return mem
+            return _stale_segments_by_camera(date, cam_list, from_ts, to_ts)
+
+        def _on_timeout():
+            if date:
+                from evileye.api.core.playback_timeline_index import schedule_segment_index_refresh
+
+                schedule_segment_index_refresh(date, cam_list)
+
+        by_camera = await _to_thread_with_timeout_or_cached(
+            _load,
+            _cached,
+            err_detail="playback_segments timeout",
+            on_timeout=_on_timeout,
         )
+        _remember(mem_key, by_camera)
         return {"by_camera": by_camera, "items": [item for items in by_camera.values() for item in items]}
     if not camera:
         raise HTTPException(status_code=400, detail="camera or cameras query required")
     _require_cameras(access, [camera], single=True)
-    items = await _to_thread_with_timeout(
-        svc.load_segments, camera, from_ts, to_ts, date, err_detail="playback_segments timeout"
+    mem_key = f"playback:segments:{date}:{from_ts}:{to_ts}:{camera}"
+
+    def _load_one():
+        return svc.load_segments(camera, from_ts, to_ts, date)
+
+    def _cached_one():
+        mem = _recall(mem_key)
+        if mem is not None:
+            return mem
+        batch = _stale_segments_by_camera(date, [camera], from_ts, to_ts)
+        if batch is None:
+            return None
+        return batch.get(camera) or []
+
+    def _on_timeout_one():
+        if date:
+            from evileye.api.core.playback_timeline_index import schedule_segment_index_refresh
+
+            schedule_segment_index_refresh(date, [camera])
+
+    items = await _to_thread_with_timeout_or_cached(
+        _load_one,
+        _cached_one,
+        err_detail="playback_segments timeout",
+        on_timeout=_on_timeout_one,
     )
+    _remember(mem_key, items)
     return {"items": items}
 
 
@@ -116,21 +239,37 @@ async def playback_timeline(
     to_ts: Optional[float] = Query(None, alias="to"),
 ) -> dict:
     """Compact day timeline: segments + detection ticks + event intervals in one round-trip."""
-    from evileye.api.core.playback_timeline_index import build_timeline
+    from evileye.api.core.playback_timeline_index import build_timeline, schedule_segment_index_refresh
 
     access = resolve_camera_access(request)
     cam_list = _require_cameras(access, [c.strip() for c in cameras.split(",") if c.strip()], single=False)
     if not cam_list:
         raise HTTPException(status_code=400, detail="cameras query required")
-    return await _to_thread_with_timeout(
-        build_timeline,
+    mem_key = f"playback:timeline:{date}:{run_id}:{from_ts}:{to_ts}:{','.join(cam_list)}"
+
+    def _load():
+        return build_timeline(
+            date_folder=date,
+            cameras=cam_list,
+            run_id=run_id,
+            from_ts=from_ts,
+            to_ts=to_ts,
+        )
+
+    def _cached():
+        mem = _recall(mem_key)
+        if mem is not None:
+            return mem
+        return _stale_timeline(date, cam_list, from_ts, to_ts)
+
+    payload = await _to_thread_with_timeout_or_cached(
+        _load,
+        _cached,
         err_detail="playback_timeline timeout",
-        date_folder=date,
-        cameras=cam_list,
-        run_id=run_id,
-        from_ts=from_ts,
-        to_ts=to_ts,
+        on_timeout=lambda: schedule_segment_index_refresh(date, cam_list),
     )
+    _remember(mem_key, payload)
+    return payload
 
 
 @router.get("/events")

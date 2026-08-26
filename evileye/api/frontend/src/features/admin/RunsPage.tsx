@@ -6,6 +6,7 @@ import {
   type StateRun,
   cacheGet,
   cacheSet,
+  formatApiError,
   isAbortError,
   ApiError,
 } from '../../api';
@@ -121,12 +122,12 @@ export function RunsPage() {
         if (e instanceof ApiError && e.status === 503 && hasDataRef.current) {
           return;
         }
-        showError(e instanceof Error ? e.message : t('runs.loadError'));
+        showError(formatApiError(e, t));
       } finally {
         if (!signal?.aborted) setLoading(false);
       }
     },
-    [showError],
+    [showError, t],
   );
 
   const loadDbHistory = useCallback(
@@ -143,12 +144,12 @@ export function RunsPage() {
         if (isAbortError(e) || signal?.aborted) return;
         setDbAvailable(false);
         setDbItems([]);
-        setDbMessage(e instanceof Error ? e.message : t('runs.dbHistoryUnavailable'));
+        setDbMessage(formatApiError(e, t));
       } finally {
         if (!signal?.aborted) setDbLoading(false);
       }
     },
-    [canViewHistory],
+    [canViewHistory, t],
   );
 
   useEffect(() => {
