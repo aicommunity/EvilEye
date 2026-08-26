@@ -1,8 +1,9 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { usersApi, type CameraCatalogItem, type UserRecord } from '../../api';
 import { Button } from '../../components/ui';
 import { useToast } from '../../components/ui/Toast';
 import { useI18n } from '../../i18n';
+import { CameraAclEditor } from './CameraAclEditor';
 
 const MIN_PASSWORD_LEN = 8;
 
@@ -30,17 +31,25 @@ export function UsersPage() {
   const [savingCams, setSavingCams] = useState<Record<string, boolean>>({});
 
   const load = useCallback(async () => {
+    let users: UserRecord[] = [];
     try {
-      const [data, cams] = await Promise.all([usersApi.list(), usersApi.cameraCatalog()]);
-      setItems(data.items ?? []);
-      setCatalog(cams.items ?? []);
+      const data = await usersApi.list();
+      users = data.items ?? [];
+      setItems(users);
       const next: Record<string, string[]> = {};
-      for (const u of data.items ?? []) {
+      for (const u of users) {
         next[u.id || u.username] = [...(u.allowed_cameras ?? [])];
       }
       setDraftCams(next);
     } catch (e) {
       showError(e instanceof Error ? e.message : t('common.error'));
+      return;
+    }
+    try {
+      const cams = await usersApi.cameraCatalog();
+      setCatalog(cams.items ?? []);
+    } catch {
+      setCatalog([]);
     }
   }, [showError, t]);
 
@@ -99,6 +108,30 @@ export function UsersPage() {
     }
   };
 
+  const camsSaveGen = useRef<Record<string, number>>({});
+
+  const saveCams = async (id: string, next: string[]) => {
+    const gen = (camsSaveGen.current[id] = (camsSaveGen.current[id] ?? 0) + 1);
+    setDraftCams((prev) => ({ ...prev, [id]: next }));
+    setSavingCams((prev) => ({ ...prev, [id]: true }));
+    try {
+      await usersApi.patch(id, { allowed_cameras: next });
+      if (camsSaveGen.current[id] !== gen) return;
+      setItems((prev) =>
+        prev.map((u) => ((u.id || u.username) === id ? { ...u, allowed_cameras: next } : u)),
+      );
+      showSuccess(t('users.camerasUpdated'));
+    } catch (e) {
+      if (camsSaveGen.current[id] !== gen) return;
+      showError(e instanceof Error ? e.message : t('common.error'));
+      await load();
+    } finally {
+      if (camsSaveGen.current[id] === gen) {
+        setSavingCams((prev) => ({ ...prev, [id]: false }));
+      }
+    }
+  };
+
   const saveResetPassword = async (id: string, raw: string) => {
     const pw = raw.trim();
     if (pw.length < MIN_PASSWORD_LEN) {
@@ -114,24 +147,6 @@ export function UsersPage() {
       }
     } finally {
       setSavingPw((prev) => ({ ...prev, [id]: false }));
-    }
-  };
-
-  const toggleCam = (userId: string, name: string) => {
-    setDraftCams((prev) => {
-      const cur = new Set(prev[userId] ?? []);
-      if (cur.has(name)) cur.delete(name);
-      else cur.add(name);
-      return { ...prev, [userId]: Array.from(cur) };
-    });
-  };
-
-  const saveCams = async (id: string) => {
-    setSavingCams((prev) => ({ ...prev, [id]: true }));
-    try {
-      await patchUser(id, { allowed_cameras: draftCams[id] ?? [] }, t('users.camerasUpdated'));
-    } finally {
-      setSavingCams((prev) => ({ ...prev, [id]: false }));
     }
   };
 
@@ -226,6 +241,7 @@ export function UsersPage() {
 
         <div className="users-list">
           <h3 className="users-list-title">{t('users.listSection')}</h3>
+          <p className="hint users-create-hint">{t('users.camerasColumnHint')}</p>
           {!items.length ? (
             <p className="empty">{t('users.empty')}</p>
           ) : (
@@ -278,29 +294,13 @@ export function UsersPage() {
                       <td>
                         {isAdmin ? (
                           <span className="hint">{t('users.allCamerasAdmin')}</span>
-                        ) : !catalog.length ? (
-                          <span className="hint">{t('users.camerasHint')}</span>
                         ) : (
-                          <div className="users-camera-acl">
-                            {catalog.map((c) => (
-                              <label key={c.source_name} className="checkbox-label">
-                                <input
-                                  type="checkbox"
-                                  checked={selected.includes(c.source_name)}
-                                  onChange={() => toggleCam(id, c.source_name)}
-                                />
-                                <span>{c.source_name}</span>
-                              </label>
-                            ))}
-                            <Button
-                              size="sm"
-                              variant="outline"
-                              disabled={Boolean(savingCams[id])}
-                              onClick={() => void saveCams(id)}
-                            >
-                              {t('users.saveCameras')}
-                            </Button>
-                          </div>
+                          <CameraAclEditor
+                            selected={selected}
+                            catalog={catalog.map((c) => c.source_name)}
+                            saving={Boolean(savingCams[id])}
+                            onChange={(next) => void saveCams(id, next)}
+                          />
                         )}
                       </td>
                       <td>

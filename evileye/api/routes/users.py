@@ -140,7 +140,11 @@ async def list_users(request: Request) -> dict:
 @router.get("/camera-catalog")
 async def users_camera_catalog(request: Request) -> dict:
     require_permission(request, "users:manage")
-    return {"items": catalog_camera_items(scope="active")}
+    try:
+        items = catalog_camera_items(scope="active")
+    except Exception:
+        items = []
+    return {"items": items}
 
 
 @router.post("")

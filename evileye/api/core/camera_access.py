@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Any, Iterable, Optional
 
 from fastapi import HTTPException, Request
@@ -100,34 +101,190 @@ def assert_name_allowed(access: CameraAccess, name: str) -> None:
 
 
 def catalog_source_names(*, scope: str = "active") -> list[str]:
+    return [item["source_name"] for item in catalog_camera_items(scope=scope)]
+
+
+def _add_catalog_name(
+    by_name: dict[str, dict[str, Any]],
+    name: str,
+    *,
+    source_id: Any = None,
+    source_type: Any = None,
+    run_id: Any = None,
+    config: str | None = None,
+) -> None:
+    cleaned = str(name or "").strip()
+    if not cleaned or cleaned == "System":
+        return
+    prev = by_name.get(cleaned) or {}
+    by_name[cleaned] = {
+        "source_name": cleaned,
+        "source_id": source_id if source_id is not None else prev.get("source_id"),
+        "source_type": source_type or prev.get("source_type"),
+        "run_id": run_id if run_id is not None else prev.get("run_id"),
+        "config": config or prev.get("config"),
+    }
+
+
+def _names_from_config_path(path: Path, by_name: dict[str, dict[str, Any]]) -> None:
+    from evileye.api.core.server_state import load_config_summary
+
+    try:
+        summary = load_config_summary(str(path))
+    except Exception:
+        summary = None
+    if summary is not None:
+        for item in summary.source_items or []:
+            _add_catalog_name(
+                by_name,
+                str(item.get("source_name") or ""),
+                source_id=item.get("source_id"),
+                source_type=item.get("source_type"),
+                config=path.name,
+            )
+
+    # Raw fallback: pick up names even when load_config_summary shape is incomplete.
+    try:
+        import json
+
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except Exception:
+        return
+    if not isinstance(payload, dict):
+        return
+    pipeline = payload.get("pipeline") if isinstance(payload.get("pipeline"), dict) else payload
+    sources = pipeline.get("sources") if isinstance(pipeline, dict) else None
+    if not isinstance(sources, list):
+        return
+    for src in sources:
+        if not isinstance(src, dict):
+            continue
+        names = src.get("source_names")
+        if isinstance(names, list) and names:
+            for n in names:
+                _add_catalog_name(by_name, str(n), source_type=src.get("source") or src.get("type"), config=path.name)
+            continue
+        single = src.get("source_name") or src.get("name")
+        if single:
+            _add_catalog_name(by_name, str(single), source_type=src.get("source") or src.get("type"), config=path.name)
+
+
+def _names_from_config_files() -> list[dict[str, Any]]:
+    """Catalog from configs/*.json under site_root."""
+    from pathlib import Path
+
+    from evileye.core.paths import configs_dir
+
+    by_name: dict[str, dict[str, Any]] = {}
+    cfg_dir = configs_dir()
+    if not cfg_dir.exists():
+        return []
+    for path in sorted(cfg_dir.glob("*.json")):
+        try:
+            _names_from_config_path(Path(path), by_name)
+        except Exception:
+            continue
+    return [by_name[k] for k in sorted(by_name.keys(), key=str.lower)]
+
+
+def _names_from_setup_default(by_name: dict[str, dict[str, Any]]) -> None:
+    """Ensure system.json / setup default_config and basic projection names are included."""
+    from pathlib import Path
+
+    from evileye.core.paths import configs_dir, creds_path
+
+    cfg_dir = configs_dir()
+    default_name = "system.json"
+    try:
+        import json
+
+        creds = json.loads(creds_path().read_text(encoding="utf-8"))
+        setup = creds.get("setup") if isinstance(creds, dict) else None
+        if isinstance(setup, dict) and setup.get("default_config"):
+            default_name = str(setup.get("default_config"))
+    except Exception:
+        pass
+
+    for name in {default_name, "system.json"}:
+        path = cfg_dir / name
+        if path.is_file():
+            _names_from_config_path(path, by_name)
+
+    # Basic projection (name + extra_names) from default config
+    try:
+        from evileye.api.core.setup_basic_merge import project_basic_from_config
+
+        path = cfg_dir / default_name
+        if not path.is_file():
+            path = cfg_dir / "system.json"
+        if not path.is_file():
+            return
+        import json
+
+        config = json.loads(path.read_text(encoding="utf-8"))
+        if not isinstance(config, dict):
+            return
+        creds: dict[str, Any] = {}
+        try:
+            raw = json.loads(creds_path().read_text(encoding="utf-8"))
+            if isinstance(raw, dict):
+                creds = raw
+        except Exception:
+            pass
+        basic = project_basic_from_config(config, creds, config_name=path.name)
+        for src in basic.get("sources") or []:
+            if not isinstance(src, dict):
+                continue
+            _add_catalog_name(by_name, str(src.get("name") or ""), config=path.name)
+            for extra in src.get("extra_names") or []:
+                _add_catalog_name(by_name, str(extra), config=path.name)
+    except Exception:
+        return
+
+
+def _names_from_summaries(by_name: dict[str, dict[str, Any]], *, scopes: tuple[str, ...]) -> None:
     from evileye.api.core.server_state import list_camera_summaries
 
-    seen: set[str] = set()
-    items: list[str] = []
-    for row in list_camera_summaries(scope=scope):
-        name = str(row.get("source_name") or "").strip()
-        if not name or name in seen:
+    for scope in scopes:
+        try:
+            rows = list_camera_summaries(scope=scope)
+        except Exception:
             continue
-        seen.add(name)
-        items.append(name)
-    items.sort(key=str.lower)
-    return items
+        for row in rows or []:
+            if not isinstance(row, dict):
+                continue
+            _add_catalog_name(
+                by_name,
+                str(row.get("source_name") or ""),
+                source_id=row.get("source_id"),
+                source_type=row.get("source_type"),
+                run_id=row.get("run_id"),
+            )
 
 
 def catalog_camera_items(*, scope: str = "active") -> list[dict[str, Any]]:
-    from evileye.api.core.server_state import list_camera_summaries
-
+    """Unique source_names for ACL UI from configs, setup, live state, and stored ACLs."""
     by_name: dict[str, dict[str, Any]] = {}
-    for row in list_camera_summaries(scope=scope):
-        name = str(row.get("source_name") or "").strip()
-        if not name or name in by_name:
-            continue
-        by_name[name] = {
-            "source_name": name,
-            "source_id": row.get("source_id"),
-            "source_type": row.get("source_type"),
-            "run_id": row.get("run_id"),
-        }
+    for item in _names_from_config_files():
+        by_name[item["source_name"]] = item
+    _names_from_setup_default(by_name)
+
+    scopes = (scope, "all") if scope != "all" else ("all",)
+    # Prefer requested scope first, then all; duplicates merge via _add_catalog_name.
+    unique_scopes = tuple(dict.fromkeys(scopes + ("active", "current", "all")))
+    _names_from_summaries(by_name, scopes=unique_scopes)
+
+    try:
+        from evileye.api.core.credentials_users import list_credentials_users
+        from evileye.api.core.user_prefs import allowed_cameras_from_record
+        from evileye.api.core.user_store import get_user_store
+
+        for record in list(list_credentials_users()) + list(get_user_store().list_users()):
+            for name in allowed_cameras_from_record(record):
+                _add_catalog_name(by_name, name)
+    except Exception:
+        pass
+
     return [by_name[k] for k in sorted(by_name.keys(), key=str.lower)]
 
 
