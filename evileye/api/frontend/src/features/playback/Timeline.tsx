@@ -15,6 +15,8 @@ import {
 } from './timelineMath';
 
 const TIMELINE_HEIGHT_PX = 92;
+/** Commit zoom to parent (and API loaders) only after the wheel gesture settles. */
+const ZOOM_COMMIT_MS = 150;
 
 export function Timeline({
   date,
@@ -45,6 +47,8 @@ export function Timeline({
   const rootRef = useRef<HTMLDivElement>(null);
   const [panning, setPanning] = useState(false);
   const [hoverSec, setHoverSec] = useState<number | null>(null);
+  /** Local zoom preview — paints every frame without re-rendering PlaybackPage / hitting API. */
+  const [zoomPreview, setZoomPreview] = useState<{ viewFrom: number; viewTo: number } | null>(null);
   const dragRef = useRef<{
     pointerId: number;
     startX: number;
@@ -56,16 +60,34 @@ export function Timeline({
   viewRef.current = { viewFrom, viewTo, position, date };
   const pendingZoomRef = useRef<{ viewFrom: number; viewTo: number } | null>(null);
   const zoomRafRef = useRef<number | null>(null);
+  const zoomCommitTimerRef = useRef<number | null>(null);
   const onViewChangeRef = useRef(onViewChange);
   onViewChangeRef.current = onViewChange;
+
+  // Drop local preview once the parent view has caught up.
+  useEffect(() => {
+    if (!zoomPreview || viewFrom == null || viewTo == null) return;
+    if (
+      Math.abs(zoomPreview.viewFrom - viewFrom) < 0.5 &&
+      Math.abs(zoomPreview.viewTo - viewTo) < 0.5
+    ) {
+      setZoomPreview(null);
+      pendingZoomRef.current = null;
+    }
+  }, [viewFrom, viewTo, zoomPreview]);
 
   useEffect(() => {
     const el = rootRef.current;
     if (!el) return;
-    const flushZoom = () => {
+    const paintPreview = () => {
       zoomRafRef.current = null;
       const pending = pendingZoomRef.current;
-      pendingZoomRef.current = null;
+      if (!pending) return;
+      setZoomPreview(pending);
+    };
+    const commitZoom = () => {
+      zoomCommitTimerRef.current = null;
+      const pending = pendingZoomRef.current;
       if (!pending) return;
       const cur = viewRef.current;
       if (
@@ -74,6 +96,8 @@ export function Timeline({
         Math.abs(pending.viewFrom - cur.viewFrom) < 1e-6 &&
         Math.abs(pending.viewTo - cur.viewTo) < 1e-6
       ) {
+        setZoomPreview(null);
+        pendingZoomRef.current = null;
         return;
       }
       onViewChangeRef.current(pending.viewFrom, pending.viewTo);
@@ -86,7 +110,10 @@ export function Timeline({
       e.preventDefault();
       const maxSpan = dayViewSpanSec(cur.date);
       const span = baseTo - baseFrom;
-      const factor = Math.exp(e.deltaY * 0.0015);
+      let dy = e.deltaY;
+      if (e.deltaMode === 1) dy *= 16;
+      if (e.deltaMode === 2) dy *= TIMELINE_HEIGHT_PX;
+      const factor = Math.exp(dy * 0.0024);
       if (factor > 1 && span >= maxSpan - 1) return;
       if (factor < 1 && span <= MIN_VIEW_SPAN_SEC + 1) return;
       const rect = el.getBoundingClientRect();
@@ -96,10 +123,11 @@ export function Timeline({
       const next = zoomViewWithinDay(baseFrom, baseTo, anchor, factor, cur.date);
       if (Math.abs(next.viewFrom - baseFrom) < 1e-6 && Math.abs(next.viewTo - baseTo) < 1e-6) return;
       pendingZoomRef.current = next;
-      // One view update per animation frame — avoids flooding React/API on trackpad inertia.
       if (zoomRafRef.current == null) {
-        zoomRafRef.current = window.requestAnimationFrame(flushZoom);
+        zoomRafRef.current = window.requestAnimationFrame(paintPreview);
       }
+      if (zoomCommitTimerRef.current != null) window.clearTimeout(zoomCommitTimerRef.current);
+      zoomCommitTimerRef.current = window.setTimeout(commitZoom, ZOOM_COMMIT_MS);
     };
     el.addEventListener('wheel', onWheel, { passive: false });
     return () => {
@@ -107,6 +135,10 @@ export function Timeline({
       if (zoomRafRef.current != null) {
         window.cancelAnimationFrame(zoomRafRef.current);
         zoomRafRef.current = null;
+      }
+      if (zoomCommitTimerRef.current != null) {
+        window.clearTimeout(zoomCommitTimerRef.current);
+        zoomCommitTimerRef.current = null;
       }
     };
   }, [date]);
@@ -129,31 +161,35 @@ export function Timeline({
       </div>
     );
   }
-  const span = viewTo - viewFrom;
-  const pct = ((position - viewFrom) / span) * 100;
-  const ticks = buildTimelineTicks(viewFrom, viewTo);
-  const dateTicks = buildTimelineDateBoundaries(viewFrom, viewTo);
+
+  const displayFrom = zoomPreview?.viewFrom ?? viewFrom;
+  const displayTo = zoomPreview?.viewTo ?? viewTo;
+  const zooming = zoomPreview != null;
+  const span = displayTo - displayFrom;
+  const pct = ((position - displayFrom) / span) * 100;
+  const ticks = buildTimelineTicks(displayFrom, displayTo);
+  const dateTicks = buildTimelineDateBoundaries(displayFrom, displayTo);
   const noData = segments.length === 0 && markers.length === 0;
 
   const seekAtClientX = (clientX: number) => {
     const el = rootRef.current;
     if (!el) return;
     const rect = el.getBoundingClientRect();
-    const raw = unixAtClientX(clientX, rect, viewFrom, viewTo);
-    onSeek(snapTimelineSeek(raw, detectionTs, viewFrom, viewTo, rect.width));
+    const raw = unixAtClientX(clientX, rect, displayFrom, displayTo);
+    onSeek(snapTimelineSeek(raw, detectionTs, displayFrom, displayTo, rect.width));
   };
 
   const updateHover = (clientX: number) => {
     const el = rootRef.current;
     if (!el) return;
     const rect = el.getBoundingClientRect();
-    setHoverSec(unixAtClientX(clientX, rect, viewFrom, viewTo));
+    setHoverSec(unixAtClientX(clientX, rect, displayFrom, displayTo));
   };
 
   return (
     <div
       ref={rootRef}
-      className={`playback-timeline playback-timeline-segments${panning ? ' is-panning' : ''}`}
+      className={`playback-timeline playback-timeline-segments${panning ? ' is-panning' : ''}${zooming ? ' is-zooming' : ''}`}
       style={{
         position: 'relative',
         height: TIMELINE_HEIGHT_PX,
@@ -170,8 +206,8 @@ export function Timeline({
         dragRef.current = {
           pointerId: e.pointerId,
           startX: e.clientX,
-          startViewFrom: viewFrom,
-          startViewTo: viewTo,
+          startViewFrom: displayFrom,
+          startViewTo: displayTo,
           moved: false,
         };
       }}
@@ -229,7 +265,7 @@ export function Timeline({
     >
       <div className="timeline-date-ticks" aria-hidden>
         {dateTicks.map((ts) => {
-          const left = ((ts - viewFrom) / span) * 100;
+          const left = ((ts - displayFrom) / span) * 100;
           const edge =
             left < 3 ? 'timeline-tick-label--start' : left > 97 ? 'timeline-tick-label--end' : '';
           return (
@@ -243,7 +279,7 @@ export function Timeline({
       </div>
       <div className="timeline-ticks" aria-hidden>
         {ticks.map((ts) => {
-          const left = ((ts - viewFrom) / span) * 100;
+          const left = ((ts - displayFrom) / span) * 100;
           const edge =
             left < 3 ? 'timeline-tick-label--start' : left > 97 ? 'timeline-tick-label--end' : '';
           const label = formatTime(new Date(ts * 1000)).slice(0, 5);
@@ -254,10 +290,15 @@ export function Timeline({
           );
         })}
       </div>
-      <EventIntervalsCanvas eventIntervals={eventIntervals} viewFrom={viewFrom} viewTo={viewTo} />
-      <DetectionTicksCanvas detectionTs={detectionTs} viewFrom={viewFrom} viewTo={viewTo} />
+      {/* Skip heavy canvases while zooming — segments + playhead are enough for live feedback. */}
+      {!zooming ? (
+        <>
+          <EventIntervalsCanvas eventIntervals={eventIntervals} viewFrom={displayFrom} viewTo={displayTo} />
+          <DetectionTicksCanvas detectionTs={detectionTs} viewFrom={displayFrom} viewTo={displayTo} />
+        </>
+      ) : null}
       {segments.map((seg) => {
-        const clipped = clipRangeToView(seg.start_ts, seg.end_ts, viewFrom, viewTo);
+        const clipped = clipRangeToView(seg.start_ts, seg.end_ts, displayFrom, displayTo);
         if (!clipped) return null;
         return (
           <div
@@ -281,12 +322,12 @@ export function Timeline({
         <>
           <div
             className="timeline-hover-line"
-            style={{ left: `${Math.max(0, Math.min(100, ((hoverSec - viewFrom) / span) * 100))}%` }}
+            style={{ left: `${Math.max(0, Math.min(100, ((hoverSec - displayFrom) / span) * 100))}%` }}
             aria-hidden
           />
           <div
             className="timeline-hover-tooltip"
-            style={{ left: `${Math.max(0, Math.min(100, ((hoverSec - viewFrom) / span) * 100))}%` }}
+            style={{ left: `${Math.max(0, Math.min(100, ((hoverSec - displayFrom) / span) * 100))}%` }}
           >
             {formatDateTime(hoverSec)}
           </div>
@@ -304,12 +345,9 @@ export function Timeline({
           pointerEvents: 'none',
         }}
       />
-      <EventMarkers
-        markers={markers}
-        from={viewFrom}
-        to={viewTo}
-        onSelect={(m) => onSeek(m.ts)}
-      />
+      {!zooming ? (
+        <EventMarkers markers={markers} from={displayFrom} to={displayTo} onSelect={(m) => onSeek(m.ts)} />
+      ) : null}
       {noData ? <div className="playback-timeline-empty-banner">{t('playback.timelineNoRecordings')}</div> : null}
     </div>
   );
