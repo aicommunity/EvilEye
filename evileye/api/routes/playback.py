@@ -4,6 +4,7 @@ import asyncio
 import mimetypes
 import threading
 import time
+from concurrent.futures import ThreadPoolExecutor
 from copy import deepcopy
 from typing import Any, Callable, Optional
 
@@ -27,6 +28,9 @@ _memory_lock = threading.Lock()
 # key -> (expires_at_or_None, value). expires_at None = sticky timeout fallback only.
 _memory_cache: dict[str, tuple[float | None, Any]] = {}
 _TIMELINE_HAPPY_TTL_SEC = 45.0
+# Keep light endpoints off the default pool so timeline rebuilds cannot starve /cameras.
+_light_pool = ThreadPoolExecutor(max_workers=4, thread_name_prefix="playback-light")
+_timeline_slots = asyncio.Semaphore(2)
 
 
 def _remember(key: str, value: Any, *, ttl_sec: float | None = None) -> None:
@@ -53,9 +57,14 @@ async def _to_thread_with_timeout_or_cached(
     *,
     err_detail: str,
     on_timeout: Callable[[], None] | None = None,
+    executor: ThreadPoolExecutor | None = None,
 ):
     timeout = playback_route_timeout_sec()
     try:
+        if executor is not None:
+            loop = asyncio.get_running_loop()
+            fut = loop.run_in_executor(executor, value_fn)
+            return await asyncio.wait_for(fut, timeout=timeout)
         return await asyncio.wait_for(asyncio.to_thread(value_fn), timeout=timeout)
     except asyncio.TimeoutError:
         if on_timeout is not None:
@@ -162,6 +171,7 @@ async def playback_cameras(
         _load,
         lambda: _recall(cache_key),
         err_detail="playback_cameras timeout",
+        executor=_light_pool,
     )
     _remember(cache_key, items)
     access = resolve_camera_access(request)
@@ -286,12 +296,24 @@ async def playback_timeline(
         schedule_detection_ticks_refresh(date, cam_list, run_id=run_id)
         schedule_event_intervals_refresh(date, cam_list)
 
-    payload = await _to_thread_with_timeout_or_cached(
-        _load,
-        _cached,
-        err_detail="playback_timeline timeout",
-        on_timeout=_on_timeout,
-    )
+    # Cap concurrent timeline rebuilds so the default thread pool stays responsive.
+    try:
+        await asyncio.wait_for(_timeline_slots.acquire(), timeout=0.05)
+    except asyncio.TimeoutError:
+        cached = _cached()
+        if cached is not None:
+            _on_timeout()
+            return cached
+        await _timeline_slots.acquire()
+    try:
+        payload = await _to_thread_with_timeout_or_cached(
+            _load,
+            _cached,
+            err_detail="playback_timeline timeout",
+            on_timeout=_on_timeout,
+        )
+    finally:
+        _timeline_slots.release()
     _remember(mem_key, payload, ttl_sec=_TIMELINE_HAPPY_TTL_SEC)
     return payload
 

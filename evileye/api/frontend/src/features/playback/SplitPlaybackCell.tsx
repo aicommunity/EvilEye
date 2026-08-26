@@ -209,7 +209,7 @@ export function SplitPlaybackCell({
     if (!video) return;
     video.playbackRate = speed;
     if (playing && !scrubbing) void video.play().catch(() => null);
-    else if (!playing) video.pause();
+    else video.pause();
   }, [playing, scrubbing, speed, videoUrl]);
 
   useEffect(() => {
@@ -219,9 +219,22 @@ export function SplitPlaybackCell({
     const onSeeked = () => {
       setSeeking(false);
       setVideoGlobalSec(startTs + video.currentTime);
+      // Pin after load even while scrubbing (new segment src starts at t=0 otherwise).
+      seekPlaybackVideo(video, getPositionRef.current(), startTs, {
+        playing,
+        scrubbing,
+        thresholdSec: playing && !scrubbing ? 1.0 : undefined,
+        segmentEndTs:
+          Number.isFinite(video.duration) && video.duration > 0 ? startTs + video.duration : undefined,
+      });
       if (playing && !scrubbing && video.paused) {
         void video.play().catch(() => null);
       }
+      drawFrame();
+      const videoWithVfc = video as HTMLVideoElement & {
+        requestVideoFrameCallback?: (cb: () => void) => number;
+      };
+      videoWithVfc.requestVideoFrameCallback?.(() => drawFrame());
     };
     const onTime = () => {
       if (video.readyState >= 2) setVideoGlobalSec(startTs + video.currentTime);
@@ -233,29 +246,36 @@ export function SplitPlaybackCell({
     video.addEventListener('seeking', onSeeking);
     video.addEventListener('seeked', onSeeked);
     video.addEventListener('timeupdate', onTime);
+    video.addEventListener('loadeddata', onSeeked);
     setSeeking(video.seeking);
     return () => {
       video.removeEventListener('seeking', onSeeking);
       video.removeEventListener('seeked', onSeeked);
       video.removeEventListener('timeupdate', onTime);
+      video.removeEventListener('loadeddata', onSeeked);
     };
   }, [videoUrl, playing, scrubbing, startTs, cameraId]);
 
   useEffect(() => {
     const video = videoRef.current;
     if (!video || !videoUrl) return;
-    if (video.seeking) return;
+    if (video.seeking && !scrubbing) return;
     seekPlaybackVideo(video, getPositionRef.current(), startTs, {
       playing,
       scrubbing,
       thresholdSec: playing && !scrubbing ? 1.0 : undefined,
-      segmentEndTs: startTs + Math.max(0, video.duration || 0),
+      segmentEndTs:
+        Number.isFinite(video.duration) && video.duration > 0 ? startTs + video.duration : undefined,
     });
     const videoWithVfc = video as HTMLVideoElement & {
       requestVideoFrameCallback?: (cb: () => void) => number;
     };
-    if (!playing && videoWithVfc.requestVideoFrameCallback) {
-      videoWithVfc.requestVideoFrameCallback(() => drawFrame());
+    // Always paint after pin — paused archive otherwise stays on a black first frame.
+    const paint = () => drawFrame();
+    if (videoWithVfc.requestVideoFrameCallback) {
+      videoWithVfc.requestVideoFrameCallback(paint);
+    } else {
+      paint();
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [positionSec, videoUrl, startTs, playing, scrubbing]);
@@ -283,7 +303,10 @@ export function SplitPlaybackCell({
             playing,
             scrubbing,
             thresholdSec: playing && !scrubbing ? 1.0 : undefined,
-            segmentEndTs: startTs + Math.max(0, video?.duration || 0),
+            segmentEndTs:
+              video && Number.isFinite(video.duration) && video.duration > 0
+                ? startTs + video.duration
+                : undefined,
           });
         }}
       />

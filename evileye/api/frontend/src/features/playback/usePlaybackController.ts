@@ -9,15 +9,17 @@ export function usePlaybackController(initialSec: number | null) {
   const [positionSec, setPositionSec] = useState<number>(initialSec ?? 0);
   const positionRef = useRef<number>(initialSec ?? 0);
   const raf = useRef<number | null>(null);
-  const last = useRef<number>(0);
   const detectionTsRef = useRef<number[]>([]);
   const skipEnabledRef = useRef(false);
   const scrubbingRef = useRef(false);
   const playingRef = useRef(false);
   const toSecRef = useRef<number | null>(null);
+  const speedRef = useRef(1);
+  const lastVideoSyncAtRef = useRef(0);
 
   playingRef.current = playing;
   toSecRef.current = toSec;
+  speedRef.current = speed;
 
   const setDetectionTimestamps = useCallback((ts: number[]) => {
     detectionTsRef.current = ts;
@@ -39,6 +41,7 @@ export function usePlaybackController(initialSec: number | null) {
       next = upper;
       setPlaying(false);
     }
+    lastVideoSyncAtRef.current = performance.now();
     positionRef.current = next;
     setPositionSec(next);
   }, []);
@@ -46,12 +49,42 @@ export function usePlaybackController(initialSec: number | null) {
   useEffect(() => {
     if (!playing) {
       if (raf.current) cancelAnimationFrame(raf.current);
+      raf.current = null;
       setPositionSec(positionRef.current);
       return;
     }
     resetPlaybackClockOwner();
+    lastVideoSyncAtRef.current = performance.now();
+    let last = performance.now();
+    const tick = (now: number) => {
+      raf.current = requestAnimationFrame(tick);
+      if (scrubbingRef.current) {
+        last = now;
+        return;
+      }
+      // Primary clock is the decoded video. If it stalls after seek (readyState 0
+      // zombie), advance from wall time so applySync/play can recover.
+      const videoFresh = now - lastVideoSyncAtRef.current < 1200;
+      if (videoFresh) {
+        last = now;
+        return;
+      }
+      const dt = ((now - last) / 1000) * speedRef.current;
+      last = now;
+      if (!(dt > 0) || dt > 1) return;
+      let next = positionRef.current + dt;
+      const upper = toSecRef.current;
+      if (upper != null && next > upper) {
+        next = upper;
+        setPlaying(false);
+      }
+      positionRef.current = next;
+      setPositionSec(next);
+    };
+    raf.current = requestAnimationFrame(tick);
     return () => {
       if (raf.current) cancelAnimationFrame(raf.current);
+      raf.current = null;
     };
   }, [playing]);
 
@@ -83,6 +116,7 @@ export function usePlaybackController(initialSec: number | null) {
       resetPlaybackClockOwner();
       positionRef.current = sec;
       setPositionSec(sec);
+      lastVideoSyncAtRef.current = performance.now();
     },
     setDetectionTimestamps,
     setSkipEnabled,

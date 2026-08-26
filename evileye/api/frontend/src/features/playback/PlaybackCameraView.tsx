@@ -18,7 +18,7 @@ import {
 import { PlaybackBusyHint } from './PlaybackBusyHint';
 import { PlaybackMediaWithOverlay } from './PlaybackMediaWithOverlay';
 import { mergePlaybackMetadata } from './mergePlaybackMetadata';
-import { seekPlaybackVideo, shouldEmitPlaybackClock } from './playbackVideoSync';
+import { seekPlaybackVideo, shouldEmitPlaybackClock, isPastDecodedEof } from './playbackVideoSync';
 import { usePlaybackMetadata } from './usePlaybackMetadata';
 import { usePlaybackStaticMetadata } from './usePlaybackStaticMetadata';
 import { isPositionInRecordingSegment, pickPlayableSegmentForPosition, isPlayableSegment } from './timelineMath';
@@ -72,7 +72,13 @@ export function usePlaybackCameraSlot(
   const publishVideoGlobal = () => {
     const v = ref.current;
     const current = slotRef.current;
-    if (!v || !current || v.readyState < 2) return;
+    if (!v || !current) return;
+    if (v.readyState < 2) {
+      // Let overlay/playhead fall back to controller clock while decode is stuck
+      // (common after seek into an index overrun past real mp4 EOF).
+      if (!scrubbingRef.current) setVideoGlobalSec(null);
+      return;
+    }
     setVideoGlobalSec(current.startTs + v.currentTime);
   };
 
@@ -121,11 +127,39 @@ export function usePlaybackCameraSlot(
       }
     }
 
-    if (segmentChanged) return;
+    if (segmentChanged) {
+      // New src lands on next paint; pin once React commits the URL.
+      requestAnimationFrame(() => {
+        applySync();
+      });
+      return;
+    }
 
     const v = ref.current;
     const current = slotRef.current;
     if (!v || !current) return;
+
+    // Index end_ts can overrun the real mp4 duration; seeking past EOF freezes decode.
+    if (isPastDecodedEof(v, position, current.startTs)) {
+      const eofGlobal = current.startTs + Math.max(0, v.duration - 0.05);
+      const nxt = nextSegment(segs, seg);
+      const gapToNext = nxt ? nxt.start_ts - (current.startTs + v.duration) : Infinity;
+      // Only auto-advance when the next file is contiguous; otherwise pin to real EOF
+      // so a seek into the phantom index tail does not jump across a long gap.
+      if (nxt && gapToNext < 2 && playing && !scrubbingRef.current) {
+        onVideoClockRef.current?.(nxt.start_ts);
+        return;
+      }
+      seekPlaybackVideo(v, eofGlobal, current.startTs, {
+        playing,
+        scrubbing: scrubbingRef.current,
+        segmentEndTs: current.endTs,
+      });
+      if (Math.abs(position - eofGlobal) > 0.2) {
+        onVideoClockRef.current?.(eofGlobal);
+      }
+      return;
+    }
 
     if (playing && !scrubbingRef.current) {
       if (v.seeking) return;
@@ -156,8 +190,8 @@ export function usePlaybackCameraSlot(
   useEffect(() => {
     const onTimeUpdate = () => {
       publishVideoGlobal();
-      // While scrubbing/seek-settling, pin from the position effect — not every
-      // timeupdate. Re-seeking here fights playback and can leave video.paused.
+      // While scrubbing/seek-settling, pin from position/loadeddata — not every
+      // timeupdate (that fought playback and left elements paused).
       if (scrubbingRef.current) return;
       if (playing) {
         const v = ref.current;
@@ -168,16 +202,39 @@ export function usePlaybackCameraSlot(
         }
       }
     };
+    const resumeIfNeeded = () => {
+      const v = ref.current;
+      if (!v || !playing || scrubbingRef.current) return;
+      if (v.paused || v.readyState < 2) {
+        void v.play().catch(() => null);
+      }
+    };
     const onSeeked = () => {
       setVideoSeeking(false);
       publishVideoGlobal();
-      // Avoid re-seek loops: browser landing slightly off target used to
-      // immediately seek again (0.15s), which fought the shared playhead.
-      if (!scrubbingRef.current) applySync();
-      const v = ref.current;
-      if (v && playing && !scrubbingRef.current && v.paused) {
-        void v.play().catch(() => null);
+      // Always pin after browser seek/load — including during scrubbing after a
+      // segment URL change (otherwise new src stays at t=0 until settle ends).
+      applySync();
+      resumeIfNeeded();
+    };
+    const onCanPlay = () => {
+      publishVideoGlobal();
+      applySync();
+      resumeIfNeeded();
+    };
+    const onEnded = () => {
+      const current = slotRef.current;
+      if (!current) return;
+      const nxt = nextSegment(segmentsRef.current, pickPlayableSegmentForPosition(segmentsRef.current, current.startTs));
+      if (nxt && playing && !scrubbingRef.current) {
+        onVideoClockRef.current?.(nxt.start_ts);
+        return;
       }
+      seekPlaybackVideo(ref.current, current.endTs, current.startTs, {
+        playing: false,
+        scrubbing: scrubbingRef.current,
+        segmentEndTs: current.endTs,
+      });
     };
     const v = ref.current;
     if (!v) return;
@@ -187,14 +244,21 @@ export function usePlaybackCameraSlot(
     setVideoSeeking(v.seeking);
     v.addEventListener('timeupdate', onTimeUpdate);
     v.addEventListener('loadeddata', onSeeked);
+    v.addEventListener('loadedmetadata', onCanPlay);
+    v.addEventListener('canplay', onCanPlay);
+    v.addEventListener('ended', onEnded);
     applySync();
     publishVideoGlobal();
+    resumeIfNeeded();
 
     return () => {
       v.removeEventListener('seeking', onSeeking);
       v.removeEventListener('seeked', onSeeked);
       v.removeEventListener('timeupdate', onTimeUpdate);
       v.removeEventListener('loadeddata', onSeeked);
+      v.removeEventListener('loadedmetadata', onCanPlay);
+      v.removeEventListener('canplay', onCanPlay);
+      v.removeEventListener('ended', onEnded);
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [playing, segments, slot?.url, playMode, scrubbing]);
@@ -208,6 +272,60 @@ export function usePlaybackCameraSlot(
     applySync();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [positionSec, playMode, scrubbing]);
+
+  // After seek-settle, pin + resume. Avoid immediate load() (aborts in-flight
+  // decode); only reload if still HAVE_NOTHING after a short grace.
+  // Some mp4s report a longer duration than decodable media — pull back if stuck.
+  useEffect(() => {
+    if (scrubbing || !playing) return;
+    const v = ref.current;
+    if (!v) return;
+    const kick = () => {
+      applySync();
+      if (v.paused || v.readyState < 2) void v.play().catch(() => null);
+    };
+    kick();
+    v.addEventListener('canplay', kick);
+    const softTimer = window.setTimeout(kick, 200);
+    let pullbacks = 0;
+    const watchdog = window.setInterval(() => {
+      if (v.readyState >= 2) return;
+      if (!(v.currentTime > 2) || pullbacks >= 4) {
+        if (pullbacks >= 4 && v.readyState < 2) {
+          try {
+            v.load();
+          } catch {
+            /* ignore */
+          }
+          kick();
+        }
+        return;
+      }
+      pullbacks += 1;
+      try {
+        v.currentTime = Math.max(0, v.currentTime - 3);
+      } catch {
+        /* ignore */
+      }
+      void v.play().catch(() => null);
+    }, 700);
+    const hardTimer = window.setTimeout(() => {
+      if (v.readyState >= 2) return;
+      try {
+        v.load();
+      } catch {
+        /* ignore */
+      }
+      kick();
+    }, 2800);
+    return () => {
+      v.removeEventListener('canplay', kick);
+      window.clearTimeout(softTimer);
+      window.clearTimeout(hardTimer);
+      window.clearInterval(watchdog);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [scrubbing, playing, slot?.url]);
 
   return { ref, preloadRef, slot, applySync, videoGlobalSec, videoSeeking, recordingInProgress };
 }
@@ -392,11 +510,10 @@ export function PlaybackVideoSurface({
     const v = videoRef.current;
     if (!v) return;
     v.playbackRate = speed;
-    // Keep playing during in-flight seeks; pausing here made archive video look
-    // like a slideshow whenever metadata/detection sync triggered seek events.
-    // Re-run when scrubbing ends so play resumes after timeline seek-while-play.
+    // Pause while seek-settling so media does not drift ahead of the playhead;
+    // resume play only after scrubbing clears.
     if (playing && !scrubbing) void v.play().catch(() => null);
-    else if (!playing) v.pause();
+    else v.pause();
   }, [playing, scrubbing, speed, slot?.url, videoRef]);
 
   const previewClass = expanded ? 'expanded-camera-frame' : 'camera-preview';

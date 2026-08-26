@@ -1,5 +1,7 @@
 /** Seek archived video to global timeline position. */
 export const PAUSED_SEEK_THRESHOLD_SEC = 1 / 30;
+/** Keep a small lead-in from EOF — seeking to exact duration often hangs decoders. */
+export const PLAYBACK_EOF_PAD_SEC = 0.05;
 
 let playbackClockOwner: string | null = null;
 
@@ -25,6 +27,22 @@ export function shouldEmitPlaybackClock(ownerId: string, video: HTMLVideoElement
   return playbackClockOwner === ownerId;
 }
 
+/** Effective media end in global timeline seconds (index end ∩ decoded duration). */
+export function effectiveSegmentEndTs(
+  segmentStartTs: number,
+  segmentEndTs: number | undefined,
+  video: HTMLVideoElement | null | undefined,
+): number | undefined {
+  const indexEnd = segmentEndTs != null && segmentEndTs > segmentStartTs ? segmentEndTs : undefined;
+  const mediaEnd =
+    video && Number.isFinite(video.duration) && video.duration > 0
+      ? segmentStartTs + video.duration
+      : undefined;
+  if (indexEnd == null) return mediaEnd;
+  if (mediaEnd == null) return indexEnd;
+  return Math.min(indexEnd, mediaEnd);
+}
+
 export function seekPlaybackVideo(
   video: HTMLVideoElement | null,
   positionSec: number,
@@ -37,18 +55,34 @@ export function seekPlaybackVideo(
   },
 ): void {
   if (!video) return;
+  const endTs = effectiveSegmentEndTs(segmentStartTs, opts?.segmentEndTs, video);
   const clampedPosition =
-    opts?.segmentEndTs != null ? Math.min(Math.max(positionSec, segmentStartTs), Math.max(segmentStartTs, opts.segmentEndTs - 0.001)) : positionSec;
-  const local = Math.max(0, clampedPosition - segmentStartTs);
+    endTs != null ? Math.min(Math.max(positionSec, segmentStartTs), endTs - PLAYBACK_EOF_PAD_SEC) : positionSec;
+  let local = Math.max(0, clampedPosition - segmentStartTs);
+  if (Number.isFinite(video.duration) && video.duration > 0) {
+    local = Math.min(local, Math.max(0, video.duration - PLAYBACK_EOF_PAD_SEC));
+  }
   const paused = Boolean(opts?.scrubbing) || !opts?.playing;
   // While playing, tolerate larger drift so follower cameras do not thrash seeks.
   const threshold = opts?.thresholdSec ?? (paused ? PAUSED_SEEK_THRESHOLD_SEC : 1.0);
 
-  if (video.seeking) return;
+  // Scrubbing must win over an in-flight seek — otherwise playhead pins to the old time.
+  if (video.seeking && !opts?.scrubbing) return;
   if (Math.abs(video.currentTime - local) <= threshold) return;
   try {
     video.currentTime = local;
   } catch {
     /* ignore seek race before metadata loaded */
   }
+}
+
+/** True when playhead is past the real decoded media (index can overrun the mp4). */
+export function isPastDecodedEof(
+  video: HTMLVideoElement | null | undefined,
+  positionSec: number,
+  segmentStartTs: number,
+  padSec = 0.25,
+): boolean {
+  if (!video || !(Number.isFinite(video.duration) && video.duration > 0)) return false;
+  return positionSec > segmentStartTs + video.duration + padSec;
 }

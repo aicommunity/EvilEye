@@ -542,10 +542,14 @@ def _parse_segment_times(path: str) -> tuple[float, float] | None:
 
 def _date_dirs(base: Path, date: Optional[str]) -> list[Path]:
     if date:
-        # Accept YYYY-MM-DD or YYYYMMDD
+        # Accept YYYY-MM-DD, YYYYMMDD, or UI DD-MM-YYYY
         candidates = [base / date]
         if re.fullmatch(r"\d{8}", date):
             candidates.append(base / f"{date[:4]}-{date[4:6]}-{date[6:8]}")
+        m = re.fullmatch(r"(\d{2})-(\d{2})-(\d{4})", date)
+        if m:
+            day, month, year = m.groups()
+            candidates.append(base / f"{year}-{month}-{day}")
         return [p for p in candidates if p.exists()]
     if not base.exists():
         return []

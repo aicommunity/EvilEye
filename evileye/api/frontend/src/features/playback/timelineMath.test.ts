@@ -202,4 +202,9 @@ describe('segment picking', () => {
     expect(pickLastPlayableSegment(mixed)?.path).toBe('closed.mp4');
     expect(snapPositionToPlayable(mixed, 130)).toBeLessThanOrEqual(119);
   });
+
+  it('snaps off the phantom index tail near segment end', () => {
+    const long = [{ path: 'long.mp4', start_ts: 1000, end_ts: 1000 + 1818, duration_ms: 1_818_000, playable: true }];
+    expect(snapPositionToPlayable(long, 1000 + 1810)).toBe(1000 + 1818 - 60);
+  });
 });

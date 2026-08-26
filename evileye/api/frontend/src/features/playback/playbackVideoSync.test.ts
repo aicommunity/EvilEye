@@ -42,7 +42,13 @@ describe('seekPlaybackVideo', () => {
   it('clamps seek target to the current playable segment end', () => {
     const video = fakeVideo(0, { duration: 10 });
     seekPlaybackVideo(video, 1015, 1000, { playing: false, segmentEndTs: 1010 });
-    expect(video.currentTime).toBeCloseTo(9.999, 3);
+    expect(video.currentTime).toBeCloseTo(9.95, 2);
+  });
+
+  it('clamps to decoded duration when index end overruns the mp4', () => {
+    const video = fakeVideo(0, { duration: 1792.14 });
+    seekPlaybackVideo(video, 1000 + 1820, 1000, { playing: true, scrubbing: true, segmentEndTs: 1000 + 1818 });
+    expect(video.currentTime).toBeCloseTo(1792.09, 1);
   });
 });
 
@@ -65,5 +71,11 @@ describe('shouldEmitPlaybackClock', () => {
     const video = fakeVideo(10, { seeking: true });
     seekPlaybackVideo(video, 1015, 1000, { playing: true, thresholdSec: 0.35 });
     expect(video.currentTime).toBe(10);
+  });
+
+  it('overrides an in-flight seek while scrubbing', () => {
+    const video = fakeVideo(10, { seeking: true });
+    seekPlaybackVideo(video, 1020, 1000, { playing: true, scrubbing: true });
+    expect(video.currentTime).toBe(20);
   });
 });

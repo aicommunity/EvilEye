@@ -100,6 +100,7 @@ def _run_server_in_process(host, port, log_level, frame_queue, demand_queue, ssl
             ssl_certfile=ssl_certfile,
             ssl_keyfile=ssl_keyfile,
             proxy_headers=True,
+            timeout_keep_alive=5,
         )
         server = uvicorn.Server(uvicorn_config)
         server.run()
@@ -409,6 +410,7 @@ def run_api_server(host: str = "127.0.0.1", port: int = 8181,
             ssl_certfile=ssl_certfile,
             ssl_keyfile=ssl_keyfile,
             proxy_headers=True,
+            timeout_keep_alive=5,
         )
         if reload:
             logger.warning("Reload mode is not supported when passing app instance directly")

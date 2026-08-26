@@ -93,7 +93,13 @@ function dateFromUnixSec(sec: number): string {
 function parseDeepLinkTime(raw: string | null): number | null {
   if (!raw) return null;
   const n = Number(raw);
-  if (Number.isFinite(n) && n > 0) return n;
+  if (Number.isFinite(n) && n > 0) {
+    // Guard against ms timestamps (Date.now()) accidentally passed as `t`.
+    if (n > 1e12) return n / 1000;
+    // Reject absurd far-future values that are not unix seconds.
+    if (n > 1e11) return null;
+    return n;
+  }
   const parsed = Date.parse(raw);
   return Number.isFinite(parsed) ? parsed / 1000 : null;
 }
@@ -133,7 +139,7 @@ export function PlaybackPage() {
   const [runId, setRunId] = useState<number | null>(null);
   const [runResolved, setRunResolved] = useState(false);
   const [cameras, setCameras] = useState<PlaybackCamera[]>([]);
-  const [camerasLoading, setCamerasLoading] = useState(false);
+  const [camerasLoading, setCamerasLoading] = useState(true);
   const { cols, setCols, selectedIds, setSelectedIds, mode, setMode } = usePlaybackLayout();
   const [segmentsByCam, setSegmentsByCam] = useState<Record<string, PlaybackSegment[]>>({});
   const [markers, setMarkers] = useState<PlaybackEventMarker[]>([]);
@@ -220,11 +226,13 @@ export function PlaybackPage() {
   const skipHardSegmentReloadRef = useRef(false);
   const pendingViewportLoadRef = useRef<{ date: string; from: number; to: number } | null>(null);
   const loadTimerRef = useRef<number | null>(null);
+  const camerasLoadedDateRef = useRef<string | null>(null);
   const selectedIdsRef = useRef(selectedIds);
   selectedIdsRef.current = selectedIds;
   const camerasAbortRef = useRef<AbortController | null>(null);
   const segmentsAbortRef = useRef<AbortController | null>(null);
   const ensureAdjacentLoadRef = useRef<(vf: number, vt: number) => void>(() => {});
+  const allSegmentsRef = useRef<PlaybackSegment[]>([]);
 
   useEffect(() => {
     if (sessionViewRestoredRef.current || initialT != null || !sessionSnap) return;
@@ -269,8 +277,9 @@ export function PlaybackPage() {
     async (nextDate: string) => {
       try {
         const camRes = await playbackApi.cameras(nextDate, runId);
-        cacheSet(camerasCacheKey(nextDate, runId), camRes, CAMERAS_TTL_MS);
         const logicalCams = preferLogicalCameras(camRes.items);
+        if (!logicalCams.length) return; // keep current on empty/timeout payloads
+        cacheSet(camerasCacheKey(nextDate, runId), { ...camRes, items: logicalCams }, CAMERAS_TTL_MS);
         setCameras(logicalCams);
         const ids = new Set(logicalCams.map((c) => c.id));
         setSelectedIds((prev) => {
@@ -306,13 +315,16 @@ export function PlaybackPage() {
     camerasAbortRef.current?.abort();
     const ac = new AbortController();
     camerasAbortRef.current = ac;
+    // Wipe segments only when the calendar day actually changes — not when runId
+    // resolves mid-playback (that used to clear videos while UI stayed on Pause).
+    const dateChanged = camerasLoadedDateRef.current !== date;
     void (async () => {
       const cacheKey = camerasCacheKey(date, runId);
       const cached = cacheGet<{ items: PlaybackCamera[] }>(cacheKey);
       if (cached?.items?.length) {
         setCameras(preferLogicalCameras(cached.items));
         setCamerasLoading(false);
-      } else {
+      } else if (dateChanged) {
         setCamerasLoading(true);
       }
       try {
@@ -323,8 +335,13 @@ export function PlaybackPage() {
         }
         if (cancelled || ac.signal.aborted) return;
         const logicalCams = preferLogicalCameras(camRes.items);
+        if (!logicalCams.length) {
+          // Keep previous cameras if API returns empty (timeout/partial).
+          return;
+        }
         cacheSet(cacheKey, { ...camRes, items: logicalCams }, CAMERAS_TTL_MS);
         setCameras(logicalCams);
+        camerasLoadedDateRef.current = date;
         const ids = new Set(logicalCams.map((c) => c.id));
         setSelectedIds((prev) => {
           const kept = filterLogicalCameraIds(prev).filter((id) => ids.has(id));
@@ -332,11 +349,15 @@ export function PlaybackPage() {
           if (urlCamera && ids.has(urlCamera) && !urlCamera.includes('-')) return [urlCamera];
           return logicalCams.map((c) => c.id);
         });
-        setSegmentsByCam({});
-        setMarkers([]);
-        setSegmentsLoaded(false);
+        if (dateChanged) {
+          setSegmentsByCam({});
+          setMarkers([]);
+          setSegmentsLoaded(false);
+        }
       } catch (e) {
         if (isAbortError(e) || cancelled) return;
+        // Do not wipe working cameras/segments on mid-play cameras timeout.
+        if (!dateChanged) return;
         showError(formatApiError(e, t));
       } finally {
         if (!cancelled && !ac.signal.aborted) setCamerasLoading(false);
@@ -403,10 +424,15 @@ export function PlaybackPage() {
             else viewport.expandLoaded(coverFrom, coverTo);
           }
           if (from != null && to != null) {
+            const pos = ctrl.getPosition();
+            const keepPos =
+              Boolean(opts?.merge) ||
+              initialT != null ||
+              (Number.isFinite(pos) && pos > 0 && pos >= from && pos <= to);
             ctrl.setRange(
               opts?.merge ? Math.min(ctrl.fromSec ?? from, from) : from,
               opts?.merge ? Math.max(ctrl.toSec ?? to, to) : to,
-              { preservePosition: Boolean(opts?.merge) || initialT != null },
+              { preservePosition: keepPos },
             );
           }
           if (!opts?.merge && (viewport.viewFrom == null || viewport.viewTo == null)) {
@@ -430,11 +456,7 @@ export function PlaybackPage() {
           });
 
           setSegmentsLoaded(true);
-          if (
-            !opts?.merge &&
-            (dateChangeSourceRef.current === 'user' || initialT != null) &&
-            allSegs.length
-          ) {
+          if (!opts?.merge && allSegs.length) {
             const target = initialT != null ? initialT : ctrl.getPosition();
             const snapped = snapPositionToPlayable(allSegs, target);
             if (Math.abs(snapped - ctrl.getPosition()) > 0.5) ctrl.seek(snapped);
@@ -519,10 +541,15 @@ export function PlaybackPage() {
           else viewport.expandLoaded(coverFrom, coverTo);
         }
         if (from != null && to != null) {
+          const pos = ctrl.getPosition();
+          const keepPos =
+            Boolean(opts?.merge) ||
+            initialT != null ||
+            (Number.isFinite(pos) && pos > 0 && pos >= from && pos <= to);
           ctrl.setRange(
             opts?.merge ? Math.min(ctrl.fromSec ?? from, from) : from,
             opts?.merge ? Math.max(ctrl.toSec ?? to, to) : to,
-            { preservePosition: Boolean(opts?.merge) || initialT != null },
+            { preservePosition: keepPos },
           );
         }
         if (!opts?.merge && (viewport.viewFrom == null || viewport.viewTo == null)) {
@@ -544,11 +571,7 @@ export function PlaybackPage() {
           return Array.from(byKey.values()).sort((a, b) => a.start_ts - b.start_ts);
         });
         setSegmentsLoaded(true);
-        if (
-          !opts?.merge &&
-          (dateChangeSourceRef.current === 'user' || initialT != null) &&
-          allSegs.length
-        ) {
+        if (!opts?.merge && allSegs.length) {
           const target = initialT != null ? initialT : ctrl.getPosition();
           const snapped = snapPositionToPlayable(allSegs, target);
           if (Math.abs(snapped - ctrl.getPosition()) > 0.5) ctrl.seek(snapped);
@@ -656,14 +679,23 @@ export function PlaybackPage() {
         const span = Math.min(dayViewSpanSec(nextDate), INITIAL_WINDOW_SEC);
         viewport.setView(Math.max(start, sec - span / 2), Math.min(upper, sec + span / 2), nextDate);
       }
-      ctrl.seek(sec);
+      // Prefer a playable media segment so seek-while-play does not clear all video slots.
+      const target = allSegmentsRef.current.length
+        ? snapPositionToPlayable(allSegmentsRef.current, sec)
+        : sec;
+      ctrl.seek(target);
       setSeekSettling(true);
       if (seekSettleTimerRef.current != null) window.clearTimeout(seekSettleTimerRef.current);
       seekSettleTimerRef.current = window.setTimeout(() => {
         setSeekSettling(false);
         seekSettleTimerRef.current = null;
       }, SEEK_SETTLE_HOLD_MS);
-      ensureAdjacentLoad(sec - SEEK_LOAD_HALF_SEC, sec + SEEK_LOAD_HALF_SEC);
+      // Defer timeline fetch until after settle so seek-while-play does not
+      // saturate worker threads (cameras/timeline timeouts wipe the UI).
+      if (loadTimerRef.current) window.clearTimeout(loadTimerRef.current);
+      loadTimerRef.current = window.setTimeout(() => {
+        ensureAdjacentLoad(target - SEEK_LOAD_HALF_SEC, target + SEEK_LOAD_HALF_SEC);
+      }, SEEK_SETTLE_HOLD_MS + 100);
     },
     [ctrl, ensureAdjacentLoad, date, viewport],
   );
@@ -717,6 +749,7 @@ export function PlaybackPage() {
     () => Object.values(segmentsByCam).flat().filter((s) => segmentIntersectsDay(s, date)),
     [segmentsByCam, date],
   );
+  allSegmentsRef.current = allSegments;
   const timelineMarkers = useMemo(() => {
     const { start, end } = dayBoundsLocal(date);
     return markers.filter((m) => m.ts >= start && m.ts < end);
@@ -746,7 +779,7 @@ export function PlaybackPage() {
   const detectionsReady = !detectionIndex.loading;
 
   let gridEmpty: string | null = null;
-  if (camerasLoading) gridEmpty = t('playback.loadingCamerasGrid');
+  if (!runResolved || camerasLoading) gridEmpty = t('playback.loadingCamerasGrid');
   else if (!cameras.length) gridEmpty = t('playback.noCamerasForDate');
   else if (!selectedIds.length) gridEmpty = t('playback.selectCameras');
   else if (segmentsLoading || (!segmentsLoaded && cameras.length > 0)) gridEmpty = t('playback.loadingSegment');
@@ -818,8 +851,8 @@ export function PlaybackPage() {
           <p className="setup-banner">{t('playback.recordingDisabled')}</p>
         ) : null}
         <div className="toolbar" style={{ flexWrap: 'wrap' }}>
-          {camerasLoading ? <span className="hint">{t('playback.loadingCameras')}</span> : null}
-          {!camerasLoading && !cameras.length ? <span className="hint">{t('playback.noCameras')}</span> : null}
+          {(!runResolved || camerasLoading) ? <span className="hint">{t('playback.loadingCameras')}</span> : null}
+          {runResolved && !camerasLoading && !cameras.length ? <span className="hint">{t('playback.noCameras')}</span> : null}
           {cameras.map((c) => {
             const on = selectedIds.includes(c.id);
             return (

@@ -378,15 +378,35 @@ export function pickLastPlayableSegment(segs: PlaybackSegment[]): PlaybackSegmen
 export function snapPositionToPlayable(segs: PlaybackSegment[], positionSec: number): number {
   if (!segs.length) return positionSec;
   const containing = pickContainingSegment(segs, positionSec);
-  if (containing && isPlayableSegment(containing)) return positionSec;
+  if (containing && isPlayableSegment(containing)) {
+    // Index end_ts often overruns the real mp4 (tens of seconds). Landing in that
+    // phantom tail freezes HTMLVideoElement seeks during play.
+    const span = Math.max(0, containing.end_ts - containing.start_ts);
+    const pad = Math.min(60, Math.max(2, span * 0.04));
+    const safeEnd = containing.end_ts - pad;
+    if (positionSec > safeEnd) return Math.max(containing.start_ts, safeEnd);
+    return positionSec;
+  }
   const target = pickPlayableSegmentForPosition(segs, positionSec);
   if (target) {
-    if (positionSec > target.end_ts) return Math.max(target.start_ts, target.end_ts - 1);
+    if (positionSec > target.end_ts) {
+      const span = Math.max(0, target.end_ts - target.start_ts);
+      const pad = Math.min(60, Math.max(2, span * 0.04));
+      return Math.max(target.start_ts, target.end_ts - pad);
+    }
     if (positionSec < target.start_ts) return target.start_ts;
+    const span = Math.max(0, target.end_ts - target.start_ts);
+    const pad = Math.min(60, Math.max(2, span * 0.04));
+    const safeEnd = target.end_ts - pad;
+    if (positionSec > safeEnd) return Math.max(target.start_ts, safeEnd);
     return positionSec;
   }
   const last = pickLastPlayableSegment(segs);
-  if (last) return Math.max(last.start_ts, Math.min(positionSec, last.end_ts - 0.001));
+  if (last) {
+    const span = Math.max(0, last.end_ts - last.start_ts);
+    const pad = Math.min(60, Math.max(2, span * 0.04));
+    return Math.max(last.start_ts, Math.min(positionSec, last.end_ts - pad));
+  }
   return positionSec;
 }
 
