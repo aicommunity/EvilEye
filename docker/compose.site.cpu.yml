@@ -1,31 +1,16 @@
-# EvilEye Docker Compose stack (GPU image + Web UI + PostgreSQL)
-#
-# From repo root:
-#   ./docker/prepare-host-dirs.sh
-#   docker compose -f docker/docker-compose.yml up -d --build
-
 services:
   db:
     image: postgres:15-alpine
-    container_name: evileye_db
     restart: unless-stopped
     environment:
       POSTGRES_USER: postgres
       POSTGRES_PASSWORD: postgres
       POSTGRES_DB: evil_eye_db
     volumes:
-      - ${EVILEYE_PG_DATA:-./postgres_data}:/var/lib/postgresql/data
-    ports:
-      - "${EVILEYE_PG_PORT:-5432}:5432"
+      - ./postgres_data:/var/lib/postgresql/data
 
   web:
-    build:
-      context: ..
-      dockerfile: docker/Dockerfile
-      args:
-        ULTRALYTICS_TAG: "8.4.115"
-    image: ${EVILEYE_IMAGE:-evileye/app:latest}
-    container_name: evileye_web
+    image: __EVILEYE_IMAGE__
     restart: unless-stopped
     working_dir: /site
     environment:
@@ -33,7 +18,7 @@ services:
       EVILEYE_DATA_DIR: /site/EvilEyeData
       PYTHONUNBUFFERED: "1"
     volumes:
-      - ${EVILEYE_SITE_DIR:-.}:/site
+      - ./:/site
     ports:
       - "${EVILEYE_HOST_PORT:-8181}:8181"
     depends_on:
@@ -42,20 +27,16 @@ services:
     command: ["evileye", "server", "--host", "0.0.0.0", "--port", "8181", "--no-reload"]
 
   app:
-    image: ${EVILEYE_IMAGE:-evileye/app:latest}
-    container_name: evileye_app
+    image: __EVILEYE_IMAGE__
     restart: unless-stopped
     working_dir: /site
     environment:
       EVILEYE_SITE_DIR: /site
       EVILEYE_DATA_DIR: /site/EvilEyeData
       PYTHONUNBUFFERED: "1"
-      NVIDIA_VISIBLE_DEVICES: all
-      NVIDIA_DRIVER_CAPABILITIES: compute,utility,video
     volumes:
-      - ${EVILEYE_SITE_DIR:-.}:/site
+      - ./:/site
     depends_on:
       db:
         condition: service_started
-    gpus: all
     command: ["evileye", "run", "configs/single_video.json", "--no-gui"]
