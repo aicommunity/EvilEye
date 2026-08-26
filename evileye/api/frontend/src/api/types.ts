@@ -101,12 +101,21 @@ export interface AuthUser {
   role: string;
 }
 
+export interface UserPrefs {
+  visible_cameras: string[] | null;
+  lang: 'ru' | 'en' | null;
+  date_format: 'DD-MM-YYYY' | 'YYYY-MM-DD' | 'MM-DD-YYYY' | null;
+}
+
 export interface AuthMeResponse {
   authenticated: boolean;
   auth_enabled: boolean;
   user: AuthUser | null;
   permissions: string[];
   must_change_password?: boolean;
+  allowed_cameras?: string[];
+  camera_access?: 'all' | 'restricted';
+  prefs?: UserPrefs;
 }
 
 export interface OverviewResponse {

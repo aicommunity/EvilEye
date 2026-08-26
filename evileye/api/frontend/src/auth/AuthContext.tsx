@@ -7,7 +7,7 @@ import {
   useState,
   type ReactNode,
 } from 'react';
-import { authApi, ApiError, type AuthUser } from '../api';
+import { authApi, ApiError, type AuthUser, type UserPrefs } from '../api';
 
 interface AuthState {
   loading: boolean;
@@ -15,6 +15,9 @@ interface AuthState {
   user: AuthUser | null;
   permissions: Set<string>;
   mustChangePassword: boolean;
+  allowedCameras: string[];
+  cameraAccess: 'all' | 'restricted';
+  prefs: UserPrefs | null;
   refresh: () => Promise<boolean>;
   login: (username: string, password: string) => Promise<void>;
   register: (email: string, password: string) => Promise<string>;
@@ -25,19 +28,41 @@ interface AuthState {
 
 const AuthContext = createContext<AuthState | null>(null);
 
+const emptyPrefs = (): UserPrefs => ({
+  visible_cameras: null,
+  lang: null,
+  date_format: null,
+});
+
 export function AuthProvider({ children }: { children: ReactNode }) {
   const [loading, setLoading] = useState(true);
   const [authEnabled, setAuthEnabled] = useState(false);
   const [user, setUser] = useState<AuthUser | null>(null);
   const [permissions, setPermissions] = useState<Set<string>>(new Set());
   const [mustChangePassword, setMustChangePassword] = useState(false);
+  const [allowedCameras, setAllowedCameras] = useState<string[]>([]);
+  const [cameraAccess, setCameraAccess] = useState<'all' | 'restricted'>('restricted');
+  const [prefs, setPrefs] = useState<UserPrefs | null>(null);
 
   const apply = useCallback(
-    (enabled: boolean, nextUser: AuthUser | null, perms: string[], mustChange = false) => {
+    (
+      enabled: boolean,
+      nextUser: AuthUser | null,
+      perms: string[],
+      mustChange = false,
+      extra?: {
+        allowed_cameras?: string[];
+        camera_access?: 'all' | 'restricted';
+        prefs?: UserPrefs;
+      },
+    ) => {
       setAuthEnabled(enabled);
       setUser(nextUser);
       setPermissions(new Set(perms));
       setMustChangePassword(Boolean(enabled && nextUser && mustChange));
+      setAllowedCameras(extra?.allowed_cameras ?? []);
+      setCameraAccess(extra?.camera_access ?? (enabled ? 'restricted' : 'all'));
+      setPrefs(extra?.prefs ?? emptyPrefs());
     },
     [],
   );
@@ -45,7 +70,11 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const refresh = useCallback(async () => {
     try {
       const me = await authApi.me();
-      apply(me.auth_enabled, me.user, me.permissions ?? [], Boolean(me.must_change_password));
+      apply(me.auth_enabled, me.user, me.permissions ?? [], Boolean(me.must_change_password), {
+        allowed_cameras: me.allowed_cameras,
+        camera_access: me.camera_access,
+        prefs: me.prefs,
+      });
       setLoading(false);
       if (!me.auth_enabled) return true;
       return Boolean(me.user);
@@ -72,6 +101,11 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         result.user,
         result.permissions ?? [],
         Boolean(result.must_change_password),
+        {
+          allowed_cameras: result.allowed_cameras,
+          camera_access: result.camera_access,
+          prefs: result.prefs,
+        },
       );
     },
     [apply],
@@ -104,6 +138,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       user,
       permissions,
       mustChangePassword,
+      allowedCameras,
+      cameraAccess,
+      prefs,
       refresh,
       login,
       register,
@@ -117,6 +154,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       user,
       permissions,
       mustChangePassword,
+      allowedCameras,
+      cameraAccess,
+      prefs,
       refresh,
       login,
       register,

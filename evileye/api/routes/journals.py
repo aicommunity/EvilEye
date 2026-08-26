@@ -1,10 +1,15 @@
-from fastapi import APIRouter, HTTPException, Query
+from fastapi import APIRouter, HTTPException, Query, Request
 from fastapi.responses import FileResponse, StreamingResponse
 
 import asyncio
 import mimetypes
 import os
 
+from evileye.api.core.camera_access import (
+    list_effective_names,
+    name_allowed_hard,
+    resolve_camera_access,
+)
 from evileye.api.core.journal_service import (
     DateScopeError,
     JournalPathForbidden,
@@ -38,6 +43,36 @@ def _filters(source_name: str | None, event_type: str | None) -> dict:
         filters["source_name"] = source_name
     if event_type:
         filters["event_type"] = event_type
+    return filters
+
+
+def _apply_camera_acl_filters(
+    request: Request,
+    source_name: str | None,
+    event_type: str | None,
+    *,
+    journal_kind: str,
+) -> dict:
+    """Inject ACL source_names; keep System for events."""
+    access = resolve_camera_access(request)
+    filters = _filters(source_name, event_type)
+    effective = list_effective_names(access)
+
+    if source_name:
+        if source_name != "System" and not name_allowed_hard(access, source_name):
+            raise HTTPException(status_code=403, detail="Camera access denied")
+        # Soft visible: if user hid the camera, still allow explicit filter only if hard-allowed
+        if effective is not None and source_name != "System" and source_name not in effective:
+            raise HTTPException(status_code=403, detail="Camera access denied")
+        return filters
+
+    if effective is None:
+        return filters
+
+    names = set(effective)
+    if journal_kind == "events":
+        names.add("System")
+    filters["source_names"] = sorted(names)
     return filters
 
 
@@ -108,6 +143,7 @@ def _resize_jpeg(path: str, width: int) -> bytes | None:
 
 @router.get("/events")
 async def journal_events(
+        request: Request,
         page: int = Query(0, ge=0),
         size: int = Query(30, ge=1, le=200),
         source_name: str | None = None,
@@ -121,7 +157,7 @@ async def journal_events(
             load_events_page,
             page=page,
             size=size,
-            filters=_filters(source_name, event_type),
+            filters=_apply_camera_acl_filters(request, source_name, event_type, journal_kind="events"),
             **_date_kwargs(date, date_from, date_to),
         )
     except DateScopeError as exc:
@@ -130,6 +166,7 @@ async def journal_events(
 
 @router.get("/events/grouped")
 async def journal_events_grouped(
+        request: Request,
         page: int = Query(0, ge=0),
         size: int = Query(30, ge=1, le=200),
         source_name: str | None = None,
@@ -143,7 +180,7 @@ async def journal_events_grouped(
             load_events_grouped_page,
             page=page,
             size=size,
-            filters=_filters(source_name, event_type),
+            filters=_apply_camera_acl_filters(request, source_name, event_type, journal_kind="events"),
             **_date_kwargs(date, date_from, date_to),
         )
     except DateScopeError as exc:
@@ -152,6 +189,7 @@ async def journal_events_grouped(
 
 @router.get("/objects")
 async def journal_objects(
+        request: Request,
         page: int = Query(0, ge=0),
         size: int = Query(30, ge=1, le=200),
         source_name: str | None = None,
@@ -165,7 +203,7 @@ async def journal_objects(
             load_objects_page,
             page=page,
             size=size,
-            filters=_filters(source_name, event_type),
+            filters=_apply_camera_acl_filters(request, source_name, event_type, journal_kind="objects"),
             **_date_kwargs(date, date_from, date_to),
         )
     except DateScopeError as exc:
@@ -174,6 +212,7 @@ async def journal_objects(
 
 @router.get("/objects/grouped")
 async def journal_objects_grouped(
+        request: Request,
         page: int = Query(0, ge=0),
         size: int = Query(30, ge=1, le=200),
         source_name: str | None = None,
@@ -187,7 +226,7 @@ async def journal_objects_grouped(
             load_objects_grouped_page,
             page=page,
             size=size,
-            filters=_filters(source_name, event_type),
+            filters=_apply_camera_acl_filters(request, source_name, event_type, journal_kind="objects"),
             **_date_kwargs(date, date_from, date_to),
         )
     except DateScopeError as exc:
@@ -195,8 +234,15 @@ async def journal_objects_grouped(
 
 
 @router.get("/filters/meta")
-async def journal_filters_meta() -> dict:
-    return await asyncio.to_thread(load_filters_meta)
+async def journal_filters_meta(request: Request) -> dict:
+    payload = await asyncio.to_thread(load_filters_meta)
+    access = resolve_camera_access(request)
+    effective = list_effective_names(access)
+    if effective is not None:
+        names = [n for n in (payload.get("source_names") or []) if n in effective]
+        payload = dict(payload)
+        payload["source_names"] = names
+    return payload
 
 
 @router.get("/stats")
@@ -215,16 +261,22 @@ async def journal_stats(
 
 @router.get("/row-meta")
 async def journal_row_meta(
+        request: Request,
         row_key: str = Query(..., min_length=1),
         journal_type: str = Query("events", pattern="^(events|objects)$"),
         meta_only: bool = Query(True),
 ) -> dict:
     try:
-        return await asyncio.to_thread(
+        payload = await asyncio.to_thread(
             load_row_meta, row_key_value=row_key, journal_type=journal_type, meta_only=meta_only,
         )
     except JournalPathNotFound:
         raise HTTPException(status_code=404, detail="Row metadata not found")
+    access = resolve_camera_access(request)
+    src = str(payload.get("source_name") or payload.get("source") or "").strip()
+    if src and not name_allowed_hard(access, src):
+        raise HTTPException(status_code=403, detail="Camera access denied")
+    return payload
 
 
 @router.get("/preview")
@@ -337,6 +389,7 @@ def _export_csv_chunks(items: list[dict]):
 
 @router.get("/export")
 async def journal_export(
+    request: Request,
     type: str = Query("events"),
     format: str = Query("json"),
     source_name: str | None = None,
@@ -353,7 +406,9 @@ async def journal_export(
         raise HTTPException(status_code=400, detail="type must be events|objects")
     if format not in {"json", "csv"}:
         raise HTTPException(status_code=400, detail="format must be json|csv")
-    filters = _filters(source_name, event_type)
+    filters = _apply_camera_acl_filters(
+        request, source_name, event_type, journal_kind="objects" if type == "objects" else "events"
+    )
     # Cap total export size; stream CSV when possible
     export_size = min(size, _EXPORT_HARD_CAP)
     loader = load_objects_grouped_page if type == "objects" else load_events_grouped_page

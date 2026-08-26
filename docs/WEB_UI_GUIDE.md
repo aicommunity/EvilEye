@@ -36,14 +36,23 @@ See [`CLI_SETUP_WEB.md`](CLI_SETUP_WEB.md).
 | `/admin/configs` | `config:view` | Config file list; open Studio or Raw JSON |
 | `/admin/configs/:name` | `config:view` | Config Studio / Basic for a chosen file (forms, ROI/Zones, history) |
 | `/admin/logs` | `logs:view` | Log files + Follow (SSE tail) |
-| `/admin/users` | `users:manage` | User management (credentials.json + web_users.json; role/password/disable/delete) |
+| `/admin/users` | `users:manage` | User management (credentials.json + web_users.json; role/password/disable/delete; **camera ACL** by `source_name`) |
 | `/admin/bans` | `bans:manage` | IP ban list (auto + manual add/remove) |
+| `/settings` | authenticated | Language, date format, visible cameras (prefs), change password |
 | `/admin/overview` | — | Redirect → `/live` |
 | `/admin/history` | — | Redirect → `/admin/runs` |
 | `/m/live`, `/m/events` | — | Compact mobile views |
 
-Language switcher (RU/EN) is in the sidebar footer (`localStorage` key `evileye.ui.lang`).
+Language and date format live on **Settings** (`/settings`) and sync to the server via `PUT /api/v1/auth/prefs` when auth is enabled (localStorage keys `evileye.ui.lang` / `evileye.ui.dateFormat` still used as client cache).
 Config mode Basic/Advanced is stored in `localStorage` key `evileye.config.mode` (default **basic**).
+
+### Camera ACL and visible cameras
+
+- **Admin ACL** (`allowed_cameras` on the user record): which `source_name` values a non-admin may access. Empty list → **no cameras**. Role `admin` always bypasses ACL.
+- **User prefs** (`prefs.visible_cameras`): subset of allowed cameras to show in Live/Playback/Events lists. `null` → all allowed; `[]` → none in UI lists.
+- Hard enforcement (403) on streams / WS / playback media uses ACL only; list endpoints also apply visible prefs.
+- Events journal always keeps `source_name=System` rows.
+- After upgrading, legacy users without `allowed_cameras` default to **empty** — assign cameras under `/admin/users`.
 
 ## First-run / Basic setup
 
@@ -107,13 +116,16 @@ Expand flow: UI posts `stream:status` with `level=stream` (pre-warm), polls unti
 
 | Method | Path | Notes |
 |--------|------|-------|
-| GET | `/api/v1/users` | Merged list: `credentials.json` (`source=credentials`) + `web_users.json` (`source=store`) |
-| POST | `/api/v1/users` | Create store user (approved) |
-| PATCH | `/api/v1/users/{id}` | role / disabled / status / password reset |
+| GET | `/api/v1/users` | Merged list: `credentials.json` (`source=credentials`) + `web_users.json` (`source=store`); includes `allowed_cameras` |
+| GET | `/api/v1/users/camera-catalog` | Unique `source_name`s from active runs (for ACL UI) |
+| POST | `/api/v1/users` | Create store user (approved); default `allowed_cameras: []` |
+| PATCH | `/api/v1/users/{id}` | role / disabled / status / password / `allowed_cameras` |
 | DELETE | `/api/v1/users/{id}` | Guards: no self-delete, no last-admin delete |
+| GET | `/api/v1/auth/me` | Session + `allowed_cameras`, `camera_access`, `prefs` |
+| PUT | `/api/v1/auth/prefs` | Self prefs: `visible_cameras`, `lang`, `date_format` |
 | POST | `/api/v1/auth/change-password` | Self-service (`current_password` + `new_password`) |
 
-Sidebar: **Change password** for the logged-in user.
+Settings page (`/settings`): language, date format, visible cameras, change password.
 
 ## Env vars (preview / streaming)
 

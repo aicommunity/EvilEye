@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from 'react';
-import { usersApi, type UserRecord } from '../../api';
+import { usersApi, type CameraCatalogItem, type UserRecord } from '../../api';
 import { Button } from '../../components/ui';
 import { useToast } from '../../components/ui/Toast';
 import { useI18n } from '../../i18n';
@@ -17,6 +17,7 @@ export function UsersPage() {
   const { showError, showSuccess } = useToast();
   const { t } = useI18n();
   const [items, setItems] = useState<UserRecord[]>([]);
+  const [catalog, setCatalog] = useState<CameraCatalogItem[]>([]);
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [showCreatePw, setShowCreatePw] = useState(false);
@@ -25,15 +26,23 @@ export function UsersPage() {
   const [resetPw, setResetPw] = useState<Record<string, string>>({});
   const [showResetPw, setShowResetPw] = useState<Record<string, boolean>>({});
   const [savingPw, setSavingPw] = useState<Record<string, boolean>>({});
+  const [draftCams, setDraftCams] = useState<Record<string, string[]>>({});
+  const [savingCams, setSavingCams] = useState<Record<string, boolean>>({});
 
   const load = useCallback(async () => {
     try {
-      const data = await usersApi.list();
+      const [data, cams] = await Promise.all([usersApi.list(), usersApi.cameraCatalog()]);
       setItems(data.items ?? []);
+      setCatalog(cams.items ?? []);
+      const next: Record<string, string[]> = {};
+      for (const u of data.items ?? []) {
+        next[u.id || u.username] = [...(u.allowed_cameras ?? [])];
+      }
+      setDraftCams(next);
     } catch (e) {
       showError(e instanceof Error ? e.message : t('common.error'));
     }
-  }, [showError]);
+  }, [showError, t]);
 
   useEffect(() => {
     void load();
@@ -105,6 +114,24 @@ export function UsersPage() {
       }
     } finally {
       setSavingPw((prev) => ({ ...prev, [id]: false }));
+    }
+  };
+
+  const toggleCam = (userId: string, name: string) => {
+    setDraftCams((prev) => {
+      const cur = new Set(prev[userId] ?? []);
+      if (cur.has(name)) cur.delete(name);
+      else cur.add(name);
+      return { ...prev, [userId]: Array.from(cur) };
+    });
+  };
+
+  const saveCams = async (id: string) => {
+    setSavingCams((prev) => ({ ...prev, [id]: true }));
+    try {
+      await patchUser(id, { allowed_cameras: draftCams[id] ?? [] }, t('users.camerasUpdated'));
+    } finally {
+      setSavingCams((prev) => ({ ...prev, [id]: false }));
     }
   };
 
@@ -209,6 +236,7 @@ export function UsersPage() {
                   <th>{t('users.sourceHeader')}</th>
                   <th>{t('users.roleHeader')}</th>
                   <th>{t('users.statusHeader')}</th>
+                  <th>{t('users.cameras')}</th>
                   <th>{t('users.actions')}</th>
                 </tr>
               </thead>
@@ -220,6 +248,8 @@ export function UsersPage() {
                   const pwVisible = Boolean(showResetPw[id]);
                   const pwValue = resetPw[id] ?? '';
                   const pwBusy = Boolean(savingPw[id]);
+                  const isAdmin = u.role === 'admin';
+                  const selected = draftCams[id] ?? [];
                   return (
                     <tr key={`${u.source}:${id}`}>
                       <td>{u.username}</td>
@@ -245,6 +275,34 @@ export function UsersPage() {
                         )}
                       </td>
                       <td>{statusLabel(u.status)}</td>
+                      <td>
+                        {isAdmin ? (
+                          <span className="hint">{t('users.allCamerasAdmin')}</span>
+                        ) : !catalog.length ? (
+                          <span className="hint">{t('users.camerasHint')}</span>
+                        ) : (
+                          <div className="users-camera-acl">
+                            {catalog.map((c) => (
+                              <label key={c.source_name} className="checkbox-label">
+                                <input
+                                  type="checkbox"
+                                  checked={selected.includes(c.source_name)}
+                                  onChange={() => toggleCam(id, c.source_name)}
+                                />
+                                <span>{c.source_name}</span>
+                              </label>
+                            ))}
+                            <Button
+                              size="sm"
+                              variant="outline"
+                              disabled={Boolean(savingCams[id])}
+                              onClick={() => void saveCams(id)}
+                            >
+                              {t('users.saveCameras')}
+                            </Button>
+                          </div>
+                        )}
+                      </td>
                       <td>
                         <div className="users-row-actions">
                           {canApprove ? (
@@ -282,7 +340,6 @@ export function UsersPage() {
                                   e.preventDefault();
                                   const form = e.currentTarget;
                                   const input = form.elements.namedItem('new-password') as HTMLInputElement | null;
-                                  // Read from DOM so Save works even if React state lagged behind typing/autofill.
                                   const raw = input?.value ?? pwValue;
                                   void saveResetPassword(id, raw);
                                 }}

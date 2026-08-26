@@ -136,7 +136,7 @@ evileye deploy-samples
 5. `power_user` предназначен для просмотра предметных журналов системы и технических логов.
 6. `admin` предназначен для настройки и управления системой.
 7. Не оставляйте дефолтный `session_secret` (`evileye-dev-session-secret` / `change-me`) — при обнаружении слабого значения сервер заменит его на криптостойкий.
-8. Первый bootstrap admin получает одноразовый случайный пароль (или `EVILEYE_BOOTSTRAP_ADMIN_PASSWORD`); пароль пишется только в лог запуска. Смените его через UI (сайдбар → «Сменить пароль») или `POST /api/v1/auth/change-password` / `PATCH /api/v1/users/admin`.
+8. Первый bootstrap admin получает одноразовый случайный пароль (или `EVILEYE_BOOTSTRAP_ADMIN_PASSWORD`); пароль пишется только в лог запуска. Смените его через UI (**Настройки** → смена пароля) или `POST /api/v1/auth/change-password` / `PATCH /api/v1/users/admin`.
 9. Production checklist: `enabled=true`, `secure_cookies=true`, HTTPS, явный `EVILEYE_CORS_ALLOW_ORIGINS`, заданный `internal_token`, секция `protection` для rate-limit/IP ban (см. ниже).
 
 **Два хранилища пользователей**:
@@ -147,6 +147,23 @@ evileye deploy-samples
 | Регистрация / UI create | `web_users.json` | email + status pending/approved |
 
 Страница `/admin/users` и `GET /api/v1/users` показывают **оба** списка (`source: credentials|store`). Логин объединяет оба источника.
+
+**Camera ACL и prefs** (оба store):
+
+```json
+{
+  "allowed_cameras": ["Cam1", "Cam2"],
+  "prefs": {
+    "visible_cameras": null,
+    "lang": "ru",
+    "date_format": "DD-MM-YYYY"
+  }
+}
+```
+
+- `allowed_cameras`: список `source_name`. Пустой / отсутствующий у non-admin → **нет доступа к камерам**. Роль `admin` всегда видит все.
+- `prefs.visible_cameras`: `null` = все из ACL; явный список = пересечение с ACL для списков Live/Playback/Events.
+- После апгрейда назначьте камеры пользователям в `/admin/users` (иначе старые user-аккаунты не увидят камер).
 
 ### Секция web_auth.protection
 
