@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import mimetypes
 import threading
+import time
 from copy import deepcopy
 from typing import Any, Callable, Optional
 
@@ -23,18 +24,27 @@ from evileye.api.core.route_timeouts import playback_route_timeout_sec
 router = APIRouter(prefix="/api/v1/playback", tags=["playback"])
 
 _memory_lock = threading.Lock()
-_memory_cache: dict[str, Any] = {}
+# key -> (expires_at_or_None, value). expires_at None = sticky timeout fallback only.
+_memory_cache: dict[str, tuple[float | None, Any]] = {}
+_TIMELINE_HAPPY_TTL_SEC = 45.0
 
 
-def _remember(key: str, value: Any) -> None:
+def _remember(key: str, value: Any, *, ttl_sec: float | None = None) -> None:
+    expires_at = (time.time() + float(ttl_sec)) if ttl_sec is not None else None
     with _memory_lock:
-        _memory_cache[key] = deepcopy(value)
+        _memory_cache[key] = (expires_at, deepcopy(value))
 
 
-def _recall(key: str) -> Any | None:
+def _recall(key: str, *, require_fresh: bool = False) -> Any | None:
     with _memory_lock:
-        cached = _memory_cache.get(key)
-        return deepcopy(cached) if cached is not None else None
+        entry = _memory_cache.get(key)
+        if entry is None:
+            return None
+        expires_at, cached = entry
+        if require_fresh:
+            if expires_at is None or expires_at <= time.time():
+                return None
+        return deepcopy(cached)
 
 
 async def _to_thread_with_timeout_or_cached(
@@ -239,13 +249,22 @@ async def playback_timeline(
     to_ts: Optional[float] = Query(None, alias="to"),
 ) -> dict:
     """Compact day timeline: segments + detection ticks + event intervals in one round-trip."""
-    from evileye.api.core.playback_timeline_index import build_timeline, schedule_segment_index_refresh
+    from evileye.api.core.playback_timeline_index import (
+        schedule_detection_ticks_refresh,
+        schedule_event_intervals_refresh,
+        schedule_segment_index_refresh,
+        build_timeline,
+    )
 
     access = resolve_camera_access(request)
     cam_list = _require_cameras(access, [c.strip() for c in cameras.split(",") if c.strip()], single=False)
     if not cam_list:
         raise HTTPException(status_code=400, detail="cameras query required")
     mem_key = f"playback:timeline:{date}:{run_id}:{from_ts}:{to_ts}:{','.join(cam_list)}"
+
+    fresh = _recall(mem_key, require_fresh=True)
+    if fresh is not None:
+        return fresh
 
     def _load():
         return build_timeline(
@@ -257,18 +276,23 @@ async def playback_timeline(
         )
 
     def _cached():
-        mem = _recall(mem_key)
+        mem = _recall(mem_key, require_fresh=False)
         if mem is not None:
             return mem
         return _stale_timeline(date, cam_list, from_ts, to_ts)
+
+    def _on_timeout():
+        schedule_segment_index_refresh(date, cam_list)
+        schedule_detection_ticks_refresh(date, cam_list, run_id=run_id)
+        schedule_event_intervals_refresh(date, cam_list)
 
     payload = await _to_thread_with_timeout_or_cached(
         _load,
         _cached,
         err_detail="playback_timeline timeout",
-        on_timeout=lambda: schedule_segment_index_refresh(date, cam_list),
+        on_timeout=_on_timeout,
     )
-    _remember(mem_key, payload)
+    _remember(mem_key, payload, ttl_sec=_TIMELINE_HAPPY_TTL_SEC)
     return payload
 
 

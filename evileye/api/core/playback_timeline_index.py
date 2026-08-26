@@ -1,18 +1,22 @@
-"""On-disk compact timeline indexes for playback (cache-on-access)."""
+"""On-disk compact timeline indexes for playback (cache-on-access + SWR)."""
 
 from __future__ import annotations
 
 import json
 import logging
 import os
+import threading
 import time
 from pathlib import Path
 from typing import Any, Optional
 
+from evileye.api.core.singleflight import singleflight
+
 logger = logging.getLogger(__name__)
 
 INDEX_VERSION = 1
-TODAY_REBUILD_SEC = 45.0
+# Soft TTL for "today" when source mtime keeps drifting under live capture.
+TODAY_REBUILD_SEC = 300.0
 
 
 def _atomic_write_json(path: Path, payload: dict[str, Any]) -> None:
@@ -81,6 +85,16 @@ def _index_fresh(path: Path, source_mtime: float, date_folder: str) -> dict[str,
     return data
 
 
+def _schedule_refresh(name: str, key: str, fn) -> None:
+    def _job() -> None:
+        try:
+            singleflight(key, fn)
+        except Exception as exc:
+            logger.debug("background %s refresh failed: %s", name, exc)
+
+    threading.Thread(target=_job, name=name, daemon=True).start()
+
+
 def read_segment_index_if_fresh(date_folder: str) -> dict[str, list[dict[str, Any]]] | None:
     from evileye.api.core import playback_service as svc
 
@@ -113,17 +127,12 @@ def read_segment_index_stale(date_folder: str) -> dict[str, list[dict[str, Any]]
 
 def schedule_segment_index_refresh(date_folder: str, cameras: list[str] | None = None) -> None:
     """Best-effort background rebuild so the next request is fast."""
-    import threading
-
     cam_list = [c for c in (cameras or []) if c]
-
-    def _job() -> None:
-        try:
-            ensure_segment_index(date_folder=date_folder, cameras=cam_list or None)
-        except Exception as exc:
-            logger.debug("background segment index refresh failed for %s: %s", date_folder, exc)
-
-    threading.Thread(target=_job, name=f"seg-index-{date_folder}", daemon=True).start()
+    _schedule_refresh(
+        f"seg-index-{date_folder}",
+        f"ensure_segment_index:{date_folder}",
+        lambda: _rebuild_segment_index(date_folder=date_folder, cameras=cam_list or None),
+    )
 
 
 def upsert_segment_index_camera(
@@ -156,26 +165,17 @@ def upsert_segment_index_camera(
         logger.debug("failed to upsert segment index %s: %s", index_path, exc)
 
 
-def ensure_segment_index(
+def _rebuild_segment_index(
     *,
     date_folder: str,
     cameras: list[str] | None = None,
 ) -> dict[str, list[dict[str, Any]]]:
-    """Build or load Streams/{date}/_timeline_segments.json."""
     from evileye.api.core import playback_service as svc
 
     streams_dir = svc.data_dir() / "Streams" / date_folder
     index_path = segment_index_path(streams_dir)
     source_mtime = _dir_mtime_sig(streams_dir, ("**/*.mp4", "**/*.session.json"))
-    cached = _index_fresh(index_path, source_mtime, date_folder)
-    if cached is not None:
-        by_camera = cached.get("by_camera") or {}
-        if isinstance(by_camera, dict):
-            if cameras:
-                return {cam: list(by_camera.get(cam) or []) for cam in cameras if cam}
-            return {str(k): list(v or []) for k, v in by_camera.items()}
 
-    # Discover cameras under the day folder when none requested.
     cam_list = [c for c in (cameras or []) if c]
     if not cam_list and streams_dir.is_dir():
         try:
@@ -214,6 +214,38 @@ def ensure_segment_index(
     return by_camera
 
 
+def ensure_segment_index(
+    *,
+    date_folder: str,
+    cameras: list[str] | None = None,
+) -> dict[str, list[dict[str, Any]]]:
+    """Build or load Streams/{date}/_timeline_segments.json."""
+    from evileye.api.core import playback_service as svc
+
+    streams_dir = svc.data_dir() / "Streams" / date_folder
+    index_path = segment_index_path(streams_dir)
+    source_mtime = _dir_mtime_sig(streams_dir, ("**/*.mp4", "**/*.session.json"))
+    cached = _index_fresh(index_path, source_mtime, date_folder)
+    if cached is not None:
+        by_camera = cached.get("by_camera") or {}
+        if isinstance(by_camera, dict):
+            if cameras:
+                return {cam: list(by_camera.get(cam) or []) for cam in cameras if cam}
+            return {str(k): list(v or []) for k, v in by_camera.items()}
+
+    stale = read_segment_index_stale(date_folder)
+    if stale is not None:
+        schedule_segment_index_refresh(date_folder, cameras)
+        if cameras:
+            return {cam: list(stale.get(cam) or []) for cam in cameras if cam}
+        return stale
+
+    return singleflight(
+        f"ensure_segment_index:{date_folder}",
+        lambda: _rebuild_segment_index(date_folder=date_folder, cameras=cameras),
+    )
+
+
 def filter_segments_window(
     items: list[dict[str, Any]],
     from_ts: float | None,
@@ -229,6 +261,95 @@ def filter_segments_window(
             continue
         out.append(row)
     return out
+
+
+def _ticks_from_payload(data: dict[str, Any], cameras: list[str]) -> dict[str, list[dict[str, Any]]]:
+    raw_by = data.get("by_camera") or {}
+    out: dict[str, list[dict[str, Any]]] = {}
+    for cam in cameras:
+        rows = raw_by.get(cam) or []
+        out[cam] = [_tick_row_to_item(row) for row in rows]
+    return out
+
+
+def read_detection_ticks_stale(
+    date_folder: str,
+    cameras: list[str],
+    *,
+    run_id: int | None = None,
+) -> dict[str, list[dict[str, Any]]] | None:
+    from evileye.api.core import playback_metadata_service as meta
+
+    params = meta._load_params_for_run(run_id)
+    base = meta._playback_data_dir(params)
+    meta_dir = base / "Detections" / date_folder / "Metadata"
+    index_path = detection_ticks_path(meta_dir)
+    data = _read_json(index_path)
+    if not data or int(data.get("version") or 0) != INDEX_VERSION:
+        return None
+    return _ticks_from_payload(data, [c for c in cameras if c])
+
+
+def schedule_detection_ticks_refresh(
+    date_folder: str,
+    cameras: list[str],
+    *,
+    run_id: int | None = None,
+) -> None:
+    cam_list = [c for c in cameras if c]
+    _schedule_refresh(
+        f"det-ticks-{date_folder}",
+        f"ensure_detection_ticks:{date_folder}:{run_id}",
+        lambda: _rebuild_detection_ticks(date_folder=date_folder, cameras=cam_list, run_id=run_id),
+    )
+
+
+def _rebuild_detection_ticks(
+    *,
+    date_folder: str,
+    cameras: list[str],
+    run_id: int | None = None,
+) -> dict[str, list[dict[str, Any]]]:
+    """Rebuild compact ticks only (no full bbox index payload on disk)."""
+    from evileye.api.core import playback_metadata_service as meta
+
+    params = meta._load_params_for_run(run_id)
+    base = meta._playback_data_dir(params)
+    meta_dir = base / "Detections" / date_folder / "Metadata"
+    index_path = detection_ticks_path(meta_dir)
+    source_mtime = meta._file_mtime_sum(
+        meta_dir / "objects_found.json",
+        meta_dir / "objects_lost.json",
+    )
+    cam_list = [c for c in cameras if c]
+
+    # Compact: one day parse via day cache, store only tick triples.
+    full = meta._load_day_index_by_camera(
+        base=base,
+        date_folder=date_folder,
+        run_id=run_id,
+        params=params,
+        cameras=cam_list,
+    )
+    compact: dict[str, list[list[Any]]] = {}
+    result: dict[str, list[dict[str, Any]]] = {}
+    for cam in cam_list:
+        items = full.get(cam) or []
+        compact[cam] = [[float(it["ts"]), it.get("kind"), it.get("object_id")] for it in items]
+        result[cam] = [meta._tick_only_item(it) for it in items]
+
+    payload = {
+        "version": INDEX_VERSION,
+        "date": date_folder,
+        "built_at": time.time(),
+        "source_mtime": source_mtime,
+        "by_camera": compact,
+    }
+    try:
+        _atomic_write_json(index_path, payload)
+    except Exception as exc:
+        logger.debug("failed to write detection ticks %s: %s", index_path, exc)
+    return result
 
 
 def ensure_detection_ticks(
@@ -248,40 +369,20 @@ def ensure_detection_ticks(
         meta_dir / "objects_found.json",
         meta_dir / "objects_lost.json",
     )
-    cached = _index_fresh(index_path, source_mtime, date_folder)
     cam_list = [c for c in cameras if c]
+    cached = _index_fresh(index_path, source_mtime, date_folder)
     if cached is not None:
-        raw_by = cached.get("by_camera") or {}
-        out: dict[str, list[dict[str, Any]]] = {}
-        for cam in cam_list:
-            rows = raw_by.get(cam) or []
-            out[cam] = [_tick_row_to_item(row) for row in rows]
-        return out
+        return _ticks_from_payload(cached, cam_list)
 
-    full = meta.load_detection_index_batch(
-        cameras=cam_list,
-        date_folder=date_folder,
-        run_id=run_id,
-        ticks_only=False,
+    stale = read_detection_ticks_stale(date_folder, cam_list, run_id=run_id)
+    if stale is not None:
+        schedule_detection_ticks_refresh(date_folder, cam_list, run_id=run_id)
+        return stale
+
+    return singleflight(
+        f"ensure_detection_ticks:{date_folder}:{run_id}",
+        lambda: _rebuild_detection_ticks(date_folder=date_folder, cameras=cam_list, run_id=run_id),
     )
-    compact: dict[str, list[list[Any]]] = {}
-    result: dict[str, list[dict[str, Any]]] = {}
-    for cam, items in full.items():
-        compact[cam] = [[float(it["ts"]), it.get("kind"), it.get("object_id")] for it in items]
-        result[cam] = [meta._tick_only_item(it) for it in items]
-
-    payload = {
-        "version": INDEX_VERSION,
-        "date": date_folder,
-        "built_at": time.time(),
-        "source_mtime": source_mtime,
-        "by_camera": compact,
-    }
-    try:
-        _atomic_write_json(index_path, payload)
-    except Exception as exc:
-        logger.debug("failed to write detection ticks %s: %s", index_path, exc)
-    return result
 
 
 def _tick_row_to_item(row: Any) -> dict[str, Any]:
@@ -298,6 +399,76 @@ def _tick_row_to_item(row: Any) -> dict[str, Any]:
             "object_id": row[2] if len(row) > 2 else None,
         }
     return {"ts": 0.0, "kind": None, "object_id": None}
+
+
+def read_event_intervals_stale(
+    date_folder: str,
+    cameras: list[str] | None = None,
+) -> list[dict[str, Any]] | None:
+    from evileye.api.core import playback_service as svc
+
+    events_dir = svc.data_dir() / "Events" / date_folder / "Metadata"
+    index_path = event_intervals_path(events_dir)
+    data = _read_json(index_path)
+    if not data or int(data.get("version") or 0) != INDEX_VERSION:
+        return None
+    items = data.get("items") or []
+    if not isinstance(items, list):
+        return None
+    if cameras:
+        cam_set = set(cameras)
+        return [it for it in items if not it.get("camera") or it.get("camera") in cam_set]
+    return list(items)
+
+
+def schedule_event_intervals_refresh(
+    date_folder: str,
+    cameras: list[str] | None = None,
+    *,
+    limit: int = 2000,
+) -> None:
+    cam_list = [c for c in (cameras or []) if c]
+    _schedule_refresh(
+        f"evt-intervals-{date_folder}",
+        f"ensure_event_intervals:{date_folder}",
+        lambda: _rebuild_event_intervals(date_folder=date_folder, cameras=cam_list or None, limit=limit),
+    )
+
+
+def _rebuild_event_intervals(
+    *,
+    date_folder: str,
+    cameras: list[str] | None = None,
+    limit: int = 2000,
+) -> list[dict[str, Any]]:
+    from evileye.api.core import playback_service as svc
+
+    events_dir = svc.data_dir() / "Events" / date_folder / "Metadata"
+    index_path = event_intervals_path(events_dir)
+    source_mtime = _dir_mtime_sig(events_dir, ("*.json",))
+    items = svc.load_event_intervals(
+        None,
+        None,
+        None,
+        cameras,
+        date=date_folder,
+        limit=limit,
+    )
+    payload = {
+        "version": INDEX_VERSION,
+        "date": date_folder,
+        "built_at": time.time(),
+        "source_mtime": source_mtime,
+        "items": items,
+    }
+    try:
+        _atomic_write_json(index_path, payload)
+    except Exception as exc:
+        logger.debug("failed to write event intervals %s: %s", index_path, exc)
+    if cameras:
+        cam_set = set(cameras)
+        return [it for it in items if not it.get("camera") or it.get("camera") in cam_set]
+    return list(items)
 
 
 def ensure_event_intervals(
@@ -321,26 +492,15 @@ def ensure_event_intervals(
                 return [it for it in items if not it.get("camera") or it.get("camera") in cam_set]
             return list(items)
 
-    items = svc.load_event_intervals(
-        None,
-        None,
-        None,
-        cameras,
-        date=date_folder,
-        limit=limit,
+    stale = read_event_intervals_stale(date_folder, cameras)
+    if stale is not None:
+        schedule_event_intervals_refresh(date_folder, cameras, limit=limit)
+        return stale
+
+    return singleflight(
+        f"ensure_event_intervals:{date_folder}",
+        lambda: _rebuild_event_intervals(date_folder=date_folder, cameras=cameras, limit=limit),
     )
-    payload = {
-        "version": INDEX_VERSION,
-        "date": date_folder,
-        "built_at": time.time(),
-        "source_mtime": source_mtime,
-        "items": items,
-    }
-    try:
-        _atomic_write_json(index_path, payload)
-    except Exception as exc:
-        logger.debug("failed to write event intervals %s: %s", index_path, exc)
-    return items
 
 
 def build_timeline(
@@ -352,28 +512,33 @@ def build_timeline(
     to_ts: float | None = None,
 ) -> dict[str, Any]:
     cam_list = [c for c in cameras if c]
-    segments_by = ensure_segment_index(date_folder=date_folder, cameras=cam_list)
-    ticks_by = ensure_detection_ticks(date_folder=date_folder, cameras=cam_list, run_id=run_id)
-    events = ensure_event_intervals(date_folder=date_folder, cameras=cam_list)
+    key = f"timeline:{date_folder}:{run_id}:{','.join(sorted(cam_list))}:{from_ts}:{to_ts}"
 
-    by_camera: dict[str, Any] = {}
-    for cam in cam_list:
-        segs = filter_segments_window(segments_by.get(cam) or [], from_ts, to_ts)
-        ticks = ticks_by.get(cam) or []
-        if from_ts is not None:
-            ticks = [t for t in ticks if float(t["ts"]) >= float(from_ts)]
-        if to_ts is not None:
-            ticks = [t for t in ticks if float(t["ts"]) <= float(to_ts)]
-        cam_events = [
-            ev
-            for ev in events
-            if (ev.get("camera") in (None, cam))
-            and (from_ts is None or float(ev.get("end_ts") or 0) >= float(from_ts))
-            and (to_ts is None or float(ev.get("start_ts") or 0) <= float(to_ts))
-        ]
-        by_camera[cam] = {
-            "segments": segs,
-            "detection_ticks": ticks,
-            "events": cam_events,
-        }
-    return {"date": date_folder, "by_camera": by_camera}
+    def _build() -> dict[str, Any]:
+        segments_by = ensure_segment_index(date_folder=date_folder, cameras=cam_list)
+        ticks_by = ensure_detection_ticks(date_folder=date_folder, cameras=cam_list, run_id=run_id)
+        events = ensure_event_intervals(date_folder=date_folder, cameras=cam_list)
+
+        by_camera: dict[str, Any] = {}
+        for cam in cam_list:
+            segs = filter_segments_window(segments_by.get(cam) or [], from_ts, to_ts)
+            ticks = ticks_by.get(cam) or []
+            if from_ts is not None:
+                ticks = [t for t in ticks if float(t["ts"]) >= float(from_ts)]
+            if to_ts is not None:
+                ticks = [t for t in ticks if float(t["ts"]) <= float(to_ts)]
+            cam_events = [
+                ev
+                for ev in events
+                if (ev.get("camera") in (None, cam))
+                and (from_ts is None or float(ev.get("end_ts") or 0) >= float(from_ts))
+                and (to_ts is None or float(ev.get("start_ts") or 0) <= float(to_ts))
+            ]
+            by_camera[cam] = {
+                "segments": segs,
+                "detection_ticks": ticks,
+                "events": cam_events,
+            }
+        return {"date": date_folder, "by_camera": by_camera}
+
+    return singleflight(key, _build)

@@ -1,6 +1,7 @@
 """In-memory sliding-window rate guard with auto IP bans."""
 from __future__ import annotations
 
+import ipaddress
 import threading
 import time
 from collections import defaultdict, deque
@@ -25,7 +26,7 @@ class ProtectionConfig:
     register_max_per_window: int = 5
     register_window_sec: float = 600
     register_ban_sec: float = 3600
-    global_max_requests: int = 120
+    global_max_requests: int = 600
     global_window_sec: float = 60
     global_ban_sec: float = 600
     auth_fail_max: int = 30
@@ -119,7 +120,20 @@ class RateGuard:
         )
 
     def is_whitelisted(self, ip: str) -> bool:
-        return ip in set(self.config.whitelist_ips)
+        try:
+            addr = ipaddress.ip_address(ip)
+        except ValueError:
+            return ip in set(self.config.whitelist_ips)
+        for entry in self.config.whitelist_ips:
+            try:
+                if "/" in entry:
+                    if addr in ipaddress.ip_network(entry, strict=False):
+                        return True
+                elif ip == entry:
+                    return True
+            except ValueError:
+                continue
+        return False
 
     def reset_bucket(self, bucket: str, ip: str) -> None:
         with self._lock:

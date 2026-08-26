@@ -260,6 +260,68 @@ def test_global_rps_autoban(tmp_path, monkeypatch):
     assert get_ip_ban_store().is_banned("198.51.100.50")
 
 
+def test_default_global_max_requests_is_600():
+    assert ProtectionConfig().global_max_requests == 600
+
+
+def test_whitelist_supports_cidr():
+    cfg = ProtectionConfig(enabled=True, whitelist_ips=["10.245.1.0/24"])
+    guard = reset_rate_guard_for_tests(cfg)
+    assert guard.is_whitelisted("10.245.1.2") is True
+    assert guard.is_whitelisted("10.245.2.1") is False
+
+
+def test_global_rate_exempt_hot_paths():
+    from evileye.api.middleware.ip_protection import is_global_rate_exempt
+
+    assert is_global_rate_exempt("/api/v1/runs/1/snapshot") is True
+    assert is_global_rate_exempt("/api/v1/runs/1/stream.mjpg") is True
+    assert is_global_rate_exempt("/api/v1/runs/1/stream:status") is True
+    assert is_global_rate_exempt("/api/v1/runs/1/metadata") is True
+    assert is_global_rate_exempt("/api/v1/playback/media") is True
+    assert is_global_rate_exempt("/api/v1/playback/metadata") is True
+    assert is_global_rate_exempt("/api/v1/playback/timeline") is False
+    assert is_global_rate_exempt("/api/v1/state/cameras") is False
+
+
+def test_exempt_paths_do_not_count_toward_global_ban(tmp_path, monkeypatch):
+    """Middleware skip helper: hot paths must not be passed to record_global_request."""
+    monkeypatch.chdir(tmp_path)
+    reset_ip_ban_store_for_tests(tmp_path / "web_ip_bans.json")
+    from evileye.api.middleware.ip_protection import is_global_rate_exempt
+
+    cfg = ProtectionConfig(
+        enabled=True,
+        whitelist_ips=[],
+        global_max_requests=3,
+        global_window_sec=60,
+        global_ban_sec=600,
+    )
+    guard = reset_rate_guard_for_tests(cfg)
+
+    class Req:
+        def __init__(self, path: str):
+            self.url = type("U", (), {"path": path})()
+            self.client = type("C", (), {"host": "198.51.100.77"})()
+            self.headers = {}
+
+    # Simulate middleware: only count non-exempt paths.
+    for _ in range(10):
+        path = "/api/v1/playback/media"
+        if not is_global_rate_exempt(path):
+            guard.record_global_request(Req(path))
+    from evileye.api.core.ip_ban_store import get_ip_ban_store
+
+    assert get_ip_ban_store().is_banned("198.51.100.77") is False
+
+    for _ in range(3):
+        path = "/api/v1/state/cameras"
+        assert is_global_rate_exempt(path) is False
+        hit = guard.record_global_request(Req(path))
+    assert hit is True
+    assert get_ip_ban_store().is_banned("198.51.100.77") is True
+
+
 def test_mask_rtsp_in_config_secrets():
     from evileye.api.routes.configs import _mask_secrets
 

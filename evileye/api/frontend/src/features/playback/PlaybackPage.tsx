@@ -37,6 +37,7 @@ import {
   snapPositionToPlayable,
   formatPlaybackTime,
 } from './timelineMath';
+import { filterLogicalCameraIds, preferLogicalCameras } from './playbackCameraIds';
 
 function today(): string {
   const d = new Date();
@@ -79,7 +80,7 @@ function parseDeepLinkTime(raw: string | null): number | null {
 }
 
 const CAMERAS_TTL_MS = 30_000;
-const SEGMENTS_TTL_MS = 15_000;
+const SEGMENTS_TTL_MS = 60_000;
 /** Padding around viewport/position for the priority detection fetch. */
 const DETECTION_PRIORITY_PAD_SEC = 900;
 const VIEWPORT_DEBOUNCE_MS = 350;
@@ -173,6 +174,8 @@ export function PlaybackPage() {
     backgroundToSec: dayBounds.toSec,
     enabled: showMetadata && selectedIds.length > 0,
   });
+  const seedTicksRef = useRef(detectionIndex.seedTicks);
+  seedTicksRef.current = detectionIndex.seedTicks;
   useEffect(() => {
     ctrl.setDetectionTimestamps(detectionIndex.globalTs);
     ctrl.setSkipEnabled(showMetadata);
@@ -247,10 +250,11 @@ export function PlaybackPage() {
       try {
         const camRes = await playbackApi.cameras(nextDate, runId);
         cacheSet(camerasCacheKey(nextDate, runId), camRes, CAMERAS_TTL_MS);
-        setCameras(camRes.items);
-        const ids = new Set(camRes.items.map((c) => c.id));
+        const logicalCams = preferLogicalCameras(camRes.items);
+        setCameras(logicalCams);
+        const ids = new Set(logicalCams.map((c) => c.id));
         setSelectedIds((prev) => {
-          const kept = prev.filter((id) => ids.has(id));
+          const kept = filterLogicalCameraIds(prev).filter((id) => ids.has(id));
           return kept.length ? kept : prev;
         });
       } catch {
@@ -286,7 +290,7 @@ export function PlaybackPage() {
       const cacheKey = camerasCacheKey(date, runId);
       const cached = cacheGet<{ items: PlaybackCamera[] }>(cacheKey);
       if (cached?.items?.length) {
-        setCameras(cached.items);
+        setCameras(preferLogicalCameras(cached.items));
         setCamerasLoading(false);
       } else {
         setCamerasLoading(true);
@@ -298,14 +302,15 @@ export function PlaybackPage() {
           camRes = await playbackApi.cameras(date, null, { signal: ac.signal });
         }
         if (cancelled || ac.signal.aborted) return;
-        cacheSet(cacheKey, camRes, CAMERAS_TTL_MS);
-        setCameras(camRes.items);
-        const ids = new Set(camRes.items.map((c) => c.id));
+        const logicalCams = preferLogicalCameras(camRes.items);
+        cacheSet(cacheKey, { ...camRes, items: logicalCams }, CAMERAS_TTL_MS);
+        setCameras(logicalCams);
+        const ids = new Set(logicalCams.map((c) => c.id));
         setSelectedIds((prev) => {
-          const kept = prev.filter((id) => ids.has(id));
+          const kept = filterLogicalCameraIds(prev).filter((id) => ids.has(id));
           if (kept.length) return kept;
-          if (urlCamera && ids.has(urlCamera)) return [urlCamera];
-          return camRes.items.map((c) => c.id);
+          if (urlCamera && ids.has(urlCamera) && !urlCamera.includes('-')) return [urlCamera];
+          return logicalCams.map((c) => c.id);
         });
         setSegmentsByCam({});
         setMarkers([]);
@@ -337,7 +342,7 @@ export function PlaybackPage() {
       let didSetSegmentsLoading = false;
       setSegmentsError(null);
       try {
-        const nextSelected = camsOverride ?? selectedIdsRef.current;
+        const nextSelected = filterLogicalCameraIds(camsOverride ?? selectedIdsRef.current);
         if (!nextSelected.length) {
           setSegmentsByCam({});
           setMarkers([]);
@@ -379,7 +384,7 @@ export function PlaybackPage() {
               { preservePosition: Boolean(opts?.merge) || initialT != null },
             );
           }
-          if (!opts?.merge) {
+          if (!opts?.merge && (viewport.viewFrom == null || viewport.viewTo == null)) {
             viewport.resetToData(from ?? null, to ?? null, useDate ?? date);
           }
 
@@ -400,9 +405,13 @@ export function PlaybackPage() {
           });
 
           setSegmentsLoaded(true);
-          if (!opts?.merge) {
+          if (
+            !opts?.merge &&
+            (dateChangeSourceRef.current === 'user' || initialT != null) &&
+            allSegs.length
+          ) {
             const target = initialT != null ? initialT : ctrl.getPosition();
-            const snapped = allSegs.length ? snapPositionToPlayable(allSegs, target) : target;
+            const snapped = snapPositionToPlayable(allSegs, target);
             if (Math.abs(snapped - ctrl.getPosition()) > 0.5) ctrl.seek(snapped);
           }
           return;
@@ -439,8 +448,7 @@ export function PlaybackPage() {
           cacheSet(segKey, { by_camera: incoming, items: Object.values(incoming).flat() }, SEGMENTS_TTL_MS);
           cacheSet(evKey, { items: evItems, legacy_markers: [] }, SEGMENTS_TTL_MS);
           if (timelineTicks) {
-            const tickKey = `playback:detections:${useDate ?? ''}:ticks:${nextSelected.join(',')}`;
-            cacheSet(tickKey, { by_camera: timelineTicks }, SEGMENTS_TTL_MS);
+            seedTicksRef.current(timelineTicks);
           }
         } catch (timelineErr) {
           if (isAbortError(timelineErr)) throw timelineErr;
@@ -484,7 +492,7 @@ export function PlaybackPage() {
             { preservePosition: Boolean(opts?.merge) || initialT != null },
           );
         }
-        if (!opts?.merge) {
+        if (!opts?.merge && (viewport.viewFrom == null || viewport.viewTo == null)) {
           viewport.resetToData(from ?? null, to ?? null, useDate ?? date);
         }
         setMarkers((prev) => {
@@ -503,9 +511,13 @@ export function PlaybackPage() {
           return Array.from(byKey.values()).sort((a, b) => a.start_ts - b.start_ts);
         });
         setSegmentsLoaded(true);
-        if (!opts?.merge) {
+        if (
+          !opts?.merge &&
+          (dateChangeSourceRef.current === 'user' || initialT != null) &&
+          allSegs.length
+        ) {
           const target = initialT != null ? initialT : ctrl.getPosition();
-          const snapped = allSegs.length ? snapPositionToPlayable(allSegs, target) : target;
+          const snapped = snapPositionToPlayable(allSegs, target);
           if (Math.abs(snapped - ctrl.getPosition()) > 0.5) ctrl.seek(snapped);
         }
       } catch (e) {
@@ -534,7 +546,8 @@ export function PlaybackPage() {
     [date, initialT, showError, ctrl, viewport, runId, t],
   );
   useEffect(() => {
-    // Show calendar-day timeline immediately on date change (before segments return).
+    // Only reset viewport when the user picks a date (DatePicker), not pan/seek cross-day.
+    if (dateChangeSourceRef.current !== 'user') return;
     viewport.resetToData(null, null, date);
     // eslint-disable-next-line react-hooks/exhaustive-deps -- only on date
   }, [date]);

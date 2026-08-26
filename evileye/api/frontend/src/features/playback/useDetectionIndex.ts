@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import { cacheGet, cacheSet, isAbortError, playbackApi, type PlaybackDetectionItem } from '../../api';
 import { mergeGlobalDetectionTs } from './detectionSync';
 
@@ -15,7 +15,8 @@ function detectionsCacheKey(
   return `playback:detections:${date}:${runId ?? 'none'}:${Math.round(fromSec)}:${Math.round(toSec)}:${ticksOnly ? 'ticks' : 'full'}:${cameras.join(',')}`;
 }
 
-function mergeDetectionItems(
+/** Merge detection rows per camera; prefer items that carry bounding_box. */
+export function mergeDetectionItems(
   prev: Record<string, PlaybackDetectionItem[]>,
   incoming: Record<string, PlaybackDetectionItem[]>,
   cameras: string[],
@@ -205,6 +206,14 @@ export function useDetectionIndex({
     enabled,
   ]);
 
+  const seedTicks = useCallback(
+    (incoming: Record<string, PlaybackDetectionItem[]>) => {
+      if (!enabled || !cameras.length) return;
+      setTickByCamera((prev) => mergeDetectionItems(prev, incoming, cameras));
+    },
+    [enabled, cameras, cameraKey],
+  );
+
   const byCamera = useMemo(() => fullByCamera, [fullByCamera]);
   const globalTs = useMemo(
     () => mergeGlobalDetectionTs(mergeDetectionItems(tickByCamera, fullByCamera, cameras)),
@@ -218,5 +227,6 @@ export function useDetectionIndex({
     hasDetections,
     loading: priorityLoading,
     backgroundLoading,
+    seedTicks,
   };
 }
