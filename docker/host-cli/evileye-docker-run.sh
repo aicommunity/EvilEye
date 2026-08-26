@@ -6,6 +6,7 @@ set -euo pipefail
 EVILEYE_DOCKER_IMAGE="${EVILEYE_DOCKER_IMAGE:-evileye/app:latest}"
 EVILEYE_DOCKER_GPU_MODE="${EVILEYE_DOCKER_GPU_MODE:-gpus}" # gpus | cdi | none
 SITE_DIR="${EVILEYE_DOCKER_SITE_DIR:-}"
+LAUNCHER_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 if ! command -v docker >/dev/null 2>&1; then
   echo "error: docker not found in PATH" >&2
@@ -22,6 +23,14 @@ fi
 if [[ $# -lt 1 ]]; then
   echo "usage: $(basename "$0") <command> [args...]" >&2
   exit 2
+fi
+
+# Auto-detect site as parent of bin/ when markers exist (unless SITE_DIR already set)
+if [[ -z "$SITE_DIR" && "$(basename "$LAUNCHER_DIR")" == "bin" ]]; then
+  parent="$(cd "$LAUNCHER_DIR/.." && pwd)"
+  if [[ -f "$parent/credentials.json" || -f "$parent/docker-compose.yml" || -d "$parent/configs" ]]; then
+    SITE_DIR="$parent"
+  fi
 fi
 
 DOCKER_ARGS=(

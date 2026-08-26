@@ -29,7 +29,7 @@ evileye --help
 - `configs/single_video.json`
 - `EvilEyeData/`, `videos/`, `models/`, `logs/`
 - `postgres_data/`
-- `bin/evileye*` (host-cli wrappers)
+- `bin/evileye*` (bash + Windows `.cmd`/`.ps1` host-cli wrappers)
 
 Web UI: `http://127.0.0.1:8181`
 
@@ -70,16 +70,29 @@ EVILEYE_IMAGE=evileye/app:cpu docker compose up -d
 
 ## Host CLI
 
-`bin/evileye` и связанные команды на хосте запускают контейнер под капотом.
+После bootstrap в `bin/` лежат:
 
-Пример:
+- bash-обёртки (`evileye`, …) — Linux / macOS / Git Bash / WSL
+- Windows-обёртки (`evileye.cmd`, `evileye.ps1`, `EvilEye-DockerRun.ps1`) — PowerShell / cmd
+
+Site-dir резолвится как родитель `bin/` (не путь `/site` из контейнера).
+
+Пример (Linux):
 
 ```bash
 export PATH="$PWD/bin:$PATH"
 evileye run configs/single_video.json --no-gui
 ```
 
-Можно запускать из любой папки, если wrapper экспортирует `EVILEYE_DOCKER_SITE_DIR` (bootstrap делает это автоматически).
+Пример (Windows PowerShell):
+
+```powershell
+$env:Path = "$PWD\bin;$env:Path"
+evileye --help
+```
+
+Подробности для Windows: [WINDOWS_DOCKER_DEPLOYMENT.md](WINDOWS_DOCKER_DEPLOYMENT.md) (секция Host CLI).
+Глобальная установка на Windows: `docker/windows/Install-HostCli.ps1`.
 
 ## ACL / пользователи
 

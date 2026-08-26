@@ -7,6 +7,17 @@ import os
 import shutil
 from pathlib import Path
 
+HOST_CLI_COMMANDS = (
+    ("evileye", "evileye"),
+    ("evileye-launch", "evileye-launch"),
+    ("evileye-process", "evileye-process"),
+    ("evileye-configure", "evileye-configure"),
+    ("evileye-srv", "evileye-srv"),
+)
+
+HOST_CLI_SRC = Path("/opt/evileye/docker/host-cli")
+HOST_CLI_WIN_SRC = HOST_CLI_SRC / "windows"
+
 
 def _copy_package_file(relpath: str, dst: Path) -> None:
     from importlib import resources
@@ -68,32 +79,88 @@ def _write_env(site: Path, image: str) -> None:
     )
 
 
-def _write_host_cli(site: Path, image: str) -> None:
-    src_dir = Path("/opt/evileye/docker/host-cli")
-    bin_dir = site / "bin"
-    shutil.copy2(src_dir / "evileye-docker-run.sh", bin_dir / "evileye-docker-run.sh")
+def _cpu_gpu_export_bash(image: str) -> str:
+    if image.endswith(":cpu"):
+        return 'export EVILEYE_DOCKER_GPU_MODE="${EVILEYE_DOCKER_GPU_MODE:-none}"\n'
+    return ""
+
+
+def _write_bash_host_cli(bin_dir: Path, image: str) -> None:
+    launcher_src = HOST_CLI_SRC / "evileye-docker-run.sh"
+    if not launcher_src.is_file():
+        print("warning: missing", launcher_src, "- skip bash host-cli")
+        return
+    shutil.copy2(launcher_src, bin_dir / "evileye-docker-run.sh")
     os.chmod(bin_dir / "evileye-docker-run.sh", 0o755)
 
-    wrappers = {
-        "evileye": "evileye",
-        "evileye-launch": "evileye-launch",
-        "evileye-process": "evileye-process",
-        "evileye-configure": "evileye-configure",
-        "evileye-srv": "evileye-srv",
-    }
-    site_dir = str(site)
-    for name, cmd in wrappers.items():
+    gpu_line = _cpu_gpu_export_bash(image)
+    for name, cmd in HOST_CLI_COMMANDS:
         script = (
             "#!/usr/bin/env bash\n"
+            "# EvilEye docker host-cli\n"
             "set -euo pipefail\n"
-            f"export EVILEYE_DOCKER_IMAGE=\"${{EVILEYE_DOCKER_IMAGE:-{image}}}\"\n"
-            f"export EVILEYE_DOCKER_SITE_DIR=\"${{EVILEYE_DOCKER_SITE_DIR:-{site_dir}}}\"\n"
-            "ROOT=\"$(cd \"$(dirname \"${BASH_SOURCE[0]}\")\" && pwd)\"\n"
-            f"exec \"$ROOT/evileye-docker-run.sh\" {cmd} \"$@\"\n"
+            f'export EVILEYE_DOCKER_IMAGE="${{EVILEYE_DOCKER_IMAGE:-{image}}}"\n'
+            f"{gpu_line}"
+            'export EVILEYE_DOCKER_SITE_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"\n'
+            'ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"\n'
+            f'exec "$ROOT/evileye-docker-run.sh" {cmd} "$@"\n'
         )
         path = bin_dir / name
         path.write_text(script, encoding="utf-8")
         os.chmod(path, 0o755)
+
+
+def _write_windows_host_cli(bin_dir: Path, image: str) -> None:
+    if not HOST_CLI_WIN_SRC.is_dir():
+        print("warning: missing", HOST_CLI_WIN_SRC, "- skip Windows host-cli")
+        return
+
+    launcher_src = HOST_CLI_WIN_SRC / "EvilEye-DockerRun.ps1"
+    if not launcher_src.is_file():
+        print("warning: missing", launcher_src, "- skip Windows host-cli")
+        return
+    shutil.copy2(launcher_src, bin_dir / "EvilEye-DockerRun.ps1")
+
+    cpu = image.endswith(":cpu")
+    for name, cmd in HOST_CLI_COMMANDS:
+        lines = [
+            "#Requires -Version 5.1",
+            "# EvilEye docker host-cli",
+            "$ErrorActionPreference = 'Stop'",
+            "$Root = $PSScriptRoot",
+            f"if (-not $env:EVILEYE_DOCKER_IMAGE) {{ $env:EVILEYE_DOCKER_IMAGE = '{image}' }}",
+        ]
+        if cpu:
+            lines.append(
+                "if (-not $env:EVILEYE_DOCKER_GPU_MODE) { $env:EVILEYE_DOCKER_GPU_MODE = 'none' }"
+            )
+        lines.extend(
+            [
+                "$env:EVILEYE_DOCKER_SITE_DIR = (Resolve-Path (Join-Path $Root '..')).Path",
+                "$Launcher = Join-Path $Root 'EvilEye-DockerRun.ps1'",
+                f"& $Launcher '{cmd}' @args",
+                "exit $LASTEXITCODE",
+                "",
+            ]
+        )
+        (bin_dir / f"{name}.ps1").write_text("\n".join(lines), encoding="utf-8", newline="\r\n")
+
+        cmd_text = (
+            "@echo off\r\n"
+            "rem EvilEye docker host-cli\r\n"
+            "setlocal\r\n"
+            'set "SCRIPT_DIR=%~dp0"\r\n'
+            f'powershell -NoProfile -ExecutionPolicy Bypass -File "%SCRIPT_DIR%{name}.ps1" %*\r\n'
+            "exit /b %ERRORLEVEL%\r\n"
+        )
+        (bin_dir / f"{name}.cmd").write_text(cmd_text, encoding="utf-8", newline="")
+
+
+def _write_host_cli(site: Path, image: str) -> None:
+    bin_dir = site / "bin"
+    bin_dir.mkdir(parents=True, exist_ok=True)
+    _write_bash_host_cli(bin_dir, image)
+    _write_windows_host_cli(bin_dir, image)
 
 
 def main() -> int:
@@ -112,7 +179,10 @@ def main() -> int:
     print("Bootstrap complete:", site)
     print("Next steps:")
     print("  docker compose up -d")
-    print("  export PATH=\"$PWD/bin:$PATH\"")
+    print("  # Linux/macOS / Git Bash:")
+    print('  export PATH="$PWD/bin:$PATH"')
+    print("  # Windows PowerShell:")
+    print('  $env:Path = "$PWD\\bin;$env:Path"')
     print("  evileye --help")
     return 0
 
