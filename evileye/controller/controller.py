@@ -102,6 +102,7 @@ class Controller(ControllerProcessingMixin):
         self._preview_active_events_by_source: dict[int, dict[tuple[int, str], dict]] = {}
         self._preview_events_lock = threading.Lock()
         self._preview_zones_by_source: dict[int, list] = {}
+        self._control_ipc_server = None
 
         self.pipeline = None
 
@@ -979,9 +980,57 @@ class Controller(ControllerProcessingMixin):
         self.logger.info(f"Starting control thread for stream_pipeline_id: {self.stream_pipeline_id}")
         self.control_thread.start()
         self.logger.info(f"Control thread started successfully")
+        self._start_control_ipc()
+
+    def _start_control_ipc(self) -> None:
+        try:
+            from evileye.api.core.control_ipc import ControlIpcServer
+
+            self._control_ipc_server = ControlIpcServer()
+            self._control_ipc_server.start(self._handle_control_command)
+        except Exception as exc:
+            self.logger.warning("Control IPC not started: %s", exc)
+
+    def _stop_control_ipc(self) -> None:
+        server = self._control_ipc_server
+        self._control_ipc_server = None
+        if server is not None:
+            try:
+                server.stop()
+            except Exception:
+                pass
+
+    def _handle_control_command(self, command: dict) -> dict:
+        cmd = str(command.get("cmd") or "")
+        if cmd != "apply_zones":
+            return {"ok": False, "error": "unknown_command"}
+        try:
+            source_id = int(command.get("source_id"))
+        except (TypeError, ValueError):
+            return {"ok": False, "error": "invalid_source_id"}
+        zones = command.get("zones")
+        if not isinstance(zones, list):
+            return {"ok": False, "error": "invalid_zones"}
+        detector = self.zone_events_detector
+        if detector is None:
+            return {"ok": False, "error": "zone_detector_unavailable"}
+        detector.replace_zones_for_source(source_id, zones)
+        try:
+            events_cfg = self.params.setdefault("events_detectors", {})
+            if isinstance(events_cfg, dict):
+                zone_cfg = events_cfg.setdefault("ZoneEventsDetector", {})
+                if isinstance(zone_cfg, dict):
+                    sources = zone_cfg.setdefault("sources", {})
+                    if isinstance(sources, dict):
+                        sources[str(source_id)] = detector.sources_list.get(str(source_id), zones)
+        except Exception:
+            pass
+        self._publish_runtime_snapshot(state="running")
+        return {"ok": True, "source_id": source_id, "zone_count": len(zones)}
 
     def stop(self):
         self.run_flag = False
+        self._stop_control_ipc()
         self._publish_runtime_snapshot(state="stopping")
         self.logger.info("Controller shutdown: stopping pipeline")
         # Stop pipeline first (detectors/trackers/captures) so source reconnect and

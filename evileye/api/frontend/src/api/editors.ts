@@ -14,6 +14,7 @@ export interface ZoneItem {
 export interface ZonesPayload {
   zones: ZoneItem[];
   restart_required?: boolean;
+  applied_live?: boolean;
 }
 
 export const editorsApi = {

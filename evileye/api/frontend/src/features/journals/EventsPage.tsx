@@ -7,7 +7,7 @@ import { useRunConfigFlags } from '../../hooks/useRunConfigFlags';
 import { JournalDetailDrawer } from './JournalDetailDrawer';
 import { JournalTable } from './JournalTable';
 import { useJournalFeed } from './useJournalFeed';
-import type { JournalType } from './journalMath';
+import { eventTypeLabel, type JournalType } from './journalMath';
 import { useVisibilityPolling } from '../../hooks/useVisibilityPolling';
 
 function formatLocalDate(d: Date): string {
@@ -21,6 +21,12 @@ function today(): string {
 function yesterday(): string {
   const d = new Date();
   d.setDate(d.getDate() - 1);
+  return formatLocalDate(d);
+}
+
+function daysAgo(n: number): string {
+  const d = new Date();
+  d.setDate(d.getDate() - n);
   return formatLocalDate(d);
 }
 
@@ -201,7 +207,7 @@ export function EventsPage() {
             <option value="">{t('journals.allTypes')}</option>
             {eventTypes.map((et) => (
               <option key={et} value={et}>
-                {et}
+                {eventTypeLabel(t, et)}
               </option>
             ))}
           </select>
@@ -258,6 +264,25 @@ export function EventsPage() {
           )
         ) : (
           <>
+            {!feed.loading && !feed.rows.length ? (
+              <div className="empty" style={{ marginBottom: 12 }}>
+                <p>
+                  {eventType === 'zone_entered'
+                    ? t('journals.emptyZoneEntered')
+                    : t('journals.emptyEventsPeriod')}
+                </p>
+                <Button
+                  size="sm"
+                  variant="outline"
+                  onClick={() => {
+                    setDateFrom(daysAgo(30));
+                    setDateTo(today());
+                  }}
+                >
+                  {t('journals.expandDateRange30')}
+                </Button>
+              </div>
+            ) : null}
             {!feed.loading && feed.message ? <p className="empty">{feed.message}</p> : null}
             <JournalTable
               rows={feed.rows}

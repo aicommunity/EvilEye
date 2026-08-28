@@ -1,6 +1,6 @@
 import { journalPreviewUrl, type JournalGroupedRow } from '../../api';
 import { useI18n } from '../../i18n';
-import { redactMediaCredentials, rowKey, type JournalType } from './journalMath';
+import { eventTypeLabel, redactMediaCredentials, rowKey, type JournalType } from './journalMath';
 
 export function JournalTable({
   rows,
@@ -35,7 +35,7 @@ export function JournalTable({
             return (
               <tr key={rowKey(row)} className="journal-row" onClick={() => onSelect(row)} style={{ cursor: 'pointer' }}>
                 <td>{formatDateTime(row.time as string | null | undefined)}</td>
-                <td>{String(row.event ?? '—')}</td>
+                <td>{eventTypeLabel(t, String(row.event ?? '—'))}</td>
                 <td>{redactMediaCredentials(row.information ?? '—')}</td>
                 <td>{redactMediaCredentials(row.source ?? '—')}</td>
                 <td>{formatDateTime(row.time_lost as string | null | undefined)}</td>

@@ -9,6 +9,8 @@ from queue import Queue
 from .event_zone import ZoneEvent
 import math
 
+_DEFAULT_FRAME_SIZE = (1920, 1080)
+
 
 class ZoneEventsDetector(EventsDetector):
     def __init__(self, objects_handler):
@@ -60,19 +62,7 @@ class ZoneEventsDetector(EventsDetector):
                     continue
 
                 zones = self.sources_zones[source_id]
-                # last_image may be None or may not contain an image (it can be cleared to save memory).
-                # In that case, we cannot evaluate zone geometry in pixel space reliably; skip this tick.
-                img_height = None
-                img_width = None
-                try:
-                    first = source_objects.objects[0]
-                    last_img = getattr(first, "last_image", None)
-                    img = getattr(last_img, "image", None)
-                    if img is not None and hasattr(img, "shape") and len(img.shape) >= 2:
-                        img_height, img_width = img.shape[:2]
-                except Exception:
-                    img_height = None
-                    img_width = None
+                img_width, img_height = self._resolve_frame_size(source_objects.objects)
                 if not img_height or not img_width:
                     continue
                 for cur_zone in zones:
@@ -272,6 +262,83 @@ class ZoneEventsDetector(EventsDetector):
                 return True
         return False
 
+    def _resolve_frame_size(self, objects) -> tuple[int | None, int | None]:
+        for obj in objects or []:
+            last_img = getattr(obj, "last_image", None)
+            img = getattr(last_img, "image", None)
+            if img is not None and hasattr(img, "shape") and len(img.shape) >= 2:
+                height, width = img.shape[:2]
+                if width > 0 and height > 0:
+                    return int(width), int(height)
+        default_w, default_h = _DEFAULT_FRAME_SIZE
+        return default_w, default_h
+
+    @staticmethod
+    def _normalize_zone_coords_list(zone_coords_list) -> list:
+        normalized = []
+        for entry in zone_coords_list or []:
+            coords = ZoneEventsDetector._normalize_polygon_coords(entry)
+            if coords:
+                normalized.append(coords)
+        return normalized
+
+    @staticmethod
+    def _normalize_polygon_coords(entry):
+        if isinstance(entry, dict):
+            points = entry.get("points") or entry.get("coords") or entry.get("coordinates")
+            if not isinstance(points, list):
+                return None
+            entry = points
+        if not isinstance(entry, (list, tuple)) or not entry:
+            return None
+        while (
+            len(entry) == 1
+            and isinstance(entry[0], (list, tuple))
+            and entry[0]
+            and isinstance(entry[0][0], (list, tuple))
+        ):
+            entry = entry[0]
+        if not entry or not isinstance(entry[0], (list, tuple)) or len(entry[0]) < 2:
+            return None
+        if not isinstance(entry[0][0], (int, float)):
+            return None
+        try:
+            return [[float(p[0]), float(p[1])] for p in entry]
+        except (TypeError, ValueError, IndexError):
+            return None
+
+    def replace_zones_for_source(self, source_id: int, zone_coords_list) -> None:
+        src_id = int(source_id)
+        normalized = self._normalize_zone_coords_list(zone_coords_list)
+
+        for obj_id in list(self.obj_ids_zone.keys()):
+            zone_map = self.obj_ids_zone.get(obj_id) or {}
+            stale_zone_ids = [
+                zone_id
+                for zone_id, zone in zone_map.items()
+                if zone.get_src_id() == src_id
+            ]
+            for zone_id in stale_zone_ids:
+                del zone_map[zone_id]
+            if not zone_map:
+                del self.obj_ids_zone[obj_id]
+
+        self.left_frame_id[src_id] = {}
+        self.entered_frame_id[src_id] = {}
+        self.sources_zones[src_id] = []
+        self.sources.add(src_id)
+        self.sources_list[str(src_id)] = normalized
+
+        for coords in normalized:
+            zone = Zone(src_id, coords, 'poly', is_active=True)
+            zone.set_id(self.zone_counter)
+            self.zone_id_people[self.zone_counter] = 0
+            self.zone_counter += 1
+            self.sources_zones[src_id].append(zone)
+
+        if not self.event.is_set():
+            self.event.set()
+
     def _update_zones(self):
         while not self.new_zones.empty():
             zone = self.new_zones.get()
@@ -332,7 +399,7 @@ class ZoneEventsDetector(EventsDetector):
     def init_impl(self):
         sources_zones = {int(key): value for key, value in self.params.get('sources', dict()).items()}
         for src_id in sources_zones:
-            for zone_coords in sources_zones[src_id]:
+            for zone_coords in self._normalize_zone_coords_list(sources_zones[src_id]):
                 self.add_zone(src_id, zone_coords, 'poly')
 
     def stop(self):

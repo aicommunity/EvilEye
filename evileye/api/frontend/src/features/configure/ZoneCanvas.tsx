@@ -24,6 +24,7 @@ export function ZoneCanvas({
   const [mode, setMode] = useState<'rect' | 'polygon'>('rect');
   const [draft, setDraft] = useState<[number, number][]>([]);
   const [bgUrl, setBgUrl] = useState<string | null>(null);
+  const [cameraLabel, setCameraLabel] = useState<string | null>(null);
   const wrapRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -42,9 +43,13 @@ export function ZoneCanvas({
         const cams = res.items ?? [];
         const match = cams.find((c) => c.source_id === sourceId && c.run_state === 'running');
         if (match) {
+          setCameraLabel(match.source_name || null);
           const base = streamSnapshotUrl(match.run_id, sourceId);
           setBgUrl(`${base}${base.includes('?') ? '&' : '?'}t=${Date.now()}`);
-        } else setBgUrl(null);
+        } else {
+          setCameraLabel(null);
+          setBgUrl(null);
+        }
       })
       .catch(() => {
         if (!cancelled) setBgUrl(null);
@@ -63,7 +68,9 @@ export function ZoneCanvas({
     <div>
       <div className="toolbar">
         <label>
-          source_id{' '}
+          {cameraLabel
+            ? t('configure.editors.zoneCameraLabel', { name: cameraLabel, id: sourceId })
+            : t('configure.editors.zoneCameraUnknown', { id: sourceId })}{' '}
           <input
             type="number"
             step={INT_STEP}
@@ -85,7 +92,8 @@ export function ZoneCanvas({
               void editorsApi
                 .putZones(configName, sourceId, zones)
                 .then((r) => {
-                  showSuccess(r.restart_required ? t('common.savedRestart') : t('common.saved'));
+                  if (r.restart_required) showSuccess(t('common.savedRestart'));
+                  else showSuccess(t('common.savedApplied'));
                   onSaved?.(Boolean(r.restart_required));
                 })
                 .catch((e) => showError(e.message))
@@ -160,6 +168,7 @@ export function ZoneCanvas({
       <p className="hint">
         {bgUrl ? t('configure.editors.zoneHintLive') : t('configure.editors.zoneHintPlaceholder')}
         {t('configure.editors.zoneHintDraw')}
+        {t('configure.editors.zoneHintDetection')}
       </p>
     </div>
   );

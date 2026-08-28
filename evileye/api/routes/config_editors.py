@@ -18,6 +18,13 @@ from evileye.api.core.config_validation import (
     split_path,
     validate_config,
 )
+from evileye.api.core.control_ipc import send_control_command
+from evileye.api.core.zone_config import (
+    detector_zones_for_source,
+    set_detector_zones_for_source,
+    ui_zones_from_detector,
+    ui_zones_to_detector,
+)
 router = APIRouter(prefix="/api/v1/configs", tags=["config-editors"])
 
 
@@ -164,74 +171,65 @@ async def put_roi(name: str, source_id: int, payload: RoiUpdate) -> dict:
 
 
 def _events_zones(body: dict[str, Any], source_id: int) -> list:
-    # Prefer events_detectors / zone params commonly used in EvilEye configs
-    events = body.get("events_detectors") or body.get("events") or {}
-    if isinstance(events, list):
-        for item in events:
-            if isinstance(item, dict) and source_id in (item.get("source_ids") or [source_id]):
-                return item.get("zones") or item.get("params", {}).get("zones") or []
-        return []
-    if isinstance(events, dict):
-        zones = events.get("zones") or {}
-        if isinstance(zones, dict):
-            return zones.get(str(source_id), zones.get(source_id, []))
-        if isinstance(zones, list):
-            return zones
-    return []
+    return detector_zones_for_source(body, source_id)
 
 
-def _set_events_zones(body: dict[str, Any], source_id: int, zones: list) -> None:
-    events = body.get("events_detectors")
-    if isinstance(events, list) and events:
-        target = None
-        for item in events:
-            if isinstance(item, dict) and source_id in (item.get("source_ids") or []):
-                target = item
-                break
-        target = target or (events[0] if isinstance(events[0], dict) else None)
-        if target is not None:
-            params = target.setdefault("params", {})
-            if isinstance(params, dict):
-                params["zones"] = zones
-            else:
-                target["zones"] = zones
-            return
-    # Fallback store
-    store = body.setdefault("events_detectors", {})
-    if isinstance(store, dict):
-        zones_map = store.setdefault("zones", {})
-        if isinstance(zones_map, dict):
-            zones_map[str(source_id)] = zones
-        else:
-            store["zones"] = zones
-    else:
-        body["web_zones"] = {str(source_id): zones}
+def _set_events_zones(body: dict[str, Any], source_id: int, zones: list[list[list[float]]]) -> None:
+    set_detector_zones_for_source(body, source_id, zones)
+
+
+def _find_runtime_id_for_config(config_name: str) -> int | None:
+    try:
+        from evileye.api.core.server_state import list_active_run_summaries
+
+        safe_name = Path(config_name).name
+        for run in list_active_run_summaries():
+            cfg = str(run.get("config_path") or "")
+            if not cfg:
+                continue
+            if Path(cfg).name == safe_name:
+                rid = run.get("id")
+                if rid is not None:
+                    return int(rid)
+    except Exception:
+        return None
+    return None
+
+
+def _apply_zones_runtime(source_id: int, zones: list[list[list[float]]]) -> bool:
+    response = send_control_command(
+        {
+            "cmd": "apply_zones",
+            "source_id": int(source_id),
+            "zones": zones,
+        }
+    )
+    return bool(isinstance(response, dict) and response.get("ok"))
 
 
 @router.get("/{name}/sources/{source_id}/zones")
 async def get_zones(name: str, source_id: int) -> dict:
     body = _load(name)
     raw = _events_zones(body, source_id)
-    zones = []
-    for z in raw if isinstance(raw, list) else []:
-        if isinstance(z, dict):
-            zones.append(
-                {
-                    "name": z.get("name"),
-                    "type": z.get("type") or "polygon",
-                    "points": z.get("points") or z.get("coords") or [],
-                }
-            )
-    return {"zones": zones}
+    return {"zones": ui_zones_from_detector(raw)}
 
 
 @router.put("/{name}/sources/{source_id}/zones")
 async def put_zones(name: str, source_id: int, payload: ZonesUpdate) -> dict:
     body = _load(name)
-    zones = [z.model_dump() for z in payload.zones]
-    _set_events_zones(body, source_id, zones)
+    ui_zones = [z.model_dump() for z in payload.zones]
+    detector_zones = ui_zones_to_detector(ui_zones)
+    _set_events_zones(body, source_id, detector_zones)
     _save(name, body)
-    return {"zones": zones, "status": "updated", "restart_required": True}
+    restart_required = True
+    if _find_runtime_id_for_config(name) is not None:
+        restart_required = not _apply_zones_runtime(source_id, detector_zones)
+    return {
+        "zones": ui_zones,
+        "status": "updated",
+        "restart_required": restart_required,
+        "applied_live": not restart_required,
+    }
 
 
 @router.get("/{name}/class-mapping")
