@@ -330,6 +330,10 @@ SPLIT_CONFIG = {
 }
 
 
+def test_video_size_for_source_split_crop_dimensions():
+    assert video_size_for_source(SPLIT_CONFIG, 2) == (2304, 1292)
+
+
 def test_resolve_playback_coord_context_split_cam3():
     from evileye.visualization_modules.playback_coord import resolve_playback_coord_context
 

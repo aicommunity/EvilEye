@@ -125,6 +125,21 @@ def video_size_for_source(params: dict[str, Any] | None, source_id: int | None) 
         source_ids = source.get("source_ids") or []
         if source_id not in source_ids:
             continue
+        if bool(source.get("split")):
+            src_coords_list = source.get("src_coords") or []
+            try:
+                idx = source_ids.index(source_id)
+            except ValueError:
+                idx = None
+            if idx is not None and idx < len(src_coords_list):
+                raw = src_coords_list[idx]
+                if isinstance(raw, (list, tuple)) and len(raw) >= 4:
+                    try:
+                        w, h = int(raw[2]), int(raw[3])
+                        if w > 0 and h > 0:
+                            return w, h
+                    except Exception:
+                        pass
         for key in ("frame_width", "width", "video_width"):
             value = source.get(key)
             if value:

@@ -73,6 +73,18 @@ class DetectionThreadBase:
             except Exception:
                 pass
 
+    def set_rois_for_source(self, source_id: int, rois_xywh: list[list[int]]) -> None:
+        """Update ROI for one source and refresh roi_coords_per_camera."""
+        if source_id not in self.source_ids:
+            return
+        idx = self.source_ids.index(source_id)
+        if not isinstance(self.roi, list):
+            self.roi = []
+        while len(self.roi) <= idx:
+            self.roi.append([])
+        self.roi[idx] = [list(r) for r in rois_xywh]
+        self.roi_coords_per_camera[source_id] = self.roi[idx]
+
     def start(self) -> None:
         """Start the detection thread."""
         self.run_flag = True

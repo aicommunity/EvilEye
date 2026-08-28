@@ -36,3 +36,31 @@ def test_apply_zones_refreshes_preview_zones_cache():
 def test_apply_zones_unknown_command():
     ctrl = Controller.__new__(Controller)
     assert ctrl._handle_control_command({"cmd": "other"}) == {"ok": False, "error": "unknown_command"}
+
+
+def test_apply_zone_detector_params_updates_runtime():
+    ctrl = Controller.__new__(Controller)
+    ctrl.params = {"events_detectors": {"ZoneEventsDetector": {}}}
+
+    class _FakeDetector:
+        event_threshold = 1
+        zone_left_threshold = 2
+
+        def apply_thresholds(self, *, event_threshold=None, zone_left_threshold=None):
+            if event_threshold is not None:
+                self.event_threshold = event_threshold
+            if zone_left_threshold is not None:
+                self.zone_left_threshold = zone_left_threshold
+
+    ctrl.zone_events_detector = _FakeDetector()
+    ctrl._publish_runtime_snapshot = lambda **kwargs: None
+
+    result = ctrl._handle_control_command(
+        {"cmd": "apply_zone_detector_params", "event_threshold": 4, "zone_left_threshold": 6}
+    )
+
+    assert result["ok"] is True
+    assert result["event_threshold"] == 4
+    assert result["zone_left_threshold"] == 6
+    assert ctrl.params["events_detectors"]["ZoneEventsDetector"]["event_threshold"] == 4
+    assert ctrl.params["events_detectors"]["ZoneEventsDetector"]["zone_left_threshold"] == 6

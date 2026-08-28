@@ -339,6 +339,17 @@ class ZoneEventsDetector(EventsDetector):
         if not self.event.is_set():
             self.event.set()
 
+    def apply_thresholds(
+        self,
+        *,
+        event_threshold: int | None = None,
+        zone_left_threshold: int | None = None,
+    ) -> None:
+        if event_threshold is not None:
+            self.event_threshold = max(0, int(event_threshold))
+        if zone_left_threshold is not None:
+            self.zone_left_threshold = max(0, int(zone_left_threshold))
+
     def _update_zones(self):
         while not self.new_zones.empty():
             zone = self.new_zones.get()

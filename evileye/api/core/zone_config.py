@@ -130,3 +130,40 @@ def set_detector_zones_for_source(body: dict[str, Any], source_id: int, zones: l
         sources = {}
         section["sources"] = sources
     sources[str(source_id)] = zones
+
+
+def zone_detector_params(body: dict[str, Any]) -> dict[str, int]:
+    """Read global ZoneEventsDetector thresholds from config."""
+    section = zone_detector_section(body)
+    event_threshold = section.get("event_threshold", 2)
+    zone_left_threshold = section.get("zone_left_threshold", 3)
+    try:
+        event_threshold = int(event_threshold)
+    except (TypeError, ValueError):
+        event_threshold = 2
+    try:
+        zone_left_threshold = int(zone_left_threshold)
+    except (TypeError, ValueError):
+        zone_left_threshold = 3
+    return {
+        "event_threshold": max(0, event_threshold),
+        "zone_left_threshold": max(0, zone_left_threshold),
+    }
+
+
+def set_zone_detector_params(
+    body: dict[str, Any],
+    *,
+    event_threshold: int,
+    zone_left_threshold: int,
+) -> None:
+    events = body.setdefault("events_detectors", {})
+    if not isinstance(events, dict):
+        body["events_detectors"] = {}
+        events = body["events_detectors"]
+    section = events.setdefault("ZoneEventsDetector", {})
+    if not isinstance(section, dict):
+        section = {}
+        events["ZoneEventsDetector"] = section
+    section["event_threshold"] = max(0, int(event_threshold))
+    section["zone_left_threshold"] = max(0, int(zone_left_threshold))

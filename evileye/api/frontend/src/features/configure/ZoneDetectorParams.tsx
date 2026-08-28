@@ -1,18 +1,9 @@
 import { useEffect, useState } from 'react';
-import { configGetSection, configPutSection } from '../../api';
+import { editorsApi } from '../../api';
 import { Button } from '../../components/ui';
 import { useToast } from '../../components/ui/Toast';
 import { useI18n } from '../../i18n';
 import { formatInt, INT_STEP, parseIntInput } from './numberFormat';
-
-type EventsDetectorsSection = {
-  ZoneEventsDetector?: {
-    event_threshold?: number;
-    zone_left_threshold?: number;
-    [key: string]: unknown;
-  };
-  [key: string]: unknown;
-};
 
 export function ZoneDetectorParams({
   configName,
@@ -32,13 +23,12 @@ export function ZoneDetectorParams({
   useEffect(() => {
     let cancelled = false;
     setLoading(true);
-    void configGetSection(configName, 'events_detectors')
+    void editorsApi
+      .getZoneDetectorParams(configName)
       .then((data) => {
         if (cancelled) return;
-        const section = (data ?? {}) as EventsDetectorsSection;
-        const zone = section.ZoneEventsDetector ?? {};
-        setEventThreshold(typeof zone.event_threshold === 'number' ? zone.event_threshold : 2);
-        setZoneLeftThreshold(typeof zone.zone_left_threshold === 'number' ? zone.zone_left_threshold : 3);
+        setEventThreshold(typeof data.event_threshold === 'number' ? data.event_threshold : 2);
+        setZoneLeftThreshold(typeof data.zone_left_threshold === 'number' ? data.zone_left_threshold : 3);
       })
       .catch((e) => showError(e instanceof Error ? e.message : String(e)))
       .finally(() => {
@@ -50,18 +40,15 @@ export function ZoneDetectorParams({
   }, [configName, showError]);
 
   const save = () => {
-    void configGetSection(configName, 'events_detectors')
-      .then((data) => {
-        const section = { ...((data ?? {}) as EventsDetectorsSection) };
-        const zone = { ...(section.ZoneEventsDetector ?? {}) };
-        zone.event_threshold = eventThreshold;
-        zone.zone_left_threshold = zoneLeftThreshold;
-        section.ZoneEventsDetector = zone;
-        return configPutSection(configName, 'events_detectors', section);
+    void editorsApi
+      .putZoneDetectorParams(configName, {
+        event_threshold: eventThreshold,
+        zone_left_threshold: zoneLeftThreshold,
       })
-      .then(() => {
-        showSuccess(t('configure.editors.detectorParamsSaved'));
-        onSaved?.(true);
+      .then((r) => {
+        if (r.restart_required) showSuccess(t('common.savedRestart'));
+        else showSuccess(t('common.savedApplied'));
+        onSaved?.(Boolean(r.restart_required));
       })
       .catch((e) => showError(e instanceof Error ? e.message : String(e)));
   };

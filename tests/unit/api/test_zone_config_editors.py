@@ -2,8 +2,10 @@ from evileye.api.core.zone_config import (
     detector_zones_for_source,
     normalize_polygon_coords,
     set_detector_zones_for_source,
+    set_zone_detector_params,
     ui_zones_from_detector,
     ui_zones_to_detector,
+    zone_detector_params,
 )
 from evileye.events_detectors.zone_events_detector import ZoneEventsDetector
 
@@ -48,6 +50,34 @@ def test_detector_zones_round_trip_via_sources():
     set_detector_zones_for_source(body, 2, converted)
     stored = body["events_detectors"]["ZoneEventsDetector"]["sources"]["2"]
     assert stored == converted
+
+
+def test_zone_detector_params_round_trip():
+    body: dict = {"events_detectors": {"ZoneEventsDetector": {"event_threshold": 1}}}
+    assert zone_detector_params(body) == {
+        "event_threshold": 1,
+        "zone_left_threshold": 3,
+    }
+    set_zone_detector_params(body, event_threshold=4, zone_left_threshold=5)
+    assert zone_detector_params(body) == {
+        "event_threshold": 4,
+        "zone_left_threshold": 5,
+    }
+
+
+def test_apply_thresholds_updates_detector():
+    class _Handler:
+        def get(self, kind, source_id):
+            class _List:
+                objects = []
+            return _List()
+
+    det = ZoneEventsDetector(_Handler())
+    det.set_params(sources={"2": []}, event_threshold=1, zone_left_threshold=2)
+    det.init()
+    det.apply_thresholds(event_threshold=7, zone_left_threshold=9)
+    assert det.event_threshold == 7
+    assert det.zone_left_threshold == 9
 
 
 def test_replace_zones_for_source_resets_tracking_state():

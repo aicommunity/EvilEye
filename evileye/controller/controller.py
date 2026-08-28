@@ -1002,8 +1002,15 @@ class Controller(ControllerProcessingMixin):
 
     def _handle_control_command(self, command: dict) -> dict:
         cmd = str(command.get("cmd") or "")
-        if cmd != "apply_zones":
-            return {"ok": False, "error": "unknown_command"}
+        if cmd == "apply_zones":
+            return self._control_apply_zones(command)
+        if cmd == "apply_zone_detector_params":
+            return self._control_apply_zone_detector_params(command)
+        if cmd == "apply_roi":
+            return self._control_apply_roi(command)
+        return {"ok": False, "error": "unknown_command"}
+
+    def _control_apply_zones(self, command: dict) -> dict:
         try:
             source_id = int(command.get("source_id"))
         except (TypeError, ValueError):
@@ -1031,6 +1038,84 @@ class Controller(ControllerProcessingMixin):
             pass
         self._publish_runtime_snapshot(state="running")
         return {"ok": True, "source_id": source_id, "zone_count": len(zones)}
+
+    def _control_apply_zone_detector_params(self, command: dict) -> dict:
+        detector = self.zone_events_detector
+        if detector is None:
+            return {"ok": False, "error": "zone_detector_unavailable"}
+        event_threshold = command.get("event_threshold")
+        zone_left_threshold = command.get("zone_left_threshold")
+        if event_threshold is None and zone_left_threshold is None:
+            return {"ok": False, "error": "missing_params"}
+        try:
+            et = int(event_threshold) if event_threshold is not None else None
+            zlt = int(zone_left_threshold) if zone_left_threshold is not None else None
+        except (TypeError, ValueError):
+            return {"ok": False, "error": "invalid_params"}
+        detector.apply_thresholds(event_threshold=et, zone_left_threshold=zlt)
+        try:
+            events_cfg = self.params.setdefault("events_detectors", {})
+            if isinstance(events_cfg, dict):
+                zone_cfg = events_cfg.setdefault("ZoneEventsDetector", {})
+                if isinstance(zone_cfg, dict):
+                    if et is not None:
+                        zone_cfg["event_threshold"] = max(0, et)
+                    if zlt is not None:
+                        zone_cfg["zone_left_threshold"] = max(0, zlt)
+        except Exception:
+            pass
+        self._publish_runtime_snapshot(state="running")
+        return {
+            "ok": True,
+            "event_threshold": detector.event_threshold,
+            "zone_left_threshold": detector.zone_left_threshold,
+        }
+
+    def _control_apply_roi(self, command: dict) -> dict:
+        from evileye.api.core.roi_config import set_detector_rois_for_source, xywh_list_to_xyxy_int
+
+        try:
+            source_id = int(command.get("source_id"))
+        except (TypeError, ValueError):
+            return {"ok": False, "error": "invalid_source_id"}
+        rois = command.get("rois")
+        if not isinstance(rois, list):
+            return {"ok": False, "error": "invalid_rois"}
+
+        det = None
+        if self.pipeline is not None and hasattr(self.pipeline, "get_detectors"):
+            for candidate in self.pipeline.get_detectors() or []:
+                try:
+                    src_ids = (
+                        candidate.get_source_ids()
+                        if hasattr(candidate, "get_source_ids")
+                        else getattr(candidate, "source_ids", [])
+                    )
+                    if source_id in (src_ids or []):
+                        det = candidate
+                        break
+                except Exception:
+                    continue
+
+        if det is None or not hasattr(det, "set_rois_for_source"):
+            return {"ok": False, "error": "detector_unavailable"}
+
+        rois_xywh: list[list[float]] = []
+        for item in rois:
+            if isinstance(item, (list, tuple)) and len(item) >= 4:
+                try:
+                    rois_xywh.append([float(v) for v in item[:4]])
+                except (TypeError, ValueError):
+                    continue
+
+        rois_xyxy = xywh_list_to_xyxy_int(rois_xywh)
+        det.set_rois_for_source(source_id, rois_xyxy)
+        try:
+            set_detector_rois_for_source(self.params, source_id, rois_xywh)
+        except Exception:
+            pass
+        self._publish_runtime_snapshot(state="running")
+        return {"ok": True, "source_id": source_id, "roi_count": len(rois_xywh)}
 
     def stop(self):
         self.run_flag = False

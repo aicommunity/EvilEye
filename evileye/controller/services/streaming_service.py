@@ -616,7 +616,7 @@ class StreamingService:
             "full_frame": bool(job.full_frame),
         }
         extra_meta = job.metadata or {}
-        for key in ("event_labels", "overlay"):
+        for key in ("event_labels", "event_color", "debug_rois", "overlay"):
             if key in extra_meta:
                 metadata[key] = extra_meta[key]
         broker = get_frame_broker()
