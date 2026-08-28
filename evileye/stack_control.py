@@ -559,9 +559,8 @@ def reload_web(
 ) -> ReloadResult:
     state = discover_stack_state(site_dir)
     root = state.site_dir
-    was_running = bool(state.console_runs or state.managed_runs)
     cfg = config or resolve_production_config(root)
-    if not cfg and was_running:
+    if with_pipeline and not cfg:
         for rec in state.console_runs + state.managed_runs:
             path = rec.get("config_path")
             if path:
@@ -569,17 +568,17 @@ def reload_web(
                 break
 
     try:
-        if with_pipeline or (state.service_enabled and state.console_runs):
+        if with_pipeline:
             stop_pipelines(site_dir=root, stop_all=True, hold=True)
         restart_web_layer(site_dir=root, force_build=force_build, log=log)
         if not wait_web_ready(port=state.port, timeout=60.0):
             return ReloadResult(ok=False, message=f"Web server not ready on port {state.port}")
-        if with_pipeline or was_running:
+        if with_pipeline:
             if not cfg:
                 return ReloadResult(
                     ok=False,
                     message=(
-                        "Pipeline was running but no config specified (--config or site profile). "
+                        "Pipeline restart requested but no config specified (--config or site profile). "
                         "Start manually: evileye pipeline start CONFIG --release. "
                         "Persist for next reload: evileye service install CONFIG"
                     ),
@@ -588,6 +587,7 @@ def reload_web(
                 cfg,
                 site_dir=root,
                 detach=True,
+                gui=False,
                 release_hold=release_hold or True,
             )
             return ReloadResult(
