@@ -22,7 +22,7 @@ from rich.console import Console
 from rich.table import Table
 from rich.progress import Progress, SpinnerColumn, TextColumn
 
-from evileye.utils.utils import normalize_config_path
+from evileye.utils.config_paths import normalize_config_path
 from evileye.core.logging_config import setup_evileye_logging, log_system_info
 from evileye.core.logger import get_module_logger
 from evileye.core.config_validator import ConfigValidator

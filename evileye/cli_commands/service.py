@@ -96,6 +96,7 @@ def service_install(
                 "production_config": cfg,
                 "watchdog_config": cfg,
                 "pipeline_launch": "auto",
+                "gui_default": False,
                 "port": port,
                 "host": host,
             },

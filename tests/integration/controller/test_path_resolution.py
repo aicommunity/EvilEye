@@ -111,7 +111,7 @@ def test_configuration_paths():
     test_logger.info(f"\n📋 Testing Configuration Path Resolution")
     test_logger.info("=" * 60)
     
-    from evileye.utils.utils import normalize_config_path
+    from evileye.utils.config_paths import normalize_config_path
     
     test_configs = [
         "my_config.json",

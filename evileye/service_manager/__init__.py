@@ -57,7 +57,7 @@ def _utc_now() -> str:
 def _normalize_config_rel(config: Optional[str], site_dir: Path) -> Optional[str]:
     if not config:
         return None
-    from evileye.utils.utils import normalize_config_path
+    from evileye.utils.config_paths import normalize_config_path
 
     normalized = Path(normalize_config_path(config))
     if not normalized.is_absolute():

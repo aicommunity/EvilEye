@@ -98,7 +98,7 @@ class DiagnosticRunner:
             # Load configuration
             import json
             import os
-            from evileye.utils.utils import normalize_config_path
+            from evileye.utils.config_paths import normalize_config_path
             config_file_name = normalize_config_path(self.config_path)
             
             # Change working directory if needed (same logic as run_config_helper)

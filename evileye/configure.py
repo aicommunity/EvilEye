@@ -18,7 +18,7 @@ except ImportError:
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from evileye.visualization_modules.configurer import configurer_window as config
-from evileye.utils.utils import normalize_config_path
+from evileye.utils.config_paths import normalize_config_path
 
 
 def start_configurer(config_file_name):

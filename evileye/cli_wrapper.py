@@ -16,6 +16,10 @@ current_dir = Path(__file__).parent
 if current_dir.exists():
     sys.path.insert(0, str(current_dir))
 
+from evileye.startup import configure_third_party_quiet
+
+configure_third_party_quiet()
+
 # No auto-fix needed - entry points are now self-healing
 
 from evileye.cli import main

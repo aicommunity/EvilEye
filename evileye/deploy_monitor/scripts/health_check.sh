@@ -79,7 +79,9 @@ if grep -q 'stopping scheduler loop' <<<"$LOG_TAIL"; then
 fi
 
 if [[ -z "$CLI_PID" ]]; then
-    if ! restart_grace_active; then
+    if pipeline_child_healthy; then
+        REASONS+=("managed_child_only")
+    elif ! restart_grace_active; then
         INCIDENT=true
         REASONS+=("cli_process_missing")
         DO_RESTART=true

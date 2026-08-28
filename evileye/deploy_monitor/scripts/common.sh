@@ -114,6 +114,24 @@ json_escape() {
     python3 -c 'import json,sys; print(json.dumps(sys.stdin.read()))' <<<"$1"
 }
 
+profile_gui_default() {
+    local profile="$DEPLOY_DIR/.evileye_service.json"
+    if [[ ! -f "$profile" ]]; then
+        echo 0
+        return
+    fi
+    python3 - "$profile" <<'PY' 2>/dev/null || echo 0
+import json, sys
+from pathlib import Path
+data = json.loads(Path(sys.argv[1]).read_text(encoding="utf-8"))
+print(1 if data.get("gui_default") else 0)
+PY
+}
+
+pipeline_child_healthy() {
+    [[ -n "$(find_child_pid)" ]]
+}
+
 find_cli_pid() {
     pgrep -f "$CLI_PATTERN" 2>/dev/null | head -1 || true
 }

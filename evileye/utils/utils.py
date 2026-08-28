@@ -1,11 +1,11 @@
+from __future__ import annotations
+
 import pathlib
 import json
 import datetime
 import numpy as np
 import cv2
 import os
-from ..object_tracker.tracking_results import TrackingResult
-from ..objects_handler.object_result import ObjectResultHistory
 import copy
 from pathlib import Path
 from ..core.logger import get_module_logger
@@ -21,12 +21,6 @@ _track_line_diag_state = {
 }
 
 from sympy.multipledispatch.dispatcher import source
-
-from ..database_controller import database_controller_pg
-from psycopg2 import sql
-from ..capture.video_capture_base import CaptureImage
-# from object_tracker.object_tracking_botsort import BOTrack
-from ..object_tracker.trackers.sctrack import SCTrack
 
 
 def get_project_root() -> Path:
@@ -88,6 +82,8 @@ def roi_to_image(roi_box_coords, x0, y0):
 
 
 def create_roi(capture_image: CaptureImage, coords):
+    from ..capture.video_capture_base import CaptureImage
+
     rois = []
     img = capture_image.image
     if img is None:
@@ -272,6 +268,8 @@ def draw_preview_boxes_zones(image, width, height, box, zone_coords):
 
 
 def draw_boxes_from_db(db_controller, table_name, load_folder, save_folder):
+    from psycopg2 import sql
+
     query = sql.SQL(
         'SELECT object_id, confidence, bounding_box, lost_bounding_box, frame_path, lost_frame_path FROM {table};').format(
         table=sql.Identifier(table_name))
@@ -566,49 +564,28 @@ class ObjectResultEncoder(json.JSONEncoder):
     def default(self, obj):
         if isinstance(obj, (datetime.datetime, datetime.date, datetime.time)):
             return obj.isoformat()
-        if isinstance(obj, TrackingResult):
-            return obj.__dict__
-        if isinstance(obj, ObjectResultHistory):
-            return obj.__dict__
-        if isinstance(obj, CaptureImage):
-            return None
-        # if isinstance(obj, BOTrack):
-        #     return None
-        if isinstance(obj, SCTrack):
+        if type(obj).__name__ == "TrackingResult":
+            from ..object_tracker.tracking_results import TrackingResult
+
+            if isinstance(obj, TrackingResult):
+                return obj.__dict__
+        if type(obj).__name__ == "ObjectResultHistory":
+            from ..objects_handler.object_result import ObjectResultHistory
+
+            if isinstance(obj, ObjectResultHistory):
+                return obj.__dict__
+        if type(obj).__name__ == "CaptureImage":
+            from ..capture.video_capture_base import CaptureImage
+
+            if isinstance(obj, CaptureImage):
+                return None
+        if type(obj).__name__ == "SCTrack":
             return None
 
         return super().default(obj)
 
 
-def normalize_config_path(config_path):
-    """
-    Normalize configuration file path by adding 'configs/' prefix if not present.
-    
-    Args:
-        config_path: Path to configuration file (string or Path object)
-        
-    Returns:
-        Normalized path as string
-        
-    Examples:
-        >>> normalize_config_path("my_config.json")
-        "configs/my_config.json"
-        >>> normalize_config_path("configs/existing.json")
-        "configs/existing.json"
-        >>> normalize_config_path("/absolute/path/config.json")
-        "/absolute/path/config.json"
-    """
-    import os
-    from pathlib import Path
-
-    config_path_str = str(config_path)
-
-    # If it's already an absolute path or already has configs/ prefix, return as is
-    if os.path.isabs(config_path_str) or config_path_str.startswith("configs"):
-        return config_path_str
-
-    # Add configs/ prefix
-    return os.path.join("configs", config_path_str)
+from evileye.utils.config_paths import normalize_config_path  # noqa: F401 — backward compat
 
 
 # =============================================================================

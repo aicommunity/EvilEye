@@ -325,7 +325,7 @@ def stop_pipelines(
 
 
 def _resolve_config_path(config: str, site_dir: Path) -> Path:
-    from evileye.utils.utils import normalize_config_path
+    from evileye.utils.config_paths import normalize_config_path
 
     normalized = Path(normalize_config_path(config))
     if not normalized.is_absolute():
@@ -561,7 +561,7 @@ def reload_web(
     root = state.site_dir
     was_running = bool(state.console_runs or state.managed_runs)
     cfg = config or resolve_production_config(root)
-    if with_pipeline and not cfg and was_running:
+    if not cfg and was_running:
         for rec in state.console_runs + state.managed_runs:
             path = rec.get("config_path")
             if path:
@@ -578,7 +578,11 @@ def reload_web(
             if not cfg:
                 return ReloadResult(
                     ok=False,
-                    message="Pipeline was running but no config specified (--config or site profile)",
+                    message=(
+                        "Pipeline was running but no config specified (--config or site profile). "
+                        "Start manually: evileye pipeline start CONFIG --release. "
+                        "Persist for next reload: evileye service install CONFIG"
+                    ),
                 )
             spawn = pipeline_start(
                 cfg,

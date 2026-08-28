@@ -7,7 +7,7 @@ source "$SCRIPT_DIR/common.sh"
 
 REASON="${1:-watchdog_restart}"
 # Require a healthy boot marker before declaring restart success.
-BOOT_OK_PATTERN="${BOOT_OK_PATTERN:-GUI shown|Starting main application loop}"
+BOOT_OK_PATTERN="${BOOT_OK_PATTERN:-GUI shown|Starting main application loop|Controller started in headless mode|Starting controller initialization synchronously \\(headless mode\\)}"
 # How long to wait for boot marker after child appears.
 BOOT_WAIT_SEC="${BOOT_WAIT_SEC:-120}"
 # Extra settle time after marker (or after child) before final liveness check.
@@ -64,10 +64,12 @@ export EVILEYE_CLI_LAUNCHED=1
 
 load_gui_env
 
-USE_NO_GUI=0
-if [[ -z "${DISPLAY:-}" ]]; then
-    USE_NO_GUI=1
-    log_msg "DISPLAY is empty; restarting headless (--no-gui)"
+USE_NO_GUI=1
+if [[ "$(profile_gui_default)" == "1" && -n "${DISPLAY:-}" ]]; then
+    USE_NO_GUI=0
+fi
+if [[ "$USE_NO_GUI" -eq 1 ]]; then
+    log_msg "Restarting headless (--no-gui)"
 fi
 
 # Snapshot latest log so we only match markers from the new run.
@@ -82,6 +84,19 @@ cd "$DEPLOY_DIR"
 # Launch outside the watchdog oneshot cgroup when possible (defense in depth for
 # KillMode). Falls back to setsid+nohup.
 launch_evileye() {
+    if command -v evileye >/dev/null 2>&1; then
+        local gui_args=(--no-gui)
+        if [[ "$USE_NO_GUI" -eq 0 ]]; then
+            gui_args=(--gui)
+        fi
+        (
+            cd "$DEPLOY_DIR"
+            evileye pipeline start "$CONFIG_NAME" --detach --release "${gui_args[@]}"
+        ) >>"$MONITOR_DIR/watchdog_stdout.log" 2>&1 &
+        echo $!
+        return
+    fi
+
     local run_cmd
     run_cmd=(env
         "DISPLAY=${DISPLAY:-}"
