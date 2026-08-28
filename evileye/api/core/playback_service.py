@@ -376,14 +376,22 @@ def _mp4_is_playable(path: str) -> bool:
 
 
 def _segment_row(path: str, start_ts: float, end_ts: float, camera: str) -> dict[str, Any]:
-    return {
+    configured = _configured_segment_length_sec()
+    media_dur = _plausible_media_duration(_mp4_duration_sec(path), configured)
+    index_end = end_ts
+    effective_end = min(end_ts, start_ts + media_dur) if media_dur is not None else end_ts
+    row: dict[str, Any] = {
         "path": path,
         "start_ts": start_ts,
-        "end_ts": end_ts,
-        "duration_ms": int(max(0.0, end_ts - start_ts) * 1000),
+        "end_ts": effective_end,
+        "index_end_ts": index_end,
+        "duration_ms": int(max(0.0, effective_end - start_ts) * 1000),
         "camera": camera,
         "playable": _mp4_is_playable(path),
     }
+    if media_dur is not None:
+        row["media_duration_sec"] = media_dur
+    return row
 
 
 def _plausible_media_duration(duration: float | None, configured_length: float) -> float | None:

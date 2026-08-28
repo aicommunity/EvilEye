@@ -414,12 +414,22 @@ export function pickSegmentNear(segs: PlaybackSegment[], positionSec: number): P
   return best;
 }
 
-/** Nearest browser-playable segment for media src (skips in-progress splitmux files). */
-export function pickPlayableSegmentForPosition(segs: PlaybackSegment[], positionSec: number): PlaybackSegment | null {
+/** Playable segment whose time window contains positionSec (no nearest fallback). */
+export function pickContainingPlayableSegment(
+  segs: PlaybackSegment[],
+  positionSec: number,
+): PlaybackSegment | null {
   const playable = segs.filter(isPlayableSegment);
   if (!playable.length) return null;
-  const containing = pickContainingSegment(playable, positionSec);
+  return pickContainingSegment(playable, positionSec);
+}
+
+/** Nearest browser-playable segment for media src (skips in-progress splitmux files). */
+export function pickPlayableSegmentForPosition(segs: PlaybackSegment[], positionSec: number): PlaybackSegment | null {
+  const containing = pickContainingPlayableSegment(segs, positionSec);
   if (containing) return containing;
+  const playable = segs.filter(isPlayableSegment);
+  if (!playable.length) return null;
   return pickSegmentNear(playable, positionSec);
 }
 
@@ -428,40 +438,147 @@ export function pickLastPlayableSegment(segs: PlaybackSegment[]): PlaybackSegmen
   return playable.length ? playable[playable.length - 1] : null;
 }
 
+/** Effective media end for a segment (index end ∩ known mp4 duration). */
+export function effectiveSegmentMediaEnd(seg: PlaybackSegment): number {
+  const mediaDur = seg.media_duration_sec;
+  if (mediaDur != null && mediaDur > 0) {
+    return Math.min(seg.end_ts, seg.start_ts + mediaDur);
+  }
+  return seg.end_ts;
+}
+
+/** Pad before index/media end — smaller when duration unknown (avoids 60s phantom tail). */
+function segmentPhantomPad(seg: PlaybackSegment, span: number): number {
+  const mediaDur = seg.media_duration_sec;
+  if (mediaDur != null && mediaDur > 0) {
+    return Math.max(0.05, span - mediaDur);
+  }
+  return Math.min(5, Math.max(0.5, span * 0.01));
+}
+
+/** Clamp a global position into decoded media bounds for a segment. */
+export function clampPositionToMediaBounds(
+  seg: PlaybackSegment,
+  positionSec: number,
+  videoDurationSec?: number,
+): number {
+  const mediaEnd = effectiveSegmentMediaEnd(seg);
+  const span = Math.max(0, mediaEnd - seg.start_ts);
+  let pad = segmentPhantomPad(seg, span);
+  if (videoDurationSec != null && videoDurationSec > 0) {
+    pad = Math.max(0.05, span - videoDurationSec);
+  }
+  const safeEnd = mediaEnd - pad;
+  if (positionSec > safeEnd) return Math.max(seg.start_ts, safeEnd);
+  if (positionSec < seg.start_ts) return seg.start_ts;
+  return positionSec;
+}
+
 /** Snap playhead into a playable segment when position sits in a recording-only window. */
-export function snapPositionToPlayable(segs: PlaybackSegment[], positionSec: number): number {
+export function snapPositionToPlayable(
+  segs: PlaybackSegment[],
+  positionSec: number,
+  videoDurationSec?: number,
+): number {
   if (!segs.length) return positionSec;
   const containing = pickContainingSegment(segs, positionSec);
   if (containing && isPlayableSegment(containing)) {
-    // Index end_ts often overruns the real mp4 (tens of seconds). Landing in that
-    // phantom tail freezes HTMLVideoElement seeks during play.
-    const span = Math.max(0, containing.end_ts - containing.start_ts);
-    const pad = Math.min(60, Math.max(2, span * 0.04));
-    const safeEnd = containing.end_ts - pad;
-    if (positionSec > safeEnd) return Math.max(containing.start_ts, safeEnd);
-    return positionSec;
+    return clampPositionToMediaBounds(containing, positionSec, videoDurationSec);
   }
   const target = pickPlayableSegmentForPosition(segs, positionSec);
   if (target) {
     if (positionSec > target.end_ts) {
-      const span = Math.max(0, target.end_ts - target.start_ts);
-      const pad = Math.min(60, Math.max(2, span * 0.04));
-      return Math.max(target.start_ts, target.end_ts - pad);
+      return clampPositionToMediaBounds(target, target.end_ts, videoDurationSec);
     }
     if (positionSec < target.start_ts) return target.start_ts;
-    const span = Math.max(0, target.end_ts - target.start_ts);
-    const pad = Math.min(60, Math.max(2, span * 0.04));
-    const safeEnd = target.end_ts - pad;
-    if (positionSec > safeEnd) return Math.max(target.start_ts, safeEnd);
-    return positionSec;
+    return clampPositionToMediaBounds(target, positionSec, videoDurationSec);
   }
   const last = pickLastPlayableSegment(segs);
   if (last) {
-    const span = Math.max(0, last.end_ts - last.start_ts);
-    const pad = Math.min(60, Math.max(2, span * 0.04));
-    return Math.max(last.start_ts, Math.min(positionSec, last.end_ts - pad));
+    return clampPositionToMediaBounds(last, positionSec, videoDurationSec);
   }
   return positionSec;
+}
+
+/** True when position is inside a segment window but no playable mp4 exists (gap or open file). */
+export function isPositionInPlayableGap(segs: PlaybackSegment[], positionSec: number): boolean {
+  const containing = pickContainingSegment(segs, positionSec);
+  if (containing && !isPlayableSegment(containing)) return true;
+  const playable = segs.filter(isPlayableSegment);
+  if (!playable.length) return false;
+  if (pickContainingSegment(playable, positionSec)) return false;
+  return true;
+}
+
+/** Union: at least one selected camera has playable media at position. */
+export function hasAnyPlayableAtPosition(
+  segmentsByCam: Record<string, PlaybackSegment[]>,
+  positionSec: number,
+): boolean {
+  return Object.values(segmentsByCam).some(
+    (segs) => pickContainingPlayableSegment(segs, positionSec) != null,
+  );
+}
+
+function playableIntervalsInView(
+  segs: PlaybackSegment[],
+  viewFrom: number,
+  viewTo: number,
+): TimeInterval[] {
+  let merged: TimeInterval[] = [];
+  for (const s of segs) {
+    if (!isPlayableSegment(s)) continue;
+    const from = Math.max(s.start_ts, viewFrom);
+    const to = Math.min(effectiveSegmentMediaEnd(s), viewTo);
+    if (to > from) merged = mergeLoadedIntervals(merged, { from, to });
+  }
+  return merged;
+}
+
+function intersectTwoIntervals(a: TimeInterval[], b: TimeInterval[]): TimeInterval[] {
+  const out: TimeInterval[] = [];
+  let i = 0;
+  let j = 0;
+  while (i < a.length && j < b.length) {
+    const from = Math.max(a[i].from, b[j].from);
+    const to = Math.min(a[i].to, b[j].to);
+    if (to > from) out.push({ from, to });
+    if (a[i].to < b[j].to) i += 1;
+    else j += 1;
+  }
+  return out;
+}
+
+/** Intervals where every camera in the map has playable media. */
+export function intersectPlayableCoverage(
+  segmentsByCam: Record<string, PlaybackSegment[]>,
+  viewFrom: number,
+  viewTo: number,
+): TimeInterval[] {
+  const camIds = Object.keys(segmentsByCam);
+  if (!camIds.length || !(viewTo > viewFrom)) return [];
+  let acc: TimeInterval[] | null = null;
+  for (const id of camIds) {
+    const lanes = playableIntervalsInView(segmentsByCam[id] ?? [], viewFrom, viewTo);
+    if (!lanes.length) return [];
+    acc = acc == null ? lanes : intersectTwoIntervals(acc, lanes);
+    if (!acc.length) return [];
+  }
+  return acc ?? [];
+}
+
+/** Fraction of selected cameras with playable media at a unix second. */
+export function playableCoverageFraction(
+  segmentsByCam: Record<string, PlaybackSegment[]>,
+  positionSec: number,
+  selectedCount: number,
+): number {
+  if (!(selectedCount > 0)) return 1;
+  let count = 0;
+  for (const segs of Object.values(segmentsByCam)) {
+    if (pickContainingPlayableSegment(segs, positionSec) != null) count += 1;
+  }
+  return count / selectedCount;
 }
 
 export function isPositionInRecordingSegment(segs: PlaybackSegment[], positionSec: number): boolean {

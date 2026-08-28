@@ -27,6 +27,7 @@ export function ExpandedPlaybackView({
   showMetadata,
   playMode = 'normal',
   scrubbing = false,
+  userSeeking = false,
   detectionItems = [],
   globalDetectionTs = [],
   eventIntervals = [],
@@ -45,6 +46,7 @@ export function ExpandedPlaybackView({
   showMetadata: boolean;
   playMode?: PlaybackPlayMode;
   scrubbing?: boolean;
+  userSeeking?: boolean;
   detectionItems?: PlaybackDetectionItem[];
   globalDetectionTs?: number[];
   eventIntervals?: PlaybackEventInterval[];
@@ -56,7 +58,7 @@ export function ExpandedPlaybackView({
   const mediaRef = useRef<HTMLDivElement>(null);
   const [videoReady, setVideoReady] = useState(0);
   const [frameSize, setFrameSize] = useState<FrameSize | null>(null);
-  const { ref, preloadRef, slot, applySync, videoGlobalSec, videoSeeking, recordingInProgress, mediaEpoch } =
+  const { ref, preloadRef, slot, applySync, videoGlobalSec, videoSeeking, recordingInProgress, inPlayableGap, mediaEpoch } =
     usePlaybackCameraSlot(
       segments,
       getPosition,
@@ -64,6 +66,7 @@ export function ExpandedPlaybackView({
       playing,
       playMode,
       scrubbing,
+      userSeeking,
       onVideoClock,
       cameraId,
     );
@@ -139,6 +142,7 @@ export function ExpandedPlaybackView({
             showMetadata={showMetadata}
             playMode={playMode}
             scrubbing={scrubbing}
+            userSeeking={userSeeking}
             detectionItems={detectionItems}
             globalDetectionTs={globalDetectionTs}
             eventIntervals={eventIntervals}
@@ -170,6 +174,7 @@ export function ExpandedPlaybackView({
             playMode={playMode}
             loading={loading}
             recordingInProgress={recordingInProgress}
+            inPlayableGap={inPlayableGap}
           />
         )}
       </div>

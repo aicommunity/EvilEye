@@ -17,6 +17,7 @@ export type PlaybackDebugCounters = {
   clockEmits: number;
   clockOwnerSeekingMs: number;
   clockGraceDrops: number;
+  userSeekBlocksSync: number;
   rafTicks: number;
   rafSkippedScrub: number;
   rafSkippedFresh: number;
@@ -63,6 +64,7 @@ const COUNTER_KEYS: (keyof PlaybackDebugCounters)[] = [
   'clockEmits',
   'clockOwnerSeekingMs',
   'clockGraceDrops',
+  'userSeekBlocksSync',
   'rafTicks',
   'rafSkippedScrub',
   'rafSkippedFresh',

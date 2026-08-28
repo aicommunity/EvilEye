@@ -198,6 +198,10 @@ export interface PlaybackSegment {
   duration_ms: number;
   /** False while splitmux is still writing (no moov atom yet). */
   playable?: boolean;
+  /** Slot end from index before media-duration clamp (backend). */
+  index_end_ts?: number;
+  /** Parsed mp4 duration when available. */
+  media_duration_sec?: number;
 }
 
 export interface PlaybackEventMarker {

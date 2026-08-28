@@ -21,11 +21,11 @@ import { Timeline } from './Timeline';
 import { PlaybackGrid } from './PlaybackGrid';
 import { ExpandedPlaybackView } from './ExpandedPlaybackView';
 import {
-  playbackDebugMarkSettleEnter,
-  playbackDebugMarkSettleExit,
   playbackDebugSetMeta,
 } from './playbackDebug';
 import { usePlaybackController } from './usePlaybackController';
+import { usePlaybackSeek } from './usePlaybackSeek';
+import { applyPostLoadSnapIfNeeded, createUserSeekGuard, type UserSeekGuard } from './playbackSeek';
 import { useDetectionIndex } from './useDetectionIndex';
 import { usePlaybackLayout } from './usePlaybackLayout';
 import { useTimelineViewport } from './useTimelineViewport';
@@ -33,14 +33,11 @@ import { readPlaybackSession, usePlaybackSessionPersist } from './usePlaybackSes
 import { fitColsForCount } from '../layout/fitGrid';
 import {
   DAY_LOAD_BUFFER_SEC,
-  localDateString,
   mergeSegments,
   dayBoundsLocal,
-  dayViewSpanSec,
   dayViewUpperBound,
   resolveTimelineViewChange,
   segmentIntersectsDay,
-  snapPositionToPlayable,
   formatPlaybackTime,
 } from './timelineMath';
 import { filterLogicalCameraIds, preferLogicalCameras } from './playbackCameraIds';
@@ -116,7 +113,6 @@ const DETECTION_PRIORITY_PAD_SEC = 900;
 /** Coalesce playhead-driven detection windows (avoid refetch every RAF tick). */
 const DETECTION_POSITION_QUANT_SEC = 600;
 const VIEWPORT_DEBOUNCE_MS = 500;
-const SEEK_SETTLE_HOLD_MS = 250;
 
 function useDebouncedValue<T>(value: T, delayMs: number): T {
   const [debounced, setDebounced] = useState(value);
@@ -161,7 +157,6 @@ export function PlaybackPage() {
   const [segmentsError, setSegmentsError] = useState<string | null>(null);
   const [showMetadata, setShowMetadata] = useState(true);
   const [, setTimelinePanning] = useState(false);
-  const [seekSettling, setSeekSettling] = useState(false);
   const [expandedCameraId, setExpandedCameraId] = useState<string | null>(null);
   const ctrl = usePlaybackController(initialT ?? sessionSnap?.positionSec ?? null);
   const viewport = useTimelineViewport();
@@ -176,7 +171,6 @@ export function PlaybackPage() {
   }, [params]);
   const debouncedViewFrom = useDebouncedValue(viewport.viewFrom, VIEWPORT_DEBOUNCE_MS);
   const debouncedViewTo = useDebouncedValue(viewport.viewTo, VIEWPORT_DEBOUNCE_MS);
-  const seekSettleTimerRef = useRef<number | null>(null);
   const dayBounds = useMemo(() => {
     const { start } = dayBoundsLocal(date);
     return { fromSec: start, toSec: dayViewUpperBound(date) };
@@ -218,26 +212,6 @@ export function PlaybackPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps -- controller setters are stable
   }, [detectionIndex.globalTs, showMetadata]);
 
-  useEffect(() => {
-    ctrl.setScrubbing(seekSettling);
-    playbackDebugSetMeta({
-      scrubbing: seekSettling,
-      playing: ctrl.playing,
-      positionSec: ctrl.positionSec,
-      selectedIds,
-    });
-    // eslint-disable-next-line react-hooks/exhaustive-deps -- controller setters are stable
-  }, [seekSettling, ctrl.playing, ctrl.positionSec, selectedIds]);
-
-  const togglePlay = useCallback(() => {
-    if (ctrl.playing && seekSettleTimerRef.current != null) {
-      window.clearTimeout(seekSettleTimerRef.current);
-      seekSettleTimerRef.current = null;
-      setSeekSettling(false);
-    }
-    ctrl.setPlaying(!ctrl.playing);
-  }, [ctrl]);
-
   const urlCamera = params.get('camera');
   const dateChangeSourceRef = useRef<'user' | 'viewport' | 'seek'>('user');
   const skipHardSegmentReloadRef = useRef(false);
@@ -250,6 +224,7 @@ export function PlaybackPage() {
   const segmentsAbortRef = useRef<AbortController | null>(null);
   const ensureAdjacentLoadRef = useRef<(vf: number, vt: number) => void>(() => {});
   const allSegmentsRef = useRef<PlaybackSegment[]>([]);
+  const userSeekGuardRef = useRef<UserSeekGuard>(createUserSeekGuard());
 
   useEffect(() => {
     if (sessionViewRestoredRef.current || initialT != null || !sessionSnap) return;
@@ -473,11 +448,13 @@ export function PlaybackPage() {
           });
 
           setSegmentsLoaded(true);
-          if (!opts?.merge && allSegs.length) {
-            const target = initialT != null ? initialT : ctrl.getPosition();
-            const snapped = snapPositionToPlayable(allSegs, target);
-            if (Math.abs(snapped - ctrl.getPosition()) > 0.5) ctrl.seek(snapped);
-          }
+          applyPostLoadSnapIfNeeded(allSegs, {
+            merge: opts?.merge,
+            initialT,
+            getPosition: ctrl.getPosition,
+            seek: ctrl.seek,
+            guard: userSeekGuardRef.current,
+          });
           if (!opts?.merge && viewport.viewFrom != null && viewport.viewTo != null) {
             ensureAdjacentLoadRef.current(viewport.viewFrom, viewport.viewTo);
           }
@@ -588,11 +565,13 @@ export function PlaybackPage() {
           return Array.from(byKey.values()).sort((a, b) => a.start_ts - b.start_ts);
         });
         setSegmentsLoaded(true);
-        if (!opts?.merge && allSegs.length) {
-          const target = initialT != null ? initialT : ctrl.getPosition();
-          const snapped = snapPositionToPlayable(allSegs, target);
-          if (Math.abs(snapped - ctrl.getPosition()) > 0.5) ctrl.seek(snapped);
-        }
+        applyPostLoadSnapIfNeeded(allSegs, {
+          merge: opts?.merge,
+          initialT,
+          getPosition: ctrl.getPosition,
+          seek: ctrl.seek,
+          guard: userSeekGuardRef.current,
+        });
         if (!opts?.merge && viewport.viewFrom != null && viewport.viewTo != null) {
           ensureAdjacentLoadRef.current(viewport.viewFrom, viewport.viewTo);
         }
@@ -662,6 +641,32 @@ export function PlaybackPage() {
   );
   ensureAdjacentLoadRef.current = ensureAdjacentLoad;
 
+  const { seek, holdVideoClock, userSeeking, cancelSeekSettle } = usePlaybackSeek({
+    ctrl,
+    viewport,
+    date,
+    setDate,
+    dateChangeSourceRef,
+    pendingViewportLoadRef,
+    loadTimerRef,
+    ensureAdjacentLoad,
+    userSeekGuardRef,
+  });
+
+  useEffect(() => {
+    playbackDebugSetMeta({
+      scrubbing: holdVideoClock,
+      playing: ctrl.playing,
+      positionSec: ctrl.positionSec,
+      selectedIds,
+    });
+  }, [holdVideoClock, ctrl.playing, ctrl.positionSec, selectedIds]);
+
+  const togglePlay = useCallback(() => {
+    if (ctrl.playing) cancelSeekSettle();
+    ctrl.setPlaying(!ctrl.playing);
+  }, [ctrl, cancelSeekSettle]);
+
   const onViewChange = useCallback(
     (vf: number, vt: number) => {
       const resolved = resolveTimelineViewChange(vf, vt, date);
@@ -682,49 +687,8 @@ export function PlaybackPage() {
     [viewport, ensureAdjacentLoad, date],
   );
 
-  const seek = useCallback(
-    (sec: number) => {
-      const nextDate = localDateString(sec);
-      if (nextDate !== date) {
-        dateChangeSourceRef.current = 'seek';
-        const { start } = dayBoundsLocal(nextDate);
-        const upper = dayViewUpperBound(nextDate);
-        pendingViewportLoadRef.current = {
-          date: nextDate,
-          from: Math.max(start, sec - SEEK_LOAD_HALF_SEC),
-          to: Math.min(upper, sec + SEEK_LOAD_HALF_SEC),
-        };
-        setDate(nextDate);
-        const span = Math.min(dayViewSpanSec(nextDate), INITIAL_WINDOW_SEC);
-        viewport.setView(Math.max(start, sec - span / 2), Math.min(upper, sec + span / 2), nextDate);
-      }
-      // Prefer a playable media segment so seek-while-play does not clear all video slots.
-      const target = allSegmentsRef.current.length
-        ? snapPositionToPlayable(allSegmentsRef.current, sec)
-        : sec;
-      ctrl.seek(target);
-      setSeekSettling(true);
-      playbackDebugMarkSettleEnter();
-      if (seekSettleTimerRef.current != null) window.clearTimeout(seekSettleTimerRef.current);
-      seekSettleTimerRef.current = window.setTimeout(() => {
-        setSeekSettling(false);
-        seekSettleTimerRef.current = null;
-        playbackDebugMarkSettleExit();
-        ctrl.beginClockGrace();
-      }, SEEK_SETTLE_HOLD_MS);
-      // Defer timeline fetch until after settle so seek-while-play does not
-      // saturate worker threads (cameras/timeline timeouts wipe the UI).
-      if (loadTimerRef.current) window.clearTimeout(loadTimerRef.current);
-      loadTimerRef.current = window.setTimeout(() => {
-        ensureAdjacentLoad(target - SEEK_LOAD_HALF_SEC, target + SEEK_LOAD_HALF_SEC);
-      }, SEEK_SETTLE_HOLD_MS + 100);
-    },
-    [ctrl, ensureAdjacentLoad, date, viewport],
-  );
-
   useEffect(() => {
     return () => {
-      if (seekSettleTimerRef.current != null) window.clearTimeout(seekSettleTimerRef.current);
       if (loadTimerRef.current != null) window.clearTimeout(loadTimerRef.current);
       camerasAbortRef.current?.abort();
       segmentsAbortRef.current?.abort();
@@ -900,7 +864,8 @@ export function PlaybackPage() {
               runId={runId}
               showMetadata={showMetadata}
               playMode="normal"
-              scrubbing={seekSettling}
+              scrubbing={holdVideoClock}
+              userSeeking={userSeeking}
               detectionItems={detectionIndex.byCamera[expandedCamera.id] ?? []}
               globalDetectionTs={detectionIndex.globalTs}
               eventIntervals={eventIntervalsByCamera[expandedCamera.id] ?? []}
@@ -942,7 +907,8 @@ export function PlaybackPage() {
               runId={runId}
               showMetadata={showMetadata}
               playMode="normal"
-              scrubbing={seekSettling}
+              scrubbing={holdVideoClock}
+              userSeeking={userSeeking}
               detectionByCamera={detectionIndex.byCamera}
               globalDetectionTs={detectionIndex.globalTs}
               eventIntervalsByCamera={eventIntervalsByCamera}
@@ -964,6 +930,8 @@ export function PlaybackPage() {
             position={ctrl.positionSec}
             markers={timelineMarkers}
             segments={allSegments}
+            segmentsByCamera={segmentsByCam}
+            selectedCameraCount={selectedIds.length}
             detectionTs={detectionIndex.globalTs}
             eventIntervals={timelineEventIntervals}
             onSeek={seek}

@@ -29,6 +29,7 @@ export function PlaybackGrid({
   showMetadata,
   playMode = 'normal',
   scrubbing = false,
+  userSeeking = false,
   detectionByCamera = {},
   globalDetectionTs = [],
   eventIntervalsByCamera = {},
@@ -50,6 +51,7 @@ export function PlaybackGrid({
   showMetadata: boolean;
   playMode?: PlaybackPlayMode;
   scrubbing?: boolean;
+  userSeeking?: boolean;
   detectionByCamera?: Record<string, PlaybackDetectionItem[]>;
   globalDetectionTs?: number[];
   eventIntervalsByCamera?: Record<string, PlaybackEventInterval[]>;
@@ -80,6 +82,7 @@ export function PlaybackGrid({
           showMetadata={showMetadata}
           playMode={playMode}
           scrubbing={scrubbing}
+          userSeeking={userSeeking}
           detectionItems={detectionByCamera[id] ?? []}
           globalDetectionTs={globalDetectionTs}
           eventIntervals={eventIntervalsByCamera[id] ?? []}
@@ -105,6 +108,7 @@ function PlaybackCell({
   showMetadata,
   playMode,
   scrubbing,
+  userSeeking,
   detectionItems,
   globalDetectionTs,
   eventIntervals,
@@ -124,6 +128,7 @@ function PlaybackCell({
   showMetadata: boolean;
   playMode: PlaybackPlayMode;
   scrubbing: boolean;
+  userSeeking: boolean;
   detectionItems: PlaybackDetectionItem[];
   globalDetectionTs: number[];
   eventIntervals: PlaybackEventInterval[];
@@ -135,8 +140,8 @@ function PlaybackCell({
   const mediaRef = useRef<HTMLDivElement>(null);
   const [videoReady, setVideoReady] = useState(0);
   const [frameSize, setFrameSize] = useState<FrameSize | null>(null);
-  const { ref, preloadRef, slot, applySync, videoGlobalSec, videoSeeking, recordingInProgress, mediaEpoch } =
-    usePlaybackCameraSlot(segments, getPosition, positionSec, playing, playMode, scrubbing, onVideoClock, id);
+  const { ref, preloadRef, slot, applySync, videoGlobalSec, videoSeeking, recordingInProgress, inPlayableGap, mediaEpoch } =
+    usePlaybackCameraSlot(segments, getPosition, positionSec, playing, playMode, scrubbing, userSeeking, onVideoClock, id);
   const split = Boolean(camera?.split && camera?.src_coords && camera.src_coords.length === 4);
 
   useEffect(() => {
@@ -162,6 +167,7 @@ function PlaybackCell({
         showMetadata={showMetadata}
         playMode={playMode}
         scrubbing={scrubbing}
+        userSeeking={userSeeking}
         detectionItems={detectionItems}
         globalDetectionTs={globalDetectionTs}
         eventIntervals={eventIntervals}
@@ -196,6 +202,7 @@ function PlaybackCell({
       showMetadata={showMetadata}
       playMode={playMode}
       scrubbing={scrubbing}
+      userSeeking={userSeeking}
       videoGlobalSec={videoGlobalSec}
       videoSeeking={videoSeeking}
       detectionItems={detectionItems}
@@ -205,6 +212,7 @@ function PlaybackCell({
       segmentsLoading={segmentsLoading}
       detectionsReady={detectionsReady}
       recordingInProgress={recordingInProgress}
+      inPlayableGap={inPlayableGap}
     />
   );
 }
@@ -229,6 +237,7 @@ function NormalPlaybackCell({
   showMetadata,
   playMode,
   scrubbing = false,
+  userSeeking = false,
   videoGlobalSec = null,
   videoSeeking = false,
   detectionItems,
@@ -238,6 +247,7 @@ function NormalPlaybackCell({
   segmentsLoading = false,
   detectionsReady = true,
   recordingInProgress = false,
+  inPlayableGap = false,
 }: {
   id: string;
   camera?: PlaybackCamera;
@@ -258,6 +268,7 @@ function NormalPlaybackCell({
   showMetadata: boolean;
   playMode: PlaybackPlayMode;
   scrubbing?: boolean;
+  userSeeking?: boolean;
   videoGlobalSec?: number | null;
   videoSeeking?: boolean;
   detectionItems: PlaybackDetectionItem[];
@@ -267,6 +278,7 @@ function NormalPlaybackCell({
   segmentsLoading?: boolean;
   detectionsReady?: boolean;
   recordingInProgress?: boolean;
+  inPlayableGap?: boolean;
 }) {
   const { meta, loading } = usePlaybackCameraMetadata({
     cameraId: id,
@@ -313,6 +325,7 @@ function NormalPlaybackCell({
           loading={loading}
           segmentsLoading={segmentsLoading}
           recordingInProgress={recordingInProgress}
+          inPlayableGap={inPlayableGap}
         />
       </div>
     </article>

@@ -8,6 +8,8 @@ import {
   buildTimelineDateLabels,
   buildTimelineTicks,
   clipRangeToView,
+  intersectPlayableCoverage,
+  playableCoverageFraction,
   dayViewSpanSec,
   panViewWithinDay,
   snapTimelineSeek,
@@ -30,6 +32,8 @@ export function Timeline({
   position,
   markers,
   segments = [],
+  segmentsByCamera,
+  selectedCameraCount = 0,
   detectionTs = [],
   eventIntervals = [],
   onSeek,
@@ -42,6 +46,8 @@ export function Timeline({
   position: number;
   markers: PlaybackEventMarker[];
   segments?: PlaybackSegment[];
+  segmentsByCamera?: Record<string, PlaybackSegment[]>;
+  selectedCameraCount?: number;
   detectionTs?: number[];
   eventIntervals?: PlaybackEventInterval[];
   onSeek: (sec: number) => void;
@@ -196,6 +202,11 @@ export function Timeline({
     }
   };
 
+  const fullCoverage =
+    hasView && segmentsByCamera && selectedCameraCount > 1
+      ? intersectPlayableCoverage(segmentsByCamera, displayFrom, displayTo)
+      : [];
+
   // One stable root for the Timeline lifetime so the wheel listener survives
   // empty → loaded transitions (swapping roots left the listener on a detached node).
   return (
@@ -288,7 +299,7 @@ export function Timeline({
                 /* ignore */
               }
               if (!wasPan) {
-                seekAtClientX(drag.startX);
+                seekAtClientX(e.clientX);
               }
               endPan(wasPan);
             }
@@ -346,6 +357,12 @@ export function Timeline({
           {segments.map((seg) => {
             const clipped = clipRangeToView(seg.start_ts, seg.end_ts, displayFrom, displayTo);
             if (!clipped) return null;
+            const mid = (Math.max(seg.start_ts, displayFrom) + Math.min(seg.end_ts, displayTo)) / 2;
+            const coverage =
+              segmentsByCamera && selectedCameraCount > 0
+                ? playableCoverageFraction(segmentsByCamera, mid, selectedCameraCount)
+                : 1;
+            const opacity = 0.35 + 0.65 * coverage;
             return (
               <div
                 key={seg.path}
@@ -356,9 +373,29 @@ export function Timeline({
                   width: `${Math.max(0.15, clipped.widthPct)}%`,
                   top: '16%',
                   height: '48%',
-                  background: 'rgba(59, 130, 246, 0.45)',
+                  background: `rgba(59, 130, 246, ${0.45 * opacity})`,
                   borderRadius: 4,
-                  border: '1px solid rgba(59, 130, 246, 0.7)',
+                  border: `1px solid rgba(59, 130, 246, ${0.7 * opacity})`,
+                  pointerEvents: 'none',
+                }}
+              />
+            );
+          })}
+          {fullCoverage.map((interval, idx) => {
+            const clipped = clipRangeToView(interval.from, interval.to, displayFrom, displayTo);
+            if (!clipped) return null;
+            return (
+              <div
+                key={`full-${interval.from}-${idx}`}
+                className="timeline-segment-block timeline-segment-block--full"
+                style={{
+                  position: 'absolute',
+                  left: `${clipped.leftPct}%`,
+                  width: `${Math.max(0.15, clipped.widthPct)}%`,
+                  top: '62%',
+                  height: '8%',
+                  background: 'rgba(59, 130, 246, 0.85)',
+                  borderRadius: 2,
                   pointerEvents: 'none',
                 }}
               />

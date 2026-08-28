@@ -245,6 +245,7 @@ const en: Dict = {
     timelineNoRecordings: 'No recordings or events for the selected day.',
     timelineHint: 'Wheel zooms, drag pans, click seeks (snaps to a nearby detection mark).',
     noSegment: 'No segment',
+    noRecordingAtTime: 'No recording for this period',
     loadingSegment: 'Loading recording…',
     recordingInProgress: 'Recording in progress — playback available after the segment closes',
     seekingFrame: 'Seeking frame…',

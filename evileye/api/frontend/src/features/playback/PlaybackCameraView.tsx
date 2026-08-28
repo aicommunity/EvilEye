@@ -23,7 +23,7 @@ import { drainVideoElement, reloadVideoMedia } from './drainVideo';
 import { seekPlaybackVideo, shouldEmitPlaybackClock, isPastDecodedEof, seekingAgeMs, SEEKING_STUCK_MS, resetPlaybackClockOwner } from './playbackVideoSync';
 import { usePlaybackMetadata } from './usePlaybackMetadata';
 import { usePlaybackStaticMetadata } from './usePlaybackStaticMetadata';
-import { isPositionInRecordingSegment, pickPlayableSegmentForPosition, isPlayableSegment } from './timelineMath';
+import { isPositionInRecordingSegment, pickContainingPlayableSegment, isPlayableSegment, isPositionInPlayableGap } from './timelineMath';
 
 const PLAYBACK_EVENT_ZONE_PAD_SEC = 1.5;
 
@@ -50,6 +50,7 @@ export function usePlaybackCameraSlot(
   playing: boolean,
   playMode: PlaybackPlayMode = 'normal',
   scrubbing = false,
+  userSeeking = false,
   onVideoClock?: (globalSec: number) => void,
   clockId?: string,
 ) {
@@ -65,6 +66,8 @@ export function usePlaybackCameraSlot(
   segmentsRef.current = segments;
   const scrubbingRef = useRef(scrubbing);
   scrubbingRef.current = scrubbing;
+  const userSeekingRef = useRef(userSeeking);
+  userSeekingRef.current = userSeeking;
   const playingRef = useRef(playing);
   playingRef.current = playing;
   const onVideoClockRef = useRef(onVideoClock);
@@ -72,6 +75,7 @@ export function usePlaybackCameraSlot(
   const [videoGlobalSec, setVideoGlobalSec] = useState<number | null>(null);
   const [videoSeeking, setVideoSeeking] = useState(false);
   const [recordingInProgress, setRecordingInProgress] = useState(false);
+  const [inPlayableGap, setInPlayableGap] = useState(false);
   /** Bump to force <video> remount when decoder is a zombie. */
   const [mediaEpoch, setMediaEpoch] = useState(0);
 
@@ -93,7 +97,8 @@ export function usePlaybackCameraSlot(
     lastAppliedPositionRef.current = position;
     const segs = segmentsRef.current;
     setRecordingInProgress(isPositionInRecordingSegment(segs, position));
-    const seg = pickPlayableSegmentForPosition(segs, position);
+    setInPlayableGap(isPositionInPlayableGap(segs, position));
+    const seg = pickContainingPlayableSegment(segs, position);
     const preload = preloadRef.current;
     let segmentChanged = false;
 
@@ -139,23 +144,24 @@ export function usePlaybackCameraSlot(
     const current = slotRef.current;
     if (!v || !current) return;
 
+    const allowVideoClock = playing && !userSeekingRef.current;
+
     // Index end_ts can overrun the real mp4 duration; seeking past EOF freezes decode.
     if (isPastDecodedEof(v, position, current.startTs)) {
       const eofGlobal = current.startTs + Math.max(0, v.duration - 0.05);
       const nxt = nextSegment(segs, seg);
       const gapToNext = nxt ? nxt.start_ts - (current.startTs + v.duration) : Infinity;
-      // Only auto-advance when the next file is contiguous; otherwise pin to real EOF
-      // so a seek into the phantom index tail does not jump across a long gap.
-      if (nxt && gapToNext < 2 && playing && !scrubbingRef.current) {
+      if (nxt && gapToNext < 2 && allowVideoClock && !scrubbingRef.current) {
         onVideoClockRef.current?.(nxt.start_ts);
         return;
       }
       seekPlaybackVideo(v, eofGlobal, current.startTs, {
         playing,
         scrubbing: scrubbingRef.current,
+        force: userSeekingRef.current,
         segmentEndTs: current.endTs,
       });
-      if (Math.abs(position - eofGlobal) > 0.2) {
+      if (allowVideoClock && Math.abs(position - eofGlobal) > 0.2) {
         onVideoClockRef.current?.(eofGlobal);
       }
       return;
@@ -187,34 +193,33 @@ export function usePlaybackCameraSlot(
         return;
       }
       if (!clockId || shouldEmitPlaybackClock(clockId, v)) {
-        onVideoClockRef.current?.(videoGlobal);
+        if (!userSeekingRef.current) onVideoClockRef.current?.(videoGlobal);
       }
       return;
     }
 
-    // During seek-settle, do not abort an in-flight seek — that stacks Range GETs
-    // and freezes the timeline under multi-cam load.
-    if (scrubbingRef.current && v.seeking && seekingAgeMs(v) < SEEKING_STUCK_MS) {
+    if (scrubbingRef.current && v.seeking && !userSeekingRef.current && seekingAgeMs(v) < SEEKING_STUCK_MS) {
       return;
     }
 
     seekPlaybackVideo(v, position, current.startTs, {
       playing,
       scrubbing: scrubbingRef.current,
+      force: userSeekingRef.current,
       segmentEndTs: current.endTs,
     });
   };
 
   useEffect(() => {
     const onTimeUpdate = () => {
+      if (!slotRef.current) return;
       publishVideoGlobal();
-      // While scrubbing/seek-settling, pin from position/loadeddata — not every
-      // timeupdate (that fought playback and left elements paused).
       if (scrubbingRef.current) return;
       if (playingRef.current) {
         const v = ref.current;
         const current = slotRef.current;
         if (v?.seeking) return;
+        if (userSeekingRef.current) return;
         if (v && current && (!clockId || shouldEmitPlaybackClock(clockId, v))) {
           onVideoClockRef.current?.(current.startTs + v.currentTime);
         }
@@ -243,7 +248,10 @@ export function usePlaybackCameraSlot(
     const onEnded = () => {
       const current = slotRef.current;
       if (!current) return;
-      const nxt = nextSegment(segmentsRef.current, pickPlayableSegmentForPosition(segmentsRef.current, current.startTs));
+      const nxt = nextSegment(
+        segmentsRef.current,
+        pickContainingPlayableSegment(segmentsRef.current, current.startTs),
+      );
       if (nxt && playingRef.current && !scrubbingRef.current) {
         onVideoClockRef.current?.(nxt.start_ts);
         return;
@@ -318,7 +326,7 @@ export function usePlaybackCameraSlot(
   useEffect(() => {
     applySync();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [positionSec, playMode, scrubbing]);
+  }, [positionSec, playMode, scrubbing, userSeeking]);
 
   // Recover stuck seeking even while paused (archive scrub). Prefer force-seek /
   // load() — remount opens a new /media Range while the old one may still hold a slot.
@@ -437,6 +445,7 @@ export function usePlaybackCameraSlot(
     videoGlobalSec,
     videoSeeking,
     recordingInProgress,
+    inPlayableGap,
     mediaEpoch,
   };
 }
@@ -579,6 +588,7 @@ export function PlaybackVideoSurface({
   loading = false,
   segmentsLoading = false,
   recordingInProgress = false,
+  inPlayableGap = false,
 }: {
   videoRef: RefObject<HTMLVideoElement | null>;
   preloadRef: RefObject<HTMLVideoElement | null>;
@@ -601,6 +611,7 @@ export function PlaybackVideoSurface({
   loading?: boolean;
   segmentsLoading?: boolean;
   recordingInProgress?: boolean;
+  inPlayableGap?: boolean;
 }) {
   const { t } = useI18n();
   const [seeking, setSeeking] = useState(false);
@@ -684,7 +695,9 @@ export function PlaybackVideoSurface({
             ? t('playback.loadingSegment')
             : recordingInProgress
               ? t('playback.recordingInProgress')
-              : t('playback.noSegment')}
+              : inPlayableGap
+                ? t('playback.noRecordingAtTime')
+                : t('playback.noSegment')}
         </div>
       )}
       {recordingInProgress && slot?.url ? (

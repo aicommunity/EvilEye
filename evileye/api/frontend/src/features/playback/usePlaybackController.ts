@@ -5,12 +5,23 @@ import {
 } from './playbackDebug';
 import { CLOCK_GRACE_MS, resetPlaybackClockOwner } from './playbackVideoSync';
 
+export type PlayheadMode = 'idle' | 'userSeek' | 'playing' | 'stalled';
+
+const USER_SEEK_BLOCK_MS = 2000;
+
+type UserSeekState = {
+  targetSec: number;
+  startedAt: number;
+  token: number;
+};
+
 export function usePlaybackController(initialSec: number | null) {
-  const [playing, setPlaying] = useState(false);
+  const [playing, setPlayingState] = useState(false);
   const [speed, setSpeed] = useState(1);
   const [fromSec, setFromSec] = useState<number | null>(null);
   const [toSec, setToSec] = useState<number | null>(null);
   const [positionSec, setPositionSec] = useState<number>(initialSec ?? 0);
+  const [playheadMode, setPlayheadMode] = useState<PlayheadMode>('idle');
   const positionRef = useRef<number>(initialSec ?? 0);
   const raf = useRef<number | null>(null);
   const detectionTsRef = useRef<number[]>([]);
@@ -21,10 +32,19 @@ export function usePlaybackController(initialSec: number | null) {
   const speedRef = useRef(1);
   const lastVideoSyncAtRef = useRef(0);
   const clockGraceUntilRef = useRef(0);
+  const userSeekRef = useRef<UserSeekState | null>(null);
+  const userSeekEndTimerRef = useRef<number | null>(null);
 
   playingRef.current = playing;
   toSecRef.current = toSec;
   speedRef.current = speed;
+
+  const clearUserSeekTimer = useCallback(() => {
+    if (userSeekEndTimerRef.current != null) {
+      window.clearTimeout(userSeekEndTimerRef.current);
+      userSeekEndTimerRef.current = null;
+    }
+  }, []);
 
   const setDetectionTimestamps = useCallback((ts: number[]) => {
     detectionTsRef.current = ts;
@@ -41,14 +61,69 @@ export function usePlaybackController(initialSec: number | null) {
   const setScrubbing = useCallback((value: boolean) => {
     const was = scrubbingRef.current;
     scrubbingRef.current = value;
-    // When settle ends, ignore stale video clock briefly so playhead does not roll back.
     if (was && !value) {
       clockGraceUntilRef.current = performance.now() + CLOCK_GRACE_MS;
     }
   }, []);
 
+  const endUserSeek = useCallback(() => {
+    clearUserSeekTimer();
+    userSeekRef.current = null;
+    setPlayheadMode(playingRef.current ? 'playing' : 'idle');
+  }, [clearUserSeekTimer]);
+
+  const beginUserSeek = useCallback(
+    (sec: number): number => {
+      clearUserSeekTimer();
+      const token = (userSeekRef.current?.token ?? 0) + 1;
+      userSeekRef.current = { targetSec: sec, startedAt: performance.now(), token };
+      resetPlaybackClockOwner();
+      setPlayheadMode('userSeek');
+      userSeekEndTimerRef.current = window.setTimeout(() => {
+        userSeekEndTimerRef.current = null;
+        userSeekRef.current = null;
+        setPlayheadMode(playingRef.current ? 'playing' : 'idle');
+      }, USER_SEEK_BLOCK_MS);
+      return token;
+    },
+    [clearUserSeekTimer],
+  );
+
+  const isUserSeekActive = useCallback((): boolean => {
+    const u = userSeekRef.current;
+    if (!u) return false;
+    if (performance.now() - u.startedAt > USER_SEEK_BLOCK_MS) {
+      userSeekRef.current = null;
+      setPlayheadMode(playingRef.current ? 'playing' : 'idle');
+      return false;
+    }
+    return true;
+  }, []);
+
+  const getUserSeekTarget = useCallback((): number | null => {
+    return userSeekRef.current?.targetSec ?? null;
+  }, []);
+
+  const setPlaying = useCallback(
+    (next: boolean) => {
+      setPlayingState(next);
+      playingRef.current = next;
+      if (userSeekRef.current) {
+        setPlayheadMode('userSeek');
+      } else {
+        setPlayheadMode(next ? 'playing' : 'idle');
+      }
+    },
+    [],
+  );
+
   const syncPositionFromVideo = useCallback((sec: number) => {
-    if (!Number.isFinite(sec) || scrubbingRef.current) return;
+    if (!Number.isFinite(sec)) return;
+    if (userSeekRef.current != null) {
+      playbackDebugInc('userSeekBlocksSync');
+      return;
+    }
+    if (scrubbingRef.current) return;
     const now = performance.now();
     if (now < clockGraceUntilRef.current && Math.abs(sec - positionRef.current) > 0.75) {
       playbackDebugInc('clockGraceDrops');
@@ -63,35 +138,38 @@ export function usePlaybackController(initialSec: number | null) {
     lastVideoSyncAtRef.current = now;
     positionRef.current = next;
     setPositionSec(next);
+    setPlayheadMode(playingRef.current ? 'playing' : 'idle');
     playbackDebugSetMeta({ positionSec: next, playing: playingRef.current, scrubbing: scrubbingRef.current });
-  }, []);
+  }, [setPlaying]);
 
   useEffect(() => {
     if (!playing) {
       if (raf.current) cancelAnimationFrame(raf.current);
       raf.current = null;
       setPositionSec(positionRef.current);
+      if (!userSeekRef.current) setPlayheadMode('idle');
       return;
     }
+    if (!userSeekRef.current) setPlayheadMode('playing');
     resetPlaybackClockOwner();
     lastVideoSyncAtRef.current = performance.now();
     let last = performance.now();
     const tick = (now: number) => {
       raf.current = requestAnimationFrame(tick);
       playbackDebugInc('rafTicks');
-      if (scrubbingRef.current) {
+      if (scrubbingRef.current || userSeekRef.current) {
         playbackDebugInc('rafSkippedScrub');
         last = now;
         return;
       }
-      // Primary clock is the decoded video. If it stalls after seek (readyState 0
-      // zombie), advance from wall time so applySync/play can recover.
       const videoFresh = now - lastVideoSyncAtRef.current < 1200;
       if (videoFresh) {
         playbackDebugInc('rafSkippedFresh');
+        if (playheadMode !== 'stalled') setPlayheadMode('playing');
         last = now;
         return;
       }
+      setPlayheadMode('stalled');
       const dt = ((now - last) / 1000) * speedRef.current;
       last = now;
       if (!(dt > 0) || dt > 1) return;
@@ -110,7 +188,9 @@ export function usePlaybackController(initialSec: number | null) {
       if (raf.current) cancelAnimationFrame(raf.current);
       raf.current = null;
     };
-  }, [playing]);
+  }, [playing, playheadMode, setPlaying]);
+
+  useEffect(() => () => clearUserSeekTimer(), [clearUserSeekTimer]);
 
   return {
     playing,
@@ -120,6 +200,7 @@ export function usePlaybackController(initialSec: number | null) {
     fromSec,
     toSec,
     positionSec,
+    playheadMode,
     getPosition: () => positionRef.current,
     setRange: (from: number | null, to: number | null, opts?: { preservePosition?: boolean }) => {
       setFromSec(from);
@@ -140,10 +221,13 @@ export function usePlaybackController(initialSec: number | null) {
       resetPlaybackClockOwner();
       positionRef.current = sec;
       setPositionSec(sec);
-      // Do NOT touch lastVideoSyncAtRef — otherwise RAF fallback never starts after seek storm.
       playbackDebugInc('seekCount');
       playbackDebugSetMeta({ positionSec: sec, scrubbing: scrubbingRef.current, playing: playingRef.current });
     },
+    beginUserSeek,
+    endUserSeek,
+    isUserSeekActive,
+    getUserSeekTarget,
     beginClockGrace,
     setDetectionTimestamps,
     setSkipEnabled,

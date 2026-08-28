@@ -12,22 +12,27 @@ import {
   dayViewSpanSec,
   dayViewUpperBound,
   defaultTimelineView,
+  hasAnyPlayableAtPosition,
+  intersectPlayableCoverage,
   intervalsExtent,
+  isPositionInPlayableGap,
+  isPositionInRecordingSegment,
   mergeLoadedIntervals,
   uncoveredIntervals,
   pickContainingSegment,
+  pickContainingPlayableSegment,
   pickLastPlayableSegment,
   pickPlayableSegmentForPosition,
   pickSegmentNear,
   resolveTimelineViewChange,
   snapPositionToPlayable,
-  isPositionInRecordingSegment,
   snapTimelineSeek,
   snapUnixToDetections,
   zoomViewAt,
   zoomViewWithinDay,
   panViewWithinDay,
 } from './timelineMath';
+import { resolveUserSeekTarget } from './playbackSeek';
 
 describe('snapUnixToDetections', () => {
   const viewFrom = 1000;
@@ -246,12 +251,60 @@ describe('segment picking', () => {
     expect(pickPlayableSegmentForPosition(mixed, 130)?.path).toBe('closed.mp4');
     expect(isPositionInRecordingSegment(mixed, 130)).toBe(true);
     expect(pickLastPlayableSegment(mixed)?.path).toBe('closed.mp4');
-    expect(snapPositionToPlayable(mixed, 130)).toBeLessThanOrEqual(119);
+    expect(snapPositionToPlayable(mixed, 130)).toBeLessThanOrEqual(120);
   });
 
   it('snaps off the phantom index tail near segment end', () => {
     const long = [{ path: 'long.mp4', start_ts: 1000, end_ts: 1000 + 1818, duration_ms: 1_818_000, playable: true }];
-    expect(snapPositionToPlayable(long, 1000 + 1810)).toBe(1000 + 1818 - 60);
+    expect(snapPositionToPlayable(long, 1000 + 1817)).toBe(1000 + 1818 - 5);
+  });
+});
+
+describe('Cam1 gap @ 18:48:29', () => {
+  const cam1BeforeEnd = 1787758001;
+  const cam1NextStart = 1787760687;
+  const target = 1787759309;
+
+  const cam1Segs = [
+    { path: 'cam1_a.mp4', start_ts: cam1BeforeEnd - 1800, end_ts: cam1BeforeEnd, duration_ms: 1_800_000, playable: true },
+    { path: 'cam1_b.mp4', start_ts: cam1NextStart, end_ts: cam1NextStart + 1800, duration_ms: 1_800_000, playable: true },
+  ];
+  const cam2Segs = [
+    {
+      path: 'cam2.mp4',
+      start_ts: target - 420,
+      end_ts: target + 1200,
+      duration_ms: 1_620_000,
+      playable: true,
+    },
+  ];
+
+  it('hasAnyPlayableAtPosition is true for union', () => {
+    expect(hasAnyPlayableAtPosition({ Cam1: cam1Segs, Cam2: cam2Segs }, target)).toBe(true);
+  });
+
+  it('isPositionInPlayableGap for Cam1 at gap', () => {
+    expect(isPositionInPlayableGap(cam1Segs, target)).toBe(true);
+    expect(pickContainingSegment(cam1Segs, target)).toBeNull();
+    expect(pickContainingPlayableSegment(cam1Segs, target)).toBeNull();
+    expect(pickPlayableSegmentForPosition(cam1Segs, target)?.path).toBe('cam1_a.mp4');
+  });
+
+  it('Cam2 plays at gap time while Cam1 has no containing segment', () => {
+    expect(pickContainingPlayableSegment(cam2Segs, target)?.path).toBe('cam2.mp4');
+  });
+
+  it('intersectPlayableCoverage is empty at Cam1 gap even when Cam2 records', () => {
+    const viewFrom = target - 600;
+    const viewTo = target + 600;
+    const full = intersectPlayableCoverage({ Cam1: cam1Segs, Cam2: cam2Segs }, viewFrom, viewTo);
+    expect(full.some((i) => i.from <= target && i.to >= target)).toBe(false);
+    const cam2Only = intersectPlayableCoverage({ Cam2: cam2Segs }, viewFrom, viewTo);
+    expect(cam2Only.some((i) => i.from <= target && i.to >= target)).toBe(true);
+  });
+
+  it('resolveUserSeekTarget does not snap user click', () => {
+    expect(resolveUserSeekTarget(target)).toBe(target);
   });
 });
 

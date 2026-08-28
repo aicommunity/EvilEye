@@ -27,6 +27,7 @@ export function SplitPlaybackCell({
   showMetadata,
   playMode = 'normal',
   scrubbing = false,
+  userSeeking = false,
   detectionItems = [],
   globalDetectionTs = [],
   eventIntervals = [],
@@ -53,6 +54,7 @@ export function SplitPlaybackCell({
   showMetadata: boolean;
   playMode?: PlaybackPlayMode;
   scrubbing?: boolean;
+  userSeeking?: boolean;
   detectionItems?: PlaybackDetectionItem[];
   globalDetectionTs?: number[];
   eventIntervals?: PlaybackEventInterval[];
@@ -83,6 +85,8 @@ export function SplitPlaybackCell({
   playingRef.current = playing;
   const scrubbingRef = useRef(scrubbing);
   scrubbingRef.current = scrubbing;
+  const userSeekingRef = useRef(userSeeking);
+  userSeekingRef.current = userSeeking;
   const startTsRef = useRef(startTs);
   startTsRef.current = startTs;
 
@@ -319,6 +323,7 @@ export function SplitPlaybackCell({
       const st = startTsRef.current;
       if (video.readyState >= 2) setVideoGlobalSec(st + video.currentTime);
       if (video.seeking || scrubbingRef.current) return;
+      if (userSeekingRef.current) return;
       if (playingRef.current && shouldEmitPlaybackClock(cameraId, video)) {
         onVideoClockRef.current?.(st + video.currentTime);
       }
@@ -370,13 +375,12 @@ export function SplitPlaybackCell({
     const video = videoRef.current;
     if (!video || !videoUrl) return;
     const stuck = video.seeking && seekingAgeMs(video) >= SEEKING_STUCK_MS;
-    if (video.seeking && !scrubbing && !stuck) return;
-    // Settle/drag: finish the current seek before issuing another Range.
-    if (scrubbing && video.seeking && !stuck) return;
+    if (video.seeking && !scrubbing && !userSeeking && !stuck) return;
+    if (scrubbing && video.seeking && !userSeeking && !stuck) return;
     seekPlaybackVideo(video, getPositionRef.current(), startTs, {
       playing,
       scrubbing,
-      force: stuck,
+      force: userSeeking || stuck,
       thresholdSec: playing && !scrubbing ? 1.0 : undefined,
       segmentEndTs:
         Number.isFinite(video.duration) && video.duration > 0 ? startTs + video.duration : undefined,
@@ -392,7 +396,7 @@ export function SplitPlaybackCell({
       paint();
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [positionSec, videoUrl, startTs, playing, scrubbing, mediaEpoch]);
+  }, [positionSec, videoUrl, startTs, playing, scrubbing, userSeeking, mediaEpoch]);
 
   const previewClass = expanded ? 'expanded-camera-frame' : 'camera-preview';
 

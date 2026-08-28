@@ -247,6 +247,7 @@ const ru: Dict = {
     timelineNoRecordings: 'Нет записей и событий за выбранный день.',
     timelineHint: 'Колесо — масштаб, перетаскивание — сдвиг, клик — переход к кадру (к зелёной метке, если рядом).',
     noSegment: 'Нет сегмента',
+    noRecordingAtTime: 'Нет записи за этот период',
     loadingSegment: 'Загрузка записи…',
     recordingInProgress: 'Идёт запись — архив доступен после закрытия сегмента',
     seekingFrame: 'Ищем кадр…',
