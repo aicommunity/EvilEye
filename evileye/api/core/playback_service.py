@@ -1047,6 +1047,85 @@ def _event_label(event: dict[str, Any], event_type: str) -> str:
     )
 
 
+def _source_id_name_maps() -> tuple[dict[int, str], dict[str, int]]:
+    """Map logical camera names to pipeline source_ids (and reverse)."""
+    id_to_name: dict[int, str] = {}
+    name_to_id: dict[str, int] = {}
+    try:
+        from evileye.api.core.server_state import get_current_config_path, load_config_summary
+
+        summary = load_config_summary(get_current_config_path())
+        for item in summary.source_items:
+            sid = item.get("source_id")
+            name = str(item.get("source_name") or "")
+            if sid is None or not name:
+                continue
+            try:
+                id_to_name[int(sid)] = name
+                name_to_id[name] = int(sid)
+            except Exception:
+                continue
+    except Exception:
+        pass
+    if id_to_name:
+        return id_to_name, name_to_id
+
+    _config_path, params = _load_current_run_config()
+    pipeline = params.get("pipeline") if isinstance(params.get("pipeline"), dict) else params
+    sources = pipeline.get("sources") if isinstance(pipeline, dict) else None
+    for source in sources or []:
+        if not isinstance(source, dict):
+            continue
+        names = source.get("source_names") or []
+        ids = source.get("source_ids") or []
+        for idx, name in enumerate(names):
+            if idx >= len(ids):
+                break
+            try:
+                sid = int(ids[idx])
+                label = str(name)
+                id_to_name[sid] = label
+                name_to_id[label] = sid
+            except Exception:
+                continue
+    return id_to_name, name_to_id
+
+
+def _resolve_event_camera_name(raw: dict[str, Any], id_to_name: dict[int, str]) -> str:
+    source_name = str(raw.get("source_name") or raw.get("camera") or raw.get("source") or "")
+    if source_name:
+        return source_name
+    raw_sid = raw.get("source_id")
+    if raw_sid is None:
+        return ""
+    try:
+        return id_to_name.get(int(raw_sid), "")
+    except Exception:
+        return ""
+
+
+def _event_matches_camera_filters(
+    raw: dict[str, Any],
+    camera_filters: list[str],
+    *,
+    id_to_name: dict[int, str],
+    name_to_id: dict[str, int],
+) -> bool:
+    if not camera_filters:
+        return True
+    source_name = _resolve_event_camera_name(raw, id_to_name)
+    if source_name and source_name in camera_filters:
+        return True
+    raw_sid = raw.get("source_id")
+    if raw_sid is not None:
+        try:
+            sid = int(raw_sid)
+            return any(name_to_id.get(cam) == sid for cam in camera_filters)
+        except Exception:
+            pass
+    return False
+
+
 def _iter_event_rows(
     from_ts: Optional[float] = None,
     to_ts: Optional[float] = None,
@@ -1060,6 +1139,7 @@ def _iter_event_rows(
     rows: list[dict[str, Any]] = []
     date_dirs = _date_dirs_covering(base, date=date, from_ts=from_ts, to_ts=to_ts)
     camera_filters = [c for c in (cameras or []) if c]
+    id_to_name, name_to_id = _source_id_name_maps()
     for date_dir in date_dirs:
         meta_dir = date_dir / "Metadata"
         if not meta_dir.is_dir():
@@ -1085,11 +1165,14 @@ def _iter_event_rows(
                     continue
                 if to_ts is not None and ts > to_ts:
                     continue
-                source_name = str(raw.get("source_name") or raw.get("camera") or "")
-                if camera_filters and source_name and source_name not in camera_filters:
+                if not _event_matches_camera_filters(
+                    raw,
+                    camera_filters,
+                    id_to_name=id_to_name,
+                    name_to_id=name_to_id,
+                ):
                     continue
-                if camera_filters and not source_name:
-                    continue
+                source_name = _resolve_event_camera_name(raw, id_to_name)
                 zone_id, zone_name = _event_zone(raw)
                 rows.append(
                     {
