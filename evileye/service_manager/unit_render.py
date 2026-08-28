@@ -20,6 +20,7 @@ Restart=on-failure
 RestartSec=5
 TimeoutStopSec=30
 Environment=PYTHONUNBUFFERED=1
+Environment=EVILEYE_SITE_DIR={{WORKING_DIRECTORY}}
 
 [Install]
 WantedBy=multi-user.target
@@ -39,6 +40,7 @@ Restart=on-failure
 RestartSec=5
 TimeoutStopSec=30
 Environment=PYTHONUNBUFFERED=1
+Environment=EVILEYE_SITE_DIR={{WORKING_DIRECTORY}}
 
 [Install]
 WantedBy=default.target

@@ -25,6 +25,13 @@ fi
 touch "$RESTART_LOCK"
 trap 'rm -f "$RESTART_LOCK"' EXIT
 
+SPAWN_LOCK="$MONITOR_DIR/.spawn.lock"
+exec 200>"$SPAWN_LOCK"
+if ! flock -w 30 200; then
+    log_msg "Restart skipped: could not acquire spawn lock"
+    exit 0
+fi
+
 mark_watchdog_restarting
 log_msg "Starting EvilEye restart (reason=$REASON)"
 
@@ -45,6 +52,11 @@ done
 
 cleanup_orphan_mp_workers
 
+if [[ -n "$(find_child_pid)" ]]; then
+    log_msg "Child already running after stop (another agent); skip restart"
+    exit 0
+fi
+
 # Cleanup stale MP workers if EvilEye package is importable.
 (
     cd "$DEPLOY_DIR"
@@ -61,6 +73,7 @@ PY
 
 export EVILEYE_SCHEDULER_GPU_SETTLE_SEC="${EVILEYE_SCHEDULER_GPU_SETTLE_SEC:-15}"
 export EVILEYE_CLI_LAUNCHED=1
+export EVILEYE_SITE_DIR="${EVILEYE_SITE_DIR:-$DEPLOY_DIR}"
 
 load_gui_env
 

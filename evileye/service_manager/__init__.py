@@ -105,6 +105,20 @@ def is_web_os_service_active() -> bool:
         return False
 
 
+def web_service_main_pid(service_name: str = "evileye") -> Optional[int]:
+    """MainPID of the installed OS web service, if running."""
+    if not sys.platform.startswith("linux"):
+        return None
+    try:
+        for backend in ("systemd-user", "systemd-system"):
+            pid = linux_backend.main_pid_linux(backend, service_name=service_name)
+            if pid:
+                return pid
+    except Exception:
+        return None
+    return None
+
+
 def probe_port_scheme(port: int, host: str = "127.0.0.1") -> str:
     """Return 'https', 'http', or 'closed'."""
     return _probe_port_scheme(port, host=host)

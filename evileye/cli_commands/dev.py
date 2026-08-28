@@ -29,12 +29,14 @@ def dev_server(
     log_level: str = typer.Option("info", "--log-level"),
 ) -> None:
     """Run foreground web server (no systemd)."""
-    from evileye.service_manager import is_web_os_service_active
+    from evileye.site_runtime_guard import DuplicateWebError, ensure_web_singleton, spawn_lock
 
-    if is_web_os_service_active():
-        console.print(
-            "[yellow]OS web service is active. Stop it first: evileye service stop[/yellow]"
-        )
+    site = Path.cwd().resolve()
+    try:
+        with spawn_lock(site):
+            ensure_web_singleton(site, policy="fail", port=port)
+    except DuplicateWebError as exc:
+        console.print(f"[red]{exc}[/red]")
         raise typer.Exit(1)
 
     cmd = [sys.executable, str(Path(__file__).resolve().parents[1] / "server.py")]
@@ -42,8 +44,10 @@ def dev_server(
     if verbose:
         cmd.append("--verbose")
     console.print(f"[green]Starting dev server on http://{host}:{port}[/green]")
+    env = os.environ.copy()
+    env["EVILEYE_SITE_DIR"] = str(site)
     try:
-        subprocess.run(cmd, check=True, cwd=os.getcwd())
+        subprocess.run(cmd, check=True, cwd=os.getcwd(), env=env)
     except KeyboardInterrupt:
         raise typer.Exit(0)
     except subprocess.CalledProcessError as exc:

@@ -177,29 +177,40 @@ def signal_pid_term(pid: int) -> None:
     os.kill(int(pid), signal.SIGTERM)
 
 
-def find_matching_runtime(
-    records: dict[int, dict[str, Any]],
-    config_name: str,
-) -> Optional[dict[str, Any]]:
+def _runtime_matches_config(rec: dict[str, Any], config_name: str) -> bool:
     want = Path(config_name).name
     if not want.endswith(".json"):
         want = f"{want}.json"
+    path = str(rec.get("config_path") or "")
+    base = Path(path).name if path else ""
+    return base == want or path.endswith(want)
+
+
+def _runtime_is_alive(rec: dict[str, Any]) -> bool:
+    state = str(rec.get("state") or "")
+    return bool(rec.get("alive")) or state in {"running", "starting"}
+
+
+def find_all_matching_runtimes(
+    records: dict[int, dict[str, Any]],
+    config_name: str,
+    *,
+    site_dir: Path | None = None,
+) -> list[dict[str, Any]]:
     matches: list[dict[str, Any]] = []
     for rec in records.values():
         if not isinstance(rec, dict):
             continue
-        path = str(rec.get("config_path") or "")
-        base = Path(path).name if path else ""
-        if base != want and not path.endswith(want):
+        if not _runtime_matches_config(rec, config_name):
             continue
-        state = str(rec.get("state") or "")
-        alive = bool(rec.get("alive")) or state in {"running", "starting"}
-        if not alive:
+        if not _runtime_is_alive(rec):
             continue
+        if site_dir is not None:
+            from evileye.site_runtime_guard import record_belongs_to_site
+
+            if not record_belongs_to_site(rec, site_dir):
+                continue
         matches.append(rec)
-    if not matches:
-        return None
-    # Prefer managed web runs, then any with live pid
     matches.sort(
         key=lambda r: (
             0 if r.get("managed") else 1,
@@ -207,4 +218,14 @@ def find_matching_runtime(
             -int(r.get("id") or 0),
         )
     )
-    return matches[0]
+    return matches
+
+
+def find_matching_runtime(
+    records: dict[int, dict[str, Any]],
+    config_name: str,
+    *,
+    site_dir: Path | None = None,
+) -> Optional[dict[str, Any]]:
+    matches = find_all_matching_runtimes(records, config_name, site_dir=site_dir)
+    return matches[0] if matches else None

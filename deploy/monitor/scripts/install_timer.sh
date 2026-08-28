@@ -101,6 +101,7 @@ EOF
 
 ENV_LINES="Environment=DEPLOY_DIR=${DEPLOY_DIR}
 Environment=MONITOR_DIR=${MONITOR_DIR}
+Environment=EVILEYE_SITE_DIR=${DEPLOY_DIR}
 Environment=CONFIG_NAME=${CONFIG_NAME}
 Environment=DISPLAY=${DISPLAY}"
 if [[ -n "$XAUTHORITY" ]]; then

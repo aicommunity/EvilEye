@@ -75,7 +75,7 @@ def prod_up() -> None:
     if not cfg:
         console.print("[yellow]No production_config in site profile; web service only.[/yellow]")
         raise typer.Exit(0)
-    spawn = pipeline_start(cfg, site_dir=site_dir, detach=True, release_hold=True, gui=False)
+    spawn = pipeline_start(cfg, site_dir=site_dir, detach=True, release_hold=True, gui=False, skip_if_running=True)
     console.print(f"[green]Production stack up[/green] pipeline pid={spawn.pid} mode={spawn.mode}")
 
 

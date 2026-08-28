@@ -51,8 +51,10 @@
 |------------|----------|
 | `status` | Активные runs |
 | `stop [--all] [--hold]` | Остановка + опционально блокировка watchdog |
-| `start CONFIG [--gui] [--detach] [--release]` | managed (если web active) или direct run |
+| `start CONFIG [--gui] [--detach] [--release] [--replace]` | managed (если web active) или direct run |
 | `restart CONFIG` | stop + start с grace |
+
+**Singleton policy (per-site):** без `--replace` команды `pipeline start`, `evileye run` и API start завершаются с ошибкой, если для того же config уже есть живой `process.py` на этом site. `evileye prod up` идемпотентен (пропускает уже запущенный pipeline). Явный перезапуск: `--replace` или `pipeline restart`.
 
 `--hold` пишет `monitor/.manual_stop_until` (watchdog не перезапустит pipeline ~1ч).
 
@@ -60,15 +62,33 @@
 
 | Подкоманда | Описание |
 |------------|----------|
-| `web [--force-build] [--with-pipeline] [--config CONFIG]` | Правильный порядок: stop pipeline → build → service restart → start pipeline |
+| `web [--force-build] [--with-pipeline] [--config CONFIG]` | Build → service restart → (опционально) pipeline restart |
 | `backend` | Только restart OS web service |
 | `pipeline CONFIG` | Только pipeline |
 
-**Типичный dev-цикл после правки SPA/API:**
+**`reload web` без `--with-pipeline` не трогает pipeline** — только web-слой (build + `service restart`). Используйте это после правок SPA/API, когда pipeline должен продолжать работать.
+
+**`reload web --with-pipeline`** останавливает pipeline, перезапускает web и стартует pipeline с `--replace` (на случай managed-only child, не попавшего в stop).
+
+**Типичный dev-цикл после правки SPA/API (pipeline трогать не нужно):**
+
+```bash
+evileye reload web
+```
+
+**Полный reload web + pipeline:**
 
 ```bash
 evileye reload web --with-pipeline --config configs/system.json
 ```
+
+## `evileye run`
+
+| Флаг | Описание |
+|------|----------|
+| `--replace` | Остановить существующий run для этого config на site, затем запустить |
+
+Без `--replace` — fail fast с pid и подсказкой, если pipeline уже запущен.
 
 ## `evileye prod`
 
@@ -83,7 +103,16 @@ evileye reload web --with-pipeline --config configs/system.json
 
 ## `evileye dev server`
 
-Foreground `evileye server --no-reload` без systemd.
+Foreground `evileye server --no-reload` без systemd. Не запускается, если OS service активен, порт занят или уже есть foreground `evileye server` для этого site.
+
+## Диагностика дублей
+
+`evileye status` показывает предупреждения:
+
+- `duplicate_pipeline_detected` — несколько живых `process.py` на один config
+- `web_collision` — OS service активен и одновременно есть foreground server
+
+Рекомендуемые команды: `evileye pipeline stop --all`, `evileye service restart`.
 
 ## Docker
 

@@ -172,6 +172,19 @@ def is_active_linux(backend: str, service_name: str = "evileye") -> bool:
     return (proc.stdout or "").strip() == "active"
 
 
+def main_pid_linux(backend: str, service_name: str = "evileye") -> Optional[int]:
+    prefix = systemctl_prefix(backend)
+    proc = _run(
+        [*prefix, "show", f"{service_name}.service", "-p", "MainPID", "--value"],
+        check=False,
+    )
+    raw = (proc.stdout or "").strip()
+    if proc.returncode != 0 or not raw.isdigit():
+        return None
+    pid = int(raw)
+    return pid if pid > 0 else None
+
+
 def control_linux_service(
     backend: str,
     action: str,

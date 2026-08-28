@@ -200,6 +200,14 @@ def discover_stack_state(site_dir: Path | None = None) -> StackState:
             )
     if stack.manual_stop_active:
         stack.warnings.append("Watchdog manual stop is active (pipeline auto-restart suppressed)")
+    from evileye.site_runtime_guard import singleton_warnings
+
+    for warning in singleton_warnings(root):
+        stack.warnings.append(warning)
+        if warning.startswith("duplicate_pipeline_detected"):
+            stack.suggested_command = "evileye pipeline stop --all"
+        elif warning.startswith("web_collision"):
+            stack.suggested_command = "evileye service restart"
     if stack.in_container:
         stack.suggested_command = "docker compose restart web"
     elif stack.service_installed:
@@ -286,7 +294,7 @@ def stop_pipelines(
             and rec.get("pid")
         ]
     elif config:
-        match = find_matching_runtime(records, config)
+        match = find_matching_runtime(records, config, site_dir=root)
         if match:
             targets = [match]
 
@@ -384,6 +392,7 @@ def spawn_managed_pipeline(
     rid = allocate_pipeline_id()
     env = {
         **os.environ,
+        "EVILEYE_SITE_DIR": str(root),
         "EVILEYE_PIPELINE_ID": str(rid),
         "EVILEYE_PIPELINE_NAME": config_path.stem,
         "EVILEYE_MANAGED_RUN": "1",
@@ -419,6 +428,7 @@ def spawn_direct_pipeline(
     config_path = _resolve_config_path(config, root)
     use_gui = gui_default(root) if gui is None else gui
     env = os.environ.copy()
+    env["EVILEYE_SITE_DIR"] = str(root)
     env["EVILEYE_CLI_LAUNCHED"] = "1"
     env.setdefault("EVILEYE_SCHEDULER_GPU_SETTLE_SEC", "15")
 
@@ -440,6 +450,7 @@ def spawn_direct_pipeline(
                 "--scope",
                 "--unit=evileye-run",
                 f"--working-directory={root}",
+                f"--setenv=EVILEYE_SITE_DIR={root}",
                 "bash",
                 "-c",
                 cmd,
@@ -470,15 +481,35 @@ def pipeline_start(
     gui: Optional[bool] = None,
     detach: bool = False,
     release_hold: bool = False,
+    replace: bool = False,
+    skip_if_running: bool = False,
 ) -> SpawnResult:
+    from evileye.site_runtime_guard import ensure_pipeline_singleton, spawn_lock
     from evileye.watchdog_native import clear_manual_stop_cooldown
 
     root = _resolve_site(site_dir)
     if release_hold:
         clear_manual_stop_cooldown(root)
-    if should_use_managed_launch(root):
-        return spawn_managed_pipeline(config, site_dir=root)
-    return spawn_direct_pipeline(config, site_dir=root, gui=gui, detach=detach)
+
+    if skip_if_running:
+        policy = "skip"
+    elif replace:
+        policy = "replace"
+    else:
+        policy = "fail"
+
+    with spawn_lock(root):
+        guard = ensure_pipeline_singleton(config, root, policy=policy)
+        if guard.skipped:
+            mode = guard.existing_mode or "existing"
+            return SpawnResult(
+                pid=int(guard.existing_pid or 0),
+                mode=mode,
+                config_path=guard.config_path or config,
+            )
+        if should_use_managed_launch(root):
+            return spawn_managed_pipeline(config, site_dir=root)
+        return spawn_direct_pipeline(config, site_dir=root, gui=gui, detach=detach)
 
 
 def pipeline_restart(
@@ -515,6 +546,25 @@ def frontend_needs_build(site_dir: Path | None = None) -> bool:
         return False
 
 
+def _stop_stray_foreground_web_servers(site_dir: Path) -> list[int]:
+    """Terminate foreground evileye server processes that are not the OS service MainPID."""
+    from evileye.service_manager import web_service_main_pid
+    from evileye.site_runtime_guard import _service_process_tree_pids, discover_site_runs
+
+    service_main_pid = web_service_main_pid()
+    stopped: list[int] = []
+    service_tree = _service_process_tree_pids(service_main_pid)
+    for pid in discover_site_runs(site_dir).web_foreground_pids:
+        if pid in service_tree:
+            continue
+        try:
+            terminate_tree(int(pid), grace_sec=_stop_grace_sec())
+            stopped.append(int(pid))
+        except Exception:
+            continue
+    return stopped
+
+
 def restart_web_layer(
     *,
     site_dir: Path | None = None,
@@ -537,6 +587,9 @@ def restart_web_layer(
         sw.build_frontend()
 
     if is_service_installed(root):
+        stray = _stop_stray_foreground_web_servers(root)
+        if stray and log:
+            log(f"Stopped stray foreground web server PIDs: {', '.join(str(p) for p in stray)}")
         result = control_service("restart", site_dir=root)
         if not result.ok:
             raise RuntimeError(result.message)
@@ -589,6 +642,7 @@ def reload_web(
                 detach=True,
                 gui=False,
                 release_hold=release_hold or True,
+                replace=True,
             )
             return ReloadResult(
                 ok=True,

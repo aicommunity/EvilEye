@@ -220,6 +220,7 @@ def _run_with_scheduler(
         # Устанавливаем переменную окружения для определения запуска через CLI
         env = os.environ.copy()
         env['EVILEYE_CLI_LAUNCHED'] = '1'
+        env['EVILEYE_SITE_DIR'] = str(Path.cwd().resolve())
         subprocess.run(base_cmd, check=True, cwd=os.getcwd(), env=env)
         return
 
@@ -273,6 +274,7 @@ def _run_with_scheduler(
                 # Устанавливаем переменную окружения для определения запуска через CLI
                 env = os.environ.copy()
                 env['EVILEYE_CLI_LAUNCHED'] = '1'
+                env['EVILEYE_SITE_DIR'] = str(Path.cwd().resolve())
                 proc = subprocess.Popen(
                     base_cmd,
                     cwd=os.getcwd(),
@@ -582,6 +584,7 @@ def run(
         autoclose: bool = typer.Option(False, "--autoclose/--no-autoclose",
                                        help="Automatic close application when video ends"),
         verbose: bool = typer.Option(False, "--verbose", help="Enable verbose logging"),
+        replace: bool = typer.Option(False, "--replace", help="Stop existing run for this config, then start"),
 ) -> None:
     """
     Launch EvilEye system.
@@ -646,6 +649,19 @@ def run(
 
     # Recording is configured only via config file; no CLI flags
 
+    if config_path is not None:
+        from evileye.site_runtime_guard import DuplicatePipelineError, ensure_pipeline_singleton, spawn_lock
+
+        site = Path.cwd().resolve()
+        policy = "replace" if replace else "fail"
+        try:
+            with spawn_lock(site):
+                ensure_pipeline_singleton(str(config_path), site, policy=policy)
+        except DuplicatePipelineError as exc:
+            logger.error(str(exc))
+            console.print(f"[red]{exc}[/red]")
+            raise typer.Exit(1)
+
     try:
         logger.info(f"Launching command: {' '.join(cmd)}")
         console.print(f"[green]Launching with command:[/green] {' '.join(cmd)}")
@@ -657,6 +673,7 @@ def run(
             # Устанавливаем переменную окружения для определения запуска через CLI
             env = os.environ.copy()
             env['EVILEYE_CLI_LAUNCHED'] = '1'
+            env['EVILEYE_SITE_DIR'] = str(Path.cwd().resolve())
             subprocess.run(cmd, check=True, cwd=os.getcwd(), env=env)
         logger.info("Command executed successfully")
     except subprocess.CalledProcessError as e:
@@ -704,6 +721,17 @@ def start_api(
     logger = get_module_logger("cli")
     log_system_info(logger)
 
+    from evileye.site_runtime_guard import DuplicateWebError, ensure_web_singleton, spawn_lock
+
+    site = Path.cwd().resolve()
+    try:
+        with spawn_lock(site):
+            ensure_web_singleton(site, policy="fail", port=port)
+    except DuplicateWebError as exc:
+        logger.error(str(exc))
+        console.print(f"[red]{exc}[/red]")
+        raise typer.Exit(1)
+
     # Use server.py instead of process.py for API server
     cmd = [sys.executable, str(Path(__file__).parent / "server.py")]
     cmd.extend(["--host", host, "--port", str(port), "--log-level", log_level])
@@ -732,7 +760,9 @@ def start_api(
         logger.info(f"Starting web server (server.py): {' '.join(cmd)}")
         scheme = "https" if ssl_enabled(cert, key) else "http"
         console.print(f"[green]Starting web server on {scheme}://{host}:{port}[/green]")
-        subprocess.run(cmd, check=True, cwd=os.getcwd())
+        env = os.environ.copy()
+        env["EVILEYE_SITE_DIR"] = str(Path.cwd().resolve())
+        subprocess.run(cmd, check=True, cwd=os.getcwd(), env=env)
     except subprocess.CalledProcessError as e:
         logger.error(f"Web server failed: {e}")
         console.print(f"[red]Web server failed: {e}[/red]")

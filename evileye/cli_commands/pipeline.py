@@ -69,7 +69,9 @@ def pipeline_start_cmd(
     gui: Optional[bool] = typer.Option(None, "--gui/--no-gui", help="GUI mode for direct launch"),
     detach: bool = typer.Option(False, "--detach", help="Launch in background scope (direct mode)"),
     release: bool = typer.Option(False, "--release", help="Clear watchdog manual stop hold"),
+    replace: bool = typer.Option(False, "--replace", help="Stop existing run for this config, then start"),
 ) -> None:
+    from evileye.site_runtime_guard import DuplicatePipelineError
     from evileye.stack_control import pipeline_start, should_use_managed_launch
 
     try:
@@ -79,7 +81,11 @@ def pipeline_start_cmd(
             gui=gui,
             detach=detach,
             release_hold=release,
+            replace=replace,
         )
+    except DuplicatePipelineError as exc:
+        console.print(f"[red]{exc}[/red]")
+        raise typer.Exit(1)
     except FileNotFoundError as exc:
         console.print(f"[red]{exc}[/red]")
         raise typer.Exit(1)
