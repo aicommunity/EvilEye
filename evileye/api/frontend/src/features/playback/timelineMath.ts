@@ -202,9 +202,18 @@ export function snapTimelineSeek(
   viewFrom: number,
   viewTo: number,
   widthPx: number,
+  segmentsByCam?: Record<string, PlaybackSegment[]>,
 ): number {
-  if (viewTo - viewFrom >= DETECTION_SNAP_VIEW_SPAN_SEC) return unix;
-  return snapUnixToDetections(unix, detectionTs, viewFrom, viewTo, widthPx);
+  let target = unix;
+  if (viewTo - viewFrom < DETECTION_SNAP_VIEW_SPAN_SEC) {
+    target = snapUnixToDetections(unix, detectionTs, viewFrom, viewTo, widthPx);
+  }
+  if (segmentsByCam && Object.keys(segmentsByCam).length) {
+    if (!hasAnyPlayableAtPosition(segmentsByCam, target)) {
+      return snapUnionPositionToPlayable(segmentsByCam, target);
+    }
+  }
+  return target;
 }
 
 export function localDateString(tsSec: number): string {
@@ -520,7 +529,7 @@ export function hasAnyPlayableAtPosition(
   );
 }
 
-function playableIntervalsInView(
+export function playableIntervalsInView(
   segs: PlaybackSegment[],
   viewFrom: number,
   viewTo: number,
@@ -533,6 +542,100 @@ function playableIntervalsInView(
     if (to > from) merged = mergeLoadedIntervals(merged, { from, to });
   }
   return merged;
+}
+
+/** Non-playable (in-progress) segment windows clipped to the view. */
+export function recordingIntervalsInView(
+  segs: PlaybackSegment[],
+  viewFrom: number,
+  viewTo: number,
+): TimeInterval[] {
+  let merged: TimeInterval[] = [];
+  for (const s of segs) {
+    if (isPlayableSegment(s)) continue;
+    const from = Math.max(s.start_ts, viewFrom);
+    const to = Math.min(s.end_ts, viewTo);
+    if (to > from) merged = mergeLoadedIntervals(merged, { from, to });
+  }
+  return merged;
+}
+
+/** Union of playable media intervals across all cameras in view. */
+export function playableUnionCoverage(
+  segmentsByCam: Record<string, PlaybackSegment[]>,
+  viewFrom: number,
+  viewTo: number,
+): TimeInterval[] {
+  let merged: TimeInterval[] = [];
+  for (const segs of Object.values(segmentsByCam)) {
+    for (const lane of playableIntervalsInView(segs, viewFrom, viewTo)) {
+      merged = mergeLoadedIntervals(merged, lane);
+    }
+  }
+  return merged;
+}
+
+/** Union of in-progress (non-playable) intervals across all cameras. */
+export function recordingUnionCoverage(
+  segmentsByCam: Record<string, PlaybackSegment[]>,
+  viewFrom: number,
+  viewTo: number,
+): TimeInterval[] {
+  let merged: TimeInterval[] = [];
+  for (const segs of Object.values(segmentsByCam)) {
+    for (const lane of recordingIntervalsInView(segs, viewFrom, viewTo)) {
+      merged = mergeLoadedIntervals(merged, lane);
+    }
+  }
+  return merged;
+}
+
+export function flattenPlayableSegments(segmentsByCam: Record<string, PlaybackSegment[]>): PlaybackSegment[] {
+  const out: PlaybackSegment[] = [];
+  for (const segs of Object.values(segmentsByCam)) {
+    for (const s of segs) {
+      if (isPlayableSegment(s)) out.push(s);
+    }
+  }
+  return out.sort((a, b) => a.start_ts - b.start_ts);
+}
+
+/** Snap playhead to nearest playable media across the union of selected cameras. */
+export function snapUnionPositionToPlayable(
+  segmentsByCam: Record<string, PlaybackSegment[]>,
+  positionSec: number,
+  videoDurationSec?: number,
+): number {
+  return snapPositionToPlayable(flattenPlayableSegments(segmentsByCam), positionSec, videoDurationSec);
+}
+
+/** True when the given camera (or any camera) has playable media at positionSec. */
+export function isPlayableAtPosition(
+  segmentsByCam: Record<string, PlaybackSegment[]>,
+  positionSec: number,
+  cameraId?: string,
+): boolean {
+  if (cameraId) {
+    return pickContainingPlayableSegment(segmentsByCam[cameraId] ?? [], positionSec) != null;
+  }
+  return hasAnyPlayableAtPosition(segmentsByCam, positionSec);
+}
+
+/** Earliest playable segment start strictly after afterSec (union across cameras). */
+export function nextPlayableStart(
+  segmentsByCam: Record<string, PlaybackSegment[]>,
+  afterSec: number,
+): number | null {
+  let best: number | null = null;
+  for (const segs of Object.values(segmentsByCam)) {
+    for (const s of segs) {
+      if (!isPlayableSegment(s)) continue;
+      const start = s.start_ts;
+      if (start <= afterSec + 1e-6) continue;
+      if (best == null || start < best) best = start;
+    }
+  }
+  return best;
 }
 
 function intersectTwoIntervals(a: TimeInterval[], b: TimeInterval[]): TimeInterval[] {

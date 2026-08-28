@@ -34,6 +34,8 @@ export function ExpandedPlaybackView({
   onVideoClock,
   onClose,
   detectionsReady = true,
+  anyCameraPlayableAtPosition = false,
+  onSeekNearestPlayable,
 }: {
   cameraId: string;
   camera?: PlaybackCamera;
@@ -53,6 +55,8 @@ export function ExpandedPlaybackView({
   onVideoClock?: (globalSec: number) => void;
   onClose: () => void;
   detectionsReady?: boolean;
+  anyCameraPlayableAtPosition?: boolean;
+  onSeekNearestPlayable?: () => void;
 }) {
   const { t } = useI18n();
   const mediaRef = useRef<HTMLDivElement>(null);
@@ -175,6 +179,8 @@ export function ExpandedPlaybackView({
             loading={loading}
             recordingInProgress={recordingInProgress}
             inPlayableGap={inPlayableGap}
+            anyCameraPlayableAtPosition={anyCameraPlayableAtPosition}
+            onSeekNearestPlayable={onSeekNearestPlayable}
           />
         )}
       </div>

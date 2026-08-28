@@ -37,6 +37,8 @@ export function PlaybackGrid({
   onExpand,
   segmentsLoading = false,
   detectionsReady = true,
+  anyCameraPlayableAtPosition = false,
+  onSeekNearestPlayable,
 }: {
   cameras: string[];
   cameraDefs: Record<string, PlaybackCamera>;
@@ -59,6 +61,8 @@ export function PlaybackGrid({
   onExpand: (cameraId: string) => void;
   segmentsLoading?: boolean;
   detectionsReady?: boolean;
+  anyCameraPlayableAtPosition?: boolean;
+  onSeekNearestPlayable?: () => void;
 }) {
   const { t } = useI18n();
   if (!cameras.length) return <p className="empty">{t('playback.selectCameras')}</p>;
@@ -90,6 +94,8 @@ export function PlaybackGrid({
           onExpand={() => onExpand(id)}
           segmentsLoading={segmentsLoading && !(segmentsByCam[id]?.length)}
           detectionsReady={detectionsReady}
+          anyCameraPlayableAtPosition={anyCameraPlayableAtPosition}
+          onSeekNearestPlayable={onSeekNearestPlayable}
         />
       ))}
     </div>
@@ -116,6 +122,8 @@ function PlaybackCell({
   onExpand,
   segmentsLoading = false,
   detectionsReady = true,
+  anyCameraPlayableAtPosition = false,
+  onSeekNearestPlayable,
 }: {
   id: string;
   camera?: PlaybackCamera;
@@ -136,6 +144,8 @@ function PlaybackCell({
   onExpand: () => void;
   segmentsLoading?: boolean;
   detectionsReady?: boolean;
+  anyCameraPlayableAtPosition?: boolean;
+  onSeekNearestPlayable?: () => void;
 }) {
   const mediaRef = useRef<HTMLDivElement>(null);
   const [videoReady, setVideoReady] = useState(0);
@@ -213,6 +223,8 @@ function PlaybackCell({
       detectionsReady={detectionsReady}
       recordingInProgress={recordingInProgress}
       inPlayableGap={inPlayableGap}
+      anyCameraPlayableAtPosition={anyCameraPlayableAtPosition}
+      onSeekNearestPlayable={onSeekNearestPlayable}
     />
   );
 }
@@ -248,6 +260,8 @@ function NormalPlaybackCell({
   detectionsReady = true,
   recordingInProgress = false,
   inPlayableGap = false,
+  anyCameraPlayableAtPosition = false,
+  onSeekNearestPlayable,
 }: {
   id: string;
   camera?: PlaybackCamera;
@@ -279,6 +293,8 @@ function NormalPlaybackCell({
   detectionsReady?: boolean;
   recordingInProgress?: boolean;
   inPlayableGap?: boolean;
+  anyCameraPlayableAtPosition?: boolean;
+  onSeekNearestPlayable?: () => void;
 }) {
   const { meta, loading } = usePlaybackCameraMetadata({
     cameraId: id,
@@ -326,6 +342,8 @@ function NormalPlaybackCell({
           segmentsLoading={segmentsLoading}
           recordingInProgress={recordingInProgress}
           inPlayableGap={inPlayableGap}
+          anyCameraPlayableAtPosition={anyCameraPlayableAtPosition}
+          onSeekNearestPlayable={onSeekNearestPlayable}
         />
       </div>
     </article>

@@ -1,4 +1,7 @@
-import { snapPositionToPlayable } from './timelineMath';
+import {
+  hasAnyPlayableAtPosition,
+  snapUnionPositionToPlayable,
+} from './timelineMath';
 import type { PlaybackSegment } from '../../api';
 
 export const POST_LOAD_SNAP_GRACE_MS = 5000;
@@ -23,7 +26,7 @@ export function createUserSeekGuard(): UserSeekGuard {
 }
 
 export function applyPostLoadSnapIfNeeded(
-  allSegs: PlaybackSegment[],
+  segmentsByCam: Record<string, PlaybackSegment[]>,
   opts: {
     merge?: boolean;
     initialT: number | null;
@@ -32,14 +35,19 @@ export function applyPostLoadSnapIfNeeded(
     guard: UserSeekGuard;
   },
 ): void {
-  if (opts.merge || !allSegs.length) return;
+  if (opts.merge || !Object.keys(segmentsByCam).length) return;
   if (!opts.guard.shouldApplyPostLoadSnap(opts.initialT)) return;
   const target = opts.initialT != null ? opts.initialT : opts.getPosition();
-  const snapped = snapPositionToPlayable(allSegs, target);
+  const snapped = snapUnionPositionToPlayable(segmentsByCam, target);
   if (Math.abs(snapped - opts.getPosition()) > 0.5) opts.seek(snapped);
 }
 
-/** User click: wall-clock intent only (detection snap happens in Timeline). */
-export function resolveUserSeekTarget(sec: number): number {
-  return sec;
+/** User seek: snap into playable union when the target sits in a gap. */
+export function resolveUserSeekTarget(
+  sec: number,
+  segmentsByCam?: Record<string, PlaybackSegment[]>,
+): number {
+  if (!segmentsByCam || !Object.keys(segmentsByCam).length) return sec;
+  if (hasAnyPlayableAtPosition(segmentsByCam, sec)) return sec;
+  return snapUnionPositionToPlayable(segmentsByCam, sec);
 }

@@ -8,8 +8,11 @@ import {
   buildTimelineDateLabels,
   buildTimelineTicks,
   clipRangeToView,
+  hasAnyPlayableAtPosition,
   intersectPlayableCoverage,
   playableCoverageFraction,
+  playableUnionCoverage,
+  recordingUnionCoverage,
   dayViewSpanSec,
   panViewWithinDay,
   snapTimelineSeek,
@@ -169,8 +172,11 @@ export function Timeline({
   const pct = hasView ? ((position - displayFrom) / span) * 100 : 0;
   const ticks = hasView ? buildTimelineTicks(displayFrom, displayTo) : [];
   const dateTicks = hasView ? buildTimelineDateLabels(displayFrom, displayTo) : [];
-  const noData = segments.length === 0 && markers.length === 0;
+  const noData =
+    segments.length === 0 && markers.length === 0 && detectionTs.length === 0 && eventIntervals.length === 0;
   const playheadInView = hasView && position >= displayFrom && position <= displayTo;
+  const playheadInGap =
+    hasView && segmentsByCamera && !hasAnyPlayableAtPosition(segmentsByCamera, position);
   const showHoverTooltip =
     hoverSec != null &&
     !panning &&
@@ -182,7 +188,7 @@ export function Timeline({
     if (!el) return;
     const rect = el.getBoundingClientRect();
     const raw = unixAtClientX(clientX, rect, displayFrom, displayTo);
-    onSeek(snapTimelineSeek(raw, detectionTs, displayFrom, displayTo, rect.width));
+    onSeek(snapTimelineSeek(raw, detectionTs, displayFrom, displayTo, rect.width, segmentsByCamera));
   };
 
   const updateHover = (clientX: number) => {
@@ -206,6 +212,10 @@ export function Timeline({
     hasView && segmentsByCamera && selectedCameraCount > 1
       ? intersectPlayableCoverage(segmentsByCamera, displayFrom, displayTo)
       : [];
+  const playableUnion =
+    hasView && segmentsByCamera ? playableUnionCoverage(segmentsByCamera, displayFrom, displayTo) : [];
+  const recordingUnion =
+    hasView && segmentsByCamera ? recordingUnionCoverage(segmentsByCamera, displayFrom, displayTo) : [];
 
   // One stable root for the Timeline lifetime so the wheel listener survives
   // empty → loaded transitions (swapping roots left the listener on a detached node).
@@ -354,10 +364,32 @@ export function Timeline({
               <DetectionTicksCanvas detectionTs={detectionTs} viewFrom={displayFrom} viewTo={displayTo} />
             </>
           ) : null}
-          {segments.map((seg) => {
-            const clipped = clipRangeToView(seg.start_ts, seg.end_ts, displayFrom, displayTo);
+          {recordingUnion.map((interval, idx) => {
+            const clipped = clipRangeToView(interval.from, interval.to, displayFrom, displayTo);
             if (!clipped) return null;
-            const mid = (Math.max(seg.start_ts, displayFrom) + Math.min(seg.end_ts, displayTo)) / 2;
+            return (
+              <div
+                key={`rec-${interval.from}-${idx}`}
+                className="timeline-segment-block timeline-segment-block--recording"
+                style={{
+                  position: 'absolute',
+                  left: `${clipped.leftPct}%`,
+                  width: `${Math.max(0.15, clipped.widthPct)}%`,
+                  top: '16%',
+                  height: '48%',
+                  background:
+                    'repeating-linear-gradient(135deg, rgba(148, 163, 184, 0.35) 0 6px, rgba(100, 116, 139, 0.2) 6px 12px)',
+                  borderRadius: 4,
+                  border: '1px dashed rgba(148, 163, 184, 0.75)',
+                  pointerEvents: 'none',
+                }}
+              />
+            );
+          })}
+          {playableUnion.map((interval, idx) => {
+            const clipped = clipRangeToView(interval.from, interval.to, displayFrom, displayTo);
+            if (!clipped) return null;
+            const mid = (Math.max(interval.from, displayFrom) + Math.min(interval.to, displayTo)) / 2;
             const coverage =
               segmentsByCamera && selectedCameraCount > 0
                 ? playableCoverageFraction(segmentsByCamera, mid, selectedCameraCount)
@@ -365,7 +397,7 @@ export function Timeline({
             const opacity = 0.35 + 0.65 * coverage;
             return (
               <div
-                key={seg.path}
+                key={`play-${interval.from}-${idx}`}
                 className="timeline-segment-block"
                 style={{
                   position: 'absolute',
@@ -423,14 +455,14 @@ export function Timeline({
             />
           ) : null}
           <div
-            className="timeline-playhead"
+            className={`timeline-playhead${playheadInGap ? ' timeline-playhead--gap' : ''}`}
             style={{
               position: 'absolute',
               left: `${Math.max(0, Math.min(100, pct))}%`,
               top: 0,
               bottom: 0,
               width: 2,
-              background: 'var(--accent)',
+              background: playheadInGap ? 'rgba(239, 68, 68, 0.85)' : 'var(--accent)',
               pointerEvents: 'none',
             }}
           />

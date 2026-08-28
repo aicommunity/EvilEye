@@ -1,9 +1,11 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState, type MutableRefObject } from 'react';
+import type { PlaybackSegment } from '../../api';
 import {
   playbackDebugInc,
   playbackDebugSetMeta,
 } from './playbackDebug';
 import { CLOCK_GRACE_MS, resetPlaybackClockOwner } from './playbackVideoSync';
+import { hasAnyPlayableAtPosition, nextPlayableStart } from './timelineMath';
 
 export type PlayheadMode = 'idle' | 'userSeek' | 'playing' | 'stalled';
 
@@ -15,7 +17,10 @@ type UserSeekState = {
   token: number;
 };
 
-export function usePlaybackController(initialSec: number | null) {
+export function usePlaybackController(
+  initialSec: number | null,
+  segmentsByCamRef?: MutableRefObject<Record<string, PlaybackSegment[]>>,
+) {
   const [playing, setPlayingState] = useState(false);
   const [speed, setSpeed] = useState(1);
   const [fromSec, setFromSec] = useState<number | null>(null);
@@ -174,6 +179,19 @@ export function usePlaybackController(initialSec: number | null) {
       last = now;
       if (!(dt > 0) || dt > 1) return;
       let next = positionRef.current + dt;
+      const segsByCam = segmentsByCamRef?.current;
+      if (segsByCam && Object.keys(segsByCam).length) {
+        const pos = positionRef.current;
+        if (!hasAnyPlayableAtPosition(segsByCam, pos)) {
+          const skipTo = nextPlayableStart(segsByCam, pos);
+          if (skipTo != null) {
+            next = skipTo;
+          } else {
+            setPlaying(false);
+            return;
+          }
+        }
+      }
       const upper = toSecRef.current;
       if (upper != null && next > upper) {
         next = upper;

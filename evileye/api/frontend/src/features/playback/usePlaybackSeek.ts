@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState, type MutableRefObject } from 'react';
+import type { PlaybackSegment } from '../../api';
 import {
   dayBoundsLocal,
   dayViewSpanSec,
@@ -34,6 +35,7 @@ export function usePlaybackSeek(opts: {
   loadTimerRef: MutableRefObject<number | null>;
   ensureAdjacentLoad: (from: number, to: number) => void;
   userSeekGuardRef: MutableRefObject<UserSeekGuard>;
+  segmentsByCamRef: MutableRefObject<Record<string, PlaybackSegment[]>>;
 }) {
   const {
     ctrl,
@@ -45,6 +47,7 @@ export function usePlaybackSeek(opts: {
     loadTimerRef,
     ensureAdjacentLoad,
     userSeekGuardRef,
+    segmentsByCamRef,
   } = opts;
 
   const seekSettleTimerRef = useRef<number | null>(null);
@@ -53,7 +56,7 @@ export function usePlaybackSeek(opts: {
 
   const seek = useCallback(
     (sec: number) => {
-      const target = resolveUserSeekTarget(sec);
+      const target = resolveUserSeekTarget(sec, segmentsByCamRef.current);
       const nextDate = localDateString(target);
       if (nextDate !== date) {
         dateChangeSourceRef.current = 'seek';

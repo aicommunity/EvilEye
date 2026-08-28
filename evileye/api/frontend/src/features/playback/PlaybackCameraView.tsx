@@ -589,6 +589,8 @@ export function PlaybackVideoSurface({
   segmentsLoading = false,
   recordingInProgress = false,
   inPlayableGap = false,
+  anyCameraPlayableAtPosition = false,
+  onSeekNearestPlayable,
 }: {
   videoRef: RefObject<HTMLVideoElement | null>;
   preloadRef: RefObject<HTMLVideoElement | null>;
@@ -612,9 +614,21 @@ export function PlaybackVideoSurface({
   segmentsLoading?: boolean;
   recordingInProgress?: boolean;
   inPlayableGap?: boolean;
+  anyCameraPlayableAtPosition?: boolean;
+  onSeekNearestPlayable?: () => void;
 }) {
   const { t } = useI18n();
   const [seeking, setSeeking] = useState(false);
+
+  const emptyMessage = (() => {
+    if (segmentsLoading) return t('playback.loadingSegment');
+    if (recordingInProgress) return t('playback.recordingInProgress');
+    if (inPlayableGap) {
+      if (anyCameraPlayableAtPosition) return t('playback.cameraNotRecordingAtTime');
+      return t('playback.betweenRecordings');
+    }
+    return t('playback.noSegment');
+  })();
 
   useEffect(() => {
     const v = videoRef.current;
@@ -691,13 +705,12 @@ export function PlaybackVideoSurface({
         </>
       ) : (
         <div className={`${previewClass} camera-preview-empty`}>
-          {segmentsLoading
-            ? t('playback.loadingSegment')
-            : recordingInProgress
-              ? t('playback.recordingInProgress')
-              : inPlayableGap
-                ? t('playback.noRecordingAtTime')
-                : t('playback.noSegment')}
+          <span>{emptyMessage}</span>
+          {inPlayableGap && !anyCameraPlayableAtPosition && onSeekNearestPlayable ? (
+            <button type="button" className="btn btn-sm btn-outline" onClick={onSeekNearestPlayable}>
+              {t('playback.seekNearestRecording')}
+            </button>
+          ) : null}
         </div>
       )}
       {recordingInProgress && slot?.url ? (

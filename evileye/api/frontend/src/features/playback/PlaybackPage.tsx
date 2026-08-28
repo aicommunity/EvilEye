@@ -36,8 +36,10 @@ import {
   mergeSegments,
   dayBoundsLocal,
   dayViewUpperBound,
+  hasAnyPlayableAtPosition,
   resolveTimelineViewChange,
   segmentIntersectsDay,
+  snapUnionPositionToPlayable,
   formatPlaybackTime,
 } from './timelineMath';
 import { filterLogicalCameraIds, preferLogicalCameras } from './playbackCameraIds';
@@ -158,7 +160,8 @@ export function PlaybackPage() {
   const [showMetadata, setShowMetadata] = useState(true);
   const [, setTimelinePanning] = useState(false);
   const [expandedCameraId, setExpandedCameraId] = useState<string | null>(null);
-  const ctrl = usePlaybackController(initialT ?? sessionSnap?.positionSec ?? null);
+  const segmentsByCamRef = useRef<Record<string, PlaybackSegment[]>>({});
+  const ctrl = usePlaybackController(initialT ?? sessionSnap?.positionSec ?? null, segmentsByCamRef);
   const viewport = useTimelineViewport();
   const sessionViewRestoredRef = useRef(false);
 
@@ -225,6 +228,10 @@ export function PlaybackPage() {
   const ensureAdjacentLoadRef = useRef<(vf: number, vt: number) => void>(() => {});
   const allSegmentsRef = useRef<PlaybackSegment[]>([]);
   const userSeekGuardRef = useRef<UserSeekGuard>(createUserSeekGuard());
+
+  useEffect(() => {
+    segmentsByCamRef.current = segmentsByCam;
+  }, [segmentsByCam]);
 
   useEffect(() => {
     if (sessionViewRestoredRef.current || initialT != null || !sessionSnap) return;
@@ -448,7 +455,7 @@ export function PlaybackPage() {
           });
 
           setSegmentsLoaded(true);
-          applyPostLoadSnapIfNeeded(allSegs, {
+          applyPostLoadSnapIfNeeded(incoming, {
             merge: opts?.merge,
             initialT,
             getPosition: ctrl.getPosition,
@@ -565,7 +572,7 @@ export function PlaybackPage() {
           return Array.from(byKey.values()).sort((a, b) => a.start_ts - b.start_ts);
         });
         setSegmentsLoaded(true);
-        applyPostLoadSnapIfNeeded(allSegs, {
+        applyPostLoadSnapIfNeeded(incoming, {
           merge: opts?.merge,
           initialT,
           getPosition: ctrl.getPosition,
@@ -651,7 +658,19 @@ export function PlaybackPage() {
     loadTimerRef,
     ensureAdjacentLoad,
     userSeekGuardRef,
+    segmentsByCamRef,
   });
+
+  const anyCameraPlayableAtPosition = useMemo(
+    () => hasAnyPlayableAtPosition(segmentsByCam, ctrl.positionSec),
+    [segmentsByCam, ctrl.positionSec],
+  );
+
+  const seekNearestPlayable = useCallback(() => {
+    const pos = ctrl.getPosition();
+    const snapped = snapUnionPositionToPlayable(segmentsByCam, pos);
+    if (Math.abs(snapped - pos) > 0.5) seek(snapped);
+  }, [ctrl, segmentsByCam, seek]);
 
   useEffect(() => {
     playbackDebugSetMeta({
@@ -872,6 +891,8 @@ export function PlaybackPage() {
               onVideoClock={ctrl.syncPositionFromVideo}
               onClose={() => setExpandedCameraId(null)}
               detectionsReady={detectionsReady}
+              anyCameraPlayableAtPosition={anyCameraPlayableAtPosition}
+              onSeekNearestPlayable={seekNearestPlayable}
             />
           ) : gridEmpty ? (
             <div className="empty" style={{ display: 'grid', gap: 12, justifyItems: 'start' }}>
@@ -916,6 +937,8 @@ export function PlaybackPage() {
               onExpand={setExpandedCameraId}
               segmentsLoading={segmentsLoading}
               detectionsReady={detectionsReady}
+              anyCameraPlayableAtPosition={anyCameraPlayableAtPosition}
+              onSeekNearestPlayable={seekNearestPlayable}
             />
           )}
         </div>

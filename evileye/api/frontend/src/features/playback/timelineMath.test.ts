@@ -17,7 +17,12 @@ import {
   intervalsExtent,
   isPositionInPlayableGap,
   isPositionInRecordingSegment,
+  isPlayableAtPosition,
   mergeLoadedIntervals,
+  nextPlayableStart,
+  playableUnionCoverage,
+  recordingUnionCoverage,
+  snapUnionPositionToPlayable,
   uncoveredIntervals,
   pickContainingSegment,
   pickContainingPlayableSegment,
@@ -303,8 +308,62 @@ describe('Cam1 gap @ 18:48:29', () => {
     expect(cam2Only.some((i) => i.from <= target && i.to >= target)).toBe(true);
   });
 
-  it('resolveUserSeekTarget does not snap user click', () => {
+  it('resolveUserSeekTarget without segments keeps raw click', () => {
     expect(resolveUserSeekTarget(target)).toBe(target);
+  });
+});
+
+describe('playable union coverage', () => {
+  const cam1Segs = [
+    { path: 'a.mp4', start_ts: 100, end_ts: 200, duration_ms: 100_000, playable: true },
+    { path: 'open.mp4', start_ts: 200, end_ts: 250, duration_ms: 50_000, playable: false },
+  ];
+  const cam2Segs = [{ path: 'b.mp4', start_ts: 150, end_ts: 300, duration_ms: 150_000, playable: true }];
+
+  it('playableUnionCoverage excludes non-playable windows', () => {
+    const union = playableUnionCoverage({ Cam1: cam1Segs }, 100, 300);
+    expect(union).toEqual([{ from: 100, to: 200 }]);
+    const multi = playableUnionCoverage({ Cam1: cam1Segs, Cam2: cam2Segs }, 100, 300);
+    expect(multi.some((i) => i.from <= 220 && i.to >= 220)).toBe(true);
+  });
+
+  it('recordingUnionCoverage tracks in-progress only', () => {
+    const rec = recordingUnionCoverage({ Cam1: cam1Segs }, 100, 300);
+    expect(rec).toEqual([{ from: 200, to: 250 }]);
+  });
+
+  it('isPlayableAtPosition respects per-camera filter', () => {
+    const byCam = { Cam1: cam1Segs, Cam2: cam2Segs };
+    expect(isPlayableAtPosition(byCam, 225)).toBe(true);
+    expect(isPlayableAtPosition(byCam, 225, 'Cam1')).toBe(false);
+    expect(isPlayableAtPosition(byCam, 225, 'Cam2')).toBe(true);
+  });
+
+  it('snapUnionPositionToPlayable snaps gap to nearest playable', () => {
+    const byCam = {
+      Cam1: [{ path: 'a.mp4', start_ts: 100, end_ts: 200, duration_ms: 100_000, playable: true }],
+      Cam2: [{ path: 'b.mp4', start_ts: 300, end_ts: 400, duration_ms: 100_000, playable: true }],
+    };
+    const snapped = snapUnionPositionToPlayable(byCam, 250);
+    expect(snapped).toBeGreaterThanOrEqual(199);
+    expect(snapped).toBeLessThanOrEqual(200);
+  });
+
+  it('nextPlayableStart finds earliest future segment', () => {
+    const byCam = {
+      Cam1: [{ path: 'a.mp4', start_ts: 100, end_ts: 200, duration_ms: 100_000, playable: true }],
+      Cam2: [{ path: 'b.mp4', start_ts: 300, end_ts: 400, duration_ms: 100_000, playable: true }],
+    };
+    expect(nextPlayableStart(byCam, 250)).toBe(300);
+  });
+
+  it('snapTimelineSeek avoids detection snap into gap when segments provided', () => {
+    const byCam = {
+      Cam1: [{ path: 'a.mp4', start_ts: 100, end_ts: 200, duration_ms: 100_000, playable: true }],
+    };
+    const detectionTs = [250];
+    const snapped = snapTimelineSeek(248, detectionTs, 100, 400, 500, byCam);
+    expect(snapped).toBeLessThanOrEqual(200);
   });
 });
 
