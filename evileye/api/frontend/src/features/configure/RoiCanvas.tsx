@@ -1,9 +1,10 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState, type CSSProperties } from 'react';
 import { configGet, editorsApi, stateApi, streamSnapshotUrl } from '../../api';
 import { Button } from '../../components/ui';
 import { useToast } from '../../components/ui/Toast';
 import { useI18n } from '../../i18n';
 import { listCamerasFromConfig, type ConfigCameraOption } from './cameraList';
+import { useImageLetterbox } from '../live/useImageLetterbox';
 
 const ROI_STROKE = 1.5;
 
@@ -28,6 +29,20 @@ function roiCorners(r: number[]): [number, number][] {
     [x2, y2],
     [x1, y2],
   ];
+}
+
+function translateRoi(r: number[], dx: number, dy: number): number[] {
+  const [x1, y1, x2, y2] = normalizeRoi(r);
+  return normalizeRoi([x1 + dx, y1 + dy, x2 + dx, y2 + dy]);
+}
+
+function pixelRoiToNorm([x, y, w, h]: number[], imgW: number, imgH: number): number[] {
+  if (imgW <= 0 || imgH <= 0) return normalizeRoi([x, y, x + w, y + h]);
+  return normalizeRoi([x / imgW, y / imgH, (x + w) / imgW, (y + h) / imgH]);
+}
+
+function snapshotFrameSize(img: HTMLImageElement | null): { w: number; h: number } {
+  return { w: img?.naturalWidth ?? 0, h: img?.naturalHeight ?? 0 };
 }
 
 function updateRoiCorner(r: number[], cornerIndex: number, point: [number, number]): number[] {
@@ -68,18 +83,45 @@ export function RoiCanvas({
   const [cameraOptions, setCameraOptions] = useState<ConfigCameraOption[]>([]);
   const [selectedIndex, setSelectedIndex] = useState<number | null>(null);
   const [dragCorner, setDragCorner] = useState<{ roiIndex: number; cornerIndex: number } | null>(null);
+  const [dragMove, setDragMove] = useState<{ roiIndex: number; start: [number, number]; orig: number[] } | null>(
+    null,
+  );
   const wrapRef = useRef<HTMLDivElement>(null);
+  const imgRef = useRef<HTMLImageElement>(null);
+  const roisPixelRef = useRef<number[][]>([]);
+  const serverRoisRef = useRef<number[][]>([]);
+  const roiLoadSeqRef = useRef(0);
+  const [imgLoaded, setImgLoaded] = useState(false);
+  const layoutBox = useImageLetterbox(wrapRef, imgRef, [bgUrl, imgLoaded, sourceId]);
+
+  const applyDisplayRois = useCallback(() => {
+    const { w, h } = snapshotFrameSize(imgRef.current);
+    const pixels = roisPixelRef.current;
+    if (w > 0 && h > 0 && pixels.length > 0) {
+      setRois(pixels.map((px) => pixelRoiToNorm(px, w, h)));
+      return;
+    }
+    if (serverRoisRef.current.length > 0) {
+      setRois(serverRoisRef.current.map(normalizeRoi));
+      return;
+    }
+    setRois([]);
+  }, []);
 
   const loadRois = useCallback(() => {
+    const seq = ++roiLoadSeqRef.current;
     void editorsApi
       .getRoi(configName, sourceId)
       .then((r) => {
-        setRois((r.rois ?? []).map(normalizeRoi));
+        if (seq !== roiLoadSeqRef.current) return;
+        roisPixelRef.current = (r.rois_pixel ?? []).map((px) => px.slice(0, 4));
+        serverRoisRef.current = (r.rois ?? []).map(normalizeRoi);
+        applyDisplayRois();
         setSelectedIndex(null);
         setDrawing(null);
       })
       .catch((e) => showError(e.message));
-  }, [configName, sourceId, showError]);
+  }, [applyDisplayRois, configName, sourceId, showError]);
 
   useEffect(() => {
     loadRois();
@@ -147,6 +189,16 @@ export function RoiCanvas({
   }, [sourceId]);
 
   useEffect(() => {
+    setImgLoaded(false);
+  }, [bgUrl, sourceId]);
+
+  useEffect(() => {
+    if (!imgLoaded) return;
+    if (!roisPixelRef.current.length && !serverRoisRef.current.length) return;
+    applyDisplayRois();
+  }, [applyDisplayRois, imgLoaded]);
+
+  useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if (readOnly || selectedIndex == null) return;
       if (e.key !== 'Delete' && e.key !== 'Backspace') return;
@@ -163,10 +215,17 @@ export function RoiCanvas({
   const selectedCamera = cameraOptions.find((c) => c.source_id === sourceId);
 
   const toNorm = (clientX: number, clientY: number): [number, number] => {
-    const rect = wrapRef.current!.getBoundingClientRect();
+    const wrap = wrapRef.current!.getBoundingClientRect();
+    const { left, top, width, height } = layoutBox;
+    if (width > 0 && height > 0) {
+      return [
+        clamp01((clientX - wrap.left - left) / width),
+        clamp01((clientY - wrap.top - top) / height),
+      ];
+    }
     return [
-      clamp01((clientX - rect.left) / rect.width),
-      clamp01((clientY - rect.top) / rect.height),
+      clamp01((clientX - wrap.left) / wrap.width),
+      clamp01((clientY - wrap.top) / wrap.height),
     ];
   };
 
@@ -183,8 +242,10 @@ export function RoiCanvas({
   };
 
   const saveRois = () => {
+    const { w, h } = snapshotFrameSize(imgRef.current);
+    const payload = w > 0 && h > 0 ? { rois, coord_ref: { w, h } } : { rois };
     void editorsApi
-      .putRoi(configName, sourceId, rois)
+      .putRoi(configName, sourceId, payload)
       .then((r) => {
         if (r.restart_required) showSuccess(t('common.savedRestart'));
         else showSuccess(t('common.savedApplied'));
@@ -204,6 +265,23 @@ export function RoiCanvas({
       prev.map((r, i) => (i === roiIndex ? updateRoiCorner(r, cornerIndex, point) : r)),
     );
   };
+
+  const updateMove = (roiIndex: number, start: [number, number], orig: number[], point: [number, number]) => {
+    const dx = point[0] - start[0];
+    const dy = point[1] - start[1];
+    setRois((prev) => prev.map((r, i) => (i === roiIndex ? translateRoi(orig, dx, dy) : r)));
+  };
+
+  const overlayStyle: CSSProperties =
+    layoutBox.width > 0 && layoutBox.height > 0
+      ? {
+          position: 'absolute',
+          left: layoutBox.left,
+          top: layoutBox.top,
+          width: layoutBox.width,
+          height: layoutBox.height,
+        }
+      : { position: 'absolute', inset: 0, width: '100%', height: '100%' };
 
   const displayRois = [...rois, ...(drawing ? [drawing] : [])];
 
@@ -259,37 +337,40 @@ export function RoiCanvas({
             aspectRatio: '16/9',
             background: '#111',
             border: '1px solid var(--border)',
-            backgroundImage: bgUrl ? `url(${bgUrl})` : undefined,
-            backgroundSize: 'contain',
-            backgroundRepeat: 'no-repeat',
-            backgroundPosition: 'center',
-            cursor: dragCorner ? 'grabbing' : undefined,
+            cursor: dragCorner || dragMove ? 'grabbing' : undefined,
           }}
           onClick={(e) => {
-            if (readOnly || dragCorner || drawing) return;
+            if (readOnly || dragCorner || dragMove || drawing) return;
             if (e.target !== e.currentTarget && !(e.target as Element).closest('[data-roi-surface]')) return;
             setSelectedIndex(null);
           }}
           onMouseDown={(e) => {
-            if (readOnly || dragCorner) return;
+            if (readOnly || dragCorner || dragMove) return;
             if ((e.target as Element).closest('[data-roi-surface], circle')) return;
             const [x, y] = toNorm(e.clientX, e.clientY);
             setDrawing([x, y, x, y]);
             setSelectedIndex(null);
           }}
           onMouseMove={(e) => {
+            const p = toNorm(e.clientX, e.clientY);
             if (dragCorner) {
-              const p = toNorm(e.clientX, e.clientY);
               updateCorner(dragCorner.roiIndex, dragCorner.cornerIndex, p);
               return;
             }
+            if (dragMove) {
+              updateMove(dragMove.roiIndex, dragMove.start, dragMove.orig, p);
+              return;
+            }
             if (!drawing) return;
-            const [x, y] = toNorm(e.clientX, e.clientY);
-            setDrawing([drawing[0], drawing[1], x, y]);
+            setDrawing([drawing[0], drawing[1], p[0], p[1]]);
           }}
           onMouseUp={() => {
             if (dragCorner) {
               setDragCorner(null);
+              return;
+            }
+            if (dragMove) {
+              setDragMove(null);
               return;
             }
             if (!drawing) return;
@@ -302,13 +383,23 @@ export function RoiCanvas({
           }}
           onMouseLeave={() => {
             if (dragCorner) setDragCorner(null);
+            if (dragMove) setDragMove(null);
             if (drawing) setDrawing(null);
           }}
         >
+          {bgUrl ? (
+            <img
+              ref={imgRef}
+              src={bgUrl}
+              alt=""
+              onLoad={() => setImgLoaded(true)}
+              style={{ width: '100%', height: '100%', objectFit: 'contain', display: 'block', pointerEvents: 'none' }}
+            />
+          ) : null}
           <svg
             viewBox="0 0 100 100"
             preserveAspectRatio="none"
-            style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', pointerEvents: 'none' }}
+            style={{ ...overlayStyle, pointerEvents: 'none' }}
           >
             {displayRois.map((r, i) => {
               const isDraft = i >= rois.length;
@@ -327,10 +418,16 @@ export function RoiCanvas({
                   stroke={selected ? '#f59e0b' : isDraft ? '#86efac' : '#22c55e'}
                   strokeWidth={ROI_STROKE}
                   vectorEffect="non-scaling-stroke"
-                  style={{ pointerEvents: isDraft ? 'none' : 'auto', cursor: readOnly ? 'default' : 'pointer' }}
-                  onClick={(e) => {
+                  style={{
+                    pointerEvents: isDraft ? 'none' : 'auto',
+                    cursor: readOnly ? 'default' : selected ? 'move' : 'pointer',
+                  }}
+                  onMouseDown={(e) => {
+                    if (readOnly || isDraft || roiIndex < 0) return;
                     e.stopPropagation();
-                    if (!readOnly && roiIndex >= 0) setSelectedIndex(roiIndex);
+                    const start = toNorm(e.clientX, e.clientY);
+                    setSelectedIndex(roiIndex);
+                    setDragMove({ roiIndex, start, orig: normalizeRoi(rois[roiIndex]) });
                   }}
                 />
               );
@@ -349,6 +446,7 @@ export function RoiCanvas({
                     style={{ pointerEvents: 'auto', cursor: 'grab' }}
                     onMouseDown={(e) => {
                       e.stopPropagation();
+                      setDragMove(null);
                       setDragCorner({ roiIndex: selectedIndex, cornerIndex: ci });
                     }}
                   />

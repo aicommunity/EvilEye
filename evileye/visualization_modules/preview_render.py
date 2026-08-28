@@ -29,6 +29,7 @@ class PreviewRenderContext:
     zones: list[Any] = field(default_factory=list)
     show_boxes: bool = True
     show_zones: bool = True
+    pipeline_params: dict[str, Any] | None = None
     # When False, boxes/zones are sent via metadata only (SVG overlay in web UI).
     burn_in_overlay: bool = True
 
@@ -114,8 +115,12 @@ def serialize_preview_metadata(
         "signalization": bool(context.event_signal_enabled and context.active_event_labels),
         "event_labels": list(context.active_event_labels or []),
         "event_color": [int(v) for v in context.event_color_rgb],
-        "debug_rois": _serialize_debug_rois(context.debug_info, source_id=resolved_source_id, w=w, h=h)
-        if context.show_debug_info else [],
+        "debug_rois": _resolve_debug_rois(
+            context,
+            source_id=resolved_source_id,
+            w=w,
+            h=h,
+        ),
         "overlay": _serialize_overlay_info(context, frame),
     }
     if w and h:
@@ -193,6 +198,28 @@ def _serialize_object_trail(obj: Any, frame_id: int | None, w: int | None, h: in
         except Exception:
             continue
     return points
+
+
+def _resolve_debug_rois(
+    context: PreviewRenderContext,
+    *,
+    source_id: int | None,
+    w: int | None,
+    h: int | None,
+) -> list[list[float]]:
+    if not context.show_debug_info:
+        return []
+    rois = _serialize_debug_rois(context.debug_info, source_id=source_id, w=w, h=h)
+    if rois or not context.pipeline_params or source_id is None or not w or not h:
+        return rois
+    from evileye.visualization_modules.overlay_config import extract_debug_rois_from_params
+
+    return extract_debug_rois_from_params(
+        context.pipeline_params,
+        source_id=source_id,
+        img_w=int(w),
+        img_h=int(h),
+    )
 
 
 def _serialize_debug_rois(

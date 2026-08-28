@@ -30,9 +30,12 @@ def client(tmp_path, monkeypatch):
 def test_get_roi_returns_normalized_xyxy(client):
     res = client.get("/api/v1/configs/test.json/sources/0/roi")
     assert res.status_code == 200
-    rois = res.json()["rois"]
+    data = res.json()
+    rois = data["rois"]
     assert len(rois) == 1
     assert rois[0][0] == pytest.approx(100 / 1920, rel=1e-3)
+    assert data["rois_pixel"] == [[100.0, 50.0, 200.0, 100.0]]
+    assert data["coord_ref"] == {"w": 1920, "h": 1080}
 
 
 @patch.object(config_editors, "_find_runtime_id_for_config", return_value=1)
@@ -57,3 +60,18 @@ def test_put_roi_restart_when_no_run(mock_run, client):
     data = res.json()
     assert data["restart_required"] is True
     assert data.get("applied_live") is False
+
+
+@patch.object(config_editors, "_find_runtime_id_for_config", return_value=None)
+def test_put_roi_uses_coord_ref(mock_run, client):
+    ui_roi = [[1790 / 1920, 0, (1790 + 500) / 1920, 400 / 1080]]
+    res = client.put(
+        "/api/v1/configs/test.json/sources/0/roi",
+        json={"rois": ui_roi, "coord_ref": {"w": 1920, "h": 1080}},
+    )
+    assert res.status_code == 200
+    stored = client.get("/api/v1/configs/test.json/sources/0/roi").json()["rois_pixel"]
+    assert stored[0][0] == 1790.0
+    assert stored[0][1] == 0.0
+    assert stored[0][2] in (500.0, 501.0)
+    assert stored[0][3] in (400.0, 401.0)

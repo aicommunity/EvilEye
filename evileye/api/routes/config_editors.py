@@ -21,7 +21,10 @@ from evileye.api.core.config_validation import (
 from evileye.api.core.control_ipc import send_control_command
 from evileye.api.core.roi_config import (
     detector_entry_for_source,
+    detector_rois_for_source,
+    roi_coord_ref,
     set_detector_rois_for_source,
+    ui_pixels_from_rois,
     ui_rois_from_detector,
     ui_rois_to_detector,
 )
@@ -63,6 +66,7 @@ class SectionUpdate(BaseModel):
 
 class RoiUpdate(BaseModel):
     rois: list[list[float]] = Field(default_factory=list)
+    coord_ref: dict[str, int] | None = None
 
 
 class ZoneItem(BaseModel):
@@ -167,7 +171,11 @@ async def get_roi(name: str, source_id: int) -> dict:
     body = _load(name)
     if detector_entry_for_source(body, source_id) is None:
         raise HTTPException(status_code=404, detail="No detector for source")
-    return {"rois": ui_rois_from_detector(body, source_id)}
+    return {
+        "rois": ui_rois_from_detector(body, source_id),
+        "rois_pixel": detector_rois_for_source(body, source_id),
+        "coord_ref": roi_coord_ref(body, source_id),
+    }
 
 
 @router.put("/{name}/sources/{source_id}/roi")
@@ -176,7 +184,13 @@ async def put_roi(name: str, source_id: int, payload: RoiUpdate) -> dict:
     if detector_entry_for_source(body, source_id) is None:
         raise HTTPException(status_code=404, detail="No detector for source")
     ui_rois = payload.rois
-    rois_xywh = ui_rois_to_detector(body, source_id, ui_rois)
+    coord_ref = payload.coord_ref or {}
+    ref_w = int(coord_ref.get("w") or 0)
+    ref_h = int(coord_ref.get("h") or 0)
+    if ref_w > 0 and ref_h > 0:
+        rois_xywh = ui_pixels_from_rois(ui_rois, ref_w, ref_h)
+    else:
+        rois_xywh = ui_rois_to_detector(body, source_id, ui_rois)
     set_detector_rois_for_source(body, source_id, rois_xywh)
     _save(name, body)
     applied = False

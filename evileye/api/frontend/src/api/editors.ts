@@ -2,8 +2,15 @@ import { request } from './client';
 
 export interface RoiPayload {
   rois: number[][];
+  rois_pixel?: number[][];
+  coord_ref?: { w: number; h: number };
   restart_required?: boolean;
   applied_live?: boolean;
+}
+
+export interface RoiUpdatePayload {
+  rois: number[][];
+  coord_ref?: { w: number; h: number };
 }
 
 export interface ZoneItem {
@@ -29,10 +36,14 @@ export const editorsApi = {
   getRoi(name: string, sourceId: number): Promise<RoiPayload> {
     return request(`/configs/${encodeURIComponent(name)}/sources/${sourceId}/roi`);
   },
-  putRoi(name: string, sourceId: number, rois: number[][]): Promise<RoiPayload & { status: string }> {
+  putRoi(
+    name: string,
+    sourceId: number,
+    payload: RoiUpdatePayload,
+  ): Promise<RoiPayload & { status: string }> {
     return request(`/configs/${encodeURIComponent(name)}/sources/${sourceId}/roi`, {
       method: 'PUT',
-      body: JSON.stringify({ rois }),
+      body: JSON.stringify(payload),
     });
   },
   getZones(name: string, sourceId: number): Promise<ZonesPayload> {

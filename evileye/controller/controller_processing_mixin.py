@@ -109,6 +109,7 @@ class ControllerProcessingMixin:
             source_duration_msecs=source_duration_msecs,
             track_info=track_info if show_boxes else [],
             debug_info=self.debug_info,
+            pipeline_params=self.params,
             show_debug_info=bool(vis_cfg.get("show_debug_info", False)),
             show_boxes=bool(show_boxes),
             show_zones=bool(show_zones),

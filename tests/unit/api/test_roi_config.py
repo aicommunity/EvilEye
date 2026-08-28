@@ -5,8 +5,11 @@ import pytest
 from evileye.api.core.roi_config import (
     detector_entry_for_source,
     detector_rois_for_source,
+    roi_frame_size_for_source,
     set_detector_rois_for_source,
     ui_rois_from_detector,
+    ui_rois_from_pixels,
+    ui_pixels_from_rois,
     ui_rois_to_detector,
     xywh_list_to_xyxy_int,
 )
@@ -109,3 +112,47 @@ def test_ui_rois_from_detector_split_source_uses_crop_size():
     ui = ui_rois_from_detector(body, 2)
     assert len(ui) == 1
     assert ui[0] == pytest.approx([0.0, 0.0, 1.0, 1.0], rel=1e-3)
+
+
+def test_ui_rois_from_detector_infers_4k_frame_from_pixel_extents():
+    body = {
+        "visualizer": {"text_config": {"base_resolution": [1920, 1080]}},
+        "pipeline": {
+            "sources": [{"source_ids": [0], "source_names": ["Cam1"]}],
+            "detectors": [
+                {
+                    "source_ids": [0],
+                    "roi": [
+                        [
+                            [1790, 0, 500, 400],
+                            [1500, 0, 2340, 2160],
+                        ]
+                    ],
+                }
+            ],
+        },
+    }
+    assert roi_frame_size_for_source(body, 0) == (3840, 2160)
+    ui = ui_rois_from_detector(body, 0)
+    assert ui[0][0] == pytest.approx(1790 / 3840, rel=1e-3)
+    assert ui[1][2] == pytest.approx(1.0, rel=1e-3)
+
+
+def test_ui_rois_from_pixels_uses_explicit_frame_size():
+    pixels = [[1790, 0, 500, 400]]
+    ui = ui_rois_from_pixels(pixels, 1920, 1080)
+    assert ui[0][0] == pytest.approx(1790 / 1920, rel=1e-3)
+    assert ui[0][3] == pytest.approx(400 / 1080, rel=1e-3)
+
+
+def test_ui_rois_from_pixels_full_frame_on_4k():
+    pixels = [[1500, 0, 2340, 2160]]
+    ui = ui_rois_from_pixels(pixels, 3840, 2160)
+    assert ui[0][2] == pytest.approx(1.0, rel=1e-3)
+
+
+def test_ui_pixels_from_rois_round_trip():
+    ui = [[0.1, 0.1, 0.3, 0.3]]
+    pixels = ui_pixels_from_rois(ui, 1920, 1080)
+    assert pixels[0][0] == 192
+    assert pixels[0][1] == 108

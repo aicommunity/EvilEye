@@ -3,7 +3,12 @@ from __future__ import annotations
 
 from typing import Any
 
-from evileye.visualization_modules.overlay_config import video_size_for_source
+from evileye.visualization_modules.overlay_config import (
+    source_video_size_for_source,
+    video_size_for_source,
+)
+
+_DEFAULT_FRAME_SIZE = (1920, 1080)
 
 
 def _detectors_list(body: dict[str, Any]) -> list[dict[str, Any]] | None:
@@ -114,6 +119,45 @@ def detector_rois_for_source(body: dict[str, Any], source_id: int) -> list[list[
     return out
 
 
+def _infer_frame_size_from_pixel_rois(rois_xywh: list[list[float]]) -> tuple[int, int] | None:
+    """Infer native frame size from stored pixel ROI extents."""
+    max_right = 0
+    max_bottom = 0
+    found = False
+    for roi in rois_xywh:
+        if not _roi_is_pixel_coords(roi):
+            continue
+        try:
+            x, y, w, h = [float(v) for v in roi[:4]]
+        except (TypeError, ValueError):
+            continue
+        max_right = max(max_right, int(round(x + w)))
+        max_bottom = max(max_bottom, int(round(y + h)))
+        found = True
+    if found and max_right > 0 and max_bottom > 0:
+        return max_right, max_bottom
+    return None
+
+
+def roi_frame_size_for_source(body: dict[str, Any], source_id: int) -> tuple[int, int]:
+    """Best frame size for ROI editor normalization (source metadata + ROI inference)."""
+    configured = source_video_size_for_source(body, source_id)
+    inferred = _infer_frame_size_from_pixel_rois(detector_rois_for_source(body, source_id))
+    if inferred:
+        if (
+            configured == _DEFAULT_FRAME_SIZE
+            or inferred[0] > configured[0]
+            or inferred[1] > configured[1]
+        ):
+            return (
+                max(configured[0], inferred[0]),
+                max(configured[1], inferred[1]),
+            )
+    if configured != _DEFAULT_FRAME_SIZE:
+        return configured
+    return video_size_for_source(body, source_id)
+
+
 def set_detector_rois_for_source(
     body: dict[str, Any], source_id: int, rois_xywh: list[list[float]]
 ) -> None:
@@ -131,28 +175,48 @@ def set_detector_rois_for_source(
     roi_groups[source_idx] = [list(r) for r in rois_xywh]
 
 
-def ui_rois_from_detector(body: dict[str, Any], source_id: int) -> list[list[float]]:
-    """Convert detector ROI ([x,y,w,h]) to normalized UI xyxy."""
-    img_w, img_h = video_size_for_source(body, source_id)
+def ui_rois_from_pixels(
+    rois_pixel: list[list[float]], img_w: int, img_h: int
+) -> list[list[float]]:
+    """Convert stored pixel ROI ([x,y,w,h]) to normalized UI xyxy."""
     ui: list[list[float]] = []
-    for raw in detector_rois_for_source(body, source_id):
+    for raw in rois_pixel or []:
         converted = _xywh_to_xyxy_norm(raw, img_w, img_h)
         if converted is not None:
             ui.append(converted)
     return ui
 
 
-def ui_rois_to_detector(
-    body: dict[str, Any], source_id: int, ui_rois: list[list[float]]
+def ui_pixels_from_rois(
+    ui_rois: list[list[float]], img_w: int, img_h: int
 ) -> list[list[int]]:
     """Convert normalized UI xyxy to detector storage ([x,y,w,h] pixels)."""
-    img_w, img_h = video_size_for_source(body, source_id)
     out: list[list[int]] = []
     for roi in ui_rois or []:
         converted = _xyxy_norm_to_xywh(roi, img_w, img_h)
         if converted is not None:
             out.append(converted)
     return out
+
+
+def ui_rois_from_detector(body: dict[str, Any], source_id: int) -> list[list[float]]:
+    """Convert detector ROI ([x,y,w,h]) to normalized UI xyxy."""
+    img_w, img_h = roi_frame_size_for_source(body, source_id)
+    return ui_rois_from_pixels(detector_rois_for_source(body, source_id), img_w, img_h)
+
+
+def ui_rois_to_detector(
+    body: dict[str, Any], source_id: int, ui_rois: list[list[float]]
+) -> list[list[int]]:
+    """Convert normalized UI xyxy to detector storage ([x,y,w,h] pixels)."""
+    img_w, img_h = roi_frame_size_for_source(body, source_id)
+    return ui_pixels_from_rois(ui_rois, img_w, img_h)
+
+
+def roi_coord_ref(body: dict[str, Any], source_id: int) -> dict[str, int]:
+    """Server-side frame size hint when client snapshot is unavailable."""
+    w, h = roi_frame_size_for_source(body, source_id)
+    return {"w": int(w), "h": int(h)}
 
 
 def xywh_list_to_xyxy_int(rois_xywh: list[list[float]]) -> list[list[int]]:

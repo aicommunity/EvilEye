@@ -104,10 +104,27 @@ def test_reload_web_infers_config_from_running_pipeline(tmp_path: Path):
         from evileye.stack_control import SpawnResult
 
         start.return_value = SpawnResult(pid=42, mode="managed", config_path="configs/was_running.json")
-        result = reload_web(site_dir=tmp_path)
+        result = reload_web(site_dir=tmp_path, with_pipeline=True)
     assert result.ok is True
     start.assert_called_once()
     assert start.call_args.args[0] == "configs/was_running.json"
+
+
+def test_reload_web_without_pipeline_flag_leaves_pipeline_alone(tmp_path: Path):
+    state = StackState(
+        site_dir=tmp_path,
+        in_container=False,
+        managed_runs=[{"config_path": "configs/was_running.json"}],
+    )
+    with patch("evileye.stack_control.discover_stack_state", return_value=state), patch(
+        "evileye.stack_control.stop_pipelines"
+    ) as stop, patch("evileye.stack_control.restart_web_layer"), patch(
+        "evileye.stack_control.wait_web_ready", return_value=True
+    ), patch("evileye.stack_control.pipeline_start") as start:
+        result = reload_web(site_dir=tmp_path)
+    assert result.ok is True
+    stop.assert_not_called()
+    start.assert_not_called()
 
 
 def test_reload_web_container_returns_error(tmp_path: Path):

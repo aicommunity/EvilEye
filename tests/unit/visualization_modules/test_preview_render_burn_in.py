@@ -3,6 +3,7 @@ from __future__ import annotations
 from types import SimpleNamespace
 
 import numpy as np
+import pytest
 
 from evileye.core.frame import CaptureImage
 from evileye.visualization_modules.preview_render import (
@@ -93,3 +94,25 @@ def test_burn_in_overlay_false_skips_event_and_debug_but_keeps_event_metadata():
     assert meta["event_labels"] == ["AttributeEvent [42]"]
     assert len(meta["debug_rois"]) == 1
     assert meta["objects"][0]["event_active"] is True
+
+
+def test_debug_rois_fallback_to_pipeline_config_when_runtime_empty():
+    frame = _make_frame()
+    context = PreviewRenderContext(
+        source_name="Cam3",
+        show_debug_info=True,
+        debug_info={},
+        pipeline_params={
+            "pipeline": {
+                "detectors": [
+                    {
+                        "source_ids": [0],
+                        "roi": [[[100, 50, 200, 100]]],
+                    }
+                ]
+            }
+        },
+    )
+    meta = serialize_preview_metadata(context, (1080, 1920, 3), frame_id=frame.frame_id, frame=frame)
+    assert len(meta["debug_rois"]) == 1
+    assert meta["debug_rois"][0][0] == pytest.approx(100 / 1920, rel=1e-3)

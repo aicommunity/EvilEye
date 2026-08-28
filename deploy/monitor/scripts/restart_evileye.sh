@@ -84,6 +84,19 @@ cd "$DEPLOY_DIR"
 # Launch outside the watchdog oneshot cgroup when possible (defense in depth for
 # KillMode). Falls back to setsid+nohup.
 launch_evileye() {
+    local port="${EVILEYE_PORT:-8181}"
+    if command -v systemctl >/dev/null 2>&1; then
+        if ! systemctl --user is-active evileye.service >/dev/null 2>&1; then
+            log_msg "Web service inactive; starting evileye.service before pipeline"
+            systemctl --user start evileye.service 2>/dev/null || true
+            sleep 3
+        fi
+    fi
+    if ! curl -sf "http://127.0.0.1:${port}/ready" >/dev/null 2>&1; then
+        log_msg "ERROR: Web UI not ready on :${port}; skip pipeline restart (run: evileye service start)"
+        exit 1
+    fi
+
     if command -v evileye >/dev/null 2>&1; then
         local gui_args=(--no-gui)
         if [[ "$USE_NO_GUI" -eq 0 ]]; then
@@ -91,7 +104,7 @@ launch_evileye() {
         fi
         (
             cd "$DEPLOY_DIR"
-            evileye pipeline start "$CONFIG_NAME" --detach --release "${gui_args[@]}"
+            evileye pipeline start "$CONFIG_NAME" --release "${gui_args[@]}"
         ) >>"$MONITOR_DIR/watchdog_stdout.log" 2>&1 &
         echo $!
         return
