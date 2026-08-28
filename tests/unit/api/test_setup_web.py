@@ -88,7 +88,7 @@ def test_ensure_web_environment_skips_when_ready(monkeypatch: pytest.MonkeyPatch
 
 
 def test_ensure_web_for_server_skips_when_ready(monkeypatch: pytest.MonkeyPatch) -> None:
-    from evileye.cli import _ensure_web_environment_for_server
+    from evileye.cli_commands.web import ensure_web_environment_for_server as _ensure_web_environment_for_server
 
     ready = sw.WebSetupReport(
         items=[
@@ -115,7 +115,7 @@ def test_ensure_web_for_server_skips_when_ready(monkeypatch: pytest.MonkeyPatch)
 
 def test_ensure_web_for_server_exits_when_fix_fails(monkeypatch: pytest.MonkeyPatch) -> None:
     import typer
-    from evileye.cli import _ensure_web_environment_for_server
+    from evileye.cli_commands.web import ensure_web_environment_for_server as _ensure_web_environment_for_server
 
     broken = sw.WebSetupReport(
         items=[
@@ -199,7 +199,7 @@ def test_setup_web_check_exit_code(monkeypatch: pytest.MonkeyPatch, tmp_path: Pa
         )
 
     monkeypatch.setattr(sw, "collect_web_setup_report", fake_report)
-    result = runner.invoke(app, ["setup-web", "--check"])
+    result = runner.invoke(app, ["web", "check"])
     assert result.exit_code == 0
 
 
@@ -221,5 +221,5 @@ def test_setup_web_check_fails_without_static(monkeypatch: pytest.MonkeyPatch) -
         )
 
     monkeypatch.setattr(sw, "collect_web_setup_report", fake_report)
-    result = runner.invoke(app, ["setup-web", "--check"])
+    result = runner.invoke(app, ["web", "check"])
     assert result.exit_code == 1

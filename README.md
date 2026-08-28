@@ -25,8 +25,8 @@ pip install evileye
 # Optional but recommended for fast JPEG live preview:
 # sudo apt install libturbojpeg   # Debian/Ubuntu
 
-# Ensure Web UI Python deps + packaged SPA (optional; also done by install-server if missing)
-# evileye setup-web
+# optional; `evileye service install` also ensures web deps
+# evileye web check
 ```
 
 #### From Source (Developers)
@@ -43,7 +43,7 @@ pip install -e "."
 python scripts/setup/fix_entry_points.py
 
 # Check / prepare Web UI (SPA static + API packages)
-evileye setup-web
+evileye web check
 ```
 
 #### Docker (GPU)
@@ -72,11 +72,11 @@ Typical site bring-up:
 ```text
 pip install -e .          # or: pip install evileye
 evileye deploy            # local site files only (no prompts, no OS service)
-evileye install-server    # only if you want the Web UI server (ensures setup-web, HTTPS, OS service)
+evileye service install    # only if you want the Web UI server (web deps, HTTPS, OS service)
 # Open http://127.0.0.1:8181 (or https://…) → login as admin with bootstrap password from first-start log
 # Change password → complete Basic setup in Настройка
 # Then run runtime if needed: evileye run configs/system.json --no-gui
-# Optional: evileye uninstall-server / watchdog via monitor/scripts/install_timer.sh
+# Optional: evileye service uninstall / evileye prod init / watchdog via monitor/scripts/install_timer.sh
 ```
 
 See also [docs/CLI_SERVICE_COMMANDS.md](docs/CLI_SERVICE_COMMANDS.md) and [docs/WEB_UI_GUIDE.md](docs/WEB_UI_GUIDE.md).
@@ -134,7 +134,7 @@ your_project/
 │   └── INSTALL_HINT.txt
 ```
 
-`deploy` готовит **site directory** для web-first bootstrap. OS-сервис и HTTPS: `evileye install-server`. Для новой машины не нужно вручную создавать runtime-конфиг до открытия Web UI.
+`deploy` готовит **site directory** для web-first bootstrap. OS-сервис и HTTPS: `evileye service install`. Для новой машины не нужно вручную создавать runtime-конфиг до открытия Web UI.
 
 See [docs/CLI_DEPLOY_COMMAND.md](docs/CLI_DEPLOY_COMMAND.md) and [docs/CLI_SERVICE_COMMANDS.md](docs/CLI_SERVICE_COMMANDS.md).
 
@@ -679,11 +679,11 @@ evileye server --log-level debug
 **Веб-интерфейс (frontend):** React SPA раздаётся FastAPI из `evileye/api/static/`.
 
 ```bash
-# Preferred: rebuild SPA only if static is missing (also runs from install-server)
-evileye setup-web
-evileye setup-web --check          # verify only
-evileye setup-web --scope system   # pip via sudo (asks confirmation)
-evileye setup-web --force --build  # reinstall missing pkgs + npm rebuild
+# Preferred: rebuild SPA: evileye web build (also during service install)
+evileye web check
+evileye web check --check          # verify only
+evileye web check --scope system   # pip via sudo (asks confirmation)
+evileye web check --force --build  # reinstall missing pkgs + npm rebuild
 
 # Manual frontend build (developers):
 cd evileye/api/frontend && npm install && npm run build
@@ -749,7 +749,7 @@ The `evileye deploy` command:
 - `configs/` - Directory for your configuration files
 
 **Next Steps After Deploy:**
-1. `evileye install-server` (HTTPS + Web UI OS service)
+1. `evileye service install` (HTTPS + Web UI OS service)
 2. Open the Web UI, change the admin password, complete Basic setup
 3. Run runtime if needed: `evileye run configs/system.json --no-gui`
 
@@ -781,7 +781,7 @@ evileye list-configs
 mkdir my_surveillance_project
 cd my_surveillance_project
 evileye deploy
-evileye install-server
+evileye service install
 
 # 2. Open the Web UI, change admin password, complete Basic setup
 #    (or edit credentials.json / create a config manually)

@@ -64,9 +64,10 @@ export EVILEYE_CLI_LAUNCHED=1
 
 load_gui_env
 
+USE_NO_GUI=0
 if [[ -z "${DISPLAY:-}" ]]; then
-    log_msg "ERROR: DISPLAY is empty; refusing GUI restart"
-    exit 1
+    USE_NO_GUI=1
+    log_msg "DISPLAY is empty; restarting headless (--no-gui)"
 fi
 
 # Snapshot latest log so we only match markers from the new run.
@@ -90,6 +91,13 @@ launch_evileye() {
         "EVILEYE_CLI_LAUNCHED=1"
         evileye run "$CONFIG_NAME"
     )
+    if [[ "$USE_NO_GUI" -eq 1 ]]; then
+        run_cmd=(env
+            "EVILEYE_SCHEDULER_GPU_SETTLE_SEC=${EVILEYE_SCHEDULER_GPU_SETTLE_SEC}"
+            "EVILEYE_CLI_LAUNCHED=1"
+            evileye run "$CONFIG_NAME" --no-gui
+        )
+    fi
 
     if command -v systemd-run >/dev/null 2>&1; then
         # Transient scope survives watchdog oneshot exit even if KillMode regresses.
@@ -103,7 +111,8 @@ launch_evileye() {
             --setenv="DBUS_SESSION_BUS_ADDRESS=${DBUS_SESSION_BUS_ADDRESS:-}" \
             --setenv="EVILEYE_SCHEDULER_GPU_SETTLE_SEC=${EVILEYE_SCHEDULER_GPU_SETTLE_SEC}" \
             --setenv="EVILEYE_CLI_LAUNCHED=1" \
-            bash -c 'exec evileye run "$0" >>"$1" 2>&1' "$CONFIG_NAME" "$MONITOR_DIR/watchdog_stdout.log" &
+            bash -c 'if [[ "$2" == 1 ]]; then exec evileye run "$0" --no-gui >>"$1" 2>&1; else exec evileye run "$0" >>"$1" 2>&1; fi' \
+            "$CONFIG_NAME" "$MONITOR_DIR/watchdog_stdout.log" "$USE_NO_GUI" &
         echo $!
         return
     fi

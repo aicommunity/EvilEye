@@ -217,7 +217,7 @@ evileye deploy-samples
 
 ### HTTPS для web API
 
-Предпочтительный путь без внешнего proxy — интерактивный шаг `evileye install-server` после `evileye deploy` (самоподпись с SAN IP/DNS или существующие PEM). Сертификаты пишутся в `certs/`, пути — в `server.ssl_certfile` / `server.ssl_keyfile`.
+Предпочтительный путь без внешнего proxy — интерактивный шаг `evileye service install` после `evileye deploy` (самоподпись с SAN IP/DNS или существующие PEM). Сертификаты пишутся в `certs/`, пути — в `server.ssl_certfile` / `server.ssl_keyfile`.
 
 Если публичный HTTPS даёт **Traefik** (или другой reverse-proxy), EvilEye за ним должен слушать **HTTP** на 8181 (пустые `ssl_*`), с `public_base_url` = публичный `https://…`, `trust_proxy` и `secure_cookies: true`. Подробно: [WEB_UI_REVERSE_PROXY.md](WEB_UI_REVERSE_PROXY.md). Не проксируйте Traefik → HTTPS uvicorn (double-TLS).
 
@@ -972,7 +972,7 @@ USB камера с GStreamer бэкендом.
 | `preview_encoder` | `turbojpeg` (предпочтительно) или fallback OpenCV |
 | `preview_encode_workers` | Число encode-workers для live preview |
 
-Для реального TurboJPEG нужны пакет `PyTurboJPEG` и системная `libturbojpeg` (`sudo apt install libturbojpeg`). Без библиотеки система стартует с OpenCV fallback. См. [`CLI_SETUP_WEB.md`](CLI_SETUP_WEB.md), `evileye setup-web`.
+Для реального TurboJPEG нужны пакет `PyTurboJPEG` и системная `libturbojpeg` (`sudo apt install libturbojpeg`). Без библиотеки система стартует с OpenCV fallback. См. [`CLI_SETUP_WEB.md`](CLI_SETUP_WEB.md), `evileye web build`.
 
 ### Секция `record`
 

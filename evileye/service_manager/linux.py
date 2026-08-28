@@ -170,3 +170,20 @@ def is_active_linux(backend: str, service_name: str = "evileye") -> bool:
     prefix = systemctl_prefix(backend)
     proc = _run([*prefix, "is-active", f"{service_name}.service"], check=False)
     return (proc.stdout or "").strip() == "active"
+
+
+def control_linux_service(
+    backend: str,
+    action: str,
+    *,
+    service_name: str = "evileye",
+) -> subprocess.CompletedProcess:
+    if shutil.which("systemctl") is None:
+        raise ServiceManagerError("systemctl not found; systemd is required on Linux")
+    prefix = systemctl_prefix(backend)
+    action_norm = action.strip().lower()
+    if action_norm == "status":
+        return _run([*prefix, "status", f"{service_name}.service"], check=False)
+    if action_norm not in {"start", "stop", "restart"}:
+        raise ServiceManagerError(f"Unsupported systemd action: {action}")
+    return _run([*prefix, action_norm, f"{service_name}.service"], check=False)

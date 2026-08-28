@@ -1,125 +1,40 @@
-# Команды `evileye install-server` / `evileye uninstall-server`
+# Команда `evileye service`
 
-## Обзор
+Управление OS-сервисом Web UI (systemd / Windows Scheduled Task) и HTTPS.
 
-Команды устанавливают и удаляют **OS-сервис приложения** EvilEye (Web UI / FastAPI), отдельно от watchdog-таймеров в `monitor/`. HTTPS настраивается здесь же (интерактивно или флагами).
+См. полный гайд: [CLI_STACK_COMMANDS.md](CLI_STACK_COMMANDS.md).
 
-| Команда | Назначение |
-|---------|------------|
-| `evileye deploy` | Только файлы сайта для локальной работы (без вопросов, без сервиса) |
-| `evileye install-server [CONFIG]` | Если окружение Web UI не готово — `setup-web`, затем TLS-мастер + OS-сервис |
-| `evileye uninstall-server` | Остановить и удалить сервис |
-| `evileye setup-web` | Явная проверка/починка Python API + SPA (необязательно, если вызываете `install-server`) |
-
-Это **не** то же самое, что `monitor/scripts/install_timer.sh` (watchdog health-check).
-
-Штатный порядок:
+## Быстрый старт
 
 ```bash
 cd /opt/evileye-site
-evileye deploy              # локальные файлы сайта
-evileye install-server      # только если нужен сервер Web UI
+evileye deploy
+evileye service install              # TLS wizard + unit
+evileye service install configs/my.json   # + autorun config в unit
 ```
 
-## install-server
+## Подкоманды
 
-Сначала проверяет окружение Web UI (`fastapi`/`uvicorn`/SPA static). Если чего-то не хватает —
-печатает, что не готово, вызывает тот же путь, что `evileye setup-web`, и **продолжает только после
-успешной повторной проверки**. Отсутствие системной `libturbojpeg` не блокирует установку
-(preview через OpenCV). Если починить окружение нельзя (нет npm для сборки SPA и т.п.) — выход с кодом 1, сервис не ставится.
+| Команда | Описание |
+|---------|----------|
+| `service install [CONFIG]` | `web deps/build` при необходимости, TLS, установка unit |
+| `service uninstall` | Остановить и удалить сервис |
+| `service start` / `stop` / `restart` / `status` | Управление unit (вместо `systemctl`) |
 
-`install-server` **не** перезаписывает `credentials.json` (пользователи и пароли) и не заменяет весь `configs/system.json`: в него дописываются только `server.ssl_*` (и `public_base_url`, если его ещё не было).
+## HTTPS
 
-Если после включения HTTPS браузер показывает `ERR_SSL_PROTOCOL_ERROR`, на порту отвечает **HTTP** (часто встроенный сервер `evileye run`, стартовавший до TLS). Перезапустите runtime из каталога сайта или остановите его и выполните `systemctl --user restart evileye`.
-
-`ERR_CONNECTION_REFUSED` значит на порту никто не слушает: unit `enabled`, но не `active` (после ребута без linger или после падения bind). Проверка: `systemctl --user status evileye`, затем `systemctl --user start evileye`. Для user-unit `install-server` включает `loginctl enable-linger`, чтобы сервис поднимался после перезагрузки без интерактивного входа.
-
-Без конфига (минимальный post-install режим):
-
-```bash
-evileye install-server
-# эквивалент сервиса после TLS-шага:
-# evileye server --host 0.0.0.0 --port 8181 --no-reload [--ssl-certfile … --ssl-keyfile …]
-```
-
-Создаёт `configs/system.json` (каркас без камер/БД), если файла нет.
-
-С конфигом (auto-run после старта API):
-
-```bash
-evileye install-server configs/my.json
-# или:
-evileye install-server my.json
-```
-
-### HTTPS
-
-Интерактивно (TTY): Enable HTTPS? → self-signed или existing PEM → SAN IP и/или DNS.
-
-CI / без TTY:
-
-```bash
-evileye install-server --non-interactive --no-tls
-evileye install-server --non-interactive --tls-self-signed --tls-ip 127.0.0.1
-evileye install-server --non-interactive --tls-self-signed --tls-ip 192.168.1.50 --tls-dns evileye.lan
-```
-
-Другие флаги: `--ssl-certfile` / `--ssl-keyfile`, `--tls-force`. Без TTY и без TLS-флагов сервис ставится как HTTP + warning запустить команду в терминале.
-
-После самоподписи импортируйте `certs/ca.crt` на клиентах. Приватные ключи `certs/*.key` не коммитить.
-
-Опции сервиса:
-
-- `--host` / `--port` (по умолчанию `0.0.0.0` / `8181`)
-- `--user` — systemd user unit (Linux, по умолчанию для CLI)
-- `--system` — system unit (может потребовать sudo)
-- `--dry-run` — показать unit без применения (`ExecStart` содержит `--ssl-*`, если TLS настроен)
-
-Состояние сайта: `.evileye_service.json` (не коммитить).
-
-### Linux
-
-- User: `~/.config/systemd/user/evileye.service` (при установке включается `loginctl enable-linger`, иначе после reboot unit не стартует без логина)
-- System: `/etc/systemd/system/evileye.service`
-- Шаблон: [`deploy/service/evileye.service.in`](../deploy/service/evileye.service.in)
-
-### Windows (best-effort → supported)
-
-Генерируется `scripts/evileye-server.bat`; регистрируется Scheduled Task **`EvilEye`** (`ONSTART`, `/RL HIGHEST`). NSSM не требуется. Нужны права администратора для `schtasks`.
-
-Ручной запуск при ошибке Task: двойной клик по `.bat` или:
-
-```powershell
-schtasks /Run /TN EvilEye
-```
-
-Полный native bring-up: [WINDOWS_NATIVE.md](WINDOWS_NATIVE.md).
-
-Watchdog (отдельно от service):
-
-```powershell
-evileye watchdog-install --config configs/single_video.json
-```
-
-## uninstall-server
-
-```bash
-evileye uninstall-server
-```
-
-Повторный вызов безопасен («не установлен»).
-
-## После установки
-
-1. Откройте `http://127.0.0.1:8181` (или `https://…`, если включён TLS) / хост машины.
-2. Войдите как `admin` (пароль bootstrap — в логе сервиса при первом старте).
-3. Смените пароль и завершите базовую настройку в Web UI.
+Интерактивно (TTY) или флаги `--no-tls`, `--tls-self-signed`, `--tls-ip`, `--ssl-certfile`, … — как в прежнем `install-server`.
 
 ## Troubleshooting
 
 ```bash
-systemctl --user status evileye
+evileye status
+evileye service status
 journalctl --user -u evileye -n 100
-evileye uninstall-server
-evileye install-server --dry-run --no-tls
+evileye service uninstall
+evileye service install --dry-run --no-tls
 ```
+
+После включения HTTPS перезапустите web-слой: `evileye service restart` или `evileye reload web`.
+
+Watchdog — отдельно: `monitor/scripts/install_timer.sh` или `evileye watchdog-install`.

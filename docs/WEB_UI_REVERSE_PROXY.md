@@ -5,7 +5,7 @@
 1. **Без reverse-proxy** — uvicorn сам отдаёт HTTP или HTTPS на порту **8181**.
 2. **За Traefik** (или аналогом) — TLS и публичное имя на прокси, EvilEye слушает **plain HTTP** на 8181.
 
-SPA всегда монтируется из `evileye/api/static/` (`/assets`, SPA fallback). Сборка: `evileye setup-web` / `npm run build` в `evileye/api/frontend` (см. [WEB_UI_GUIDE.md](WEB_UI_GUIDE.md)).
+SPA всегда монтируется из `evileye/api/static/` (`/assets`, SPA fallback). Сборка: `evileye web build` / `npm run build` в `evileye/api/frontend` (см. [WEB_UI_GUIDE.md](WEB_UI_GUIDE.md)).
 
 Связанные материалы: [CLI_SERVICE_COMMANDS.md](CLI_SERVICE_COMMANDS.md), [CONFIGURATION_GUIDE.md](CONFIGURATION_GUIDE.md) (секции `server`, `web_auth`), [CLI_DEPLOY_COMMAND.md](CLI_DEPLOY_COMMAND.md).
 
@@ -79,7 +79,7 @@ curl -s http://127.0.0.1:8181/ready
 
 ### A2. HTTPS на самом EvilEye (self-signed или свои PEM)
 
-Предпочтительный путь: `evileye deploy` → `evileye install-server` (сертификаты в `certs/`, пути в `server.ssl_*`).
+Предпочтительный путь: `evileye deploy` → `evileye service install` (сертификаты в `certs/`, пути в `server.ssl_*`).
 
 ```json
 "server": {

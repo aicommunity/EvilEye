@@ -37,6 +37,17 @@ Web UI: `http://127.0.0.1:8181`
 
 Образы берут пакет из PyPI на момент сборки. Если в PyPI ещё старая версия, сборка может пройти, но поведение будет старым (например, без последних web-правок).
 
+## Управление через CLI (native vs Docker)
+
+| Задача | Native (systemd) | Docker Compose |
+|--------|------------------|----------------|
+| Статус | `evileye status` | `docker compose ps` + `docker compose exec web evileye status` |
+| Перезапуск Web UI | `evileye reload web` | `docker compose restart web` |
+| Перезапуск pipeline | `evileye pipeline restart CONFIG` | `docker compose restart app` |
+| Production up | `evileye prod up` | `docker compose up -d` |
+
+В контейнере `evileye service *` недоступен — роль `web`-сервиса выполняет контейнер с `restart: unless-stopped`.
+
 ## Compose по умолчанию
 
 Bootstrap-шаблон поднимает 3 сервиса:

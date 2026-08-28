@@ -438,7 +438,7 @@ class StreamingService:
         if has_server_preview_demand:
             level = self._get_preview_demand_level(throttle_key)
             return self._fps_for_demand_level(level) > 0.0
-        # External OS Web UI (install-server): no ServerProcessManager demand queue —
+        # External OS Web UI (evileye service install): no ServerProcessManager demand queue —
         # keep publishing over HTTPS relay so Live preview works.
         if has_relay and self._publish_fps > 0.0:
             return True

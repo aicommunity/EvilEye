@@ -199,7 +199,7 @@ def _build_status(config_name: Optional[str] = None) -> dict[str, Any]:
         "analytics_enabled": _analytics_enabled(config),
         "recording_enabled": recording_enabled,
         "service": {
-            "hint": "evileye install-server",
+            "hint": "evileye service install",
             "installed": bool(svc_state.get("installed")) if svc_state else None,
         },
     }

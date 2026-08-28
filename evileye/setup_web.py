@@ -1,4 +1,4 @@
-"""Web UI environment check / install helpers for `evileye setup-web`."""
+"""Web UI environment check / install helpers for `evileye web`."""
 from __future__ import annotations
 
 import importlib

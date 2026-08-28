@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import os
 import re
+import shutil
 import subprocess
 import sys
 import time
@@ -115,7 +116,50 @@ def _reset_backoff(mdir: Path) -> None:
         marker.unlink()
 
 
-def find_cli_and_child(config: str) -> tuple[Optional[int], Optional[int]]:
+def manual_stop_active(root: Optional[Path] = None) -> bool:
+    mdir = _ensure_monitor(site_root(root))
+    marker = mdir / ".manual_stop_until"
+    if not marker.exists():
+        return False
+    try:
+        until = float(marker.read_text(encoding="utf-8").strip())
+        return time.time() < until
+    except Exception:
+        return False
+
+
+def restart_grace_active(root: Optional[Path] = None) -> bool:
+    return _grace_active(_ensure_monitor(site_root(root)))
+
+
+def set_manual_stop_cooldown(*, seconds: int = 3600, root: Optional[Path] = None) -> None:
+    mdir = _ensure_monitor(site_root(root))
+    until = time.time() + max(1, int(seconds))
+    (mdir / ".manual_stop_until").write_text(str(until), encoding="utf-8")
+
+
+def clear_manual_stop_cooldown(root: Optional[Path] = None) -> None:
+    marker = _ensure_monitor(site_root(root)) / ".manual_stop_until"
+    if marker.exists():
+        marker.unlink()
+
+
+def set_restart_grace(*, seconds: Optional[int] = None, root: Optional[Path] = None) -> None:
+    mdir = _ensure_monitor(site_root(root))
+    duration = RESTART_GRACE_SEC if seconds is None else max(1, int(seconds))
+    (mdir / ".restart_grace_until").write_text(str(time.time() + duration), encoding="utf-8")
+
+
+def stop_evileye_run_scope() -> None:
+    if not sys.platform.startswith("linux"):
+        return
+    if shutil.which("systemctl") is None:
+        return
+    subprocess.run(["systemctl", "--user", "stop", "evileye-run.scope"], check=False, capture_output=True)
+    subprocess.run(["systemctl", "--user", "reset-failed", "evileye-run.scope"], check=False, capture_output=True)
+
+
+def find_cli_and_child(config: str, root: Optional[Path] = None) -> tuple[Optional[int], Optional[int]]:
     stem = re.escape(_config_stem(config))
     cli_pids = find_pids_by_cmdline_regex([rf"evileye(\.exe)?\s+run.*{stem}", rf"cli_wrapper.*run.*{stem}"])
     child_pids = find_pids_by_cmdline_regex([rf"process\.py.*{stem}", rf"process_wrapper.*{stem}"])
@@ -175,7 +219,7 @@ def health_check(*, config: str, root: Optional[Path] = None, do_restart: bool =
 
     if status == "ok":
         _reset_backoff(mdir)
-    elif do_restart and restart_reasons and not grace and not _backoff_blocked(mdir):
+    elif do_restart and restart_reasons and not grace and not _backoff_blocked(mdir) and not manual_stop_active(site):
         incident_id = datetime.now().strftime("%Y%m%d_%H%M%S")
         inc = mdir / "incidents" / incident_id
         inc.mkdir(parents=True, exist_ok=True)

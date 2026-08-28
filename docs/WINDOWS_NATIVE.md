@@ -39,7 +39,7 @@ cd $env:USERPROFILE\EvilEye
 $env:EVILEYE_SITE_DIR = (Get-Location).Path
 
 evileye deploy
-evileye install-server
+evileye service install
 # Open http://127.0.0.1:8181 (or https://…) — admin bootstrap password is in the server log
 ```
 
@@ -82,8 +82,8 @@ Or complete Basic setup in the Web UI without Postgres (JSON journals).
 
 ```powershell
 # Prefer elevated shell for schtasks
-evileye install-server
-evileye uninstall-server
+evileye service install
+evileye service uninstall
 ```
 
 Creates `scripts\evileye-server.bat` and Scheduled Task **EvilEye** (`ONSTART`). See [CLI_SERVICE_COMMANDS.md](CLI_SERVICE_COMMANDS.md).
@@ -116,7 +116,7 @@ evileye server --host 127.0.0.1 --port 8181
 # curl http://127.0.0.1:8181/ready
 evileye deploy-samples
 evileye run configs/single_video.json --no-gui
-evileye install-server --dry-run --no-tls
+evileye service install --dry-run --no-tls
 evileye watchdog-install --dry-run
 ```
 

@@ -1,4 +1,4 @@
-"""HTTPS setup step for `evileye install-server` (interactive or flag-driven)."""
+"""HTTPS setup step for `evileye service install` (interactive or flag-driven)."""
 from __future__ import annotations
 
 import json
@@ -67,7 +67,7 @@ def patch_system_ssl(
         except Exception as exc:
             raise SslConfigError(
                 f"Cannot update TLS settings: {path} is not valid JSON ({exc}). "
-                "Fix the file; install-server will not overwrite it."
+                "Fix the file; service install will not overwrite it."
             ) from exc
         if not isinstance(loaded, dict):
             raise SslConfigError(f"Cannot update TLS settings: {path} root must be a JSON object.")
@@ -181,7 +181,7 @@ def run_tls_deploy_step(
     if not interactive:
         return TlsWizardResult(
             enabled=False,
-            message="TLS not configured (non-interactive). Re-run `evileye install-server` in a terminal to enable HTTPS.",
+            message="TLS not configured (non-interactive). Re-run `evileye service install` in a terminal to enable HTTPS.",
         )
 
     if existing_c and existing_k:

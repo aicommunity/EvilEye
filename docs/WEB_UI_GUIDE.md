@@ -8,7 +8,7 @@ React SPA (Vite) served by FastAPI from `evileye/api/static/`.
 |------|-----------------|
 | API + serve existing SPA | `pip install evileye` (or `-e .`) — FastAPI/uvicorn are main deps; static ships in the package when present |
 | Fast JPEG live preview | Python `PyTurboJPEG` (main dep) **and** system `libturbojpeg` (`sudo apt install libturbojpeg`) |
-| Rebuild / first-time SPA from sources | Node.js + `npm` → `evileye setup-web` or manual `npm run build` |
+| Rebuild / first-time SPA from sources | Node.js + `npm` → `evileye web build` or manual `npm run build` |
 
 Recommended:
 
@@ -16,7 +16,7 @@ Recommended:
 pip install evileye   # или: pip install -e . для разработки
 # optional: sudo apt install libturbojpeg
 evileye deploy
-evileye install-server
+evileye service install
 # open http://127.0.0.1:8181 (or https://… if TLS was configured)
 # login as admin with bootstrap password from first-start log
 # change password → complete Basic Setup in Configure
@@ -69,7 +69,7 @@ Config mode Basic/Advanced is stored in `localStorage` key `evileye.config.mode`
 ## First-run / Basic setup
 
 1. Choose a dedicated site directory and run `evileye deploy` there. EvilEye uses the current working directory as site root (`credentials.json`, `configs/`, `logs/`, `monitor/`).
-2. `evileye deploy` prepares site files and monitor assets (no prompts) — этого достаточно для локальной работы. Если нужен сервер Web UI, `evileye install-server` при необходимости запускает `setup-web`, затем HTTPS и OS-сервис.
+2. `evileye deploy` prepares site files. For Web UI: `evileye service install` (runs `web deps/build` if needed).
 3. Start the backend via OS service or manually:
    ```bash
    evileye server --host 0.0.0.0 --port 8181 --no-reload
@@ -86,7 +86,7 @@ Advanced Config Studio remains available after setup (or when a data directory i
 ## Build & test
 
 ```bash
-evileye setup-web --build
+evileye web build
 # or manually:
 cd evileye/api/frontend && npm install && npm run build
 npm test   # vitest (journalMath)

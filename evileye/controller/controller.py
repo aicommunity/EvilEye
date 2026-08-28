@@ -1444,14 +1444,17 @@ class Controller(ControllerProcessingMixin):
                 self.logger.error("Invalid TLS configuration for embedded web server: %s", exc)
                 raise
             inferred_base_url = internal_relay_url()
-            # Only skip when the OS service is actually running. If it is merely
-            # enabled but dead (e.g. failed bind before reboot, no linger), fall
-            # through so embedded HTTPS can still bind and avoid CONNECTION_REFUSED.
-            if is_web_os_service_active():
-                self.logger.info(
-                    "Skipping embedded web server: OS service evileye.service is active "
-                    "(Web UI is served separately, including HTTPS)"
-                )
+            if is_web_os_service_enabled() or is_web_os_service_active():
+                if is_web_os_service_enabled() and not is_web_os_service_active():
+                    self.logger.warning(
+                        "Skipping embedded web server: OS service evileye.service is enabled "
+                        "but not active; start it with: evileye service start"
+                    )
+                else:
+                    self.logger.info(
+                        "Skipping embedded web server: OS service evileye.service is active "
+                        "(Web UI is served separately, including HTTPS)"
+                    )
                 if self._streaming_service is not None:
                     self._streaming_service.set_frame_relay(inferred_base_url, relay_token)
             elif not self._can_bind_embedded_server(host, port):
@@ -1463,12 +1466,6 @@ class Controller(ControllerProcessingMixin):
                 if self._streaming_service is not None:
                     self._streaming_service.set_frame_relay(inferred_base_url, relay_token)
             else:
-                if is_web_os_service_enabled():
-                    self.logger.warning(
-                        "OS service evileye.service is enabled but not active; "
-                        "starting embedded web server as fallback (port %s)",
-                        port,
-                    )
                 try:
                     from evileye.server import ServerProcessManager
 

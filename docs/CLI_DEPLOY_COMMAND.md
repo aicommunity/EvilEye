@@ -4,7 +4,7 @@
 
 Команда `evileye deploy` предназначена для быстрой **локальной подготовки** каталога сайта в текущей директории. Она **не задаёт вопросов**, **не настраивает HTTPS** и **не ставит OS-сервис**.
 
-Серверная часть (HTTPS + systemd / Windows task): [`evileye install-server`](CLI_SERVICE_COMMANDS.md).
+Серверная часть (HTTPS + systemd / Windows task): [`evileye service install`](CLI_SERVICE_COMMANDS.md).
 
 ## Функциональность
 
@@ -23,7 +23,7 @@
 DEPLOY_DIR=$PWD ./monitor/scripts/install_timer.sh
 ```
 
-См. также [`CLI_SERVICE_COMMANDS.md`](CLI_SERVICE_COMMANDS.md) (`install-server` / `uninstall-server`).
+См. также [`CLI_SERVICE_COMMANDS.md`](CLI_SERVICE_COMMANDS.md) (`evileye service`).
 
 ## Использование
 
@@ -32,7 +32,7 @@ DEPLOY_DIR=$PWD ./monitor/scripts/install_timer.sh
 evileye deploy
 ```
 
-Важно: запускайте `deploy`, `install-server`, `server` и `run` из одной и той же site-директории.
+Важно: запускайте `deploy`, `service install`, `server` и `run` из одной и той же site-директории.
 Текущая рабочая директория становится корнем сайта для `credentials.json`,
 `configs/`, `logs/`, `monitor/` и связанных runtime-файлов.
 
@@ -52,7 +52,7 @@ cd my_evileye_project
 # Развертываем файлы сайта (локальная подготовка, без вопросов)
 evileye deploy
 # Если нужен Web UI как сервис (HTTPS + OS-сервис) — отдельно:
-evileye install-server
+evileye service install
 ```
 
 ### Результат выполнения
@@ -63,7 +63,7 @@ Created configs folder
 Deployed monitor assets (... scripts, ... systemd templates) → .../monitor
 Note: watchdog timers were not enabled; run install_timer.sh when ready
 Deployment completed successfully!
-Next: evileye install-server
+Next: evileye service install
 ```
 
 ### Повторный запуск (файлы уже существуют)
@@ -142,7 +142,7 @@ Deployment completed successfully!
 
 2. **HTTPS + OS-сервис Web UI:**
    ```bash
-   evileye install-server
+   evileye service install
    ```
    Либо вручную: `evileye server --host 0.0.0.0 --port 8181 --no-reload`
 
@@ -178,7 +178,7 @@ Deployment completed successfully!
 Команда `deploy` является первым шагом в web-first рабочем процессе:
 
 1. `evileye deploy` - развертывание базовых файлов сайта (без вопросов)
-2. `evileye install-server` - HTTPS (опционально) и OS-сервис Web UI
+2. `evileye service install` - HTTPS (опционально) и OS-сервис Web UI
 3. Basic Setup в браузере - создание и сохранение `configs/system.json`
 4. `evileye run configs/system.json --no-gui` - запуск runtime
 5. `evileye validate` - проверка конфигураций при ручном редактировании
@@ -248,8 +248,8 @@ evileye create advanced_config --sources 2 --detector-model /path/to/model.pt --
 ## Связанные команды
 
 Перед первым запуском Web UI на сайте достаточно `evileye deploy` (локальные файлы).
-Если нужен ещё и сервер (OS-сервис + HTTPS), вызовите `evileye install-server` —
-он сам проверит окружение Web UI и при необходимости выполнит тот же путь, что `evileye setup-web`.
+Если нужен ещё и сервер (OS-сервис + HTTPS), вызовите `evileye service install` —
+он сам проверит окружение Web UI и при необходимости выполнит тот же путь, что `evileye web build`.
 
 Подробности: [`CLI_SERVICE_COMMANDS.md`](CLI_SERVICE_COMMANDS.md), [`CLI_SETUP_WEB.md`](CLI_SETUP_WEB.md).
 

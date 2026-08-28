@@ -51,7 +51,7 @@ def test_deploy_creates_monitor_without_starting_services(tmp_path: Path):
     unit_text = (monitor / "systemd" / "evileye-watchdog.service").read_text(encoding="utf-8")
     assert "KillMode=process" in unit_text
     assert not (tmp_path / "certs").exists()
-    assert "install-server" in result.output
+    assert "service install" in result.output
 
 
 def test_deploy_help_has_no_tls_flags():

@@ -113,6 +113,38 @@ def install_windows(
     return result
 
 
+@dataclass
+class WindowsControlResult:
+    ok: bool
+    message: str
+
+
+def control_windows_service(action: str, *, service_name: str = "EvilEye") -> WindowsControlResult:
+    action_norm = action.strip().lower()
+    if action_norm == "start":
+        proc = _run(["schtasks", "/Run", "/TN", service_name], check=False)
+        ok = proc.returncode == 0
+        msg = (proc.stdout or proc.stderr or "").strip() or f"schtasks /Run exit {proc.returncode}"
+        return WindowsControlResult(ok=ok, message=msg)
+    if action_norm == "stop":
+        proc = _run(["schtasks", "/End", "/TN", service_name], check=False)
+        ok = proc.returncode == 0
+        msg = (proc.stdout or proc.stderr or "").strip() or f"schtasks /End exit {proc.returncode}"
+        return WindowsControlResult(ok=ok, message=msg)
+    if action_norm == "restart":
+        _run(["schtasks", "/End", "/TN", service_name], check=False)
+        proc = _run(["schtasks", "/Run", "/TN", service_name], check=False)
+        ok = proc.returncode == 0
+        msg = (proc.stdout or proc.stderr or "").strip() or f"schtasks restart exit {proc.returncode}"
+        return WindowsControlResult(ok=ok, message=msg)
+    if action_norm == "status":
+        proc = _run(["schtasks", "/Query", "/TN", service_name, "/FO", "LIST"], check=False)
+        ok = proc.returncode == 0
+        msg = (proc.stdout or proc.stderr or "Task not found").strip()
+        return WindowsControlResult(ok=ok, message=msg)
+    raise WindowsServiceError(f"Unsupported Windows service action: {action}")
+
+
 def uninstall_windows(
     *,
     site_dir: Path,

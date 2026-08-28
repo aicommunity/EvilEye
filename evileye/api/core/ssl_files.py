@@ -87,7 +87,7 @@ def resolve_ssl_files(
     cfg = dict(server_cfg or ())
     sys_cfg = load_system_server_cfg(root)
     # Pipeline configs often have server.enabled/host/port without ssl_*.
-    # Still honor certs written by install-server into configs/system.json.
+    # Still honor certs written by service install into configs/system.json.
     if not str(cfg.get("ssl_certfile") or "").strip():
         cfg["ssl_certfile"] = sys_cfg.get("ssl_certfile")
     if not str(cfg.get("ssl_keyfile") or "").strip():

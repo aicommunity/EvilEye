@@ -105,6 +105,76 @@ def is_web_os_service_active() -> bool:
         return False
 
 
+def probe_port_scheme(port: int, host: str = "127.0.0.1") -> str:
+    """Return 'https', 'http', or 'closed'."""
+    return _probe_port_scheme(port, host=host)
+
+
+def is_service_installed(site_dir: Path | None = None) -> bool:
+    from evileye.core.paths import site_root
+
+    root = Path(site_dir).resolve() if site_dir is not None else site_root()
+    state = load_state(root)
+    return bool(state.get("installed"))
+
+
+def _resolve_service_backend(state: dict[str, Any]) -> Optional[str]:
+    backend = state.get("backend")
+    if isinstance(backend, str) and backend:
+        return backend
+    if sys.platform.startswith("linux"):
+        if linux_backend.is_enabled_linux("systemd-user"):
+            return "systemd-user"
+        if linux_backend.is_enabled_linux("systemd-system"):
+            return "systemd-system"
+    if sys.platform.startswith("win"):
+        return "windows-task"
+    return None
+
+
+def control_service(action: str, *, site_dir: Path | None = None) -> ServiceActionResult:
+    """Start/stop/restart/status the installed OS web service."""
+    from evileye.core.paths import site_root
+
+    root = Path(site_dir).resolve() if site_dir is not None else site_root()
+    state = load_state(root)
+    if not state.get("installed"):
+        return ServiceActionResult(ok=False, message="EvilEye OS web service is not installed.", state=state)
+
+    service_name = str(state.get("service_name") or SERVICE_NAME)
+    backend = _resolve_service_backend(state)
+    action_norm = action.strip().lower()
+    if action_norm not in {"start", "stop", "restart", "status"}:
+        return ServiceActionResult(ok=False, message=f"Unknown service action: {action}", state=state)
+
+    if sys.platform.startswith("linux"):
+        if not backend:
+            backend = "systemd-user"
+        try:
+            result = linux_backend.control_linux_service(backend, action_norm, service_name=service_name)
+        except linux_backend.ServiceManagerError as exc:
+            return ServiceActionResult(ok=False, message=str(exc), state=state)
+        ok = result.returncode == 0 or action_norm == "status"
+        message = (result.stdout or result.stderr or "").strip() or f"systemctl {action_norm} exit {result.returncode}"
+        if action_norm in {"start", "restart"} and ok:
+            port = int(state.get("port") or 8181)
+            scheme = probe_port_scheme(port)
+            message = f"Service {action_norm} OK (port {port}: {scheme})"
+        return ServiceActionResult(ok=ok, message=message, state=state)
+
+    if sys.platform.startswith("win"):
+        try:
+            result = windows_backend.control_windows_service(
+                action_norm,
+                service_name=str(state.get("service_name") or "EvilEye"),
+            )
+        except windows_backend.WindowsServiceError as exc:
+            return ServiceActionResult(ok=False, message=str(exc), state=state)
+        return ServiceActionResult(ok=result.ok, message=result.message, state=state)
+
+    return ServiceActionResult(ok=False, message=f"Unsupported platform: {sys.platform}", state=state)
+
+
 def _probe_port_scheme(port: int, host: str = "127.0.0.1") -> str:
     """Return 'https', 'http', or 'closed'."""
     import socket
@@ -331,7 +401,7 @@ def ensure_service(
     force_system: bool = False,
     dry_run: bool = False,
 ) -> ServiceActionResult:
-    """Idempotent install/update used by `evileye install-server`."""
+    """Idempotent install/update used by `evileye service install`."""
     return install_service(
         site_dir=site_dir,
         config=config,
