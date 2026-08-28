@@ -1025,6 +1025,10 @@ class Controller(ControllerProcessingMixin):
                         sources[str(source_id)] = detector.sources_list.get(str(source_id), zones)
         except Exception:
             pass
+        try:
+            self._preview_zones_by_source = self._extract_preview_zones()
+        except Exception:
+            pass
         self._publish_runtime_snapshot(state="running")
         return {"ok": True, "source_id": source_id, "zone_count": len(zones)}
 
