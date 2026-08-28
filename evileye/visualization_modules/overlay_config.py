@@ -111,8 +111,8 @@ def serialize_zones_for_overlay(
     return out
 
 
-def video_size_for_source(params: dict[str, Any] | None, source_id: int | None) -> tuple[int, int]:
-    """Best-effort native frame size for coordinate normalization."""
+def source_video_size_for_source(params: dict[str, Any] | None, source_id: int | None) -> tuple[int, int]:
+    """Frame size from pipeline source metadata only (split crop / explicit width)."""
     default = (1920, 1080)
     if not params or source_id is None:
         return default
@@ -161,6 +161,18 @@ def video_size_for_source(params: dict[str, Any] | None, source_id: int | None) 
                     h = default[1]
                 if h > 0:
                     return w, h
+    return default
+
+
+def video_size_for_source(params: dict[str, Any] | None, source_id: int | None) -> tuple[int, int]:
+    """Best-effort native frame size for coordinate normalization."""
+    default = (1920, 1080)
+    explicit = source_video_size_for_source(params, source_id)
+    if explicit != default:
+        return explicit
+
+    if not params or source_id is None:
+        return default
 
     vis = params.get("visualization") or params.get("visualizer") or {}
     text_cfg = vis.get("text_config") if isinstance(vis.get("text_config"), dict) else {}

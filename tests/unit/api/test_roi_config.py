@@ -5,6 +5,8 @@ import pytest
 from evileye.api.core.roi_config import (
     detector_entry_for_source,
     detector_rois_for_source,
+    display_rois_for_source,
+    roi_coord_ref,
     roi_frame_size_for_source,
     set_detector_rois_for_source,
     ui_rois_from_detector,
@@ -13,6 +15,7 @@ from evileye.api.core.roi_config import (
     ui_rois_to_detector,
     xywh_list_to_xyxy_int,
 )
+from evileye.visualization_modules.overlay_config import extract_debug_rois_from_params, source_video_size_for_source
 
 
 def _sample_body() -> dict:
@@ -114,7 +117,26 @@ def test_ui_rois_from_detector_split_source_uses_crop_size():
     assert ui[0] == pytest.approx([0.0, 0.0, 1.0, 1.0], rel=1e-3)
 
 
-def test_ui_rois_from_detector_infers_4k_frame_from_pixel_extents():
+def test_display_rois_matches_live_config_fallback():
+    body = {
+        "pipeline": {
+            "sources": [{"source_ids": [0], "source_names": ["Cam1"]}],
+            "detectors": [
+                {
+                    "source_ids": [0],
+                    "roi": [[[1790, 0, 500, 400]]],
+                }
+            ],
+        }
+    }
+    w, h = source_video_size_for_source(body, 0)
+    expected = extract_debug_rois_from_params(body, source_id=0, img_w=w, img_h=h)
+    assert display_rois_for_source(body, 0) == expected
+    assert display_rois_for_source(body, 0)[0][0] == pytest.approx(1790 / 1920, rel=1e-3)
+    assert roi_coord_ref(body, 0) == {"w": 1920, "h": 1080}
+
+
+def test_roi_frame_size_infers_4k_from_pixel_extents():
     body = {
         "visualizer": {"text_config": {"base_resolution": [1920, 1080]}},
         "pipeline": {
@@ -133,9 +155,10 @@ def test_ui_rois_from_detector_infers_4k_frame_from_pixel_extents():
         },
     }
     assert roi_frame_size_for_source(body, 0) == (3840, 2160)
-    ui = ui_rois_from_detector(body, 0)
+    ui = ui_rois_from_pixels(detector_rois_for_source(body, 0), 3840, 2160)
     assert ui[0][0] == pytest.approx(1790 / 3840, rel=1e-3)
     assert ui[1][2] == pytest.approx(1.0, rel=1e-3)
+    assert display_rois_for_source(body, 0)[0][0] == pytest.approx(1790 / 1920, rel=1e-3)
 
 
 def test_ui_rois_from_pixels_uses_explicit_frame_size():

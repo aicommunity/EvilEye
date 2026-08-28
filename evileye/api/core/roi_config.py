@@ -4,6 +4,7 @@ from __future__ import annotations
 from typing import Any
 
 from evileye.visualization_modules.overlay_config import (
+    extract_debug_rois_from_params,
     source_video_size_for_source,
     video_size_for_source,
 )
@@ -199,24 +200,29 @@ def ui_pixels_from_rois(
     return out
 
 
+def roi_coord_ref(body: dict[str, Any], source_id: int) -> dict[str, int]:
+    """Frame size hint for editor save/load (source metadata, matches live coord_ref)."""
+    w, h = source_video_size_for_source(body, source_id)
+    return {"w": int(w), "h": int(h)}
+
+
+def display_rois_for_source(body: dict[str, Any], source_id: int) -> list[list[float]]:
+    """Normalized UI xyxy using same logic as live config fallback overlay."""
+    w, h = source_video_size_for_source(body, source_id)
+    return extract_debug_rois_from_params(body, source_id=source_id, img_w=w, img_h=h)
+
+
 def ui_rois_from_detector(body: dict[str, Any], source_id: int) -> list[list[float]]:
-    """Convert detector ROI ([x,y,w,h]) to normalized UI xyxy."""
-    img_w, img_h = roi_frame_size_for_source(body, source_id)
-    return ui_rois_from_pixels(detector_rois_for_source(body, source_id), img_w, img_h)
+    """Convert detector ROI ([x,y,w,h]) to normalized UI xyxy (legacy alias)."""
+    return display_rois_for_source(body, source_id)
 
 
 def ui_rois_to_detector(
     body: dict[str, Any], source_id: int, ui_rois: list[list[float]]
 ) -> list[list[int]]:
     """Convert normalized UI xyxy to detector storage ([x,y,w,h] pixels)."""
-    img_w, img_h = roi_frame_size_for_source(body, source_id)
-    return ui_pixels_from_rois(ui_rois, img_w, img_h)
-
-
-def roi_coord_ref(body: dict[str, Any], source_id: int) -> dict[str, int]:
-    """Server-side frame size hint when client snapshot is unavailable."""
-    w, h = roi_frame_size_for_source(body, source_id)
-    return {"w": int(w), "h": int(h)}
+    w, h = source_video_size_for_source(body, source_id)
+    return ui_pixels_from_rois(ui_rois, w, h)
 
 
 def xywh_list_to_xyxy_int(rois_xywh: list[list[float]]) -> list[list[int]]:

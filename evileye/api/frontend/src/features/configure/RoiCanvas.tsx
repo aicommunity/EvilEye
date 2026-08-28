@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState, type CSSProperties } from 'react';
-import { configGet, editorsApi, stateApi, streamSnapshotUrl } from '../../api';
+import { configGet, editorsApi, request, stateApi, streamSnapshotUrl, type StreamMetadata } from '../../api';
 import { Button } from '../../components/ui';
 import { useToast } from '../../components/ui/Toast';
 import { useI18n } from '../../i18n';
@@ -36,13 +36,17 @@ function translateRoi(r: number[], dx: number, dy: number): number[] {
   return normalizeRoi([x1 + dx, y1 + dy, x2 + dx, y2 + dy]);
 }
 
-function pixelRoiToNorm([x, y, w, h]: number[], imgW: number, imgH: number): number[] {
-  if (imgW <= 0 || imgH <= 0) return normalizeRoi([x, y, x + w, y + h]);
-  return normalizeRoi([x / imgW, y / imgH, (x + w) / imgW, (y + h) / imgH]);
+type CoordRef = { w: number; h: number };
+
+function roisFromMetadata(meta: StreamMetadata | null): number[][] {
+  const raw = meta?.debug_rois ?? [];
+  return raw.map((r) => normalizeRoi(r.slice(0, 4)));
 }
 
-function snapshotFrameSize(img: HTMLImageElement | null): { w: number; h: number } {
-  return { w: img?.naturalWidth ?? 0, h: img?.naturalHeight ?? 0 };
+function coordRefFromMetadata(meta: StreamMetadata | null): CoordRef | null {
+  const ref = meta?.coord_ref;
+  if (!ref || ref.w <= 0 || ref.h <= 0) return null;
+  return { w: ref.w, h: ref.h };
 }
 
 function updateRoiCorner(r: number[], cornerIndex: number, point: [number, number]): number[] {
@@ -88,21 +92,26 @@ export function RoiCanvas({
   );
   const wrapRef = useRef<HTMLDivElement>(null);
   const imgRef = useRef<HTMLImageElement>(null);
-  const roisPixelRef = useRef<number[][]>([]);
-  const serverRoisRef = useRef<number[][]>([]);
+  const metadataRoisRef = useRef<number[][]>([]);
+  const displayRoisRef = useRef<number[][]>([]);
+  const fallbackRoisRef = useRef<number[][]>([]);
+  const coordRefRef = useRef<CoordRef | null>(null);
   const roiLoadSeqRef = useRef(0);
+  const metadataSeqRef = useRef(0);
   const [imgLoaded, setImgLoaded] = useState(false);
   const layoutBox = useImageLetterbox(wrapRef, imgRef, [bgUrl, imgLoaded, sourceId]);
 
   const applyDisplayRois = useCallback(() => {
-    const { w, h } = snapshotFrameSize(imgRef.current);
-    const pixels = roisPixelRef.current;
-    if (w > 0 && h > 0 && pixels.length > 0) {
-      setRois(pixels.map((px) => pixelRoiToNorm(px, w, h)));
+    if (metadataRoisRef.current.length > 0) {
+      setRois(metadataRoisRef.current.map(normalizeRoi));
       return;
     }
-    if (serverRoisRef.current.length > 0) {
-      setRois(serverRoisRef.current.map(normalizeRoi));
+    if (displayRoisRef.current.length > 0) {
+      setRois(displayRoisRef.current.map(normalizeRoi));
+      return;
+    }
+    if (fallbackRoisRef.current.length > 0) {
+      setRois(fallbackRoisRef.current.map(normalizeRoi));
       return;
     }
     setRois([]);
@@ -114,8 +123,11 @@ export function RoiCanvas({
       .getRoi(configName, sourceId)
       .then((r) => {
         if (seq !== roiLoadSeqRef.current) return;
-        roisPixelRef.current = (r.rois_pixel ?? []).map((px) => px.slice(0, 4));
-        serverRoisRef.current = (r.rois ?? []).map(normalizeRoi);
+        displayRoisRef.current = (r.display_rois ?? r.rois ?? []).map(normalizeRoi);
+        fallbackRoisRef.current = (r.rois ?? []).map(normalizeRoi);
+        if (r.coord_ref && r.coord_ref.w > 0 && r.coord_ref.h > 0) {
+          coordRefRef.current = { w: r.coord_ref.w, h: r.coord_ref.h };
+        }
         applyDisplayRois();
         setSelectedIndex(null);
         setDrawing(null);
@@ -167,18 +179,32 @@ export function RoiCanvas({
 
   useEffect(() => {
     let cancelled = false;
+    const metaSeq = ++metadataSeqRef.current;
+    metadataRoisRef.current = [];
     void stateApi
       .cameras('current')
       .then((res) => {
-        if (cancelled) return;
+        if (cancelled || metaSeq !== metadataSeqRef.current) return;
         const cams = res.items ?? [];
         const match = cams.find((c) => c.source_id === sourceId && c.run_state === 'running');
         if (match) {
           const base = streamSnapshotUrl(match.run_id, sourceId);
           setBgUrl(`${base}${base.includes('?') ? '&' : '?'}t=${Date.now()}`);
-        } else {
-          setBgUrl(null);
+          return request<StreamMetadata>(`/runs/${match.run_id}/metadata?source_id=${sourceId}`)
+            .then((meta) => {
+              if (cancelled || metaSeq !== metadataSeqRef.current) return;
+              metadataRoisRef.current = roisFromMetadata(meta);
+              const liveRef = coordRefFromMetadata(meta);
+              if (liveRef) coordRefRef.current = liveRef;
+              applyDisplayRois();
+            })
+            .catch(() => {
+              /* offline metadata — use API display_rois */
+            });
         }
+        setBgUrl(null);
+        metadataRoisRef.current = [];
+        applyDisplayRois();
       })
       .catch(() => {
         if (!cancelled) setBgUrl(null);
@@ -186,17 +212,11 @@ export function RoiCanvas({
     return () => {
       cancelled = true;
     };
-  }, [sourceId]);
+  }, [applyDisplayRois, sourceId]);
 
   useEffect(() => {
     setImgLoaded(false);
   }, [bgUrl, sourceId]);
-
-  useEffect(() => {
-    if (!imgLoaded) return;
-    if (!roisPixelRef.current.length && !serverRoisRef.current.length) return;
-    applyDisplayRois();
-  }, [applyDisplayRois, imgLoaded]);
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
@@ -242,8 +262,9 @@ export function RoiCanvas({
   };
 
   const saveRois = () => {
-    const { w, h } = snapshotFrameSize(imgRef.current);
-    const payload = w > 0 && h > 0 ? { rois, coord_ref: { w, h } } : { rois };
+    const ref = coordRefRef.current;
+    const payload =
+      ref && ref.w > 0 && ref.h > 0 ? { rois, coord_ref: ref } : { rois };
     void editorsApi
       .putRoi(configName, sourceId, payload)
       .then((r) => {

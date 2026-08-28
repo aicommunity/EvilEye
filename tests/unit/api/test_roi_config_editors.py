@@ -36,6 +36,13 @@ def test_get_roi_returns_normalized_xyxy(client):
     assert rois[0][0] == pytest.approx(100 / 1920, rel=1e-3)
     assert data["rois_pixel"] == [[100.0, 50.0, 200.0, 100.0]]
     assert data["coord_ref"] == {"w": 1920, "h": 1080}
+    assert data["display_rois"] == data["rois"]
+
+
+def test_config_editors_imports():
+    from evileye.api.routes import config_editors as ce
+
+    assert ce.get_roi is not None
 
 
 @patch.object(config_editors, "_find_runtime_id_for_config", return_value=1)

@@ -22,6 +22,7 @@ from evileye.api.core.control_ipc import send_control_command
 from evileye.api.core.roi_config import (
     detector_entry_for_source,
     detector_rois_for_source,
+    display_rois_for_source,
     roi_coord_ref,
     set_detector_rois_for_source,
     ui_pixels_from_rois,
@@ -173,6 +174,7 @@ async def get_roi(name: str, source_id: int) -> dict:
         raise HTTPException(status_code=404, detail="No detector for source")
     return {
         "rois": ui_rois_from_detector(body, source_id),
+        "display_rois": display_rois_for_source(body, source_id),
         "rois_pixel": detector_rois_for_source(body, source_id),
         "coord_ref": roi_coord_ref(body, source_id),
     }

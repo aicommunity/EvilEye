@@ -2,6 +2,7 @@ import { request } from './client';
 
 export interface RoiPayload {
   rois: number[][];
+  display_rois?: number[][];
   rois_pixel?: number[][];
   coord_ref?: { w: number; h: number };
   restart_required?: boolean;
