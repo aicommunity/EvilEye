@@ -719,6 +719,7 @@ export function PlaybackVideoSurface({
         </>
       ) : staticFrame?.previewPath ? (
         <PlaybackStaticFrame
+          key={`${cameraId || cameraLabel}-${staticFrame.ts}-${staticFrame.previewPath}`}
           frame={staticFrame}
           date={date}
           showMetadata={showMetadata}

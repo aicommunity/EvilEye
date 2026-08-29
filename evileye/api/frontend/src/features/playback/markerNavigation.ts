@@ -1,10 +1,8 @@
 import type { PlaybackDetectionItem, PlaybackEventInterval, PlaybackSegment, StreamMetadata } from '../../api';
-import { bboxFromIndexBox, mergeGlobalDetectionTs, overlayTimeLabel } from './detectionSync';
+import { bboxFromIndexBox, MATCH_SEC, mergeGlobalDetectionTs, overlayTimeLabel } from './detectionSync';
 import { isPlayableAtPosition, nearestMarkerTs } from './timelineMath';
 
 export { nearestMarkerTs };
-
-export const STATIC_FRAME_MAX_DIST_SEC = 60;
 
 export type StaticFrameSource = {
   ts: number;
@@ -47,53 +45,20 @@ export function nextEventTs(sorted: number[], afterSec: number): number | null {
   return null;
 }
 
-function nearestDetection(
-  items: PlaybackDetectionItem[],
-  positionSec: number,
-  maxDistSec: number,
-): { item: PlaybackDetectionItem; dist: number } | null {
-  let best: { item: PlaybackDetectionItem; dist: number } | null = null;
-  for (const it of items) {
-    if (!it.preview_path || !Number.isFinite(it.ts)) continue;
-    const dist = Math.abs(it.ts - positionSec);
-    if (dist > maxDistSec) continue;
-    if (!best || dist < best.dist || (dist === best.dist && it.kind === 'found')) {
-      best = { item: it, dist };
-    }
-  }
-  return best;
-}
-
-function nearestEvent(
-  events: PlaybackEventInterval[],
-  positionSec: number,
-  maxDistSec: number,
-): { event: PlaybackEventInterval; dist: number } | null {
-  let best: { event: PlaybackEventInterval; dist: number } | null = null;
-  for (const ev of events) {
-    if (!ev.preview_path || !Number.isFinite(ev.start_ts)) continue;
-    const dist = Math.abs(ev.start_ts - positionSec);
-    if (dist > maxDistSec) continue;
-    if (!best || dist < best.dist) best = { event: ev, dist };
-  }
-  return best;
-}
-
+/** Per-camera static frame only when a marker matches the playhead exactly (no cross-time bleed). */
 export function resolveStaticFrameForCamera(
   cameraId: string,
   positionSec: number,
   segments: PlaybackSegment[],
   detections: PlaybackDetectionItem[],
   events: PlaybackEventInterval[],
-  opts?: { maxDistSec?: number },
+  matchSec = MATCH_SEC,
 ): StaticFrameSource | null {
   if (!Number.isFinite(positionSec)) return null;
   if (isPlayableAtPosition({ [cameraId]: segments }, positionSec, cameraId)) return null;
 
-  const maxDistSec = opts?.maxDistSec ?? STATIC_FRAME_MAX_DIST_SEC;
-
   const exactDet = detections.find(
-    (it) => it.preview_path && Number.isFinite(it.ts) && Math.abs(it.ts - positionSec) < 0.5,
+    (it) => it.preview_path && Number.isFinite(it.ts) && Math.abs(it.ts - positionSec) < matchSec,
   );
   if (exactDet) {
     const mode: 'found' | 'lost' = exactDet.kind === 'lost' ? 'lost' : 'found';
@@ -111,7 +76,7 @@ export function resolveStaticFrameForCamera(
     (it) =>
       it.preview_path &&
       Number.isFinite(it.start_ts) &&
-      Math.abs(it.start_ts - positionSec) < 0.5,
+      Math.abs(it.start_ts - positionSec) < matchSec,
   );
   if (exactEv) {
     return {
@@ -124,31 +89,7 @@ export function resolveStaticFrameForCamera(
     };
   }
 
-  const det = nearestDetection(detections, positionSec, maxDistSec);
-  const ev = nearestEvent(events, positionSec, maxDistSec);
-
-  if (!det && !ev) return null;
-  if (det && (!ev || det.dist <= ev.dist)) {
-    const it = det.item;
-    const mode: 'found' | 'lost' = it.kind === 'lost' ? 'lost' : 'found';
-    return {
-      ts: it.ts,
-      previewPath: String(it.preview_path),
-      journalType: 'objects',
-      mode,
-      markerKind: 'detection',
-      label: it.class_name ?? undefined,
-    };
-  }
-  const interval = ev!.event;
-  return {
-    ts: interval.start_ts,
-    previewPath: String(interval.preview_path),
-    journalType: 'events',
-    mode: interval.preview_mode === 'lost' ? 'lost' : 'found',
-    markerKind: 'event',
-    label: interval.label ?? interval.zone_name ?? undefined,
-  };
+  return null;
 }
 
 export function staticFrameToStreamMetadata(
@@ -159,7 +100,7 @@ export function staticFrameToStreamMetadata(
   const objects: StreamMetadata['objects'] = [];
   if (frame.markerKind === 'detection') {
     const match = detectionItems.find(
-      (it) => Math.abs(it.ts - frame.ts) < 0.5 && it.preview_path === frame.previewPath,
+      (it) => Math.abs(it.ts - frame.ts) < MATCH_SEC && it.preview_path === frame.previewPath,
     );
     const bbox = bboxFromIndexBox(match?.bounding_box ?? null, frameSize);
     if (bbox) {

@@ -1,5 +1,5 @@
-import { useMemo, useRef, useState } from 'react';
-import { journalPreviewUrl, type PlaybackDetectionItem } from '../../api';
+import { useEffect, useMemo, useRef, useState } from 'react';
+import { journalFrameUrl, type PlaybackDetectionItem } from '../../api';
 import { MetadataOverlayLayer } from '../overlay/MetadataOverlayLayer';
 import { useImageLetterbox } from '../overlay/useMediaLetterbox';
 import { mergePlaybackMetadata } from './mergePlaybackMetadata';
@@ -30,8 +30,15 @@ export function PlaybackStaticFrame({
   const wrapRef = useRef<HTMLDivElement>(null);
   const imgRef = useRef<HTMLImageElement>(null);
   const [imgLoaded, setImgLoaded] = useState(0);
-  const layoutBox = useImageLetterbox(wrapRef, imgRef, [frame.previewPath, imgLoaded]);
   const [naturalSize, setNaturalSize] = useState<{ w: number; h: number } | null>(null);
+  const frameKey = `${frame.markerKind}:${frame.ts}:${frame.previewPath}:${frame.mode}`;
+
+  useEffect(() => {
+    setImgLoaded(0);
+    setNaturalSize(null);
+  }, [frameKey]);
+
+  const layoutBox = useImageLetterbox(wrapRef, imgRef, [frameKey, imgLoaded]);
 
   const staticMeta = usePlaybackStaticMetadata({
     camera: cameraId,
@@ -52,17 +59,19 @@ export function PlaybackStaticFrame({
   }, [showMetadata, staticMeta, frameMeta]);
 
   const previewClass = expanded ? 'expanded-camera-frame' : 'camera-preview';
+  const imageSrc = journalFrameUrl({
+    path: frame.previewPath,
+    date,
+    journalType: frame.journalType,
+    mode: frame.mode,
+  });
 
   return (
     <div ref={wrapRef} className={`playback-static-frame ${previewClass}`} style={{ position: 'relative' }}>
       <img
+        key={frameKey}
         ref={imgRef}
-        src={journalPreviewUrl({
-          path: frame.previewPath,
-          date,
-          journalType: frame.journalType,
-          mode: frame.mode,
-        })}
+        src={imageSrc}
         alt=""
         className={previewClass}
         onLoad={() => {

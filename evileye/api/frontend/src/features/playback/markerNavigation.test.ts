@@ -34,7 +34,7 @@ describe('markerNavigation', () => {
     expect(nextEventTs(starts, 300)).toBeNull();
   });
 
-  it('resolveStaticFrameForCamera returns detection preview in gap', () => {
+  it('resolveStaticFrameForCamera returns detection at exact playhead only', () => {
     const detections: PlaybackDetectionItem[] = [
       {
         ts: 250,
@@ -44,9 +44,8 @@ describe('markerNavigation', () => {
         bounding_box: { x: 1, y: 2, width: 3, height: 4 },
       },
     ];
-    const frame = resolveStaticFrameForCamera('Cam1', 248, segments, detections, []);
-    expect(frame?.previewPath).toBe('found.jpg');
-    expect(frame?.markerKind).toBe('detection');
+    expect(resolveStaticFrameForCamera('Cam1', 250, segments, detections, [])?.previewPath).toBe('found.jpg');
+    expect(resolveStaticFrameForCamera('Cam1', 248, segments, detections, [])).toBeNull();
   });
 
   it('resolveStaticFrameForCamera skips when playable video exists', () => {
@@ -56,7 +55,7 @@ describe('markerNavigation', () => {
     expect(resolveStaticFrameForCamera('Cam1', 150, segments, detections, [])).toBeNull();
   });
 
-  it('resolveStaticFrameForCamera picks event when closer', () => {
+  it('resolveStaticFrameForCamera shows event only at exact start_ts', () => {
     const events: PlaybackEventInterval[] = [
       {
         start_ts: 248,
@@ -68,8 +67,7 @@ describe('markerNavigation', () => {
     const detections: PlaybackDetectionItem[] = [
       { ts: 200, kind: 'found', object_id: 1, preview_path: 'old.jpg' },
     ];
-    const frame = resolveStaticFrameForCamera('Cam1', 249, segments, detections, events);
-    expect(frame?.previewPath).toBe('event.jpg');
-    expect(frame?.markerKind).toBe('event');
+    expect(resolveStaticFrameForCamera('Cam1', 248, segments, detections, events)?.previewPath).toBe('event.jpg');
+    expect(resolveStaticFrameForCamera('Cam1', 249, segments, detections, events)).toBeNull();
   });
 });
