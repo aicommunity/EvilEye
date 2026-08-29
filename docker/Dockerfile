@@ -1,17 +1,9 @@
 # syntax=docker/dockerfile:1.7
-#
-# EvilEye GPU image on top of the official Ultralytics stack
-# (PyTorch + CUDA + ultralytics / YOLO).
-#
-# To bump the base image, change ULTRALYTICS_TAG (or pass --build-arg).
-# Check tags: https://hub.docker.com/r/ultralytics/ultralytics/tags
-# Prefer a pinned semver (e.g. 8.4.115), not floating "latest".
-
 ARG ULTRALYTICS_TAG=8.4.115
 FROM ultralytics/ultralytics:${ULTRALYTICS_TAG}
 
 LABEL org.opencontainers.image.title="EvilEye" \
-      org.opencontainers.image.description="Intelligence video surveillance (GPU) on Ultralytics/PyTorch/CUDA" \
+      org.opencontainers.image.description="Intelligence video surveillance (GPU) from PyPI" \
       org.opencontainers.image.source="https://github.com/aicommunity/EvilEye"
 
 ENV DEBIAN_FRONTEND=noninteractive \
@@ -19,10 +11,8 @@ ENV DEBIAN_FRONTEND=noninteractive \
     PYTHONUNBUFFERED=1 \
     PIP_DISABLE_PIP_VERSION_CHECK=1 \
     PIP_NO_CACHE_DIR=1 \
-    APP_HOME=/opt/evileye \
-    EVILEYE_DATA_DIR=/opt/evileye/EvilEyeData
+    APP_HOME=/opt/evileye
 
-# System deps for PostgreSQL client stack, GStreamer capture, TurboJPEG
 RUN apt-get update && apt-get install -y --no-install-recommends \
     libpq5 \
     libgstreamer1.0-0 \
@@ -37,28 +27,24 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 
 WORKDIR ${APP_HOME}
 
-# Manifests + package sources (see root .dockerignore)
-COPY pyproject.toml README.md ./
-COPY evileye ./evileye
-COPY docker/install_python_deps.py /tmp/install_python_deps.py
+COPY docker/install_pypi_deps.py /tmp/install_pypi_deps.py
+COPY docker/entrypoint.sh /usr/local/bin/evileye-entrypoint
+COPY docker/bootstrap_site.py /opt/evileye/docker/bootstrap_site.py
+COPY docker/compose.site.gpu.yml /opt/evileye/docker/compose.site.gpu.yml
+COPY docker/compose.site.cpu.yml /opt/evileye/docker/compose.site.cpu.yml
+COPY docker/host-cli /opt/evileye/docker/host-cli
 
-# Install project deps without replacing CUDA torch / ultralytics from the base image,
-# then install the EvilEye package itself with --no-deps.
-RUN python /tmp/install_python_deps.py \
-    && pip install --no-cache-dir --no-deps . \
-    && rm -f /tmp/install_python_deps.py \
-    && python -c "import torch, ultralytics, evileye; print('torch', torch.__version__, 'cuda_build', torch.version.cuda); print('ultralytics', ultralytics.__version__); print('evileye ok')"
-
-RUN mkdir -p ${APP_HOME}/EvilEyeData/images \
-    ${APP_HOME}/logs \
-    ${APP_HOME}/videos \
-    ${APP_HOME}/models \
-    ${APP_HOME}/configs
+RUN chmod +x /tmp/install_pypi_deps.py /usr/local/bin/evileye-entrypoint /opt/evileye/docker/bootstrap_site.py \
+    && pip install --no-cache-dir --upgrade pip setuptools wheel \
+    && pip install --no-cache-dir --no-deps evileye \
+    && python /tmp/install_pypi_deps.py --package evileye --skip torch,torchvision,torchaudio,ultralytics \
+    && rm -f /tmp/install_pypi_deps.py \
+    && python -c "import evileye, torch, ultralytics; print('evileye ok', evileye.__version__)"
 
 EXPOSE 8181
 
 HEALTHCHECK --interval=30s --timeout=5s --retries=3 \
     CMD python -c "import evileye, torch, ultralytics" || exit 1
 
-# Headless by default; override in compose / docker run
-CMD ["evileye", "run", "configs/single_video.json", "--no-gui"]
+ENTRYPOINT ["evileye-entrypoint"]
+CMD ["evileye", "server", "--host", "0.0.0.0", "--port", "8181", "--no-reload"]

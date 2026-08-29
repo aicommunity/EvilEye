@@ -575,6 +575,7 @@ class GStreamerCaptureFramesMixin:
                     self._record_perf_metrics(pull_duration, process_time, None)
                     self.logger.error(f"Failed to extract frame data: {e}")
                     return Gst.FlowReturn.ERROR
+                pts_ns, media_pts_sec = self._pts_clock_fields(pts_value)
 
                 # Process frame metadata (optimized: only if needed for video files)
                 buffer = sample.get_buffer()
@@ -622,7 +623,9 @@ class GStreamerCaptureFramesMixin:
                             frame_id=frame_id,
                             timestamp=now,
                             current_video_frame=current_video_frame,
-                            current_video_position=current_video_position
+                            current_video_position=current_video_position,
+                            pts_ns=pts_ns,
+                            media_pts_sec=media_pts_sec,
                         )
                     except Exception as e:
                         self.logger.error(f"Error in _handle_split_stream for {self.source_names}: {e}", exc_info=True)
@@ -690,7 +693,9 @@ class GStreamerCaptureFramesMixin:
                                 timestamp=now,
                                 source_id=self.source_ids[0] if self.source_ids else 0,
                                 current_video_frame=current_video_frame,
-                                current_video_position=current_video_position
+                                current_video_position=current_video_position,
+                                pts_ns=pts_ns,
+                                media_pts_sec=media_pts_sec,
                             )
                             with self.frame_lock:
                                 # Always update to track latest frame reception time
@@ -706,7 +711,9 @@ class GStreamerCaptureFramesMixin:
                         timestamp=now,
                         source_id=source_id,
                         current_video_frame=current_video_frame,
-                        current_video_position=current_video_position
+                        current_video_position=current_video_position,
+                        pts_ns=pts_ns,
+                        media_pts_sec=media_pts_sec,
                     )
 
                     # Mark as working when we receive first frame after init

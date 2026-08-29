@@ -164,7 +164,7 @@ def test_web_auth_bootstrap_creates_admin(tmp_path, monkeypatch):
     assert not ensure_default_admin_credentials(creds_path)
 
 
-def test_journal_json_fallback_when_database_disabled(tmp_path, monkeypatch):
+def test_journal_json_mode_when_database_disabled(tmp_path, monkeypatch):
     base_dir = tmp_path / "EvilEyeData"
     metadata = base_dir / "Detections" / "2026-06-13" / "Metadata"
     metadata.mkdir(parents=True)
@@ -195,12 +195,20 @@ def test_journal_json_fallback_when_database_disabled(tmp_path, monkeypatch):
     )
     monkeypatch.setattr(
         journal_service,
-        "get_current_run_summary",
-        lambda: {"config_path": str(config_path)},
+        "get_current_config_path",
+        lambda: str(config_path),
     )
+    monkeypatch.setattr(
+        "evileye.api.core.server_state.get_current_run_summary",
+        lambda: None,
+    )
+    journal_service._runtime_params_cache = None
+    journal_service._light_config_path_cache = None
+    journal_service._image_base_dir_cache = None
     status = journal_service.journal_availability()
     assert status["available"] is True
     assert status["mode"] == "json"
+    assert status["reason"] == "ok"
     payload = journal_service.load_objects_grouped_page(page=0, size=10, filters={})
     assert payload["available"] is True
     assert payload["mode"] == "json"
@@ -208,17 +216,103 @@ def test_journal_json_fallback_when_database_disabled(tmp_path, monkeypatch):
 
 
 def test_journal_disabled_message(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
     config_path = tmp_path / "poly.json"
     config_path.write_text(json.dumps({"controller": {"use_database": False}}), encoding="utf-8")
     monkeypatch.setattr(
         journal_service,
-        "get_current_run_summary",
-        lambda: {"config_path": str(config_path)},
+        "get_current_config_path",
+        lambda: str(config_path),
     )
+    monkeypatch.setattr(
+        "evileye.api.core.server_state.get_current_run_summary",
+        lambda: None,
+    )
+    journal_service._runtime_params_cache = None
+    journal_service._light_config_path_cache = None
+    journal_service._image_base_dir_cache = None
     payload = journal_service.load_events_page(page=0, size=10, filters={})
     assert payload["available"] is False
-    assert payload["reason"] == "database_disabled"
-    assert "use_database" in payload["message"]
+    assert payload["mode"] == "json"
+    assert payload["reason"] == "json_unavailable"
+    assert "EvilEyeData" in payload["message"]
+
+
+def test_journal_database_mode_falls_back_to_json_when_unreachable(tmp_path, monkeypatch):
+    base_dir = tmp_path / "EvilEyeData"
+    metadata = base_dir / "Detections" / "2026-06-13" / "Metadata"
+    metadata.mkdir(parents=True)
+    (metadata / "objects_found.json").write_text("[]", encoding="utf-8")
+    config_path = tmp_path / "poly.json"
+    config_path.write_text(
+        json.dumps({"controller": {"use_database": True, "image_dir": str(base_dir)}}),
+        encoding="utf-8",
+    )
+    creds_path = tmp_path / "credentials.json"
+    creds_path.write_text(
+        json.dumps({"database": {"host": "127.0.0.1", "port": 5432, "dbname": "x", "user": "x", "password": "x"}}),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(journal_service, "get_current_config_path", lambda: str(config_path))
+    monkeypatch.setattr(journal_service, "creds_path", lambda: creds_path)
+    monkeypatch.setattr(journal_service, "_db_controller", lambda: None)
+    monkeypatch.setattr(
+        "evileye.api.core.server_state.get_current_run_summary",
+        lambda: None,
+    )
+    journal_service._runtime_params_cache = None
+    journal_service._light_config_path_cache = None
+    journal_service._image_base_dir_cache = None
+
+    status = journal_service.journal_availability()
+    assert status["available"] is True
+    assert status["mode"] == "json"
+    assert status["reason"] == "database_fallback_json"
+
+    payload = journal_service.load_events_page(page=0, size=10, filters={})
+    assert payload["available"] is True
+    assert payload["mode"] == "json"
+    assert payload["reason"] == "database_fallback_json"
+
+
+def test_journal_json_mode_from_on_disk_config(tmp_path, monkeypatch):
+    base_dir = tmp_path / "EvilEyeData"
+    metadata = base_dir / "Detections" / "2026-06-13" / "Metadata"
+    metadata.mkdir(parents=True)
+    (metadata / "objects_found.json").write_text(
+        json.dumps(
+            [
+                {
+                    "event_id": 1,
+                    "timestamp": "2026-06-13T10:00:00",
+                    "source_id": 0,
+                    "source_name": "Cam1",
+                    "object_id": 42,
+                    "class_name": "person",
+                }
+            ]
+        ),
+        encoding="utf-8",
+    )
+    config_path = tmp_path / "poly.json"
+    config_path.write_text(
+        json.dumps({"controller": {"use_database": False, "image_dir": str(base_dir)}}),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(journal_service, "get_current_config_path", lambda: str(config_path))
+    journal_service._runtime_params_cache = None
+    journal_service._light_config_path_cache = None
+    journal_service._image_base_dir_cache = None
+
+    assert journal_service.configured_storage_mode() == "json"
+    status = journal_service.journal_availability()
+    assert status["available"] is True
+    assert status["mode"] == "json"
+
+    payload = journal_service.load_objects_grouped_page(page=0, size=10, filters={})
+    assert payload["available"] is True
+    assert payload["mode"] == "json"
+    assert payload["total"] >= 1
 
 
 def test_auth_register_and_users_flow(tmp_path, monkeypatch):

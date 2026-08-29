@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import logging
 import json
+import threading
 import time
 from dataclasses import dataclass
 from pathlib import Path
@@ -15,6 +17,8 @@ from evileye.api.core.runtime_registry import (
     maybe_discover_process_runtimes,
 )
 from evileye.core.runtime_services import get_frame_broker
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass
@@ -35,6 +39,37 @@ def _load_json(path: Path) -> dict[str, Any]:
         return json.loads(path.read_text(encoding="utf-8"))
     except Exception:
         return {}
+
+
+def use_database_from_params(params: dict[str, Any] | None) -> bool:
+    """Whether the run uses PostgreSQL (controller.use_database), not merely a database config section."""
+    controller = params.get("controller") if isinstance(params, dict) else None
+    if isinstance(controller, dict) and "use_database" in controller:
+        return bool(controller.get("use_database"))
+    return True
+
+
+def storage_mode_from_params(params: dict[str, Any] | None) -> str:
+    return "database" if use_database_from_params(params) else "json"
+
+
+def _params_from_config_path(config_path: str | None) -> dict[str, Any]:
+    if not config_path:
+        return {}
+    payload = _load_json(Path(config_path))
+    return payload if isinstance(payload, dict) else {}
+
+
+def effective_params_for_run(
+        config_path: str | None,
+        runtime_snapshot: dict[str, Any] | None,
+) -> dict[str, Any]:
+    """Effective run config: live snapshot when present, else on-disk config file."""
+    if isinstance(runtime_snapshot, dict):
+        payload = runtime_snapshot.get("config")
+        if isinstance(payload, dict):
+            return payload
+    return _params_from_config_path(config_path)
 
 
 def _get_pipeline_section(config: dict[str, Any]) -> dict[str, Any]:
@@ -64,7 +99,6 @@ def load_config_summary(config_path: Optional[str]) -> ConfigSummary:
     trackers = pipeline.get("trackers") if isinstance(pipeline, dict) else None
     event_detectors = config.get("events_detectors") or pipeline.get("events_detectors") if isinstance(pipeline,
                                                                                                        dict) else {}
-    database = config.get("database") or pipeline.get("database") if isinstance(pipeline, dict) else {}
 
     source_items: list[dict[str, Any]] = []
     for source in sources or []:
@@ -108,8 +142,6 @@ def load_config_summary(config_path: Optional[str]) -> ConfigSummary:
 
     if not isinstance(event_detectors, dict):
         event_detectors = {}
-    if not isinstance(database, dict):
-        database = {}
 
     summary = ConfigSummary(
         pipeline_class=pipeline.get("pipeline_class") if isinstance(pipeline, dict) else None,
@@ -117,7 +149,7 @@ def load_config_summary(config_path: Optional[str]) -> ConfigSummary:
         detector_count=len(detectors or []),
         tracker_count=len(trackers or []),
         event_detector_names=sorted(event_detectors.keys()),
-        database_enabled=bool(database),
+        database_enabled=use_database_from_params(config),
     )
     _config_summary_cache[config_path] = (mtime, summary)
     return summary
@@ -262,16 +294,25 @@ def _read_log_tail(path: Path, *, lines: int = 120) -> list[str]:
     return payload[-lines:]
 
 
-def _run_summary(record: Dict[str, Any]) -> Dict[str, Any]:
+def _run_summary(record: Dict[str, Any], *, include_logs: bool = True) -> Dict[str, Any]:
     from evileye.api.core.log_service import resolve_run_log_files
 
     config_summary = load_config_summary(record.get("config_path"))
-    runtime_snapshot = load_runtime_snapshot(int(record.get("id") or 0)) if record.get("id") is not None else None
     rid = record.get("id")
+    rid_int = int(rid) if rid is not None else None
+    if include_logs:
+        runtime_snapshot = load_runtime_snapshot(rid_int) if rid_int is not None else None
+        log_info = resolve_run_log_files(record)
+    else:
+        # Hot path (overview / active list): skip log glob + full snapshot hydrate.
+        runtime_snapshot = _slim_snapshot_for_cameras(rid_int)
+        log_info = {}
     latest_frame_exists = _preview_frame_available(rid)
     config_path = record.get("config_path")
     config_name = Path(config_path).name if config_path else None
-    log_info = resolve_run_log_files(record)
+    effective_params = effective_params_for_run(config_path, runtime_snapshot)
+    database_enabled = use_database_from_params(effective_params)
+    storage_mode = storage_mode_from_params(effective_params)
     return {
         "id": record.get("id"),
         "name": record.get("name"),
@@ -295,7 +336,8 @@ def _run_summary(record: Dict[str, Any]) -> Dict[str, Any]:
         "detector_count": config_summary.detector_count,
         "tracker_count": config_summary.tracker_count,
         "event_detector_names": config_summary.event_detector_names,
-        "database_enabled": config_summary.database_enabled,
+        "database_enabled": database_enabled,
+        "storage_mode": storage_mode,
         "sources": config_summary.source_items,
         "runtime_snapshot": runtime_snapshot,
         "log_session_id": log_info.get("log_session_id"),
@@ -306,6 +348,58 @@ def _run_summary(record: Dict[str, Any]) -> Dict[str, Any]:
 
 def list_run_summaries() -> list[Dict[str, Any]]:
     return [_run_summary(record) for record in _combined_runtime_records(discover=True).values()]
+
+
+def _stub_to_list_item(stub: Dict[str, Any]) -> Dict[str, Any]:
+    """UI list row from a registry stub: no snapshot, no config parse, no log scan."""
+    config_path = stub.get("config_path")
+    started = stub.get("started_at")
+    item = dict(stub)
+    item["config_name"] = Path(str(config_path)).name if config_path else None
+    try:
+        item["uptime_seconds"] = max(0.0, time.time() - float(started)) if started else None
+    except (TypeError, ValueError):
+        item["uptime_seconds"] = None
+    return item
+
+
+def _best_current_stub() -> Optional[Dict[str, Any]]:
+    stubs = _combined_runtime_stubs(discover=False)
+    if not stubs:
+        return None
+    active = [stub for stub in stubs.values() if _is_run_active(stub)]
+    pool = active or list(stubs.values())
+    return max(pool, key=_stub_candidate_key)
+
+
+def get_current_run_list_item() -> Optional[Dict[str, Any]]:
+    stub = _best_current_stub()
+    return _stub_to_list_item(stub) if stub else None
+
+
+def list_run_list_items(*, discover: bool = True) -> list[Dict[str, Any]]:
+    stubs = _combined_runtime_stubs(discover=discover)
+    items = [_stub_to_list_item(stub) for stub in stubs.values()]
+    items.sort(
+        key=lambda item: (float(item.get("updated_at") or 0.0), int(item.get("id") or 0)),
+        reverse=True,
+    )
+    return items
+
+
+def list_history_run_list_items(*, exclude_current: bool = True) -> list[Dict[str, Any]]:
+    stubs = _combined_runtime_stubs(discover=False)
+    current = _best_current_stub()
+    current_id = int(current.get("id") or 0) if current else None
+    items: list[Dict[str, Any]] = []
+    for rid, stub in stubs.items():
+        if _is_run_active(stub):
+            continue
+        if exclude_current and current_id is not None and rid == current_id:
+            continue
+        items.append(_stub_to_list_item(stub))
+    items.sort(key=lambda item: float(item.get("updated_at") or 0.0), reverse=True)
+    return items
 
 
 def get_run_summary(rid: int) -> Optional[Dict[str, Any]]:
@@ -337,22 +431,70 @@ def _is_run_active(run: Dict[str, Any]) -> bool:
 
 
 def list_active_run_summaries() -> list[Dict[str, Any]]:
-    stubs = _combined_runtime_stubs(discover=True)
-    active_ids = [rid for rid, stub in stubs.items() if _is_run_active(stub)]
-    runs: list[Dict[str, Any]] = []
-    for rid in active_ids:
-        record = _combined_runtime_record(rid)
-        if record is None:
-            continue
-        runs.append(_run_summary(record))
-    runs.sort(
-        key=lambda item: (
-            _current_run_candidate_key(item),
-            int(item.get("id") or 0),
-        ),
-        reverse=True,
-    )
-    return runs
+    now = time.time()
+    with _active_run_summaries_cache_lock:
+        has_value = isinstance(_active_run_summaries_cache.value, list)
+        decision = _swr_decide(_active_run_summaries_cache, now=now, has_value=has_value)
+        cached = _active_run_summaries_cache.value if has_value else None
+        if decision in {"fresh", "stale"}:
+            return list(cached or [])
+        if decision == "wait":
+            if _active_run_summaries_cache.inflight_event is not None:
+                _active_run_summaries_cache.inflight_event.wait(timeout=_STATE_FOLLOWER_WAIT_SEC)
+            if isinstance(_active_run_summaries_cache.value, list):
+                return _active_run_summaries_cache.value
+            return []
+        spawn_bg = decision == "stale_bg"
+        stale_return = list(cached or []) if spawn_bg else None
+
+    def _compute() -> list[Dict[str, Any]]:
+        started_at = time.monotonic()
+        runs: list[Dict[str, Any]] = []
+        computed_ok = False
+        try:
+            stubs = _combined_runtime_stubs(discover=False)
+            active_ids = [rid for rid, stub in stubs.items() if _is_run_active(stub)]
+            for rid in active_ids:
+                record = _combined_runtime_record(rid)
+                if record is None:
+                    continue
+                runs.append(_run_summary(record, include_logs=False))
+            runs.sort(
+                key=lambda item: (
+                    _current_run_candidate_key(item),
+                    int(item.get("id") or 0),
+                ),
+                reverse=True,
+            )
+            computed_ok = True
+            return runs
+        finally:
+            total = time.monotonic() - started_at
+            if total >= _STATE_LATENCY_WARN_SEC:
+                logger.warning("list_active_run_summaries slow: %.3fs (runs=%d)", total, len(runs))
+            with _active_run_summaries_cache_lock:
+                ev = _active_run_summaries_cache.inflight_event
+                _active_run_summaries_cache.inflight_event = None
+                _active_run_summaries_cache.computing = False
+                ts = time.time()
+                if computed_ok:
+                    _active_run_summaries_cache.value = runs
+                    _active_run_summaries_cache.expires_at = ts + _STATE_CACHE_TTL_SEC
+                    _active_run_summaries_cache.stale_expires_at = (
+                        ts + _STATE_STALE_WHILE_REFRESH_TTL_SEC
+                    )
+                else:
+                    _active_run_summaries_cache.value = None
+                    _active_run_summaries_cache.expires_at = 0.0
+                    _active_run_summaries_cache.stale_expires_at = 0.0
+                if ev is not None:
+                    ev.set()
+
+    if spawn_bg:
+        threading.Thread(target=_compute, daemon=True, name="active-runs-swr").start()
+        return stale_return or []
+
+    return _compute()
 
 
 def get_current_config_path() -> Optional[str]:
@@ -368,19 +510,70 @@ def get_current_config_path() -> Optional[str]:
 
 
 def get_current_run_summary() -> Optional[Dict[str, Any]]:
-    stubs = _combined_runtime_stubs(discover=True)
-    if not stubs:
-        return None
-    active = [stub for stub in stubs.values() if _is_run_active(stub)]
-    pool = active or list(stubs.values())
-    best = max(pool, key=_stub_candidate_key)
-    rid = int(best.get("id") or 0)
-    if not rid:
-        return None
-    record = _combined_runtime_record(rid)
-    if record is None:
-        return None
-    return _run_summary(record)
+    now = time.time()
+    with _current_run_cache_lock:
+        has_value = _current_run_cache.value is not None
+        decision = _swr_decide(_current_run_cache, now=now, has_value=has_value)
+        cached = _current_run_cache.value
+        cached_value: Dict[str, Any] | None = None if cached is _CACHED_NONE else cached  # type: ignore[assignment]
+        if decision in {"fresh", "stale"}:
+            return cached_value if has_value else None
+        if decision == "wait":
+            if _current_run_cache.inflight_event is not None:
+                _current_run_cache.inflight_event.wait(timeout=_STATE_FOLLOWER_WAIT_SEC)
+            cached = _current_run_cache.value
+            return None if cached is _CACHED_NONE else cached
+        spawn_bg = decision == "stale_bg"
+        stale_return = cached_value if spawn_bg and has_value else None
+
+    def _compute() -> Optional[Dict[str, Any]]:
+        started_at = time.monotonic()
+        computed_ok = False
+        result: Optional[Dict[str, Any]] = None
+        try:
+            stubs = _combined_runtime_stubs(discover=False)
+            if not stubs:
+                result = None
+            else:
+                active = [stub for stub in stubs.values() if _is_run_active(stub)]
+                pool = active or list(stubs.values())
+                best = max(pool, key=_stub_candidate_key)
+                rid = int(best.get("id") or 0)
+                if not rid:
+                    result = None
+                else:
+                    record = _combined_runtime_record(rid)
+                    if record is None:
+                        result = None
+                    else:
+                        result = _run_summary(record, include_logs=False)
+            computed_ok = True
+            return result
+        finally:
+            total = time.monotonic() - started_at
+            if total >= _STATE_LATENCY_WARN_SEC:
+                logger.warning("get_current_run_summary slow: %.3fs", total)
+            with _current_run_cache_lock:
+                ev = _current_run_cache.inflight_event
+                _current_run_cache.inflight_event = None
+                _current_run_cache.computing = False
+                ts = time.time()
+                if computed_ok:
+                    _current_run_cache.value = result if result is not None else _CACHED_NONE
+                    _current_run_cache.expires_at = ts + _STATE_CACHE_TTL_SEC
+                    _current_run_cache.stale_expires_at = ts + _STATE_STALE_WHILE_REFRESH_TTL_SEC
+                else:
+                    _current_run_cache.value = None
+                    _current_run_cache.expires_at = 0.0
+                    _current_run_cache.stale_expires_at = 0.0
+                if ev is not None:
+                    ev.set()
+
+    if spawn_bg:
+        threading.Thread(target=_compute, daemon=True, name="current-run-swr").start()
+        return stale_return
+
+    return _compute()
 
 
 def list_history_run_summaries(*, exclude_current: bool = True) -> list[Dict[str, Any]]:
@@ -401,43 +594,340 @@ def list_history_run_summaries(*, exclude_current: bool = True) -> list[Dict[str
     return items
 
 
-def list_camera_summaries(*, scope: str = "current") -> list[Dict[str, Any]]:
-    cameras: list[Dict[str, Any]] = []
+def _slim_snapshot_for_cameras(rid: int | None) -> dict[str, Any] | None:
+    """Load runtime snapshot but keep only fields needed for camera health."""
+    if rid is None:
+        return None
+    try:
+        snapshot = load_runtime_snapshot(int(rid))
+    except Exception:
+        return None
+    if not isinstance(snapshot, dict):
+        return None
+    sources = snapshot.get("sources")
+    if not isinstance(sources, list):
+        return {"sources": []}
+    return {"sources": sources, "updated_at": snapshot.get("updated_at")}
+
+
+def _slim_run_for_cameras(record: Dict[str, Any]) -> Dict[str, Any]:
+    """Minimal run view for /state/cameras — no logs, no full config snapshot."""
+    config_summary = load_config_summary(record.get("config_path"))
+    rid = record.get("id")
+    return {
+        "id": rid,
+        "name": record.get("name"),
+        "state": record.get("state"),
+        "alive": bool(record.get("alive")),
+        "pipeline_class": config_summary.pipeline_class,
+        "sources": config_summary.source_items,
+        "runtime_snapshot": _slim_snapshot_for_cameras(int(rid) if rid is not None else None),
+    }
+
+
+def _runs_for_camera_summaries(scope: str, *, discover: bool = False) -> list[Dict[str, Any]]:
+    """Resolve runs for camera listing without hydrating full run summaries."""
+    stubs = _combined_runtime_stubs(discover=discover)
+    if not stubs:
+        return []
+
     if scope == "current":
-        runs = [get_current_run_summary()]
-    elif scope == "active":
-        runs = list_active_run_summaries()
-    else:
-        runs = list_run_summaries()
-    for run in runs:
-        if not run:
+        active = [stub for stub in stubs.values() if _is_run_active(stub)]
+        pool = active or list(stubs.values())
+        best = max(pool, key=_stub_candidate_key)
+        rid = int(best.get("id") or 0)
+        if not rid:
+            return []
+        record = _combined_runtime_record(rid)
+        if record is None:
+            return []
+        return [_slim_run_for_cameras(record)]
+
+    if scope == "active":
+        runs: list[Dict[str, Any]] = []
+        for rid, stub in stubs.items():
+            if not _is_run_active(stub):
+                continue
+            record = _combined_runtime_record(rid)
+            if record is None:
+                continue
+            runs.append(_slim_run_for_cameras(record))
+        return runs
+
+    runs = []
+    for rid in stubs:
+        record = _combined_runtime_record(rid)
+        if record is None:
             continue
-        for source in run.get("sources", []):
-            sid = source.get("source_id")
-            preview, age, is_working, reconnecting = _camera_health(run, sid)
-            cameras.append(
-                {
-                    "run_id": run["id"],
-                    "run_name": run.get("name"),
-                    "run_state": run.get("state"),
-                    "pipeline_class": run.get("pipeline_class"),
-                    "source_id": sid,
-                    "source_name": source.get("source_name"),
-                    "source_type": source.get("source_type"),
-                    "address": source.get("address"),
-                    "preview_available": preview,
-                    "is_working": is_working,
-                    "last_frame_age_sec": age,
-                    "reconnecting": reconnecting,
-                    "alive": bool(run.get("alive")),
-                }
-            )
-    cameras.sort(key=lambda item: (item.get("run_id") or 0, str(item.get("source_name") or "")))
-    return cameras
+        runs.append(_slim_run_for_cameras(record))
+    return runs
+
+
+def _swr_decide(
+    item: "_TtlCacheItem",
+    *,
+    now: float,
+    has_value: bool,
+) -> str:
+    """Return decision for stale-while-revalidate caches.
+
+    - ``fresh``: serve cached value
+    - ``stale_bg``: serve cached value and caller should start background refresh
+    - ``stale``: serve cached value (refresh already in flight)
+    - ``miss``: caller should compute synchronously (marks computing)
+    - ``wait``: wait briefly for inflight then serve whatever is cached
+    """
+    if has_value and now < item.expires_at:
+        return "fresh"
+    if has_value and now < item.stale_expires_at:
+        if item.computing:
+            return "stale"
+        item.computing = True
+        item.inflight_event = threading.Event()
+        item.inflight_event.clear()
+        return "stale_bg"
+    if item.computing:
+        return "wait"
+    item.computing = True
+    item.inflight_event = threading.Event()
+    item.inflight_event.clear()
+    return "miss"
+
+
+def list_camera_summaries(*, scope: str = "current") -> list[Dict[str, Any]]:
+    now = time.time()
+    wait_event: threading.Event | None = None
+    stale_while_wait: list[Dict[str, Any]] | None = None
+    spawn_bg = False
+    stale_return: list[Dict[str, Any]] | None = None
+    with _camera_summaries_cache_lock:
+        item = _camera_summaries_cache.get(scope)
+        if item is None:
+            item = _TtlCacheItem()
+            _camera_summaries_cache[scope] = item
+
+        has_value = isinstance(item.value, list)
+        decision = _swr_decide(item, now=now, has_value=has_value)
+        cached = item.value if has_value else None
+        if decision in {"fresh", "stale"}:
+            return list(cached or [])
+        if decision == "wait":
+            wait_event = item.inflight_event
+            stale_while_wait = list(cached) if isinstance(cached, list) else None
+        else:
+            spawn_bg = decision == "stale_bg"
+            stale_return = list(cached or []) if spawn_bg else None
+
+    if wait_event is not None:
+        # Wait outside the cache lock so the in-flight compute can publish.
+        wait_event.wait(
+            timeout=1.5 if not stale_while_wait else _STATE_FOLLOWER_WAIT_SEC
+        )
+        with _camera_summaries_cache_lock:
+            if isinstance(item.value, list) and item.value:
+                return list(item.value)
+            if stale_while_wait:
+                return stale_while_wait
+            if isinstance(item.value, list):
+                return list(item.value)
+        return []
+
+    def _compute() -> list[Dict[str, Any]]:
+        started_at = time.monotonic()
+        cameras: list[Dict[str, Any]] = []
+        computed_ok = False
+        try:
+            runs = _runs_for_camera_summaries(scope, discover=False)
+            for run in runs:
+                if not run:
+                    continue
+                for source in run.get("sources", []):
+                    sid = source.get("source_id")
+                    preview, age, is_working, reconnecting = _camera_health(run, sid)
+                    cameras.append(
+                        {
+                            "run_id": run["id"],
+                            "run_name": run.get("name"),
+                            "run_state": run.get("state"),
+                            "pipeline_class": run.get("pipeline_class"),
+                            "source_id": sid,
+                            "source_name": source.get("source_name"),
+                            "source_type": source.get("source_type"),
+                            "address": source.get("address"),
+                            "preview_available": preview,
+                            "is_working": is_working,
+                            "last_frame_age_sec": age,
+                            "reconnecting": reconnecting,
+                            "alive": bool(run.get("alive")),
+                        }
+                    )
+            cameras.sort(key=lambda row: (row.get("run_id") or 0, str(row.get("source_name") or "")))
+            total = time.monotonic() - started_at
+            if total >= _STATE_LATENCY_WARN_SEC:
+                logger.warning(
+                    "list_camera_summaries(%s) slow: %.3fs (cameras=%d)",
+                    scope,
+                    total,
+                    len(cameras),
+                )
+            computed_ok = True
+            return cameras
+        finally:
+            with _camera_summaries_cache_lock:
+                ev = item.inflight_event
+                item.inflight_event = None
+                item.computing = False
+                if computed_ok:
+                    # Do not clobber a non-empty cache with a transient empty miss.
+                    if cameras or not (isinstance(item.value, list) and item.value):
+                        item.value = cameras
+                    ts = time.time()
+                    item.expires_at = ts + _STATE_CACHE_TTL_SEC
+                    item.stale_expires_at = ts + _STATE_STALE_WHILE_REFRESH_TTL_SEC
+                else:
+                    item.expires_at = 0.0
+                    item.stale_expires_at = 0.0
+                if ev is not None:
+                    ev.set()
+
+    if spawn_bg:
+        threading.Thread(
+            target=_compute,
+            daemon=True,
+            name=f"cameras-swr-{scope}",
+        ).start()
+        return stale_return or []
+
+    return _compute()
 
 
 _journal_stats_cache: tuple[float, dict[str, Any]] | None = None
 _JOURNAL_STATS_TTL_SEC = 60
+
+_STATE_CACHE_TTL_SEC = 6.0
+_STATE_STALE_WHILE_REFRESH_TTL_SEC = 30.0
+_STATE_FOLLOWER_WAIT_SEC = 0.25
+_STATE_LATENCY_WARN_SEC = 1.0
+_BACKGROUND_DISCOVER_INTERVAL_SEC = 5.0
+
+_background_discover_stop = threading.Event()
+_background_discover_thread: threading.Thread | None = None
+_background_discover_lock = threading.Lock()
+
+
+def start_background_runtime_discovery(*, interval_sec: float | None = None) -> None:
+    """Periodic process discovery so hot state paths can use discover=False."""
+    global _background_discover_thread
+    interval = float(interval_sec) if interval_sec is not None else _BACKGROUND_DISCOVER_INTERVAL_SEC
+    interval = max(1.0, interval)
+
+    with _background_discover_lock:
+        if _background_discover_thread is not None and _background_discover_thread.is_alive():
+            return
+        _background_discover_stop.clear()
+
+        def _loop() -> None:
+            # Prime once so first UI request sees live PIDs.
+            try:
+                maybe_discover_process_runtimes(force=True)
+            except Exception:
+                logger.debug("Initial runtime discovery failed", exc_info=True)
+            while not _background_discover_stop.wait(interval):
+                try:
+                    maybe_discover_process_runtimes()
+                except Exception:
+                    logger.debug("Background runtime discovery failed", exc_info=True)
+
+        _background_discover_thread = threading.Thread(
+            target=_loop,
+            daemon=True,
+            name="RuntimeDiscovery",
+        )
+        _background_discover_thread.start()
+
+
+def stop_background_runtime_discovery() -> None:
+    global _background_discover_thread
+    with _background_discover_lock:
+        _background_discover_stop.set()
+        thread = _background_discover_thread
+        _background_discover_thread = None
+    if thread is not None and thread.is_alive():
+        thread.join(timeout=2.0)
+
+
+@dataclass
+class _TtlCacheItem:
+    expires_at: float = 0.0
+    stale_expires_at: float = 0.0
+    value: Any | None = None
+    computing: bool = False
+    inflight_event: threading.Event | None = None
+
+
+_overview_cache: _TtlCacheItem = _TtlCacheItem()
+_overview_cache_lock = threading.Lock()
+
+_camera_summaries_cache: dict[str, _TtlCacheItem] = {}
+_camera_summaries_cache_lock = threading.Lock()
+
+# Sentinel value to allow caching "no current run" without treating it as a cache miss.
+_CACHED_NONE: Any = object()
+
+_current_run_cache: _TtlCacheItem = _TtlCacheItem()
+_current_run_cache_lock = threading.Lock()
+
+_active_run_summaries_cache: _TtlCacheItem = _TtlCacheItem()
+_active_run_summaries_cache_lock = threading.Lock()
+
+
+def get_cached_overview() -> Dict[str, Any] | None:
+    with _overview_cache_lock:
+        if not isinstance(_overview_cache.value, dict):
+            return None
+        if time.time() >= _overview_cache.stale_expires_at:
+            return None
+        return _overview_cache.value
+
+
+def get_cached_camera_summaries(scope: str) -> list[Dict[str, Any]] | None:
+    with _camera_summaries_cache_lock:
+        item = _camera_summaries_cache.get(scope)
+        if not (item and isinstance(item.value, list)):
+            return None
+        if time.time() >= item.stale_expires_at:
+            return None
+        return item.value
+
+
+def probe_cached_current_run_summary() -> tuple[bool, Dict[str, Any] | None]:
+    """
+    Returns (has_cached, cached_value).
+
+    cached_value may be None when "no current run" was cached (not a cache miss).
+    """
+    now = time.time()
+    with _current_run_cache_lock:
+        if _current_run_cache.value is None:
+            return False, None
+        if now >= _current_run_cache.stale_expires_at:
+            return False, None
+        if _current_run_cache.value is _CACHED_NONE:
+            return True, None
+        if isinstance(_current_run_cache.value, dict):
+            return True, _current_run_cache.value
+        return False, None
+
+
+def probe_cached_active_run_summaries() -> tuple[bool, list[Dict[str, Any]]]:
+    """Returns (has_cached, cached_value)."""
+    now = time.time()
+    with _active_run_summaries_cache_lock:
+        if not isinstance(_active_run_summaries_cache.value, list):
+            return False, []
+        if now >= _active_run_summaries_cache.stale_expires_at:
+            return False, []
+        return True, _active_run_summaries_cache.value
 
 
 def _journal_stats() -> dict[str, Any]:
@@ -458,40 +948,131 @@ def _journal_stats() -> dict[str, Any]:
         return {"available": False}
 
 
-def build_overview() -> Dict[str, Any]:
-    current_run = get_current_run_summary()
-    active_runs = list_active_run_summaries()
-    active_cameras = list_camera_summaries(scope="current")
-    log_files = _log_files()
-    latest_logs = []
-    for path in log_files[:3]:
-        latest_logs.append(
-            {
-                "name": path.name,
-                "updated_at": path.stat().st_mtime,
-                "tail": _read_log_tail(path, lines=10),
-            }
-        )
-
-    current_state = current_run.get("state") if current_run else "stopped"
-    journal_stats = _journal_stats()
+def _overview_placeholder() -> Dict[str, Any]:
     return {
         "timestamp": time.time(),
-        "server": {
-            "status": "ok",
-            "current_run_id": current_run.get("id") if current_run else None,
-            "current_run_state": current_state,
-            "active_runs_total": len(active_runs),
-            "cameras_total": len(active_cameras),
-            "web_previews_available": sum(1 for camera in active_cameras if camera.get("preview_available")),
-            "log_files": [path.name for path in log_files[:10]],
-            "journal_stats": journal_stats,
-        },
-        "current_run": current_run,
-        "active_runs": active_runs,
-        "cameras": active_cameras,
-        "latest_logs": latest_logs,
+        "server": {"status": "ok", "log_files": [], "journal_stats": {"available": False}},
+        "current_run": None,
+        "active_runs": [],
+        "cameras": [],
+        "latest_logs": [],
     }
+
+
+def build_overview() -> Dict[str, Any]:
+    now = time.time()
+    with _overview_cache_lock:
+        has_value = isinstance(_overview_cache.value, dict)
+        decision = _swr_decide(_overview_cache, now=now, has_value=has_value)
+        cached = _overview_cache.value if has_value else None
+        if decision in {"fresh", "stale"}:
+            return cached  # type: ignore[return-value]
+        if decision == "wait":
+            if _overview_cache.inflight_event is not None:
+                _overview_cache.inflight_event.wait(timeout=_STATE_FOLLOWER_WAIT_SEC)
+            if isinstance(_overview_cache.value, dict):
+                return _overview_cache.value
+            return _overview_placeholder()
+        spawn_bg = decision == "stale_bg"
+        stale_return = cached if spawn_bg else None
+
+    def _compute() -> Dict[str, Any]:
+        started_at = time.monotonic()
+        computed_ok = False
+        result: Dict[str, Any] | None = None
+        try:
+            current_run = get_current_run_summary()
+            active_runs = list_active_run_summaries()
+            # Avoid extra nested `list_camera_summaries()` call here to prevent
+            # duplicate expensive run/camera discovery work.
+            active_cameras: list[Dict[str, Any]] = []
+            if current_run:
+                for source in current_run.get("sources", []):
+                    sid = source.get("source_id")
+                    preview, age, is_working, reconnecting = _camera_health(current_run, sid)
+                    active_cameras.append(
+                        {
+                            "run_id": current_run["id"],
+                            "run_name": current_run.get("name"),
+                            "run_state": current_run.get("state"),
+                            "pipeline_class": current_run.get("pipeline_class"),
+                            "source_id": sid,
+                            "source_name": source.get("source_name"),
+                            "source_type": source.get("source_type"),
+                            "address": source.get("address"),
+                            "preview_available": preview,
+                            "is_working": is_working,
+                            "last_frame_age_sec": age,
+                            "reconnecting": reconnecting,
+                            "alive": bool(current_run.get("alive")),
+                        }
+                    )
+                active_cameras.sort(
+                    key=lambda item: (item.get("run_id") or 0, str(item.get("source_name") or ""))
+                )
+            log_files = _log_files()
+            latest_logs = []
+            for path in log_files[:3]:
+                latest_logs.append(
+                    {
+                        "name": path.name,
+                        "updated_at": path.stat().st_mtime,
+                        "tail": _read_log_tail(path, lines=10),
+                    }
+                )
+
+            current_state = current_run.get("state") if current_run else "stopped"
+            journal_stats = _journal_stats()
+
+            result = {
+                "timestamp": time.time(),
+                "server": {
+                    "status": "ok",
+                    "current_run_id": current_run.get("id") if current_run else None,
+                    "current_run_state": current_state,
+                    "active_runs_total": len(active_runs),
+                    "cameras_total": len(active_cameras),
+                    "web_previews_available": sum(
+                        1 for camera in active_cameras if camera.get("preview_available")
+                    ),
+                    "log_files": [path.name for path in log_files[:10]],
+                    "journal_stats": journal_stats,
+                },
+                "current_run": current_run,
+                "active_runs": active_runs,
+                "cameras": active_cameras,
+                "latest_logs": latest_logs,
+            }
+            total = time.monotonic() - started_at
+            if total >= _STATE_LATENCY_WARN_SEC:
+                logger.warning("build_overview slow: %.3fs (cameras=%d)", total, len(active_cameras))
+
+            computed_ok = True
+            return result
+        finally:
+            with _overview_cache_lock:
+                _overview_cache.computing = False
+                ev = _overview_cache.inflight_event
+                _overview_cache.inflight_event = None
+
+                ts = time.time()
+                if computed_ok and isinstance(result, dict):
+                    _overview_cache.value = result
+                    _overview_cache.expires_at = ts + _STATE_CACHE_TTL_SEC
+                    _overview_cache.stale_expires_at = ts + _STATE_STALE_WHILE_REFRESH_TTL_SEC
+                else:
+                    _overview_cache.value = None
+                    _overview_cache.expires_at = 0.0
+                    _overview_cache.stale_expires_at = 0.0
+
+                if ev is not None:
+                    ev.set()
+
+    if spawn_bg:
+        threading.Thread(target=_compute, daemon=True, name="overview-swr").start()
+        return stale_return if isinstance(stale_return, dict) else _overview_placeholder()
+
+    return _compute()
 
 
 def build_runtime_history() -> Dict[str, Any]:

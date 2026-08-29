@@ -6,7 +6,9 @@ import {
   type StateRun,
   cacheGet,
   cacheSet,
+  formatApiError,
   isAbortError,
+  ApiError,
 } from '../../api';
 import { Badge, Button, Modal } from '../../components/ui';
 import { useToast } from '../../components/ui/Toast';
@@ -34,6 +36,16 @@ function archiveStatusLabel(state: string | undefined, t: (key: string) => strin
 
 function archiveBadgeState(state: string | undefined): string {
   return String(state || '').trim() === 'error' ? 'error' : 'stopped';
+}
+
+function storageModeLabel(
+  run: Pick<StateRun, 'storage_mode' | 'database_enabled'>,
+  t: (key: string) => string,
+): string {
+  const mode = run.storage_mode;
+  if (mode === 'database' || run.database_enabled === true) return t('setup.storageDb');
+  if (mode === 'json' || run.database_enabled === false) return t('setup.storageJson');
+  return '—';
 }
 
 const RUNS_CACHE_KEY = 'state:runs:all';
@@ -107,12 +119,15 @@ export function RunsPage() {
         hasDataRef.current = Boolean(cur) || rest.length > 0;
       } catch (e) {
         if (isAbortError(e) || signal?.aborted) return;
-        showError(e instanceof Error ? e.message : t('runs.loadError'));
+        if (e instanceof ApiError && e.status === 503 && hasDataRef.current) {
+          return;
+        }
+        showError(formatApiError(e, t));
       } finally {
         if (!signal?.aborted) setLoading(false);
       }
     },
-    [showError],
+    [showError, t],
   );
 
   const loadDbHistory = useCallback(
@@ -129,12 +144,12 @@ export function RunsPage() {
         if (isAbortError(e) || signal?.aborted) return;
         setDbAvailable(false);
         setDbItems([]);
-        setDbMessage(e instanceof Error ? e.message : t('runs.dbHistoryUnavailable'));
+        setDbMessage(formatApiError(e, t));
       } finally {
         if (!signal?.aborted) setDbLoading(false);
       }
     },
-    [canViewHistory],
+    [canViewHistory, t],
   );
 
   useEffect(() => {
@@ -216,6 +231,7 @@ export function RunsPage() {
           <th>{t('runs.columns.name')}</th>
           <th>{t('runs.columns.status')}</th>
           <th>{t('runs.columns.config')}</th>
+          <th>{t('runs.columns.storage')}</th>
           <th>{t('runs.columns.log')}</th>
           <th>{t('runs.columns.pipeline')}</th>
           <th>{t('runs.columns.pid')}</th>
@@ -250,12 +266,26 @@ export function RunsPage() {
                 </div>
               </td>
               <td className="run-config">{renderConfigCell(r)}</td>
+              <td>{storageModeLabel(r, t)}</td>
               <td>{renderLogCell(r)}</td>
               <td>{r.pipeline_class ?? '—'}</td>
               <td>{r.pid ?? '—'}</td>
               <td>{formatUptime(r.uptime_seconds)}</td>
               <td>
-                <Button size="sm" variant="outline" onClick={() => setDetail({ run: r, archive: opts.archive })}>
+                <Button
+                  size="sm"
+                  variant="outline"
+                  onClick={() => {
+                    void (async () => {
+                      try {
+                        const full = await stateApi.run(r.id);
+                        setDetail({ run: full, archive: opts.archive });
+                      } catch {
+                        setDetail({ run: r, archive: opts.archive });
+                      }
+                    })();
+                  }}
+                >
                   {t('runs.view')}
                 </Button>
               </td>
@@ -399,6 +429,9 @@ export function RunsPage() {
                 {detail.run.config_path}
               </p>
             ) : null}
+            <p>
+              <strong>{t('runs.columns.storage')}</strong> {storageModeLabel(detail.run, t)}
+            </p>
             <p>
               <strong>{t('runs.columns.pipeline')}</strong> {detail.run.pipeline_class ?? '—'}
             </p>

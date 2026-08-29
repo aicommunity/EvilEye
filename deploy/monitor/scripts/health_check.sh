@@ -79,7 +79,9 @@ if grep -q 'stopping scheduler loop' <<<"$LOG_TAIL"; then
 fi
 
 if [[ -z "$CLI_PID" ]]; then
-    if ! restart_grace_active; then
+    if pipeline_child_healthy; then
+        REASONS+=("managed_child_only")
+    elif ! restart_grace_active; then
         INCIDENT=true
         REASONS+=("cli_process_missing")
         DO_RESTART=true
@@ -147,6 +149,16 @@ fi
 if ((${#REASONS[@]} == 0)); then
     REASONS+=("healthy")
 fi
+
+if pipeline_child_healthy && [[ -n "$CHILD_PID" ]] && (( LOG_AGE <= LOG_STALE_SEC )); then
+    INCIDENT=false
+    DO_RESTART=false
+    STATUS="ok"
+    if ! printf '%s\n' "${REASONS[@]}" | grep -qx 'managed_child_only'; then
+        REASONS=("managed_child_only")
+    fi
+fi
+
 REASON_STR="$(IFS=';'; echo "${REASONS[*]}")"
 
 ENTRY="$(append_journal "$STATUS" "$REASON_STR" "$CLI_PID" "$CHILD_PID" "$MAIN_LOG" "$LOG_AGE")"

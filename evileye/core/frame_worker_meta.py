@@ -13,6 +13,8 @@ def frame_to_worker_meta(frame: Frame) -> dict[str, Any]:
         "source_id": frame.source_id,
         "frame_id": frame.frame_id,
         "time_stamp": frame.time_stamp,
+        "pts_ns": getattr(frame, "pts_ns", None),
+        "media_pts_sec": getattr(frame, "media_pts_sec", None),
         "current_video_frame": frame.current_video_frame,
         "current_video_position": frame.current_video_position,
         "source_video_duration": frame.source_video_duration,

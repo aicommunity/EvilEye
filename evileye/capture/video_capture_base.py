@@ -78,6 +78,7 @@ class VideoCaptureBase(EvilEyeBase):
         self.disconnects = []
         self.reconnects = []
         self.subscribers = []
+        self._first_pts_ns: int | None = None
 
         # Recording
         self.recording_params: RecordingParams | None = None
@@ -475,6 +476,8 @@ class VideoCaptureBase(EvilEyeBase):
                 frame.current_video_position = meta.get("current_video_position")
                 frame.source_video_duration = meta.get("source_video_duration")
                 frame.time_stamp = meta.get("time_stamp")
+                frame.pts_ns = meta.get("pts_ns")
+                frame.media_pts_sec = meta.get("media_pts_sec")
                 frame.image = image
                 return frame
             except Exception:
@@ -792,7 +795,9 @@ class VideoCaptureBase(EvilEyeBase):
             timestamp: float,
             source_id: int,
             current_video_frame: int | None = None,
-            current_video_position: float | None = None
+            current_video_position: float | None = None,
+            pts_ns: int | None = None,
+            media_pts_sec: float | None = None,
     ) -> CaptureImage:
         """Create a CaptureImage object with metadata.
         
@@ -815,7 +820,22 @@ class VideoCaptureBase(EvilEyeBase):
         capture_image.current_video_frame = current_video_frame if current_video_frame is not None else self.video_current_frame
         capture_image.current_video_position = current_video_position if current_video_position is not None else self.video_current_position
         capture_image.source_video_duration = self.video_duration
+        capture_image.pts_ns = pts_ns
+        capture_image.media_pts_sec = media_pts_sec
         return capture_image
+
+    def _pts_clock_fields(self, pts_ns: int | None) -> tuple[int | None, float | None]:
+        from evileye.core.frame_pts import media_pts_sec, valid_pts_ns
+
+        if not valid_pts_ns(pts_ns):
+            return None, None
+        pts_int = int(pts_ns)
+        if getattr(self, "_first_pts_ns", None) is None:
+            self._first_pts_ns = pts_int
+        first = self._first_pts_ns
+        if first is None:
+            return pts_int, None
+        return pts_int, media_pts_sec(pts_int, first)
 
     def _handle_split_stream(
             self,
@@ -823,7 +843,9 @@ class VideoCaptureBase(EvilEyeBase):
             frame_id: int,
             timestamp: float,
             current_video_frame: int | None = None,
-            current_video_position: float | None = None
+            current_video_position: float | None = None,
+            pts_ns: int | None = None,
+            media_pts_sec: float | None = None,
     ) -> list[CaptureImage]:
         """Handle split stream processing - create multiple CaptureImage objects from single frame.
         
@@ -875,7 +897,9 @@ class VideoCaptureBase(EvilEyeBase):
                 timestamp=timestamp,
                 source_id=source_id,
                 current_video_frame=current_video_frame,
-                current_video_position=current_video_position
+                current_video_position=current_video_position,
+                pts_ns=pts_ns,
+                media_pts_sec=media_pts_sec,
             )
             captured_images.append(capture_image)
 

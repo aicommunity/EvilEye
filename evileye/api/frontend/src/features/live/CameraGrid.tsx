@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import type { StateCamera } from '../../api';
 import { useI18n } from '../../i18n';
 import { CameraTile } from './CameraTile';
+import { cameraTileActive } from './livePreviewPrefer';
 
 export function CameraGrid({
   cameras,
@@ -11,8 +12,12 @@ export function CameraGrid({
   onReorder,
   onExpand,
   getPreviewBlob,
+  getPreviewFrameAgeSec,
   previewWsActive = false,
   loading = false,
+  camerasPolledAtMs,
+  healthTick = 0,
+  onActiveSourcesChange,
 }: {
   cameras: StateCamera[];
   cols: number;
@@ -21,19 +26,28 @@ export function CameraGrid({
   onReorder: (keys: string[]) => void;
   onExpand?: (key: string) => void;
   getPreviewBlob?: (sourceId: number | null) => string | null | undefined;
+  getPreviewFrameAgeSec?: (sourceId: number | null) => number | null | undefined;
   previewWsActive?: boolean;
   loading?: boolean;
+  camerasPolledAtMs?: number;
+  healthTick?: number;
+  /** C3: report currently active (visible) sources for per-source demand. */
+  onActiveSourcesChange?: (active: Array<{ runId: number; sourceId: number | null }>) => void;
 }) {
   const { t } = useI18n();
   const [selected, setSelected] = useState<string | null>(null);
   const [visible, setVisible] = useState<Set<string>>(new Set());
+  /** Until the first IntersectionObserver callback, treat all tiles as active (fixed cold start). */
+  const [ioReady, setIoReady] = useState(false);
   const dragKey = useRef<string | null>(null);
   const observerRef = useRef<IntersectionObserver | null>(null);
   const elByKey = useRef<Map<string, HTMLElement>>(new Map());
 
   useEffect(() => {
+    setIoReady(false);
     observerRef.current = new IntersectionObserver(
       (entries) => {
+        setIoReady(true);
         setVisible((prev) => {
           const next = new Set(prev);
           for (const entry of entries) {
@@ -54,13 +68,29 @@ export function CameraGrid({
     };
   }, []);
 
+  const keyOf = (c: StateCamera) => `${c.run_id}:${c.source_id}`;
+
+  useEffect(() => {
+    if (!onActiveSourcesChange) return;
+    const activeCams = cameras.filter((camera) => {
+      const key = keyOf(camera);
+      return cameraTileActive({
+        mode,
+        ioReady,
+        visible: visible.has(key),
+        selected: selected === key,
+      });
+    });
+    onActiveSourcesChange(
+      activeCams.map((c) => ({ runId: c.run_id, sourceId: c.source_id ?? null })),
+    );
+  }, [cameras, mode, ioReady, visible, selected, onActiveSourcesChange]);
+
   if (!cameras.length) {
     return (
       <p className="empty">{loading ? t('common.searching') : t('live.camera.unavailable')}</p>
     );
   }
-
-  const keyOf = (c: StateCamera) => `${c.run_id}:${c.source_id}`;
 
   return (
     <div
@@ -70,7 +100,12 @@ export function CameraGrid({
       {cameras.map((camera) => {
         const key = keyOf(camera);
         const isSelected = selected === key;
-        const isVisible = mode === 'fit' || visible.has(key) || isSelected;
+        const isVisible = cameraTileActive({
+          mode,
+          ioReady,
+          visible: visible.has(key),
+          selected: isSelected,
+        });
         return (
           <div
             key={key}
@@ -96,6 +131,9 @@ export function CameraGrid({
               gridMode
               active={isVisible}
               previewBlobUrl={getPreviewBlob?.(camera.source_id) ?? null}
+              previewFrameAgeSec={getPreviewFrameAgeSec?.(camera.source_id) ?? null}
+              camerasPolledAtMs={camerasPolledAtMs}
+              healthTick={healthTick}
               previewWsActive={previewWsActive}
               onOpen={() => onOpenStream(camera.run_id, camera.source_id)}
               onExpand={onExpand ? () => onExpand(key) : undefined}

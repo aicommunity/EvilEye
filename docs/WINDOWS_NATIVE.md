@@ -38,10 +38,9 @@ mkdir $env:USERPROFILE\EvilEye
 cd $env:USERPROFILE\EvilEye
 $env:EVILEYE_SITE_DIR = (Get-Location).Path
 
-evileye setup-web
 evileye deploy
-# Open http://127.0.0.1:8181 — admin bootstrap password is in the server log
-evileye service-install
+evileye service install
+# Open http://127.0.0.1:8181 (or https://…) — admin bootstrap password is in the server log
 ```
 
 Sample pipeline:
@@ -83,8 +82,8 @@ Or complete Basic setup in the Web UI without Postgres (JSON journals).
 
 ```powershell
 # Prefer elevated shell for schtasks
-evileye service-install
-evileye service-uninstall
+evileye service install
+evileye service uninstall
 ```
 
 Creates `scripts\evileye-server.bat` and Scheduled Task **EvilEye** (`ONSTART`). See [CLI_SERVICE_COMMANDS.md](CLI_SERVICE_COMMANDS.md).
@@ -112,13 +111,12 @@ Writes `monitor/journal.jsonl`, incidents, and morning reports. Restarts use pro
 
 ```text
 evileye info
-evileye setup-web
 evileye deploy
 evileye server --host 127.0.0.1 --port 8181
 # curl http://127.0.0.1:8181/ready
 evileye deploy-samples
 evileye run configs/single_video.json --no-gui
-evileye service-install --dry-run
+evileye service install --dry-run --no-tls
 evileye watchdog-install --dry-run
 ```
 

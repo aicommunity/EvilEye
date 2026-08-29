@@ -2,7 +2,9 @@
 
 ## Обзор
 
-Команда `evileye deploy` предназначена для быстрого развертывания базовых конфигурационных файлов EvilEye в текущей директории.
+Команда `evileye deploy` предназначена для быстрой **локальной подготовки** каталога сайта в текущей директории. Она **не задаёт вопросов**, **не настраивает HTTPS** и **не ставит OS-сервис**.
+
+Серверная часть (HTTPS + systemd / Windows task): [`evileye service install`](CLI_SERVICE_COMMANDS.md).
 
 ## Функциональность
 
@@ -13,9 +15,7 @@
 3. **Разворачивает `monitor/`** — скрипты watchdog и шаблоны systemd (без запуска сервисов)
 4. **Создает `logs/`**, а также `monitor/incidents/` и `monitor/reports/`
 
-Команда **не** включает systemd timers watchdog и **не** запускает pipeline runtime.
-В конце `deploy` вызывает **ensure** `evileye service-install` (Web UI OS-сервис).
-Ошибка установки сервиса не отменяет deploy — сайт всё равно создаётся.
+Команда **не** включает systemd timers watchdog, **не** запускает pipeline runtime и **не** устанавливает Web UI как OS-сервис.
 
 Для активации watchdog отдельно:
 
@@ -23,7 +23,7 @@
 DEPLOY_DIR=$PWD ./monitor/scripts/install_timer.sh
 ```
 
-См. также [`CLI_SERVICE_COMMANDS.md`](CLI_SERVICE_COMMANDS.md) (`service-install` / `service-uninstall`).
+См. также [`CLI_SERVICE_COMMANDS.md`](CLI_SERVICE_COMMANDS.md) (`evileye service`).
 
 ## Использование
 
@@ -31,6 +31,10 @@ DEPLOY_DIR=$PWD ./monitor/scripts/install_timer.sh
 ```bash
 evileye deploy
 ```
+
+Важно: запускайте `deploy`, `service install`, `server` и `run` из одной и той же site-директории.
+Текущая рабочая директория становится корнем сайта для `credentials.json`,
+`configs/`, `logs/`, `monitor/` и связанных runtime-файлов.
 
 ### Справка
 ```bash
@@ -45,8 +49,10 @@ evileye deploy --help
 mkdir my_evileye_project
 cd my_evileye_project
 
-# Развертываем файлы
+# Развертываем файлы сайта (локальная подготовка, без вопросов)
 evileye deploy
+# Если нужен Web UI как сервис (HTTPS + OS-сервис) — отдельно:
+evileye service install
 ```
 
 ### Результат выполнения
@@ -57,6 +63,7 @@ Created configs folder
 Deployed monitor assets (... scripts, ... systemd templates) → .../monitor
 Note: watchdog timers were not enabled; run install_timer.sh when ready
 Deployment completed successfully!
+Next: evileye service install
 ```
 
 ### Повторный запуск (файлы уже существуют)
@@ -71,24 +78,39 @@ Deployment completed successfully!
 ## Создаваемые файлы
 
 ### `credentials.json`
-Скопированный из `evileye/credentials_proto.json` файл с шаблоном учетных данных:
+Скопированный из `evileye/credentials_proto.json` файл с шаблоном учетных данных.
+`deploy` не создаёт bootstrap admin в открытом виде: первый web admin генерируется
+при первом старте сервера, пароль печатается в лог, после входа требуется его смена.
 
 ```json
 {
   "sources" : {
     "rtsp://name": {
       "username": "user",
-      "password": "password"
+      "password": ""
     }
   },
   "database": {
+    "user_name": "postgres",
+    "password": "",
+    "database_name": "evil_eye_db",
+    "host_name": "localhost",
+    "port": 5432,
     "admin_user_name": "postgres",
-    "admin_password": "your_db_password"
+    "admin_password": ""
   },
   "web_auth": {
-    "enabled": false,
-    "username": "admin",
-    "password": "change-me"
+    "enabled": true,
+    "session_secret": "",
+    "secure_cookies": false,
+    "internal_token": "",
+    "protection": {
+      "enabled": true,
+      "trust_proxy": false,
+      "trusted_proxy_ips": ["127.0.0.1"],
+      "whitelist_ips": ["127.0.0.1", "::1"]
+    },
+    "users": []
   }
 }
 ```
@@ -113,25 +135,36 @@ Deployment completed successfully!
 
 ## Рабочий процесс
 
-1. **Развертывание:**
+1. **Развертывание файлов сайта:**
    ```bash
    evileye deploy
    ```
 
-2. **Создание конфигурации:**
+2. **HTTPS + OS-сервис Web UI:**
    ```bash
-   evileye create my_config --sources 2 --source-type video_file
+   evileye service install
    ```
+   Либо вручную: `evileye server --host 0.0.0.0 --port 8181 --no-reload`
 
-3. **(Опционально) включить watchdog:**
+3. **Первый вход и Basic Setup:**
+   - открыть `http://<host>:8181` или `https://…` (если включили TLS)
+   - войти как `admin` с bootstrap-паролем из лога первого старта
+   - сменить пароль
+   - в разделе **Настройка** сохранить Basic Setup в `configs/system.json`
+
+4. **(Опционально) включить watchdog:**
    ```bash
    DEPLOY_DIR=$PWD ./monitor/scripts/install_timer.sh
    ```
 
-4. **Запуск системы:**
+5. **Запуск runtime (после настройки):**
    ```bash
-   evileye run configs/my_config.json
+   evileye run configs/system.json --no-gui
    ```
+
+`evileye deploy` подготавливает **site directory** для Web UI. Команда `evileye create`
+остаётся полезной для ручного config-first workflow, но больше не является обязательным
+первым шагом на новой машине.
 
 ## Безопасность
 
@@ -142,12 +175,13 @@ Deployment completed successfully!
 
 ## Интеграция с другими командами
 
-Команда `deploy` является первым шагом в рабочем процессе:
+Команда `deploy` является первым шагом в web-first рабочем процессе:
 
-1. `evileye deploy` - развертывание базовых файлов
-2. `evileye create` - создание конфигураций
-3. `evileye run` - запуск системы
-4. `evileye validate` - проверка конфигураций
+1. `evileye deploy` - развертывание базовых файлов сайта (без вопросов)
+2. `evileye service install` - HTTPS (опционально) и OS-сервис Web UI
+3. Basic Setup в браузере - создание и сохранение `configs/system.json`
+4. `evileye run configs/system.json --no-gui` - запуск runtime
+5. `evileye validate` - проверка конфигураций при ручном редактировании
 
 ## Обработка ошибок
 
@@ -213,12 +247,10 @@ evileye create advanced_config --sources 2 --detector-model /path/to/model.pt --
 
 ## Связанные команды
 
-Перед первым запуском Web UI на сайте:
+Перед первым запуском Web UI на сайте достаточно `evileye deploy` (локальные файлы).
+Если нужен ещё и сервер (OS-сервис + HTTPS), вызовите `evileye service install` —
+он сам проверит окружение Web UI и при необходимости выполнит тот же путь, что `evileye web build`.
 
-```bash
-evileye setup-web
-```
-
-Подробности: [`CLI_SETUP_WEB.md`](CLI_SETUP_WEB.md).
+Подробности: [`CLI_SERVICE_COMMANDS.md`](CLI_SERVICE_COMMANDS.md), [`CLI_SETUP_WEB.md`](CLI_SETUP_WEB.md).
 
 

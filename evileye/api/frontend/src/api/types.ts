@@ -21,6 +21,7 @@ export interface StateRun extends ConfigRun {
   tracker_count?: number;
   event_detector_names?: string[];
   database_enabled?: boolean;
+  storage_mode?: 'json' | 'database';
   config_name?: string | null;
   log_session_id?: string | null;
   log_files?: {
@@ -100,12 +101,21 @@ export interface AuthUser {
   role: string;
 }
 
+export interface UserPrefs {
+  visible_cameras: string[] | null;
+  lang: 'ru' | 'en' | null;
+  date_format: 'DD-MM-YYYY' | 'YYYY-MM-DD' | 'MM-DD-YYYY' | null;
+}
+
 export interface AuthMeResponse {
   authenticated: boolean;
   auth_enabled: boolean;
   user: AuthUser | null;
   permissions: string[];
   must_change_password?: boolean;
+  allowed_cameras?: string[];
+  camera_access?: 'all' | 'restricted';
+  prefs?: UserPrefs;
 }
 
 export interface OverviewResponse {
@@ -127,20 +137,45 @@ export interface OverviewResponse {
 }
 
 export interface StreamMetadataObject {
+  object_id?: number | null;
+  global_id?: number | null;
   track_id?: number | null;
   class_id?: number;
   class_name?: string | null;
-  conf?: number;
+  conf?: number | null;
   bbox?: [number, number, number, number];
+  event_active?: boolean;
+  attributes?: Array<{
+    name: string;
+    state: string;
+    confidence?: number;
+    frames_present?: number;
+    total_time_ms?: number;
+    found_ratio?: number;
+  }>;
+  trail?: [number, number][];
 }
 
 export interface StreamMetadata {
   source_id?: number | null;
   ts?: number;
+  /** Pixel size of the reference frame used for normalized coords (logical/display frame). */
+  coord_ref?: { w: number; h: number };
   objects?: StreamMetadataObject[];
-  zones?: Array<{ name?: string; points: [number, number][] }>;
+  zones?: Array<{ name?: string; kind?: 'poly' | 'rect'; points: [number, number][] }>;
   signalization?: boolean;
+  event_labels?: string[];
+  event_color?: [number, number, number];
+  debug_rois?: [number, number, number, number][];
+  overlay?: {
+    source_name?: string;
+    time_label?: string;
+  };
+  highlight_zone_name?: string | null;
 }
+
+/** Alias for overlays shared between live and archive playback. */
+export type OverlayMetadata = StreamMetadata;
 
 export interface PlaybackCamera {
   id: string;
@@ -151,6 +186,7 @@ export interface PlaybackCamera {
   parent_folder?: string | null;
   split?: boolean;
   src_coords?: [number, number, number, number] | null;
+  logical_frame_size?: { w: number; h: number };
   segment_count?: number;
   available?: boolean;
 }
@@ -160,6 +196,12 @@ export interface PlaybackSegment {
   start_ts: number;
   end_ts: number;
   duration_ms: number;
+  /** False while splitmux is still writing (no moov atom yet). */
+  playable?: boolean;
+  /** Slot end from index before media-duration clamp (backend). */
+  index_end_ts?: number;
+  /** Parsed mp4 duration when available. */
+  media_duration_sec?: number;
 }
 
 export interface PlaybackEventMarker {
@@ -168,3 +210,40 @@ export interface PlaybackEventMarker {
   camera?: string;
   row_key?: string;
 }
+
+export interface PlaybackEventInterval {
+  start_ts: number;
+  end_ts: number;
+  event_type: string;
+  label?: string;
+  camera?: string;
+  severity?: string | number | null;
+  zone_id?: string | null;
+  zone_name?: string | null;
+  raw_id?: string | number | null;
+  preview_path?: string | null;
+  preview_mode?: 'found' | 'lost';
+}
+
+export interface PlaybackEventsResponse {
+  items: PlaybackEventInterval[];
+  legacy_markers?: PlaybackEventMarker[];
+}
+
+export interface PlaybackDetectionItem {
+  ts: number;
+  kind: 'found' | 'lost';
+  object_id?: number | null;
+  source_name?: string;
+  source_id?: number | null;
+  bounding_box?: unknown;
+  frame_id?: number | null;
+  class_name?: string | null;
+  confidence?: number | null;
+  class_id?: number | null;
+  track_id?: number | null;
+  global_id?: number | null;
+  preview_path?: string | null;
+}
+
+export type PlaybackPlayMode = 'normal' | 'detection-sync';

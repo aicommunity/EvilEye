@@ -596,7 +596,8 @@
                 1080
             ]
         },
-        "display_zones": true
+        "display_zones": true,
+        "track_frame_match_window": 10
     },
     "objects_handler": {
         "history_len": 30,

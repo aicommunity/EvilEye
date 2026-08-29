@@ -133,9 +133,8 @@ class DatabaseAdapterAttributeEvents(DatabaseAdapterBase):
     def _get_img_path(self, image_type, obj_event_type, event, time_stamp=None, time_lost=None):
         save_dir = self.db_params['image_dir']
         events_dir = os.path.join(save_dir, 'Events')
-        import datetime
-        cur_date = datetime.date.today()
-        cur_date_str = cur_date.strftime('%Y-%m-%d')
+        from evileye.core.event_time import date_folder_from_ts
+        cur_date_str = date_folder_from_ts(time_lost if obj_event_type != 'attribute_found' else time_stamp)
 
         current_day_path = os.path.join(events_dir, cur_date_str)
         images_dir = os.path.join(current_day_path, 'Images')

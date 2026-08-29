@@ -1,4 +1,5 @@
 import json
+import os
 import time
 
 import evileye.api.core.runtime_registry as rr
@@ -11,6 +12,28 @@ def _patch_registry(tmp_path, monkeypatch):
     monkeypatch.setattr(rr, "LOCK_FILE", tmp_path / ".lock")
     rr._corrupt_record_logged.clear()
     rr._last_discover_ts = 0.0
+    with rr._stubs_cache_lock:
+        rr._stubs_cache_value = None
+        rr._stubs_cache_ts = 0.0
+    try:
+        from evileye.api.core import server_state as ss
+
+        with ss._current_run_cache_lock:
+            ss._current_run_cache.value = None
+            ss._current_run_cache.expires_at = 0.0
+            ss._current_run_cache.stale_expires_at = 0.0
+            ss._current_run_cache.computing = False
+            ss._current_run_cache.inflight_event = None
+        with ss._active_run_summaries_cache_lock:
+            ss._active_run_summaries_cache.value = None
+            ss._active_run_summaries_cache.expires_at = 0.0
+            ss._active_run_summaries_cache.stale_expires_at = 0.0
+            ss._active_run_summaries_cache.computing = False
+            ss._active_run_summaries_cache.inflight_event = None
+        with ss._camera_summaries_cache_lock:
+            ss._camera_summaries_cache.clear()
+    except Exception:
+        pass
 
 
 def test_prune_keeps_alive_and_recent_stopped(tmp_path, monkeypatch):
@@ -124,3 +147,104 @@ def test_get_current_run_summary_hydrates_one(tmp_path, monkeypatch):
     assert current is not None
     assert current["id"] == 100
     assert calls["n"] == 1
+
+
+def test_refresh_marks_foreign_pid_stopped(tmp_path, monkeypatch):
+    _patch_registry(tmp_path, monkeypatch)
+    rr.save_runtime_record(
+        {
+            "id": 7,
+            "pid": 424242,
+            "state": "running",
+            "alive": True,
+            "updated_at": time.time(),
+            "name": "foreign",
+        }
+    )
+    monkeypatch.setattr(os, "kill", lambda pid, sig: None)
+    monkeypatch.setattr(rr, "_parse_process_cmdline", lambda pid: None)
+
+    record = rr.load_runtime_record(7)
+    assert record is not None
+    assert record["alive"] is False
+    assert record["state"] == "stopped"
+    assert record["pid"] is None
+
+
+def test_skip_unchanged_runtime_snapshot_write(tmp_path, monkeypatch):
+    _patch_registry(tmp_path, monkeypatch)
+    writes = {"n": 0}
+    real_atomic = rr._atomic_write_text
+
+    def tracked(path, text, *, fsync=True):
+        writes["n"] += 1
+        return real_atomic(path, text, fsync=fsync)
+
+    monkeypatch.setattr(rr, "_atomic_write_text", tracked)
+    first = rr.save_runtime_snapshot(42, {"sources": [{"source_ids": [0], "is_working": True}], "config": {"a": 1}})
+    assert writes["n"] == 1
+    second = rr.update_runtime_snapshot(42, sources=[{"source_ids": [0], "is_working": True}], config={"a": 1})
+    assert writes["n"] == 1
+    assert second["updated_at"] == first["updated_at"]
+    rr.update_runtime_snapshot(42, sources=[{"source_ids": [0], "is_working": False}], config={"a": 1})
+    assert writes["n"] == 2
+
+
+def test_skip_unchanged_runtime_record_write(tmp_path, monkeypatch):
+    _patch_registry(tmp_path, monkeypatch)
+    monkeypatch.setattr(rr, "_is_pid_alive", lambda pid: False)
+    writes = {"n": 0}
+    real_atomic = rr._atomic_write_text
+
+    def tracked(path, text, *, fsync=True):
+        writes["n"] += 1
+        return real_atomic(path, text, fsync=fsync)
+
+    monkeypatch.setattr(rr, "_atomic_write_text", tracked)
+    rr.save_runtime_record({"id": 9, "pid": None, "state": "stopped", "alive": False, "name": "x"})
+    assert writes["n"] == 1
+    rr.save_runtime_record({"id": 9, "pid": None, "state": "stopped", "alive": False, "name": "x"})
+    assert writes["n"] == 1
+    rr.save_runtime_record({"id": 9, "pid": None, "state": "stopped", "alive": False, "name": "y"})
+    assert writes["n"] == 2
+
+
+def test_list_run_list_items_skips_run_summary(tmp_path, monkeypatch):
+    _patch_registry(tmp_path, monkeypatch)
+    from evileye.api.core import server_state as ss
+
+    now = time.time()
+    rr.save_runtime_record(
+        {
+            "id": 3,
+            "pid": None,
+            "state": "stopped",
+            "alive": False,
+            "updated_at": now,
+            "started_at": now - 10,
+            "config_path": "/tmp/poly-cameras-gst.json",
+            "name": "archived",
+        }
+    )
+    monkeypatch.setattr(ss, "maybe_discover_process_runtimes", lambda force=False: None)
+    monkeypatch.setattr(rr, "maybe_discover_process_runtimes", lambda force=False: None)
+
+    class _Mgr:
+        def list(self):
+            return {}
+
+        def describe(self, rid):
+            raise KeyError(rid)
+
+    monkeypatch.setattr(ss, "get_config_run_manager", lambda: _Mgr())
+    monkeypatch.setattr(
+        ss,
+        "_run_summary",
+        lambda record: (_ for _ in ()).throw(AssertionError("list must not hydrate summaries")),
+    )
+    items = ss.list_run_list_items(discover=False)
+    assert len(items) == 1
+    assert items[0]["id"] == 3
+    assert items[0]["config_name"] == "poly-cameras-gst.json"
+    assert items[0]["uptime_seconds"] is not None
+    assert "runtime_snapshot" not in items[0]

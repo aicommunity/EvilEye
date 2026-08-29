@@ -16,6 +16,7 @@ $dirs = @(
     "models",
     "configs",
     "logs",
+    "postgres_data",
     "monitor\incidents",
     "monitor\reports"
 )
@@ -33,13 +34,20 @@ if (-not (Test-Path $creds)) {
     Write-Host "Created credentials.json from credentials_proto.json"
 }
 
-# Force compose DB hostname
-$raw = Get-Content $creds -Raw -Encoding UTF8
-if ($raw -match '"host_name"\s*:\s*"localhost"') {
-    $raw = $raw -replace '"host_name"\s*:\s*"localhost"', '"host_name": "db"'
-    Set-Content -Path $creds -Value $raw -Encoding UTF8
-    Write-Host "Set database.host_name to `"db`" for Compose"
+# Force compose DB defaults
+$json = Get-Content $creds -Raw -Encoding UTF8 | ConvertFrom-Json
+if (-not $json.database) {
+    $json | Add-Member -MemberType NoteProperty -Name database -Value ([pscustomobject]@{})
 }
+$json.database.host_name = "db"
+if (-not $json.database.user_name) { $json.database.user_name = "postgres" }
+if (-not $json.database.password) { $json.database.password = "postgres" }
+if (-not $json.database.database_name) { $json.database.database_name = "evil_eye_db" }
+if (-not $json.database.port) { $json.database.port = 5432 }
+if (-not $json.database.admin_user_name) { $json.database.admin_user_name = $json.database.user_name }
+if (-not $json.database.admin_password) { $json.database.admin_password = $json.database.password }
+($json | ConvertTo-Json -Depth 10) | Set-Content -Path $creds -Encoding UTF8
+Write-Host "Set database.host_name to 'db' for Compose"
 
 $sampleSrc = Join-Path $Root "evileye\samples_configs\single_video.json"
 $sampleDst = Join-Path $Root "configs\single_video.json"
@@ -49,4 +57,4 @@ if ((Test-Path $sampleSrc) -and -not (Test-Path $sampleDst)) {
 }
 
 Write-Host "Host dirs ready under: $Root"
-Write-Host "Next: docker compose -f docker/docker-compose.yml up --build -d"
+Write-Host "Next: docker compose -f docker/docker-compose.yml up -d --build"

@@ -98,6 +98,17 @@ async def receive_frame(rid: int, request: Request, source_id: int | None = Quer
     if not body:
         raise HTTPException(status_code=400, detail="Empty body")
 
+    return ingest_frame_bytes(rid, body, source_id=source_id, extra=extra, content_type=content_type)
+
+
+def ingest_frame_bytes(
+    rid: int | str,
+    body: bytes,
+    *,
+    source_id: int | None,
+    extra: dict[str, Any] | None,
+    content_type: str,
+) -> dict:
     metadata = _merge_metadata(source_id=source_id, content_type=content_type, extra=extra)
     broker = get_frame_broker()
     broker.publish_jpeg(str(rid), body, metadata=metadata)

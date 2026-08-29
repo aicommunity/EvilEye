@@ -36,6 +36,7 @@ from evileye.core.class_manager import ClassManager
 from evileye.pipelines import PipelineSurveillance
 from evileye.core.logger import get_module_logger
 from evileye.api.core.runtime_registry import update_runtime_snapshot
+from evileye.api.core.server_state import storage_mode_from_params, use_database_from_params
 from evileye.api.security import load_web_auth_config
 from evileye.core.system_diagnostics import SystemDiagnostics
 from evileye.core.memory_monitor import MemoryMonitor
@@ -101,6 +102,7 @@ class Controller(ControllerProcessingMixin):
         self._preview_active_events_by_source: dict[int, dict[tuple[int, str], dict]] = {}
         self._preview_events_lock = threading.Lock()
         self._preview_zones_by_source: dict[int, list] = {}
+        self._control_ipc_server = None
 
         self.pipeline = None
 
@@ -316,6 +318,13 @@ class Controller(ControllerProcessingMixin):
     def get_params(self):
         return self.params
 
+    def _sync_use_database_to_params(self) -> None:
+        if not isinstance(self.params, dict):
+            return
+        controller = self.params.setdefault("controller", {})
+        if isinstance(controller, dict):
+            controller["use_database"] = bool(self.use_database)
+
     def _publish_runtime_snapshot(self, *, state: str | None = None) -> None:
         try:
             runtime_id = int(self.stream_pipeline_id)
@@ -345,9 +354,12 @@ class Controller(ControllerProcessingMixin):
 
         try:
             server_cfg = params.get("server", {}) if isinstance(params, dict) else {}
+            use_database = use_database_from_params(params if isinstance(params, dict) else None)
+            storage_mode = storage_mode_from_params(params if isinstance(params, dict) else None)
             journal_context = {
                 "config_path": getattr(self, "config_path", None),
-                "database_enabled": bool(params.get("database")) if isinstance(params, dict) else False,
+                "database_enabled": use_database,
+                "storage_mode": storage_mode,
                 "source_names": [name for source in sources_payload for name in source.get("source_names", [])],
             }
             update_runtime_snapshot(
@@ -361,7 +373,8 @@ class Controller(ControllerProcessingMixin):
                     "pipeline_class": self.pipeline.__class__.__name__ if self.pipeline is not None else None,
                     "detector_count": len(getattr(self.pipeline, "detectors", []) or []),
                     "tracker_count": len(getattr(self.pipeline, "trackers", []) or []),
-                    "database_enabled": bool(params.get("database")) if isinstance(params, dict) else False,
+                    "database_enabled": use_database,
+                    "storage_mode": storage_mode,
                     "event_detector_names": sorted((params.get("events_detectors") or {}).keys()) if isinstance(params,
                                                                                                                 dict) and isinstance(
                         params.get("events_detectors"), dict) else [],
@@ -911,6 +924,7 @@ class Controller(ControllerProcessingMixin):
 
                 # Полностью отключаем функциональность БД
                 self.use_database = False
+                self._sync_use_database_to_params()
                 # Останавливаем адаптеры БД, если они были запущены
                 try:
                     if self.db_adapter_obj:
@@ -966,9 +980,146 @@ class Controller(ControllerProcessingMixin):
         self.logger.info(f"Starting control thread for stream_pipeline_id: {self.stream_pipeline_id}")
         self.control_thread.start()
         self.logger.info(f"Control thread started successfully")
+        self._start_control_ipc()
+
+    def _start_control_ipc(self) -> None:
+        try:
+            from evileye.api.core.control_ipc import ControlIpcServer
+
+            self._control_ipc_server = ControlIpcServer()
+            self._control_ipc_server.start(self._handle_control_command)
+        except Exception as exc:
+            self.logger.warning("Control IPC not started: %s", exc)
+
+    def _stop_control_ipc(self) -> None:
+        server = self._control_ipc_server
+        self._control_ipc_server = None
+        if server is not None:
+            try:
+                server.stop()
+            except Exception:
+                pass
+
+    def _handle_control_command(self, command: dict) -> dict:
+        cmd = str(command.get("cmd") or "")
+        if cmd == "apply_zones":
+            return self._control_apply_zones(command)
+        if cmd == "apply_zone_detector_params":
+            return self._control_apply_zone_detector_params(command)
+        if cmd == "apply_roi":
+            return self._control_apply_roi(command)
+        return {"ok": False, "error": "unknown_command"}
+
+    def _control_apply_zones(self, command: dict) -> dict:
+        try:
+            source_id = int(command.get("source_id"))
+        except (TypeError, ValueError):
+            return {"ok": False, "error": "invalid_source_id"}
+        zones = command.get("zones")
+        if not isinstance(zones, list):
+            return {"ok": False, "error": "invalid_zones"}
+        detector = self.zone_events_detector
+        if detector is None:
+            return {"ok": False, "error": "zone_detector_unavailable"}
+        detector.replace_zones_for_source(source_id, zones)
+        try:
+            events_cfg = self.params.setdefault("events_detectors", {})
+            if isinstance(events_cfg, dict):
+                zone_cfg = events_cfg.setdefault("ZoneEventsDetector", {})
+                if isinstance(zone_cfg, dict):
+                    sources = zone_cfg.setdefault("sources", {})
+                    if isinstance(sources, dict):
+                        sources[str(source_id)] = detector.sources_list.get(str(source_id), zones)
+        except Exception:
+            pass
+        try:
+            self._preview_zones_by_source = self._extract_preview_zones()
+        except Exception:
+            pass
+        self._publish_runtime_snapshot(state="running")
+        return {"ok": True, "source_id": source_id, "zone_count": len(zones)}
+
+    def _control_apply_zone_detector_params(self, command: dict) -> dict:
+        detector = self.zone_events_detector
+        if detector is None:
+            return {"ok": False, "error": "zone_detector_unavailable"}
+        event_threshold = command.get("event_threshold")
+        zone_left_threshold = command.get("zone_left_threshold")
+        if event_threshold is None and zone_left_threshold is None:
+            return {"ok": False, "error": "missing_params"}
+        try:
+            et = int(event_threshold) if event_threshold is not None else None
+            zlt = int(zone_left_threshold) if zone_left_threshold is not None else None
+        except (TypeError, ValueError):
+            return {"ok": False, "error": "invalid_params"}
+        detector.apply_thresholds(event_threshold=et, zone_left_threshold=zlt)
+        try:
+            events_cfg = self.params.setdefault("events_detectors", {})
+            if isinstance(events_cfg, dict):
+                zone_cfg = events_cfg.setdefault("ZoneEventsDetector", {})
+                if isinstance(zone_cfg, dict):
+                    if et is not None:
+                        zone_cfg["event_threshold"] = max(0, et)
+                    if zlt is not None:
+                        zone_cfg["zone_left_threshold"] = max(0, zlt)
+        except Exception:
+            pass
+        self._publish_runtime_snapshot(state="running")
+        return {
+            "ok": True,
+            "event_threshold": detector.event_threshold,
+            "zone_left_threshold": detector.zone_left_threshold,
+        }
+
+    def _control_apply_roi(self, command: dict) -> dict:
+        from evileye.api.core.roi_config import set_detector_rois_for_source, xywh_list_to_xyxy_int
+
+        try:
+            source_id = int(command.get("source_id"))
+        except (TypeError, ValueError):
+            return {"ok": False, "error": "invalid_source_id"}
+        rois = command.get("rois")
+        if not isinstance(rois, list):
+            return {"ok": False, "error": "invalid_rois"}
+
+        det = None
+        if self.pipeline is not None and hasattr(self.pipeline, "get_detectors"):
+            for candidate in self.pipeline.get_detectors() or []:
+                try:
+                    src_ids = (
+                        candidate.get_source_ids()
+                        if hasattr(candidate, "get_source_ids")
+                        else getattr(candidate, "source_ids", [])
+                    )
+                    if source_id in (src_ids or []):
+                        det = candidate
+                        break
+                except Exception:
+                    continue
+
+        if det is None or not hasattr(det, "set_rois_for_source"):
+            return {"ok": False, "error": "detector_unavailable"}
+
+        rois_xywh: list[list[float]] = []
+        for item in rois:
+            if isinstance(item, (list, tuple)) and len(item) >= 4:
+                try:
+                    rois_xywh.append([float(v) for v in item[:4]])
+                except (TypeError, ValueError):
+                    continue
+
+        rois_xyxy = xywh_list_to_xyxy_int(rois_xywh)
+        det.set_rois_for_source(source_id, rois_xyxy)
+        try:
+            set_detector_rois_for_source(self.params, source_id, rois_xywh)
+        except Exception:
+            pass
+        self._publish_runtime_snapshot(state="running")
+        return {"ok": True, "source_id": source_id, "roi_count": len(rois_xywh)}
 
     def stop(self):
         self.run_flag = False
+        self._stop_control_ipc()
         self._publish_runtime_snapshot(state="stopping")
         self.logger.info("Controller shutdown: stopping pipeline")
         # Stop pipeline first (detectors/trackers/captures) so source reconnect and
@@ -1222,6 +1373,7 @@ class Controller(ControllerProcessingMixin):
             else:
                 # Fallback to no-database mode
                 self.use_database = False
+                self._sync_use_database_to_params()
                 self.db_controller = None
                 self.database_config = {"database": {}, "database_adapters": {}}
 
@@ -1237,10 +1389,13 @@ class Controller(ControllerProcessingMixin):
             )
 
         server_cfg = self.params.get("server", {}) if isinstance(self.params, dict) else {}
-        relay_base_url = os.environ.get("EVILEYE_WEB_API_BASE")
+        from evileye.api.core.internal_unix import internal_relay_url
+
+        relay_base_url = internal_relay_url()
         relay_token = os.environ.get("EVILEYE_INTERNAL_TOKEN") or load_web_auth_config().internal_token
+        default_workers = 2 if bool(server_cfg.get("enabled")) else 1
+        default_render_workers = max(3, default_workers)
         if self._streaming_service is not None:
-            default_workers = 2 if bool(server_cfg.get("enabled")) else 1
             self._streaming_service.configure(
                 pipeline_id=self.stream_pipeline_id,
                 publish_fps=self._stream_publish_fps,
@@ -1256,7 +1411,7 @@ class Controller(ControllerProcessingMixin):
         if self._preview_render_service is not None:
             self._preview_render_service.configure(
                 streaming_service=self._streaming_service,
-                num_workers=server_cfg.get("preview_render_workers", 1),
+                num_workers=server_cfg.get("preview_render_workers", default_render_workers),
             )
 
         # Managed API runs already have an outer web server; do not start another one inside the child runtime.
@@ -1264,14 +1419,45 @@ class Controller(ControllerProcessingMixin):
         # Initialize web server in a separate process if configured
         if managed_run and server_cfg.get("enabled", False):
             self.logger.info("Skipping embedded web server for managed runtime launch")
-            if self._streaming_service is not None and relay_base_url:
-                self._streaming_service.set_frame_relay(relay_base_url, relay_token)
+            if self._streaming_service is not None:
+                from evileye.api.core.internal_unix import internal_relay_url
+
+                unix_relay = internal_relay_url()
+                if unix_relay:
+                    self._streaming_service.set_frame_relay(unix_relay, relay_token)
         elif server_cfg.get("enabled", False) and str(server_cfg.get("execution_mode", "process")).lower() == "process":
             host = server_cfg.get("host", "127.0.0.1")
             port = int(server_cfg.get("port", 8181))
-            scheme = "https" if server_cfg.get("ssl_certfile") or server_cfg.get("ssl_keyfile") else "http"
-            inferred_base_url = relay_base_url or f"{scheme}://{host}:{port}/api/v1"
-            if not self._can_bind_embedded_server(host, port):
+            from evileye.api.core.internal_unix import internal_relay_url
+            from evileye.service_manager import is_web_os_service_active, is_web_os_service_enabled
+
+            ssl_certfile = ssl_keyfile = None
+            try:
+                from evileye.api.core.ssl_files import SslConfigError, apply_ssl_env, resolve_ssl_files
+                from evileye.core.paths import site_root
+
+                cert, key = resolve_ssl_files(server_cfg=server_cfg, site_dir=site_root())
+                apply_ssl_env(cert, key)
+                ssl_certfile = str(cert) if cert else None
+                ssl_keyfile = str(key) if key else None
+            except SslConfigError as exc:
+                self.logger.error("Invalid TLS configuration for embedded web server: %s", exc)
+                raise
+            inferred_base_url = internal_relay_url()
+            if is_web_os_service_enabled() or is_web_os_service_active():
+                if is_web_os_service_enabled() and not is_web_os_service_active():
+                    self.logger.warning(
+                        "Skipping embedded web server: OS service evileye.service is enabled "
+                        "but not active; start it with: evileye service start"
+                    )
+                else:
+                    self.logger.info(
+                        "Skipping embedded web server: OS service evileye.service is active "
+                        "(Web UI is served separately, including HTTPS)"
+                    )
+                if self._streaming_service is not None:
+                    self._streaming_service.set_frame_relay(inferred_base_url, relay_token)
+            elif not self._can_bind_embedded_server(host, port):
                 self.logger.info(
                     "Skipping embedded web server because %s:%s is already in use",
                     host,
@@ -1288,6 +1474,8 @@ class Controller(ControllerProcessingMixin):
                         host=host,
                         port=port,
                         log_level=server_cfg.get("log_level", "info"),
+                        ssl_certfile=ssl_certfile,
+                        ssl_keyfile=ssl_keyfile,
                     )
                     time.sleep(0.2)
                     if not self._server_process_manager.is_alive():

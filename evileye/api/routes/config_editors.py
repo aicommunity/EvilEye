@@ -18,6 +18,25 @@ from evileye.api.core.config_validation import (
     split_path,
     validate_config,
 )
+from evileye.api.core.control_ipc import send_control_command
+from evileye.api.core.roi_config import (
+    detector_entry_for_source,
+    detector_rois_for_source,
+    display_rois_for_source,
+    roi_coord_ref,
+    set_detector_rois_for_source,
+    ui_pixels_from_rois,
+    ui_rois_from_detector,
+    ui_rois_to_detector,
+)
+from evileye.api.core.zone_config import (
+    detector_zones_for_source,
+    set_detector_zones_for_source,
+    set_zone_detector_params,
+    ui_zones_from_detector,
+    ui_zones_to_detector,
+    zone_detector_params,
+)
 router = APIRouter(prefix="/api/v1/configs", tags=["config-editors"])
 
 
@@ -48,6 +67,7 @@ class SectionUpdate(BaseModel):
 
 class RoiUpdate(BaseModel):
     rois: list[list[float]] = Field(default_factory=list)
+    coord_ref: dict[str, int] | None = None
 
 
 class ZoneItem(BaseModel):
@@ -58,6 +78,11 @@ class ZoneItem(BaseModel):
 
 class ZonesUpdate(BaseModel):
     zones: list[ZoneItem] = Field(default_factory=list)
+
+
+class ZoneDetectorParamsUpdate(BaseModel):
+    event_threshold: int = Field(ge=0, default=2)
+    zone_left_threshold: int = Field(ge=0, default=3)
 
 
 class ClassMappingUpdate(BaseModel):
@@ -145,93 +170,162 @@ def _detector_for_source(body: dict[str, Any], source_id: int) -> dict[str, Any]
 @router.get("/{name}/sources/{source_id}/roi")
 async def get_roi(name: str, source_id: int) -> dict:
     body = _load(name)
-    det = _detector_for_source(body, source_id)
-    rois = (det or {}).get("roi") or []
-    if not isinstance(rois, list):
-        rois = []
-    return {"rois": rois}
+    if detector_entry_for_source(body, source_id) is None:
+        raise HTTPException(status_code=404, detail="No detector for source")
+    return {
+        "rois": ui_rois_from_detector(body, source_id),
+        "display_rois": display_rois_for_source(body, source_id),
+        "rois_pixel": detector_rois_for_source(body, source_id),
+        "coord_ref": roi_coord_ref(body, source_id),
+    }
 
 
 @router.put("/{name}/sources/{source_id}/roi")
 async def put_roi(name: str, source_id: int, payload: RoiUpdate) -> dict:
     body = _load(name)
-    det = _detector_for_source(body, source_id)
-    if det is None:
+    if detector_entry_for_source(body, source_id) is None:
         raise HTTPException(status_code=404, detail="No detector for source")
-    det["roi"] = payload.rois
+    ui_rois = payload.rois
+    coord_ref = payload.coord_ref or {}
+    ref_w = int(coord_ref.get("w") or 0)
+    ref_h = int(coord_ref.get("h") or 0)
+    if ref_w > 0 and ref_h > 0:
+        rois_xywh = ui_pixels_from_rois(ui_rois, ref_w, ref_h)
+    else:
+        rois_xywh = ui_rois_to_detector(body, source_id, ui_rois)
+    set_detector_rois_for_source(body, source_id, rois_xywh)
     _save(name, body)
-    return {"rois": payload.rois, "status": "updated", "restart_required": True}
+    applied = False
+    if _find_runtime_id_for_config(name) is not None:
+        applied = _apply_roi_runtime(source_id, rois_xywh)
+    apply_meta = _runtime_apply_result(name, applied)
+    return {
+        "rois": ui_rois,
+        "status": "updated",
+        **apply_meta,
+    }
 
 
 def _events_zones(body: dict[str, Any], source_id: int) -> list:
-    # Prefer events_detectors / zone params commonly used in EvilEye configs
-    events = body.get("events_detectors") or body.get("events") or {}
-    if isinstance(events, list):
-        for item in events:
-            if isinstance(item, dict) and source_id in (item.get("source_ids") or [source_id]):
-                return item.get("zones") or item.get("params", {}).get("zones") or []
-        return []
-    if isinstance(events, dict):
-        zones = events.get("zones") or {}
-        if isinstance(zones, dict):
-            return zones.get(str(source_id), zones.get(source_id, []))
-        if isinstance(zones, list):
-            return zones
-    return []
+    return detector_zones_for_source(body, source_id)
 
 
-def _set_events_zones(body: dict[str, Any], source_id: int, zones: list) -> None:
-    events = body.get("events_detectors")
-    if isinstance(events, list) and events:
-        target = None
-        for item in events:
-            if isinstance(item, dict) and source_id in (item.get("source_ids") or []):
-                target = item
-                break
-        target = target or (events[0] if isinstance(events[0], dict) else None)
-        if target is not None:
-            params = target.setdefault("params", {})
-            if isinstance(params, dict):
-                params["zones"] = zones
-            else:
-                target["zones"] = zones
-            return
-    # Fallback store
-    store = body.setdefault("events_detectors", {})
-    if isinstance(store, dict):
-        zones_map = store.setdefault("zones", {})
-        if isinstance(zones_map, dict):
-            zones_map[str(source_id)] = zones
-        else:
-            store["zones"] = zones
-    else:
-        body["web_zones"] = {str(source_id): zones}
+def _set_events_zones(body: dict[str, Any], source_id: int, zones: list[list[list[float]]]) -> None:
+    set_detector_zones_for_source(body, source_id, zones)
+
+
+def _find_runtime_id_for_config(config_name: str) -> int | None:
+    try:
+        from evileye.api.core.server_state import list_active_run_summaries
+
+        safe_name = Path(config_name).name
+        for run in list_active_run_summaries():
+            cfg = str(run.get("config_path") or "")
+            if not cfg:
+                continue
+            if Path(cfg).name == safe_name:
+                rid = run.get("id")
+                if rid is not None:
+                    return int(rid)
+    except Exception:
+        return None
+    return None
+
+
+def _apply_roi_runtime(source_id: int, rois_xywh: list[list[float]]) -> bool:
+    response = send_control_command(
+        {
+            "cmd": "apply_roi",
+            "source_id": int(source_id),
+            "rois": rois_xywh,
+        }
+    )
+    return bool(isinstance(response, dict) and response.get("ok"))
+
+
+def _apply_zones_runtime(source_id: int, zones: list[list[list[float]]]) -> bool:
+    response = send_control_command(
+        {
+            "cmd": "apply_zones",
+            "source_id": int(source_id),
+            "zones": zones,
+        }
+    )
+    return bool(isinstance(response, dict) and response.get("ok"))
+
+
+def _apply_zone_detector_params_runtime(event_threshold: int, zone_left_threshold: int) -> bool:
+    response = send_control_command(
+        {
+            "cmd": "apply_zone_detector_params",
+            "event_threshold": int(event_threshold),
+            "zone_left_threshold": int(zone_left_threshold),
+        }
+    )
+    return bool(isinstance(response, dict) and response.get("ok"))
+
+
+def _runtime_apply_result(config_name: str, applied: bool) -> dict[str, bool]:
+    has_run = _find_runtime_id_for_config(config_name) is not None
+    restart_required = not applied if has_run else True
+    return {
+        "restart_required": restart_required,
+        "applied_live": applied and has_run,
+    }
 
 
 @router.get("/{name}/sources/{source_id}/zones")
 async def get_zones(name: str, source_id: int) -> dict:
     body = _load(name)
     raw = _events_zones(body, source_id)
-    zones = []
-    for z in raw if isinstance(raw, list) else []:
-        if isinstance(z, dict):
-            zones.append(
-                {
-                    "name": z.get("name"),
-                    "type": z.get("type") or "polygon",
-                    "points": z.get("points") or z.get("coords") or [],
-                }
-            )
-    return {"zones": zones}
+    return {"zones": ui_zones_from_detector(raw)}
 
 
 @router.put("/{name}/sources/{source_id}/zones")
 async def put_zones(name: str, source_id: int, payload: ZonesUpdate) -> dict:
     body = _load(name)
-    zones = [z.model_dump() for z in payload.zones]
-    _set_events_zones(body, source_id, zones)
+    ui_zones = [z.model_dump() for z in payload.zones]
+    detector_zones = ui_zones_to_detector(ui_zones)
+    _set_events_zones(body, source_id, detector_zones)
     _save(name, body)
-    return {"zones": zones, "status": "updated", "restart_required": True}
+    applied = False
+    if _find_runtime_id_for_config(name) is not None:
+        applied = _apply_zones_runtime(source_id, detector_zones)
+    apply_meta = _runtime_apply_result(name, applied)
+    return {
+        "zones": ui_zones,
+        "status": "updated",
+        **apply_meta,
+    }
+
+
+@router.get("/{name}/zone-detector-params")
+async def get_zone_detector_params(name: str) -> dict:
+    body = _load(name)
+    return zone_detector_params(body)
+
+
+@router.put("/{name}/zone-detector-params")
+async def put_zone_detector_params(name: str, payload: ZoneDetectorParamsUpdate) -> dict:
+    body = _load(name)
+    set_zone_detector_params(
+        body,
+        event_threshold=payload.event_threshold,
+        zone_left_threshold=payload.zone_left_threshold,
+    )
+    _save(name, body)
+    applied = False
+    if _find_runtime_id_for_config(name) is not None:
+        applied = _apply_zone_detector_params_runtime(
+            payload.event_threshold,
+            payload.zone_left_threshold,
+        )
+    apply_meta = _runtime_apply_result(name, applied)
+    return {
+        "status": "updated",
+        **zone_detector_params(body),
+        **apply_meta,
+    }
 
 
 @router.get("/{name}/class-mapping")

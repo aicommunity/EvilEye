@@ -98,7 +98,7 @@ class GStreamerCaptureRecordingMixin:
                 queue_before_mux.set_property("max-size-buffers", 200)
                 queue_before_mux.set_property("max-size-bytes", 5 * 1024 * 1024)
                 queue_before_mux.set_property("max-size-time", 2_000_000_000)
-                queue_before_mux.set_property("leaky", 2)  # downstream
+                queue_before_mux.set_property("leaky", 0)
             except Exception:
                 pass
 
@@ -314,6 +314,8 @@ class GStreamerCaptureRecordingMixin:
                     self.logger.error(f"Error during cleanup after failed linking: {cleanup_err}")
                 raise RuntimeError("Failed to link recording branch elements")
 
+            self._attach_legacy_first_mux_probe(queue_before_mux, location)
+
             # Verify that all links are actually established
             # Check the entire chain from recording_queue to splitmuxsink
             try:
@@ -370,6 +372,51 @@ class GStreamerCaptureRecordingMixin:
                 raise
             self.logger.error(f"Error setting up recording branch: {e}", exc_info=True)
             raise
+
+    def _attach_legacy_first_mux_probe(self, queue_before_mux, location: str) -> None:
+        from evileye.video_recorder.session_sidecar import (
+            sidecar_path_from_splitmux_location,
+            write_session_sidecar,
+        )
+
+        sidecar = sidecar_path_from_splitmux_location(location)
+        state = {"written": False}
+
+        def _on_buffer(pad, info):
+            if state["written"]:
+                return Gst.PadProbeReturn.OK
+            buf = info.get_buffer()
+            if buf is None:
+                return Gst.PadProbeReturn.OK
+            pts = getattr(buf, "pts", None)
+            first_pts = None
+            try:
+                clock_none = getattr(Gst, "CLOCK_TIME_NONE", None)
+                if pts is not None and pts >= 0 and (clock_none is None or pts != clock_none):
+                    first_pts = int(pts)
+            except Exception:
+                first_pts = None
+            try:
+                write_session_sidecar(sidecar, time.time(), first_pts)
+            except Exception:
+                self.logger.exception("Failed to write session sidecar %s", sidecar)
+            state["written"] = True
+            for elem in (getattr(self, "_recording_queue_elem", None), queue_before_mux):
+                if elem is None:
+                    continue
+                try:
+                    elem.set_property("leaky", 2)
+                except Exception:
+                    pass
+            return Gst.PadProbeReturn.REMOVE
+
+        try:
+            srcpad = queue_before_mux.get_static_pad("src")
+            if srcpad is None:
+                return
+            srcpad.add_probe(Gst.PadProbeType.BUFFER, _on_buffer)
+        except Exception:
+            self.logger.exception("Failed to attach first-mux probe")
 
     def _cleanup_recording_branch(self, *, pipeline=None):
         """Clean up recording branch elements"""

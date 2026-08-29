@@ -103,6 +103,7 @@ def main():
     """Main entry point for the EvilEye process application"""
     ensure_spawn_start_method()
     args = create_args_parser()
+    os.environ.setdefault("EVILEYE_SITE_DIR", str(Path.cwd().resolve()))
     # Инициализация логирования после парсинга аргументов
     logger = setup_evileye_logging(log_level=args.log_level.upper(), log_to_console=True, log_to_file=True)
     os.environ.setdefault("EVILEYE_SESSION_ID", uuid.uuid4().hex)

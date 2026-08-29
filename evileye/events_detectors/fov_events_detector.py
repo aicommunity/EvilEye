@@ -4,6 +4,7 @@ from threading import Event
 from .event_fov import FieldOfViewEvent
 from .events_detector import EventsDetector
 from datetime import datetime
+from evileye.core.event_time import obj_found_datetime, obj_lost_datetime
 
 
 class FieldOfViewEventsDetector(EventsDetector):
@@ -46,7 +47,7 @@ class FieldOfViewEventsDetector(EventsDetector):
                         if idx == -1:
                             continue
                         hist_obj = obj.history[idx]
-                        timestamp = datetime.now()
+                        timestamp = obj_found_datetime(hist_obj)
                         self.active_obj_ids[source_id].add(obj.object_id)
                         event = FieldOfViewEvent(timestamp, 'Alarm', hist_obj)
                         # print(f'New event: {obj.last_image.frame_id}, Event: {event}')
@@ -60,7 +61,7 @@ class FieldOfViewEventsDetector(EventsDetector):
                     continue
                 for obj in source_objects.objects:  # Для каждого объекта
                     if obj.object_id in self.active_obj_ids[source_id]:  # Если объект был активен в запрещенный период
-                        timestamp = datetime.now()
+                        timestamp = obj_lost_datetime(obj)
                         self.active_obj_ids[source_id].remove(obj.object_id)
                         lost_obj_ids.add(obj.object_id)
                         event = FieldOfViewEvent(timestamp, 'Alarm', obj, is_finished=True)
@@ -75,7 +76,7 @@ class FieldOfViewEventsDetector(EventsDetector):
                         if idx == -1:
                             continue
                         hist_obj = obj.history[idx]
-                        timestamp = datetime.now()
+                        timestamp = obj_lost_datetime(obj)
                         # Сразу же создаем завершенное событие, так как данный объект уже потерян
                         event = FieldOfViewEvent(timestamp, 'Alarm', obj, is_finished=True)
                         events.append(event)

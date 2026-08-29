@@ -475,6 +475,22 @@ class ObjectsHandler(EvilEyeBase):
             return datetime.datetime.fromtimestamp(timestamp)
         return None
 
+    def _copy_frame_clock(self, obj, image) -> None:
+        if image is None:
+            return
+        pts = getattr(image, "pts_ns", None)
+        if pts is not None:
+            obj.pts_ns = pts
+        media = getattr(image, "media_pts_sec", None)
+        if media is not None:
+            obj.media_pts_sec = media
+
+    def _event_date_str(self, obj, *, lost: bool = False) -> str:
+        from evileye.core.event_time import date_folder_from_ts
+
+        ts = obj.time_lost if lost else (obj.time_stamp or obj.time_detected)
+        return date_folder_from_ts(ts)
+
     def _is_primary_object(self, obj):
         """Check if object is primary based on class name or ID"""
         if not self.attr_manager:
@@ -665,6 +681,7 @@ class ObjectsHandler(EvilEyeBase):
                 track_object.track = track
                 # Convert timestamp to datetime if needed
                 track_object.time_stamp = self._timestamp_to_datetime(tracking_results.time_stamp)
+                self._copy_frame_clock(track_object, image)
                 # Store reference to image instead of copying to save memory
                 # The image will be used for saving, then cleared when object is lost
                 track_object.last_image = image
@@ -692,6 +709,7 @@ class ObjectsHandler(EvilEyeBase):
                 # Convert timestamp to datetime if needed
                 obj.time_stamp = self._timestamp_to_datetime(tracking_results.time_stamp)
                 obj.time_detected = self._timestamp_to_datetime(tracking_results.time_stamp)
+                self._copy_frame_clock(obj, image)
                 obj.frame_id = tracking_results.frame_id
                 obj.object_id = self.object_id_counter
                 obj.global_id = track.tracking_data.get('global_id', None)
@@ -785,7 +803,11 @@ class ObjectsHandler(EvilEyeBase):
             if not active_obj.last_update and active_obj.source_id == tracking_results.source_id:
                 active_obj.lost_frames += 1
                 if active_obj.lost_frames >= self.lost_thresh:
-                    active_obj.time_lost = datetime.datetime.now()
+                    active_obj.time_lost = (
+                        self._timestamp_to_datetime(active_obj.time_stamp)
+                        or self._timestamp_to_datetime(getattr(tracking_results, "time_stamp", None))
+                        or datetime.datetime.now()
+                    )
                     start_update_it = timer()
                     if self.db_adapter is not None:
                         self.db_adapter.update(active_obj)
@@ -1008,8 +1030,7 @@ class ObjectsHandler(EvilEyeBase):
         else:
             save_dir = 'EvilEyeData'  # Default directory
         detections_dir = os.path.join(save_dir, 'Detections')
-        cur_date = datetime.date.today()
-        cur_date_str = cur_date.strftime('%Y-%m-%d')
+        cur_date_str = self._event_date_str(obj, lost=(obj_event_type == 'lost'))
 
         current_day_path = os.path.join(detections_dir, cur_date_str)
         images_dir = os.path.join(current_day_path, 'Images')

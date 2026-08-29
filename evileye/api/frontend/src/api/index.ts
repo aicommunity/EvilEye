@@ -1,4 +1,5 @@
 export * from './client';
+export * from './formatApiError';
 export * from './types';
 export * from './auth';
 export * from './state';

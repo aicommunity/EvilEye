@@ -1,0 +1,144 @@
+import { describe, expect, it, vi, beforeEach, afterEach } from 'vitest';
+import {
+  CLOCK_OWNER_STALE_MS,
+  SEEKING_STUCK_MS,
+  resetPlaybackClockOwner,
+  seekPlaybackVideo,
+  setPlaybackSyncNow,
+  shouldEmitPlaybackClock,
+} from './playbackVideoSync';
+
+function fakeVideo(currentTime = 10, extra: Partial<HTMLVideoElement> = {}) {
+  return {
+    currentTime,
+    pause: vi.fn(),
+    seeking: false,
+    readyState: 4,
+    ...extra,
+  } as unknown as HTMLVideoElement;
+}
+
+describe('seekPlaybackVideo', () => {
+  beforeEach(() => {
+    resetPlaybackClockOwner();
+    setPlaybackSyncNow(null);
+  });
+  afterEach(() => {
+    setPlaybackSyncNow(null);
+    resetPlaybackClockOwner();
+  });
+
+  it('seeks paused video on 1s steps without pausing again', () => {
+    const video = fakeVideo(10);
+    seekPlaybackVideo(video, 1011, 1000, { playing: false });
+    expect(video.currentTime).toBe(11);
+    expect(video.pause).not.toHaveBeenCalled();
+  });
+
+  it('does not seek paused video when already on the same frame', () => {
+    const video = fakeVideo(11);
+    seekPlaybackVideo(video, 1011, 1000, { playing: false });
+    expect(video.currentTime).toBe(11);
+  });
+
+  it('does not pause while playing to catch up', () => {
+    const video = fakeVideo(10);
+    seekPlaybackVideo(video, 1012, 1000, { playing: true, thresholdSec: 0.35 });
+    expect(video.currentTime).toBe(12);
+    expect(video.pause).not.toHaveBeenCalled();
+  });
+
+  it('does not pause the video during transient seek settling', () => {
+    const video = fakeVideo(3);
+    seekPlaybackVideo(video, 1005, 1000, { playing: true, scrubbing: true });
+    expect(video.currentTime).toBe(5);
+    expect(video.pause).not.toHaveBeenCalled();
+  });
+
+  it('clamps seek target to the current playable segment end', () => {
+    const video = fakeVideo(0, { duration: 10 });
+    seekPlaybackVideo(video, 1015, 1000, { playing: false, segmentEndTs: 1010 });
+    expect(video.currentTime).toBeCloseTo(9.95, 2);
+  });
+
+  it('clamps to decoded duration when index end overruns the mp4', () => {
+    const video = fakeVideo(0, { duration: 1792.14 });
+    seekPlaybackVideo(video, 1000 + 1820, 1000, {
+      playing: true,
+      scrubbing: true,
+      segmentEndTs: 1000 + 1818,
+    });
+    expect(video.currentTime).toBeCloseTo(1792.09, 1);
+  });
+
+  it('does not seek again while a seek is already in flight', () => {
+    let t = 1000;
+    setPlaybackSyncNow(() => t);
+    const video = fakeVideo(10, { seeking: true });
+    seekPlaybackVideo(video, 1015, 1000, { playing: true, thresholdSec: 0.35 });
+    expect(video.currentTime).toBe(10);
+  });
+
+  it('overrides an in-flight seek while scrubbing', () => {
+    const video = fakeVideo(10, { seeking: true });
+    seekPlaybackVideo(video, 1020, 1000, { playing: true, scrubbing: true });
+    expect(video.currentTime).toBe(20);
+  });
+
+  it('force-seeks after seeking is stuck beyond SEEKING_STUCK_MS', () => {
+    let t = 0;
+    setPlaybackSyncNow(() => t);
+    const video = fakeVideo(10, { seeking: true });
+    // First call records seekingSince at t=0 and skips.
+    seekPlaybackVideo(video, 1015, 1000, { playing: true, thresholdSec: 0.35 });
+    expect(video.currentTime).toBe(10);
+    t = SEEKING_STUCK_MS + 50;
+    seekPlaybackVideo(video, 1025, 1000, { playing: true, thresholdSec: 0.35 });
+    expect(video.currentTime).toBe(25);
+  });
+
+  it('force option overrides seeking immediately', () => {
+    const video = fakeVideo(10, { seeking: true });
+    seekPlaybackVideo(video, 1030, 1000, { playing: true, force: true, thresholdSec: 0 });
+    expect(video.currentTime).toBe(30);
+  });
+});
+
+describe('shouldEmitPlaybackClock', () => {
+  beforeEach(() => {
+    resetPlaybackClockOwner();
+    setPlaybackSyncNow(null);
+  });
+  afterEach(() => {
+    setPlaybackSyncNow(null);
+    resetPlaybackClockOwner();
+  });
+
+  it('lets the first ready camera own the clock and keeps lock while that owner seeks', () => {
+    resetPlaybackClockOwner();
+    const cam1 = fakeVideo(0, { seeking: true, readyState: 1 });
+    const cam4 = fakeVideo(0, { seeking: false, readyState: 4 });
+    expect(shouldEmitPlaybackClock('Cam1', cam1)).toBe(false);
+    expect(shouldEmitPlaybackClock('Cam4', cam4)).toBe(true);
+    // Cam4 is owner; while Cam4 seeks, do not hand the clock to Cam1.
+    expect(shouldEmitPlaybackClock('Cam4', fakeVideo(0, { seeking: true, readyState: 4 }))).toBe(false);
+    expect(shouldEmitPlaybackClock('Cam1', fakeVideo(0, { seeking: false, readyState: 4 }))).toBe(false);
+    expect(shouldEmitPlaybackClock('Cam4', fakeVideo(0, { seeking: false, readyState: 4 }))).toBe(true);
+    resetPlaybackClockOwner();
+    expect(shouldEmitPlaybackClock('Cam1', fakeVideo(0, { seeking: false, readyState: 4 }))).toBe(true);
+  });
+
+  it('releases a stale seeking owner so another camera can emit', () => {
+    let t = 0;
+    setPlaybackSyncNow(() => t);
+    resetPlaybackClockOwner();
+    expect(shouldEmitPlaybackClock('Cam4', fakeVideo(0, { seeking: false, readyState: 4 }))).toBe(true);
+    // Owner starts seeking — block emit but keep lock briefly.
+    expect(shouldEmitPlaybackClock('Cam4', fakeVideo(0, { seeking: true, readyState: 4 }))).toBe(false);
+    expect(shouldEmitPlaybackClock('Cam1', fakeVideo(0, { seeking: false, readyState: 4 }))).toBe(false);
+    t = CLOCK_OWNER_STALE_MS + 10;
+    // Stale clear happens inside owner seeking call.
+    expect(shouldEmitPlaybackClock('Cam4', fakeVideo(0, { seeking: true, readyState: 4 }))).toBe(false);
+    expect(shouldEmitPlaybackClock('Cam1', fakeVideo(0, { seeking: false, readyState: 4 }))).toBe(true);
+  });
+});

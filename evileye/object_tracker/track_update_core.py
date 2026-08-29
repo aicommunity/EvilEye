@@ -53,7 +53,12 @@ def parse_detections_to_boxes(det_info: DetectionResultList | dict, image: np.nd
     return cam_id, Boxes(boxes_array, orig_shape)
 
 
-def run_tracker_update(tracker, det_info: DetectionResultList, image_np: np.ndarray) -> TrackingResultList:
+def run_tracker_update(
+    tracker,
+    det_info: DetectionResultList,
+    image_np: np.ndarray,
+    time_stamp=None,
+) -> TrackingResultList:
     """Run BoT-SORT update and build TrackingResultList."""
     cam_id, boxes = parse_detections_to_boxes(det_info, image_np)
     tracks = tracker.update(boxes, image_np)
@@ -61,7 +66,12 @@ def run_tracker_update(tracker, det_info: DetectionResultList, image_np: np.ndar
     tracks_info = TrackingResultList()
     tracks_info.source_id = cam_id
     tracks_info.frame_id = det_info.frame_id if hasattr(det_info, "frame_id") else None
-    tracks_info.time_stamp = datetime.datetime.now()
+    if time_stamp is not None:
+        tracks_info.time_stamp = time_stamp
+    elif getattr(det_info, "time_stamp", None) is not None:
+        tracks_info.time_stamp = det_info.time_stamp
+    else:
+        tracks_info.time_stamp = datetime.datetime.now()
 
     if len(tracks) > 0:
         tracks_results = np.asarray([x.result for x in tracks], dtype=np.float32)

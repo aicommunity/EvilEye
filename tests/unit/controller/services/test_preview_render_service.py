@@ -6,7 +6,7 @@ from types import SimpleNamespace
 import numpy as np
 
 from evileye.core.frame import CaptureImage
-from evileye.controller.services.preview_render_service import PreviewRenderService
+from evileye.controller.services.preview_render_service import PreviewRenderJob, PreviewRenderService
 from evileye.visualization_modules.preview_render import PreviewRenderContext, render_preview_frame
 
 
@@ -48,6 +48,26 @@ def test_render_preview_frame_keeps_source_image_immutable():
     assert rendered is not frame
     assert np.count_nonzero(rendered.image) > 0
     assert np.count_nonzero(frame.image) == 0
+
+
+def test_preview_render_service_processes_oldest_pending_job_first():
+    service = PreviewRenderService()
+    now = time.time()
+    service._pending_jobs["src:1"] = PreviewRenderJob(
+        frame=_make_frame(source_id=1),
+        context=PreviewRenderContext(source_name="Cam1"),
+        source_id=1,
+        submitted_at=now + 0.2,
+    )
+    service._pending_jobs["src:2"] = PreviewRenderJob(
+        frame=_make_frame(source_id=2),
+        context=PreviewRenderContext(source_name="Cam2"),
+        source_id=2,
+        submitted_at=now,
+    )
+    job = service._get_next_job()
+    assert job is not None
+    assert job.source_id == 2
 
 
 def test_preview_render_service_skips_frames_without_consumers():

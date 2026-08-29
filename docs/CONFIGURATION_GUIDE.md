@@ -136,7 +136,7 @@ evileye deploy-samples
 5. `power_user` предназначен для просмотра предметных журналов системы и технических логов.
 6. `admin` предназначен для настройки и управления системой.
 7. Не оставляйте дефолтный `session_secret` (`evileye-dev-session-secret` / `change-me`) — при обнаружении слабого значения сервер заменит его на криптостойкий.
-8. Первый bootstrap admin получает одноразовый случайный пароль (или `EVILEYE_BOOTSTRAP_ADMIN_PASSWORD`); пароль пишется только в лог запуска. Смените его через UI (сайдбар → «Сменить пароль») или `POST /api/v1/auth/change-password` / `PATCH /api/v1/users/admin`.
+8. Первый bootstrap admin получает одноразовый случайный пароль (или `EVILEYE_BOOTSTRAP_ADMIN_PASSWORD`); пароль пишется только в лог запуска. Смените его через UI (**Настройки** → смена пароля) или `POST /api/v1/auth/change-password` / `PATCH /api/v1/users/admin`.
 9. Production checklist: `enabled=true`, `secure_cookies=true`, HTTPS, явный `EVILEYE_CORS_ALLOW_ORIGINS`, заданный `internal_token`, секция `protection` для rate-limit/IP ban (см. ниже).
 
 **Два хранилища пользователей**:
@@ -147,6 +147,23 @@ evileye deploy-samples
 | Регистрация / UI create | `web_users.json` | email + status pending/approved |
 
 Страница `/admin/users` и `GET /api/v1/users` показывают **оба** списка (`source: credentials|store`). Логин объединяет оба источника.
+
+**Camera ACL и prefs** (оба store):
+
+```json
+{
+  "allowed_cameras": ["Cam1", "Cam2"],
+  "prefs": {
+    "visible_cameras": null,
+    "lang": "ru",
+    "date_format": "DD-MM-YYYY"
+  }
+}
+```
+
+- `allowed_cameras`: список `source_name`. Пустой / отсутствующий у non-admin → **нет доступа к камерам**. Роль `admin` всегда видит все.
+- `prefs.visible_cameras`: `null` = все из ACL; явный список = пересечение с ACL для списков Live/Playback/Events.
+- После апгрейда назначьте камеры пользователям в `/admin/users` (иначе старые user-аккаунты не увидят камер).
 
 ### Секция web_auth.protection
 
@@ -200,17 +217,36 @@ evileye deploy-samples
 
 ### HTTPS для web API
 
-Веб-сервер поддерживает запуск с TLS напрямую через `uvicorn`:
+Предпочтительный путь без внешнего proxy — интерактивный шаг `evileye service install` после `evileye deploy` (самоподпись с SAN IP/DNS или существующие PEM). Сертификаты пишутся в `certs/`, пути — в `server.ssl_certfile` / `server.ssl_keyfile`.
+
+Если публичный HTTPS даёт **Traefik** (или другой reverse-proxy), EvilEye за ним должен слушать **HTTP** на 8181 (пустые `ssl_*`), с `public_base_url` = публичный `https://…`, `trust_proxy` и `secure_cookies: true`. Подробно: [WEB_UI_REVERSE_PROXY.md](WEB_UI_REVERSE_PROXY.md). Не проксируйте Traefik → HTTPS uvicorn (double-TLS).
+
+Порт по умолчанию остаётся **8181** (TLS на том же порту, если включён на uvicorn). HTTP и HTTPS одновременно на одном порту uvicorn не умеет.
+
+Веб-сервер также принимает TLS напрямую:
 
 ```bash
-evileye server --host 0.0.0.0 --port 8443 --ssl-certfile ./certs/server.crt --ssl-keyfile ./certs/server.key
+evileye server --host 0.0.0.0 --port 8181 --ssl-certfile ./certs/server.crt --ssl-keyfile ./certs/server.key
 ```
+
+`evileye run` с `server.enabled: true` читает те же `ssl_*` из конфига пайплайна / `configs/system.json`.
+
+Приоритет путей: CLI `--ssl-*` → env `EVILEYE_SSL_CERTFILE` / `EVILEYE_SSL_KEYFILE` → `server.ssl_*`. Относительные пути — от корня сайта.
+
+При наличии TLS cookie `Secure` включается автоматически (`web_auth.secure_cookies`). **HSTS не включается** вместе с cookies: только `server.hsts: true` или `EVILEYE_HSTS=1`. Для LAN self-signed HSTS опасен (браузер может на год запретить HTTP). Включайте HSTS только с импортированным CA или публично доверенным сертификатом.
+
+Доступ не с localhost: задайте origins явно, например  
+`EVILEYE_CORS_ALLOW_ORIGINS=https://192.168.1.50:8181,https://evileye.lan:8181`.  
+Если включён `EVILEYE_ALLOWED_HOSTS`, перечислите хосты без схемы: `192.168.1.50,evileye.lan,127.0.0.1`.
+
+`server.public_base_url` (в credentials или в `configs/system.json`) задаёт публичный URL UI/API; wizard при самоподписи пишет `https://<первый-dns-или-ip>:8181`. Relay runtime→API использует `https://127.0.0.1:{port}` и локальный CA (`certs/ca.crt` / `EVILEYE_SSL_CAFILE`).
 
 При использовании HTTPS рекомендуется:
 
 1. Включить `web_auth.enabled=true`
-2. Задать `web_auth.secure_cookies=true`
+2. Оставить `secure_cookies` авто при TLS (или явно `true`)
 3. Ограничить `EVILEYE_CORS_ALLOW_ORIGINS` конкретными origin вместо `*`
+4. Импортировать `certs/ca.crt` на клиентах (для самоподписи)
 
 ### Секция sources
 
@@ -918,18 +954,25 @@ USB камера с GStreamer бэкендом.
   "port": 8181,
   "log_level": "info",
   "preview_encoder": "turbojpeg",
-  "preview_encode_workers": 2
+  "preview_encode_workers": 2,
+  "ssl_certfile": "certs/server.crt",
+  "ssl_keyfile": "certs/server.key",
+  "hsts": false,
+  "public_base_url": "https://192.168.1.50:8181"
 }
 ```
 
 | Параметр | Описание |
 |----------|----------|
 | `enabled` | Поднять web-сервер из runtime |
-| `host` / `port` | Bind (для LAN часто `0.0.0.0`) |
+| `host` / `port` | Bind (для LAN часто `0.0.0.0`; TLS слушает тот же порт) |
+| `ssl_certfile` / `ssl_keyfile` | PEM-пара. Пустые/отсутствующие = HTTP. IP и DNS должны быть в SAN сертификата (не только CN) |
+| `hsts` | Opt-in Strict-Transport-Security. Default `false`. Не путать с `secure_cookies` |
+| `public_base_url` | Публичный URL UI (читается также из credentials, если там задан) |
 | `preview_encoder` | `turbojpeg` (предпочтительно) или fallback OpenCV |
 | `preview_encode_workers` | Число encode-workers для live preview |
 
-Для реального TurboJPEG нужны пакет `PyTurboJPEG` и системная `libturbojpeg` (`sudo apt install libturbojpeg`). Без библиотеки система стартует с OpenCV fallback. См. [`CLI_SETUP_WEB.md`](CLI_SETUP_WEB.md), `evileye setup-web`.
+Для реального TurboJPEG нужны пакет `PyTurboJPEG` и системная `libturbojpeg` (`sudo apt install libturbojpeg`). Без библиотеки система стартует с OpenCV fallback. См. [`CLI_SETUP_WEB.md`](CLI_SETUP_WEB.md), `evileye web build`.
 
 ### Секция `record`
 

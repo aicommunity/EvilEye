@@ -1,6 +1,14 @@
+from typing import Any, Literal, Optional
+
 from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel, Field
 
+from evileye.api.core.camera_access import catalog_source_names, lookup_user_record, resolve_camera_access
+from evileye.api.core.user_prefs import (
+    allowed_cameras_from_record,
+    normalize_allowed_cameras,
+    prefs_from_record,
+)
 from evileye.api.core.web_auth_bootstrap import user_must_change_password
 from evileye.api.security import (
     authenticate_user,
@@ -29,6 +37,12 @@ class ChangePasswordPayload(BaseModel):
     new_password: str = Field(..., min_length=8)
 
 
+class PrefsPayload(BaseModel):
+    visible_cameras: Optional[list[str]] = None
+    lang: Optional[Literal["ru", "en"]] = None
+    date_format: Optional[Literal["DD-MM-YYYY", "YYYY-MM-DD", "MM-DD-YYYY"]] = None
+
+
 def _must_change_for_username(username: str) -> bool:
     from evileye.api.core.credentials_users import get_credentials_user, list_credentials_users
     from evileye.api.core.user_store import get_user_store
@@ -43,6 +57,23 @@ def _must_change_for_username(username: str) -> bool:
         return user_must_change_password(cred)
     record = get_user_store().get_user_record(username)
     return user_must_change_password(record)
+
+
+def _me_camera_fields(request: Request, username: str, role: str) -> dict[str, Any]:
+    record = lookup_user_record(username) if username else None
+    prefs = prefs_from_record(record)
+    access = resolve_camera_access(request)
+    if access.unrestricted or role == "admin":
+        allowed = catalog_source_names(scope="active")
+        camera_access = "all"
+    else:
+        allowed = allowed_cameras_from_record(record)
+        camera_access = "restricted"
+    return {
+        "allowed_cameras": allowed,
+        "camera_access": camera_access,
+        "prefs": prefs,
+    }
 
 
 @router.post("/register")
@@ -73,6 +104,9 @@ async def auth_me(request: Request) -> dict:
             "user": None,
             "permissions": [],
             "must_change_password": False,
+            "allowed_cameras": catalog_source_names(scope="active"),
+            "camera_access": "all",
+            "prefs": prefs_from_record(None),
         }
     user = request.session.get("user")
     if not isinstance(user, dict):
@@ -80,12 +114,77 @@ async def auth_me(request: Request) -> dict:
     role = normalize_role(str(user.get("role") or "user"))
     username = str(user.get("username") or "")
     session_user = {"username": username, "role": role}
+    camera_fields = _me_camera_fields(request, username, role)
     return {
         "authenticated": True,
         "auth_enabled": True,
         "user": session_user,
         "permissions": permissions_for_role(role),
         "must_change_password": _must_change_for_username(username),
+        **camera_fields,
+    }
+
+
+@router.put("/prefs")
+async def auth_put_prefs(payload: PrefsPayload, request: Request) -> dict:
+    from evileye.api.core.credentials_users import (
+        get_credentials_user,
+        list_credentials_users,
+        update_credentials_user,
+    )
+    from evileye.api.core.user_store import get_user_store
+
+    user = require_authenticated(request)
+    username = str(user.get("username") or "").strip()
+    if not username:
+        raise HTTPException(status_code=401, detail="Authentication required")
+
+    role = normalize_role(str(user.get("role") or "user"))
+    record = lookup_user_record(username)
+    if record is None:
+        raise HTTPException(status_code=404, detail="User not found")
+
+    patch: dict[str, Any] = {}
+    raw = payload.model_dump(exclude_unset=True)
+    if "visible_cameras" in raw:
+        vis = raw.get("visible_cameras")
+        if vis is None:
+            patch["visible_cameras"] = None
+        else:
+            cleaned = normalize_allowed_cameras(vis)
+            if role != "admin":
+                allowed = set(allowed_cameras_from_record(record))
+                cleaned = [n for n in cleaned if n in allowed]
+            patch["visible_cameras"] = cleaned
+    if "lang" in raw:
+        patch["lang"] = raw.get("lang")
+    if "date_format" in raw:
+        patch["date_format"] = raw.get("date_format")
+    if not patch:
+        raise HTTPException(status_code=400, detail="At least one prefs field is required")
+
+    cred = get_credentials_user(username)
+    if cred is None:
+        for item in list_credentials_users():
+            if str(item.get("username") or "").lower() == username.lower():
+                cred = item
+                username = str(item.get("username"))
+                break
+
+    try:
+        if cred is not None:
+            updated = update_credentials_user(username, prefs=patch)
+        else:
+            updated = get_user_store().update_user(username, prefs=patch)
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail="User not found") from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    return {
+        "ok": True,
+        "prefs": prefs_from_record(updated),
+        **_me_camera_fields(request, username, role),
     }
 
 
@@ -101,6 +200,9 @@ async def auth_login(payload: LoginPayload, request: Request) -> dict:
             "user": None,
             "permissions": [],
             "must_change_password": False,
+            "allowed_cameras": catalog_source_names(scope="active"),
+            "camera_access": "all",
+            "prefs": prefs_from_record(None),
         }
     user = authenticate_user(payload.username, payload.password, auth)
     if user is None:
@@ -111,12 +213,14 @@ async def auth_login(payload: LoginPayload, request: Request) -> dict:
     username = str(user["username"])
     session_user = {"username": username, "role": role}
     request.session["user"] = session_user
+    camera_fields = _me_camera_fields(request, username, role)
     return {
         "authenticated": True,
         "auth_enabled": True,
         "user": session_user,
         "permissions": permissions_for_role(role),
         "must_change_password": _must_change_for_username(username),
+        **camera_fields,
     }
 
 

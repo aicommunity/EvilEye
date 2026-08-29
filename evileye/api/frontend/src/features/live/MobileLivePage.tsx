@@ -19,30 +19,50 @@ function MobileLiveInner() {
   const [fullscreen, setFullscreen] = useState(false);
   const [snapTs, setSnapTs] = useState(Date.now());
   const abortRef = useRef<AbortController | null>(null);
+  const camerasLoadingTimerRef = useRef<number | null>(null);
 
   const load = useCallback(async () => {
     abortRef.current?.abort();
     const ac = new AbortController();
     abortRef.current = ac;
+    if (camerasLoadingTimerRef.current != null) {
+      window.clearTimeout(camerasLoadingTimerRef.current);
+      camerasLoadingTimerRef.current = null;
+    }
     setCameras((prev) => {
-      if (!prev.length) setCamerasLoading(true);
+      if (!prev.length) {
+        camerasLoadingTimerRef.current = window.setTimeout(() => setCamerasLoading(true), 1500);
+      }
       return prev;
     });
     try {
       const res = await stateApi.cameras('current', { signal: ac.signal });
       if (ac.signal.aborted) return;
-      cacheSet('state:cameras:current', res, 8_000);
-      setCameras(res.items ?? []);
+      const items = res.items ?? [];
+      if (items.length) {
+        cacheSet('state:cameras:current', res, 12_000);
+        setCameras(items);
+      }
     } catch (e) {
       if (isAbortError(e)) return;
     } finally {
+      if (camerasLoadingTimerRef.current != null) {
+        window.clearTimeout(camerasLoadingTimerRef.current);
+        camerasLoadingTimerRef.current = null;
+      }
       if (!ac.signal.aborted) setCamerasLoading(false);
     }
   }, []);
 
   useEffect(() => () => abortRef.current?.abort(), []);
+  useEffect(() => () => {
+    if (camerasLoadingTimerRef.current != null) {
+      window.clearTimeout(camerasLoadingTimerRef.current);
+      camerasLoadingTimerRef.current = null;
+    }
+  }, []);
 
-  useVisibilityPolling(load, 5000, true, 200);
+  useVisibilityPolling(load, 15_000, true, 200);
   useEffect(() => {
     if (idx >= cameras.length) setIdx(0);
   }, [cameras, idx]);
@@ -69,10 +89,10 @@ function MobileLiveInner() {
     const rid = cam.run_id;
     const tick = () => {
       if (typeof document !== 'undefined' && document.hidden) return;
-      void streamStatus(rid).catch(() => undefined);
+      void streamStatus(rid, null).catch(() => undefined);
     };
     tick();
-    const id = window.setInterval(tick, 15000);
+    const id = window.setInterval(tick, 5_000);
     return () => window.clearInterval(id);
   }, [cam?.run_id, cam?.run_state]);
 

@@ -1,9 +1,10 @@
-import { useEffect } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { type StateCamera, type StreamMetadata } from '../../api';
 import { Button } from '../../components/ui';
 import { useMjpegStream } from '../../hooks/useMjpegStream';
 import { useI18n } from '../../i18n';
-import { OverlayCanvas } from './OverlayCanvas';
+import { OverlayCanvas } from '../overlay/OverlayCanvas';
+import { useImageLetterbox } from '../overlay/useMediaLetterbox';
 import { useRunMetadataWs } from './useRunMetadataWs';
 
 export function ExpandedCameraView({
@@ -15,6 +16,8 @@ export function ExpandedCameraView({
 }) {
   const { t } = useI18n();
   const running = camera.run_state === 'running';
+  const mediaRef = useRef<HTMLDivElement>(null);
+  const imgRef = useRef<HTMLImageElement>(null);
   const { phase, src, error, retry, onImgError, onImgLoad, attempt } = useMjpegStream({
     rid: running ? camera.run_id : null,
     sourceId: camera.source_id ?? null,
@@ -22,6 +25,8 @@ export function ExpandedCameraView({
     enabled: running,
   });
   const meta = useRunMetadataWs(running ? camera.run_id : null, camera.source_id ?? null);
+  const [imgLoaded, setImgLoaded] = useState(0);
+  const layoutBox = useImageLetterbox(mediaRef, imgRef, [src, attempt, imgLoaded]);
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
@@ -33,6 +38,11 @@ export function ExpandedCameraView({
 
   const showPlaceholder = !running || !src || phase === 'warming' || phase === 'error';
 
+  const handleImgLoad = () => {
+    onImgLoad();
+    setImgLoaded((n) => n + 1);
+  };
+
   return (
     <div className="expanded-camera-view">
       <div className="expanded-camera-toolbar">
@@ -40,11 +50,17 @@ export function ExpandedCameraView({
         <span className="hint">
           {t('live.camera.runLabel', { id: camera.run_id, sid: camera.source_id ?? '—' })}
         </span>
-        <Button size="sm" variant="outline" onClick={onClose}>
-          {t('live.expandClose')}
-        </Button>
+        <button
+          type="button"
+          className="icon-btn"
+          title={t('live.expandClose')}
+          aria-label={t('live.expandClose')}
+          onClick={onClose}
+        >
+          ⤡
+        </button>
       </div>
-      <div className="expanded-camera-media">
+      <div className="expanded-camera-media" ref={mediaRef}>
         {!running ? (
           <div className="expanded-camera-placeholder">{t('live.camera.stopped')}</div>
         ) : (
@@ -52,14 +68,15 @@ export function ExpandedCameraView({
             {src ? (
               <>
                 <img
+                  ref={imgRef}
                   key={attempt}
                   src={src}
                   alt={camera.source_name}
                   className="expanded-camera-frame"
                   onError={onImgError}
-                  onLoad={onImgLoad}
+                  onLoad={handleImgLoad}
                 />
-                <OverlayCanvas meta={meta as StreamMetadata | null} />
+                <OverlayCanvas meta={meta as StreamMetadata | null} layoutBox={layoutBox} density="full" />
               </>
             ) : null}
             {showPlaceholder && !src ? (

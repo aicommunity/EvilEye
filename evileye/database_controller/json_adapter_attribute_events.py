@@ -1,5 +1,5 @@
 import os
-import datetime
+from evileye.core.event_time import date_folder_from_ts, require_datetime
 from .db_adapter import DatabaseAdapterBase
 from .json_event_io import append_json_record
 from .event_image_paths import ensure_event_image_dirs
@@ -68,9 +68,8 @@ class JsonAdapterAttributeEvents(DatabaseAdapterBase):
                 event_dt = getattr(event, 'get_time_finished', None)() or getattr(event, 'timestamp', None)
             except Exception:
                 event_dt = getattr(event, 'timestamp', None)
-            if event_dt is None:
-                event_dt = datetime.datetime.now()
-            date_folder = event_dt.date().strftime('%Y-%m-%d')
+            event_dt = require_datetime(event_dt)
+            date_folder = date_folder_from_ts(event_dt)
             day_dir = os.path.join(self.base_dir, date_folder)
             metadata_dir = os.path.join(day_dir, 'Metadata')
             os.makedirs(metadata_dir, exist_ok=True)
@@ -91,7 +90,7 @@ class JsonAdapterAttributeEvents(DatabaseAdapterBase):
 
             rec = {
                 'event_id': event.event_id,
-                'ts': (event.get_time_finished() or event.timestamp).isoformat(),
+                'ts': require_datetime(event.get_time_finished() or event.timestamp).isoformat(),
                 'source_id': event.source_id,
                 'object_id': event.object_id,
                 'event_name': event.matched_event_name,
@@ -117,9 +116,7 @@ class JsonAdapterAttributeEvents(DatabaseAdapterBase):
     def _save_images(self, day_dir: str, event, is_update: bool):
         try:
             # Новые каталоги: Events/.../Images/FoundFrames/FoundPreviews/LostFrames/LostPreviews
-            ts = (event.get_time_finished() if is_update else event.timestamp)
-            if ts is None:
-                ts = datetime.datetime.now()
+            ts = require_datetime(event.get_time_finished() if is_update else event.timestamp)
             # Имя с новым форматом без подчеркиваний в дате
             ts_str = ts.strftime('%Y-%m-%d_%H-%M-%S-%f') if is_update else ts.strftime('%Y-%m-%d_%H-%M-%S.%f')
             previews_dir, frames_dir = ensure_event_image_dirs(day_dir, is_lost=is_update)

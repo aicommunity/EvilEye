@@ -1,10 +1,12 @@
 #!/usr/bin/env bash
 # EvilEye docker host-cli
-# Shared launcher: run a command inside the EvilEye GPU container with cwd bind-mounted.
+# Shared launcher: run a command inside the EvilEye container.
 set -euo pipefail
 
 EVILEYE_DOCKER_IMAGE="${EVILEYE_DOCKER_IMAGE:-evileye/app:latest}"
 EVILEYE_DOCKER_GPU_MODE="${EVILEYE_DOCKER_GPU_MODE:-gpus}" # gpus | cdi | none
+SITE_DIR="${EVILEYE_DOCKER_SITE_DIR:-}"
+LAUNCHER_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 if ! command -v docker >/dev/null 2>&1; then
   echo "error: docker not found in PATH" >&2
@@ -13,8 +15,8 @@ fi
 
 if ! docker image inspect "$EVILEYE_DOCKER_IMAGE" >/dev/null 2>&1; then
   echo "error: image '$EVILEYE_DOCKER_IMAGE' not found." >&2
-  echo "Build it first:" >&2
-  echo "  docker compose -f docker/docker-compose.yml build" >&2
+  echo "Build/pull it first:" >&2
+  echo "  docker pull $EVILEYE_DOCKER_IMAGE" >&2
   exit 1
 fi
 
@@ -23,15 +25,41 @@ if [[ $# -lt 1 ]]; then
   exit 2
 fi
 
+# Auto-detect site as parent of bin/ when markers exist (unless SITE_DIR already set)
+if [[ -z "$SITE_DIR" && "$(basename "$LAUNCHER_DIR")" == "bin" ]]; then
+  parent="$(cd "$LAUNCHER_DIR/.." && pwd)"
+  if [[ -f "$parent/credentials.json" || -f "$parent/docker-compose.yml" || -d "$parent/configs" ]]; then
+    SITE_DIR="$parent"
+  fi
+fi
+
 DOCKER_ARGS=(
   --rm
   --ipc=host
   -e NVIDIA_VISIBLE_DEVICES="${NVIDIA_VISIBLE_DEVICES:-all}"
   -e NVIDIA_DRIVER_CAPABILITIES="${NVIDIA_DRIVER_CAPABILITIES:-compute,utility,video}"
   -e PYTHONUNBUFFERED=1
-  -v "${PWD}:${PWD}"
-  -w "${PWD}"
 )
+
+if [[ -n "$SITE_DIR" ]]; then
+  SITE_DIR="$(cd "$SITE_DIR" && pwd)"
+  DOCKER_ARGS+=(
+    -e EVILEYE_SITE_DIR=/site
+    -e EVILEYE_DATA_DIR="${EVILEYE_DATA_DIR:-/site/EvilEyeData}"
+    -v "$SITE_DIR:/site"
+    -w /site
+  )
+else
+  DOCKER_ARGS+=(
+    -v "${PWD}:${PWD}"
+    -w "${PWD}"
+  )
+  if [[ -n "${EVILEYE_DATA_DIR:-}" ]]; then
+    DOCKER_ARGS+=( -e "EVILEYE_DATA_DIR=${EVILEYE_DATA_DIR}" )
+  elif [[ -d "${PWD}/EvilEyeData" ]]; then
+    DOCKER_ARGS+=( -e "EVILEYE_DATA_DIR=${PWD}/EvilEyeData" )
+  fi
+fi
 
 # Allocate a TTY only when stdin is a terminal
 if [[ -t 0 ]]; then
@@ -39,16 +67,6 @@ if [[ -t 0 ]]; then
 else
   DOCKER_ARGS+=(-i)
 fi
-
-# Optional data-dir env (host path, same path inside container via PWD mount)
-if [[ -n "${EVILEYE_DATA_DIR:-}" ]]; then
-  DOCKER_ARGS+=(-e "EVILEYE_DATA_DIR=${EVILEYE_DATA_DIR}")
-elif [[ -d "${PWD}/EvilEyeData" ]]; then
-  DOCKER_ARGS+=(-e "EVILEYE_DATA_DIR=${PWD}/EvilEyeData")
-fi
-
-# Mount common project siblings if present outside PWD but under REPO guess — skip;
-# cwd layout is the default: run from the deploy directory that contains configs/videos/etc.
 
 case "$EVILEYE_DOCKER_GPU_MODE" in
   gpus)

@@ -400,6 +400,18 @@ class ConfigRunManager:
         if item.state in (ConfigRunState.RUNNING, ConfigRunState.STARTING):
             return self.describe(rid)
 
+        from evileye.site_runtime_guard import DuplicatePipelineError, ensure_pipeline_singleton, spawn_lock
+
+        site = site_root()
+        try:
+            with spawn_lock(site):
+                ensure_pipeline_singleton(str(item.config_path), site, policy="fail")
+        except DuplicatePipelineError as exc:
+            item.state = ConfigRunState.ERROR
+            item.error = str(exc)
+            self.logger.error("ConfigRun '%s' start blocked: %s", rid, exc)
+            return self.describe(rid)
+
         try:
             item.state = ConfigRunState.STARTING
             auth = load_web_auth_config()
@@ -410,6 +422,7 @@ class ConfigRunManager:
             log_session_id = allocate_log_session_id()
             env = {
                 **os.environ,
+                "EVILEYE_SITE_DIR": str(site),
                 "EVILEYE_PIPELINE_ID": str(rid),
                 "EVILEYE_PIPELINE_NAME": item.name,
                 "EVILEYE_MANAGED_RUN": "1",

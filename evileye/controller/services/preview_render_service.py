@@ -1,7 +1,8 @@
 from __future__ import annotations
 
 import threading
-from dataclasses import dataclass
+import time
+from dataclasses import dataclass, field
 from typing import Optional
 
 from evileye.core.logger import get_module_logger
@@ -17,6 +18,7 @@ class PreviewRenderJob:
     frame: object
     context: PreviewRenderContext
     source_id: int | None
+    submitted_at: float = field(default_factory=time.time)
 
 
 class PreviewRenderService:
@@ -110,10 +112,13 @@ class PreviewRenderService:
         with self._condition:
             while not self._stop_event.is_set() and not self._pending_jobs:
                 self._condition.wait(timeout=0.5)
-            if self._stop_event.is_set():
+            if self._stop_event.is_set() or not self._pending_jobs:
                 return None
-            _, job = self._pending_jobs.popitem()
-            return job
+            oldest_key = min(
+                self._pending_jobs,
+                key=lambda key: self._pending_jobs[key].submitted_at,
+            )
+            return self._pending_jobs.pop(oldest_key)
 
     def _worker_loop(self) -> None:
         while not self._stop_event.is_set():
@@ -129,12 +134,15 @@ class PreviewRenderService:
                 if rendered is not None and self._streaming_service is not None:
                     image = getattr(rendered, "image", None)
                     shape = getattr(image, "shape", None)
-                    meta = serialize_preview_metadata(job.context, shape)
+                    meta = serialize_preview_metadata(
+                        job.context,
+                        shape,
+                        frame_id=getattr(job.frame, "frame_id", None),
+                        frame=job.frame,
+                    )
                     self._streaming_service.submit_frame(
                         rendered,
-                        objects=meta.get("objects"),
-                        zones=meta.get("zones"),
-                        signalization=bool(meta.get("signalization")),
+                        metadata=meta,
                     )
             except Exception as exc:
                 self._stats["render_errors"] += 1

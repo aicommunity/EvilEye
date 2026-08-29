@@ -1,0 +1,42 @@
+services:
+  db:
+    image: postgres:15-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: evil_eye_db
+    volumes:
+      - ./postgres_data:/var/lib/postgresql/data
+
+  web:
+    image: __EVILEYE_IMAGE__
+    restart: unless-stopped
+    working_dir: /site
+    environment:
+      EVILEYE_SITE_DIR: /site
+      EVILEYE_DATA_DIR: /site/EvilEyeData
+      PYTHONUNBUFFERED: "1"
+    volumes:
+      - ./:/site
+    ports:
+      - "${EVILEYE_HOST_PORT:-8181}:8181"
+    depends_on:
+      db:
+        condition: service_started
+    command: ["evileye", "server", "--host", "0.0.0.0", "--port", "8181", "--no-reload"]
+
+  app:
+    image: __EVILEYE_IMAGE__
+    restart: unless-stopped
+    working_dir: /site
+    environment:
+      EVILEYE_SITE_DIR: /site
+      EVILEYE_DATA_DIR: /site/EvilEyeData
+      PYTHONUNBUFFERED: "1"
+    volumes:
+      - ./:/site
+    depends_on:
+      db:
+        condition: service_started
+    command: ["evileye", "run", "configs/single_video.json", "--no-gui"]

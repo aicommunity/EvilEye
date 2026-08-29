@@ -2,6 +2,7 @@ import os
 import threading
 import asyncio
 import json
+import time
 from pathlib import Path
 from fastapi import FastAPI, Response, Request
 from fastapi.middleware.cors import CORSMiddleware
@@ -104,8 +105,9 @@ class SecurityHeadersMiddleware(BaseHTTPMiddleware):
             "form-action 'self'"
         )
         response.headers.setdefault("Content-Security-Policy", csp)
-        auth = getattr(request.app.state, "web_auth", None)
-        if auth is not None and getattr(auth, "secure_cookies", False):
+        from evileye.api.core.ssl_files import hsts_enabled
+
+        if hsts_enabled():
             response.headers.setdefault("Strict-Transport-Security", "max-age=31536000; includeSubDomains")
         return response
 
@@ -163,6 +165,13 @@ async def lifespan(_app: FastAPI):
     _app.state.live_preview_hub = hub
 
     try:
+        from evileye.api.core.internal_unix import start_internal_unix_server
+
+        start_internal_unix_server(getattr(_app.state.web_auth, "internal_token", "") or "")
+    except Exception as exc:
+        logger.warning("Internal unix frame relay not started: %s", exc)
+
+    try:
         from evileye.core.mp_session_registry import cleanup_stale_sessions
 
         cleaned = cleanup_stale_sessions()
@@ -195,13 +204,45 @@ async def lifespan(_app: FastAPI):
     registry_prune_thread.start()
 
     try:
+        from evileye.api.core.server_state import start_background_runtime_discovery
+
+        start_background_runtime_discovery()
+    except Exception as exc:
+        logger.warning("Background runtime discovery failed to start: %s", exc)
+
+    try:
+        from evileye.api.core.playback_index_warmer import start_detection_ticks_warmer
+
+        start_detection_ticks_warmer()
+    except Exception as exc:
+        logger.warning("Detection ticks warmer failed to start: %s", exc)
+
+    try:
         yield
     finally:
         cleanup_stop.set()
         try:
+            from evileye.api.core.playback_index_warmer import stop_detection_ticks_warmer
+
+            stop_detection_ticks_warmer()
+        except Exception:
+            pass
+        try:
+            from evileye.api.core.server_state import stop_background_runtime_discovery
+
+            stop_background_runtime_discovery()
+        except Exception:
+            pass
+        try:
             from evileye.api.core.live_preview_hub import get_live_preview_hub
 
             await get_live_preview_hub().stop()
+        except Exception:
+            pass
+        try:
+            from evileye.api.core.internal_unix import stop_internal_unix_server
+
+            stop_internal_unix_server()
         except Exception:
             pass
         logger.info("FastAPI lifespan shutdown")
@@ -290,7 +331,54 @@ def create_app() -> FastAPI:
 
     @app.get("/ready")
     async def ready():
-        return {"status": "ok"}
+        payload: dict = {"status": "ok"}
+        try:
+            from evileye.api.core.internal_unix import internal_socket_path
+            from evileye.api.routes.playback import detections_inflight_count, media_inflight_count
+
+            broker = get_frame_broker()
+            stats = broker.get_runtime_stats() if hasattr(broker, "get_runtime_stats") else {}
+            keys = int(stats.get("frames_keys") or stats.get("frame_count") or 0)
+            max_age = None
+            try:
+                # Prefer public helpers when present.
+                if hasattr(broker, "max_frame_age_sec"):
+                    max_age = broker.max_frame_age_sec()
+                else:
+                    with broker._lock:  # noqa: SLF001
+                        frames = getattr(broker, "_frames", {}) or {}
+                        keys = len(frames)
+                        now = time.time()
+                        ages = [
+                            max(0.0, now - float(fr.timestamp))
+                            for fr in frames.values()
+                            if getattr(fr, "timestamp", None) is not None
+                        ]
+                        max_age = max(ages) if ages else None
+            except Exception:
+                pass
+            sock_path = internal_socket_path()
+            payload["frame_broker"] = {
+                "keys": keys,
+                "max_age_sec": max_age,
+                "published_payloads": stats.get("published_payloads"),
+                "estimated_bytes": stats.get("estimated_bytes"),
+            }
+            payload["internal_unix"] = {
+                "listening": bool(sock_path.exists()),
+                "path": str(sock_path),
+            }
+            payload["playback_detections_inflight"] = detections_inflight_count()
+            payload["playback_media_inflight"] = media_inflight_count()
+            try:
+                from evileye.api.core.rate_guard import get_rate_guard
+
+                payload["ws_reject_counts"] = get_rate_guard().ws_reject_counts()
+            except Exception:
+                pass
+        except Exception:
+            pass
+        return payload
 
     @app.get("/api/v1/version")
     async def version():

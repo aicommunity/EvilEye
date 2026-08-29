@@ -1,5 +1,5 @@
 import { request } from './client';
-import type { AuthMeResponse } from './types';
+import type { AuthMeResponse, UserPrefs } from './types';
 
 export const authApi = {
   me(): Promise<AuthMeResponse> {
@@ -19,6 +19,18 @@ export const authApi = {
     must_change_password?: boolean;
   }> {
     return request('/auth/change-password', { method: 'POST', body: JSON.stringify(body) });
+  },
+  putPrefs(body: {
+    visible_cameras?: string[] | null;
+    lang?: 'ru' | 'en';
+    date_format?: 'DD-MM-YYYY' | 'YYYY-MM-DD' | 'MM-DD-YYYY';
+  }): Promise<{
+    ok: boolean;
+    prefs: UserPrefs;
+    allowed_cameras?: string[];
+    camera_access?: 'all' | 'restricted';
+  }> {
+    return request('/auth/prefs', { method: 'PUT', body: JSON.stringify(body) });
   },
 };
 

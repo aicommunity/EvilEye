@@ -19,7 +19,7 @@ except ImportError:
 
 from evileye.controller import controller
 from evileye.visualization_modules.controller_init_thread import ControllerInitThread
-from evileye.utils.utils import normalize_config_path
+from evileye.utils.config_paths import normalize_config_path
 from evileye.core.logger import get_module_logger
 from evileye.core.config_validator import ConfigValidator
 from evileye.gui import GUIManager, GUIMode, determine_gui_mode

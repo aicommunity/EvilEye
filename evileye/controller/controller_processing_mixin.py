@@ -14,17 +14,77 @@ from evileye.visualization_modules.preview_render import PreviewRenderContext
 
 
 class ControllerProcessingMixin:
+    def _get_preview_track_match_window(self) -> int:
+        vis_cfg = self._get_preview_visualizer_cfg()
+        try:
+            raw = vis_cfg.get("track_frame_match_window", 10)
+            return max(0, int(raw if raw is not None else 10))
+        except Exception:
+            return 10
+
+    def _resolve_preview_track_info(self, object_list: ObjectResultList | None, frame_id) -> list:
+        if not object_list:
+            return []
+        max_delta = self._get_preview_track_match_window()
+        track_info: list = []
+        if frame_id is not None:
+            track_info = object_list.find_objects_by_frame_id(frame_id, use_history=False)
+            if not track_info and max_delta > 0:
+                try:
+                    track_info = object_list.find_objects_near_frame_id(
+                        frame_id,
+                        max_delta=max_delta,
+                        use_history=True,
+                    )
+                except Exception:
+                    track_info = []
+        if not track_info and object_list.get_num_objects() > 0:
+            track_info = list(object_list.objects)
+        return track_info
+
+    def _pick_preview_frame_for_source(
+            self,
+            frames: list,
+            source_id: int,
+            object_list: ObjectResultList | None,
+    ):
+        candidates = [
+            frame for frame in frames
+            if getattr(frame, "source_id", None) == source_id and getattr(frame, "image", None) is not None
+        ]
+        if not candidates:
+            return None
+        if not object_list or object_list.get_num_objects() == 0:
+            return candidates[-1]
+        target_ids = []
+        for obj in object_list.objects:
+            obj_frame_id = getattr(obj, "frame_id", None)
+            if obj_frame_id is not None:
+                try:
+                    target_ids.append(int(obj_frame_id))
+                except Exception:
+                    continue
+        if not target_ids:
+            return candidates[-1]
+        target_frame_id = max(target_ids)
+
+        def _frame_distance(frame) -> int:
+            frame_id = getattr(frame, "frame_id", None)
+            if frame_id is None:
+                return 10**12
+            try:
+                return abs(int(frame_id) - target_frame_id)
+            except Exception:
+                return 10**12
+
+        return min(candidates, key=_frame_distance)
+
     def _build_preview_render_context(self, frame,
                                       objects_by_source: dict[int, ObjectResultList]) -> PreviewRenderContext:
         source_id = getattr(frame, "source_id", None)
         frame_id = getattr(frame, "frame_id", None)
         object_list = objects_by_source.get(source_id, ObjectResultList())
-        track_info = object_list.find_objects_by_frame_id(frame_id, use_history=False) if object_list else []
-        if not track_info and object_list:
-            try:
-                track_info = object_list.find_objects_near_frame_id(frame_id, max_delta=1, use_history=True)
-            except Exception:
-                track_info = []
+        track_info = self._resolve_preview_track_info(object_list, frame_id)
         event_entries = self._get_preview_event_entries(source_id)
         event_cfg = self._get_preview_event_cfg()
         vis_cfg = self._get_preview_visualizer_cfg()
@@ -38,12 +98,21 @@ class ControllerProcessingMixin:
                     self.source_video_duration[source_id] = float(source_duration_msecs)
                 except Exception:
                     pass
+        show_boxes = vis_cfg.get("show_boxes")
+        if show_boxes is None:
+            show_boxes = True
+        show_zones = vis_cfg.get("show_zones")
+        if show_zones is None:
+            show_zones = vis_cfg.get("display_zones", True)
         return PreviewRenderContext(
             source_name=self.source_id_name_table.get(source_id, f"src{source_id}"),
             source_duration_msecs=source_duration_msecs,
-            track_info=track_info,
+            track_info=track_info if show_boxes else [],
             debug_info=self.debug_info,
+            pipeline_params=self.params,
             show_debug_info=bool(vis_cfg.get("show_debug_info", False)),
+            show_boxes=bool(show_boxes),
+            show_zones=bool(show_zones),
             text_config=vis_cfg.get("text_config", {}) or {},
             class_mapping=self.class_mapping or {},
             event_signal_enabled=event_enabled,
@@ -53,7 +122,8 @@ class ControllerProcessingMixin:
                 f'{entry.get("event_name", "Event")} [{entry.get("object_id")}]'
                 for entry in event_entries
             ],
-            zones=self._preview_zones_by_source.get(source_id, []),
+            zones=self._preview_zones_by_source.get(source_id, []) if show_zones else [],
+            burn_in_overlay=False,
         )
 
     def _check_memory_and_maybe_stop(self) -> bool:
@@ -209,23 +279,9 @@ class ControllerProcessingMixin:
         return obj
 
     def _extract_preview_zones(self) -> dict[int, list]:
-        zones_cfg = (((self.params or {}).get('events_detectors', {}) or {}).get('ZoneEventsDetector', {}) or {}).get(
-            'sources', {})
-        sources_zones: dict[int, list] = {}
-        if not isinstance(zones_cfg, dict):
-            return sources_zones
-        for key, zone_list in zones_cfg.items():
-            try:
-                source_id = int(key)
-            except Exception:
-                continue
-            prepared = []
-            for coords in (zone_list or []):
-                if isinstance(coords, list) and coords:
-                    prepared.append(['poly', coords, None])
-            if prepared:
-                sources_zones[source_id] = prepared
-        return sources_zones
+        from evileye.visualization_modules.overlay_config import extract_zones_by_source
+
+        return extract_zones_by_source(self.params)
 
     def _extract_track_ids(self, data) -> tuple[set[int], int]:
         track_ids: set[int] = set()
@@ -519,7 +575,6 @@ class ControllerProcessingMixin:
             if not processing_frames:
                 self.logger.debug("No processing frames available for publishing")
                 return
-            interested_frames = []
             interested_source_ids: set[int] = set()
             for frame in processing_frames:
                 if getattr(frame, "image", None) is None:
@@ -528,15 +583,18 @@ class ControllerProcessingMixin:
                 if self._preview_render_service is not None:
                     if not self._preview_render_service.wants_frame(source_id):
                         continue
-                interested_frames.append(frame)
                 if source_id is not None:
                     interested_source_ids.add(source_id)
-            if not interested_frames:
+            if not interested_source_ids:
                 self.logger.debug("No frames currently requested for preview publish")
             else:
                 objects_by_source = self._collect_preview_objects_by_source(interested_source_ids, objects_results)
                 published = 0
-                for frame in interested_frames:
+                for source_id in sorted(interested_source_ids):
+                    object_list = objects_by_source.get(source_id, ObjectResultList())
+                    frame = self._pick_preview_frame_for_source(processing_frames, source_id, object_list)
+                    if frame is None:
+                        continue
                     accepted = False
                     if self._preview_render_service is not None:
                         render_context = self._build_preview_render_context(frame, objects_by_source)

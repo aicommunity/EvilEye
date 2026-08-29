@@ -151,7 +151,9 @@ class ObjectTrackingBotsort(ObjectTrackingBase):
                     tracks_info = TrackingResultList()
                     tracks_info.source_id = source_id
                     tracks_info.frame_id = frame_id
-                    tracks_info.time_stamp = datetime.datetime.now()
+                    tracks_info.time_stamp = getattr(image, "time_stamp", None)
+                    if tracks_info.time_stamp is None:
+                        tracks_info.time_stamp = datetime.datetime.now()
                     self._put_out_drop_oldest((tracks_info, image))
                     continue
             except Exception:
@@ -160,7 +162,8 @@ class ObjectTrackingBotsort(ObjectTrackingBase):
 
             try:
                 tracks_info = run_tracker_update(
-                    self.tracker, detection_result, image.image
+                    self.tracker, detection_result, image.image,
+                    time_stamp=getattr(image, "time_stamp", None),
                 )
                 self._put_out_drop_oldest((tracks_info, image))
             except Exception as e:
@@ -183,7 +186,6 @@ class ObjectTrackingBotsort(ObjectTrackingBase):
 
         tracks_info = TrackingResultList()
         tracks_info.source_id = cam_id
-        tracks_info.frame_id = frame_id
         tracks_info.time_stamp = datetime.datetime.now()
 
         # print(tracks)

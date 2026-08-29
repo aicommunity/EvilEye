@@ -260,6 +260,68 @@ def test_global_rps_autoban(tmp_path, monkeypatch):
     assert get_ip_ban_store().is_banned("198.51.100.50")
 
 
+def test_default_global_max_requests_is_600():
+    assert ProtectionConfig().global_max_requests == 600
+
+
+def test_whitelist_supports_cidr():
+    cfg = ProtectionConfig(enabled=True, whitelist_ips=["10.245.1.0/24"])
+    guard = reset_rate_guard_for_tests(cfg)
+    assert guard.is_whitelisted("10.245.1.2") is True
+    assert guard.is_whitelisted("10.245.2.1") is False
+
+
+def test_global_rate_exempt_hot_paths():
+    from evileye.api.middleware.ip_protection import is_global_rate_exempt
+
+    assert is_global_rate_exempt("/api/v1/runs/1/snapshot") is True
+    assert is_global_rate_exempt("/api/v1/runs/1/stream.mjpg") is True
+    assert is_global_rate_exempt("/api/v1/runs/1/stream:status") is True
+    assert is_global_rate_exempt("/api/v1/runs/1/metadata") is True
+    assert is_global_rate_exempt("/api/v1/playback/media") is True
+    assert is_global_rate_exempt("/api/v1/playback/metadata") is True
+    assert is_global_rate_exempt("/api/v1/playback/timeline") is False
+    assert is_global_rate_exempt("/api/v1/state/cameras") is False
+
+
+def test_exempt_paths_do_not_count_toward_global_ban(tmp_path, monkeypatch):
+    """Middleware skip helper: hot paths must not be passed to record_global_request."""
+    monkeypatch.chdir(tmp_path)
+    reset_ip_ban_store_for_tests(tmp_path / "web_ip_bans.json")
+    from evileye.api.middleware.ip_protection import is_global_rate_exempt
+
+    cfg = ProtectionConfig(
+        enabled=True,
+        whitelist_ips=[],
+        global_max_requests=3,
+        global_window_sec=60,
+        global_ban_sec=600,
+    )
+    guard = reset_rate_guard_for_tests(cfg)
+
+    class Req:
+        def __init__(self, path: str):
+            self.url = type("U", (), {"path": path})()
+            self.client = type("C", (), {"host": "198.51.100.77"})()
+            self.headers = {}
+
+    # Simulate middleware: only count non-exempt paths.
+    for _ in range(10):
+        path = "/api/v1/playback/media"
+        if not is_global_rate_exempt(path):
+            guard.record_global_request(Req(path))
+    from evileye.api.core.ip_ban_store import get_ip_ban_store
+
+    assert get_ip_ban_store().is_banned("198.51.100.77") is False
+
+    for _ in range(3):
+        path = "/api/v1/state/cameras"
+        assert is_global_rate_exempt(path) is False
+        hit = guard.record_global_request(Req(path))
+    assert hit is True
+    assert get_ip_ban_store().is_banned("198.51.100.77") is True
+
+
 def test_mask_rtsp_in_config_secrets():
     from evileye.api.routes.configs import _mask_secrets
 
@@ -280,3 +342,44 @@ def test_internal_token_length_mismatch_is_401(secured_client):
         headers={"X-EvilEye-Internal-Token": "short"},
     )
     assert res.status_code == 401
+
+
+def _security_headers_client(tmp_path, monkeypatch, *, hsts_env=None, secure_cookies=True):
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.delenv("EVILEYE_ENV", raising=False)
+    if hsts_env is None:
+        monkeypatch.delenv("EVILEYE_HSTS", raising=False)
+    else:
+        monkeypatch.setenv("EVILEYE_HSTS", hsts_env)
+    creds = {
+        "web_auth": {
+            "enabled": True,
+            "session_secret": "test-session-secret-not-default-0123456789",
+            "internal_token": "test-internal-token",
+            "secure_cookies": secure_cookies,
+            "users": [
+                {
+                    "username": "admin",
+                    "password_hash": hash_password("correct-horse"),
+                    "role": "admin",
+                    "disabled": False,
+                }
+            ],
+        }
+    }
+    (tmp_path / "credentials.json").write_text(json.dumps(creds), encoding="utf-8")
+    from evileye.api.app import create_app
+
+    return TestClient(create_app())
+
+
+def test_hsts_absent_when_secure_cookies_without_flag(tmp_path, monkeypatch):
+    client = _security_headers_client(tmp_path, monkeypatch, secure_cookies=True)
+    res = client.get("/", follow_redirects=False)
+    assert "strict-transport-security" not in {k.lower() for k in res.headers}
+
+
+def test_hsts_present_when_env_set(tmp_path, monkeypatch):
+    client = _security_headers_client(tmp_path, monkeypatch, hsts_env="1", secure_cookies=False)
+    res = client.get("/", follow_redirects=False)
+    assert res.headers.get("strict-transport-security", "").startswith("max-age=")

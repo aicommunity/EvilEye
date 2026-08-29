@@ -1,5 +1,5 @@
 import time
-from datetime import datetime
+from evileye.core.event_time import obj_found_datetime, obj_lost_datetime
 from threading import Event as ThreadEvent
 from .events_detector import EventsDetector
 from .event_attribute import AttributeEvent
@@ -41,7 +41,7 @@ class AttributeEventsDetector(EventsDetector):
                         for event_name, expected_set in expected_map.items():
                             key = (source_id, obj.object_id, event_name)
                             if current_attrs == expected_set and key not in self.active_events:
-                                ts = datetime.now()
+                                ts = obj_found_datetime(obj)
                                 event = AttributeEvent(ts, 'AttributeEvent', source_id, obj.object_id, event_name,
                                                        sorted(list(expected_set)), is_finished=False, obj=obj)
                                 events.append(event)
@@ -57,7 +57,7 @@ class AttributeEventsDetector(EventsDetector):
                         for event_name in expected_map.keys():
                             key = (source_id, obj.object_id, event_name)
                             if key in self.active_events:
-                                ts = datetime.now()
+                                ts = obj_lost_datetime(obj)
                                 event = AttributeEvent(ts, 'AttributeEvent', source_id, obj.object_id, event_name,
                                                        sorted(list(expected_map[event_name])), is_finished=True,
                                                        obj=obj)

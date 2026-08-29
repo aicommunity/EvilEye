@@ -30,9 +30,10 @@ Last full pass: **2026-05-22** (branch `mt_refactoring2`, post MP refactor R0–
 | docs/VIDEO_CAPTURE_OPENCV_ISSUES.md | capture/ | Issues | **OK** | |
 | docs/GUI_REFACTORING_GUIDE.md | visualization/ | Feature | **OK** | |
 | docs/DEPENDENCY_INJECTION_GUIDE.md | core/di | Feature | **OK** | |
+| docs/CLI_STACK_COMMANDS.md | cli | Feature | **OK** | Stack status/web/service/pipeline/reload/prod |
 | docs/CLI_DEPLOY_COMMAND.md | cli | Feature | **OK** | |
-| docs/CLI_SERVICE_COMMANDS.md | service_manager | Feature | **OK** | Windows schtasks |
-| docs/CLI_SETUP_WEB.md | setup_web | Feature | **OK** | |
+| docs/CLI_SERVICE_COMMANDS.md | service_manager | Feature | **OK** | `evileye service` |
+| docs/CLI_SETUP_WEB.md | setup_web | Feature | **OK** | `evileye web` |
 | docs/DOCKER_DEPLOYMENT.md | docker/ | Feature | **OK** | Linux host-cli; Win → WINDOWS_DOCKER |
 | docs/WINDOWS_NATIVE.md | cli, watchdog_native | Feature | **OK** | Native pip Windows |
 | docs/WINDOWS_DOCKER_DEPLOYMENT.md | docker/windows | Feature | **OK** | Docker Desktop |

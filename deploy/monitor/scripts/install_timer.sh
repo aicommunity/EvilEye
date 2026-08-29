@@ -40,6 +40,13 @@ SYNC_SCRIPTS="${SYNC_SCRIPTS:-1}"
 mkdir -p "$MONITOR_DIR/scripts" "$MONITOR_DIR/systemd" "$MONITOR_DIR/incidents" "$MONITOR_DIR/reports" \
     "$DEPLOY_DIR/logs" "$SYSTEMD_USER_DIR"
 
+_package_scripts="$(cd "$PACKAGE_MONITOR/scripts" && pwd)"
+_monitor_scripts="$(cd "$MONITOR_DIR/scripts" && pwd)"
+if [[ "$SYNC_SCRIPTS" == "1" && "$_package_scripts" == "$_monitor_scripts" ]]; then
+    echo "Site monitor scripts already in place; skipping script sync."
+    SYNC_SCRIPTS=0
+fi
+
 if [[ "$SYNC_SCRIPTS" == "1" ]]; then
     cp -a "$PACKAGE_MONITOR/scripts/"*.sh "$MONITOR_DIR/scripts/"
     chmod +x "$MONITOR_DIR/scripts/"*.sh
@@ -94,6 +101,7 @@ EOF
 
 ENV_LINES="Environment=DEPLOY_DIR=${DEPLOY_DIR}
 Environment=MONITOR_DIR=${MONITOR_DIR}
+Environment=EVILEYE_SITE_DIR=${DEPLOY_DIR}
 Environment=CONFIG_NAME=${CONFIG_NAME}
 Environment=DISPLAY=${DISPLAY}"
 if [[ -n "$XAUTHORITY" ]]; then

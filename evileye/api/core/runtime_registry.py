@@ -2,6 +2,7 @@ import json
 import os
 import tempfile
 import time
+import threading
 from contextlib import contextmanager
 from pathlib import Path
 from typing import Dict, Iterable, Optional
@@ -23,6 +24,7 @@ _corrupt_record_logged: set[int] = set()
 _corrupt_snapshot_logged: set[int] = set()
 _last_discover_ts: float = 0.0
 _DISCOVER_MIN_INTERVAL_SEC = 5.0
+_discover_lock = threading.Lock()
 _STUB_FIELDS = (
     "id",
     "pid",
@@ -55,7 +57,7 @@ def _snapshot_path(rid: int) -> Path:
     return SNAPSHOT_DIR / f"{int(rid)}.json"
 
 
-def _atomic_write_text(path: Path, text: str) -> None:
+def _atomic_write_text(path: Path, text: str, *, fsync: bool = True) -> None:
     """Write ``text`` to ``path`` via temp file + ``os.replace`` (atomic on POSIX)."""
     path.parent.mkdir(parents=True, exist_ok=True)
     fd, tmp_name = tempfile.mkstemp(
@@ -67,7 +69,8 @@ def _atomic_write_text(path: Path, text: str) -> None:
         with os.fdopen(fd, "w", encoding="utf-8") as handle:
             handle.write(text)
             handle.flush()
-            os.fsync(handle.fileno())
+            if fsync:
+                os.fsync(handle.fileno())
         os.replace(tmp_name, path)
     except Exception:
         try:
@@ -77,6 +80,24 @@ def _atomic_write_text(path: Path, text: str) -> None:
         raise
 
 
+_VOLATILE_KEYS = frozenset({"updated_at"})
+
+
+def _stable_payload(data: Dict) -> str:
+    """Canonical JSON for equality checks (ignore volatile timestamps)."""
+    filtered = {k: v for k, v in data.items() if k not in _VOLATILE_KEYS}
+    return json.dumps(filtered, ensure_ascii=False, sort_keys=True, separators=(",", ":"), default=str)
+
+
+def _unchanged_on_disk(path: Path, payload: str) -> bool:
+    if not path.exists():
+        return False
+    try:
+        return path.read_text(encoding="utf-8") == payload
+    except Exception:
+        return False
+
+
 def _is_pid_alive(pid: Optional[int]) -> bool:
     if not pid or pid <= 0:
         return False
@@ -84,7 +105,7 @@ def _is_pid_alive(pid: Optional[int]) -> bool:
         os.kill(int(pid), 0)
     except OSError:
         return False
-    return True
+    return _parse_process_cmdline(int(pid)) is not None
 
 
 @contextmanager
@@ -202,7 +223,12 @@ def maybe_discover_process_runtimes(*, force: bool = False) -> None:
     now = time.time()
     if not force and (now - _last_discover_ts) < _DISCOVER_MIN_INTERVAL_SEC:
         return
-    discover_process_runtimes()
+    # Single-flight: avoid concurrent /proc walks when multiple UI calls race.
+    with _discover_lock:
+        now = time.time()
+        if not force and (now - _last_discover_ts) < _DISCOVER_MIN_INTERVAL_SEC:
+            return
+        discover_process_runtimes()
 
 def load_runtime_record(rid: int, *, refresh_state: bool = True) -> Optional[Dict]:
     path = _record_path(rid)
@@ -245,10 +271,17 @@ def save_runtime_record(record: Dict) -> Dict:
     _ensure_dirs()
     normalized = refresh_runtime_record(record)
     normalized["id"] = int(normalized["id"])
+    path = _record_path(normalized["id"])
+    # Preserve previous updated_at when content is unchanged to avoid churn.
+    existing = load_runtime_record(int(normalized["id"]), refresh_state=False)
+    if existing is not None and _stable_payload(existing) == _stable_payload(normalized):
+        return existing
     normalized.setdefault("updated_at", time.time())
     payload = json.dumps(normalized, ensure_ascii=False, indent=2)
     with _registry_lock():
-        _atomic_write_text(_record_path(normalized["id"]), payload)
+        if _unchanged_on_disk(path, payload):
+            return normalized
+        _atomic_write_text(path, payload)
     _corrupt_record_logged.discard(normalized["id"])
     return normalized
 
@@ -257,10 +290,17 @@ def save_runtime_snapshot(rid: int, snapshot: Dict) -> Dict:
     _ensure_dirs()
     normalized = dict(snapshot)
     normalized["id"] = int(rid)
+    path = _snapshot_path(rid)
+    existing = load_runtime_snapshot(int(rid))
+    if existing is not None and _stable_payload(existing) == _stable_payload(normalized):
+        return existing
     normalized["updated_at"] = time.time()
-    payload = json.dumps(normalized, ensure_ascii=False, indent=2)
+    # Compact JSON + no fsync: snapshots are rewritten often by the pipeline.
+    payload = json.dumps(normalized, ensure_ascii=False, separators=(",", ":"), default=str)
     with _registry_lock():
-        _atomic_write_text(_snapshot_path(rid), payload)
+        if _unchanged_on_disk(path, payload):
+            return normalized
+        _atomic_write_text(path, payload, fsync=False)
     _corrupt_snapshot_logged.discard(int(rid))
     return normalized
 
@@ -297,6 +337,8 @@ def delete_runtime_snapshot(rid: int) -> bool:
 def update_runtime_snapshot(rid: int, **updates) -> Dict:
     existing = load_runtime_snapshot(rid) or {}
     merged = {**existing, **updates}
+    if existing and _stable_payload(existing) == _stable_payload(merged):
+        return existing
     return save_runtime_snapshot(rid, merged)
 
 
@@ -368,11 +410,23 @@ def _record_to_stub(record: Dict) -> Dict:
     return stub
 
 
+_stubs_cache_lock = threading.Lock()
+_stubs_cache_ts: float = 0.0
+_stubs_cache_value: Optional[Dict[int, Dict]] = None
+_STUBS_CACHE_TTL_SEC = 0.75
+
+
 def list_runtime_record_stubs(*, discover: bool = False) -> Dict[int, Dict]:
     """Light registry scan: id/pid/state/alive/paths only (no snapshots)."""
+    global _stubs_cache_value, _stubs_cache_ts
     _ensure_dirs()
     if discover:
         maybe_discover_process_runtimes()
+    if not discover:
+        now = time.time()
+        with _stubs_cache_lock:
+            if _stubs_cache_value is not None and (now - _stubs_cache_ts) < _STUBS_CACHE_TTL_SEC:
+                return _stubs_cache_value
     items: Dict[int, Dict] = {}
     for path in REGISTRY_DIR.glob("*.json"):
         try:
@@ -383,7 +437,12 @@ def list_runtime_record_stubs(*, discover: bool = False) -> Dict[int, Dict]:
         if not record:
             continue
         items[rid] = _record_to_stub(record)
-    return dict(sorted(items.items(), key=lambda pair: pair[0]))
+    items = dict(sorted(items.items(), key=lambda pair: pair[0]))
+    if not discover:
+        with _stubs_cache_lock:
+            _stubs_cache_value = items
+            _stubs_cache_ts = time.time()
+    return items
 
 
 def prune_stale_runtime_records(

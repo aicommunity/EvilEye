@@ -1,89 +1,40 @@
-# Команды `evileye service-install` / `evileye service-uninstall`
+# Команда `evileye service`
 
-## Обзор
+Управление OS-сервисом Web UI (systemd / Windows Scheduled Task) и HTTPS.
 
-Команды устанавливают и удаляют **OS-сервис приложения** EvilEye (Web UI / FastAPI), отдельно от watchdog-таймеров в `monitor/`.
+См. полный гайд: [CLI_STACK_COMMANDS.md](CLI_STACK_COMMANDS.md).
 
-| Команда | Назначение |
-|---------|------------|
-| `evileye service-install [CONFIG]` | Установить и запустить сервис (идемпотентно) |
-| `evileye service-uninstall` | Остановить и удалить сервис |
-| `evileye deploy` | В конце вызывает ensure `service-install` (ошибка сервиса не валит deploy) |
-
-Это **не** то же самое, что `monitor/scripts/install_timer.sh` (watchdog health-check).
-
-## service-install
-
-Без конфига (минимальный post-install режим):
+## Быстрый старт
 
 ```bash
-evileye service-install
-# эквивалент сервиса:
-# evileye server --host 0.0.0.0 --port 8181 --no-reload
+cd /opt/evileye-site
+evileye deploy
+evileye service install              # TLS wizard + unit
+evileye service install configs/my.json   # + autorun config в unit
 ```
 
-Создаёт `configs/system.json` (каркас без камер/БД), если файла нет.
+## Подкоманды
 
-С конфигом (auto-run после старта API):
+| Команда | Описание |
+|---------|----------|
+| `service install [CONFIG]` | `web deps/build` при необходимости, TLS, установка unit |
+| `service uninstall` | Остановить и удалить сервис |
+| `service start` / `stop` / `restart` / `status` | Управление unit (вместо `systemctl`) |
 
-```bash
-evileye service-install configs/my.json
-# или:
-evileye service-install my.json
-```
+## HTTPS
 
-Опции:
-
-- `--host` / `--port` (по умолчанию `0.0.0.0` / `8181`)
-- `--user` — systemd user unit (Linux, по умолчанию для CLI)
-- `--system` — system unit (может потребовать sudo)
-- `--dry-run` — показать unit без применения
-
-Состояние сайта: `.evileye_service.json` (не коммитить).
-
-### Linux
-
-- User: `~/.config/systemd/user/evileye.service`
-- System: `/etc/systemd/system/evileye.service`
-- Шаблон: [`deploy/service/evileye.service.in`](../deploy/service/evileye.service.in)
-
-### Windows (best-effort → supported)
-
-Генерируется `scripts/evileye-server.bat`; регистрируется Scheduled Task **`EvilEye`** (`ONSTART`, `/RL HIGHEST`). NSSM не требуется. Нужны права администратора для `schtasks`.
-
-Ручной запуск при ошибке Task: двойной клик по `.bat` или:
-
-```powershell
-schtasks /Run /TN EvilEye
-```
-
-Полный native bring-up: [WINDOWS_NATIVE.md](WINDOWS_NATIVE.md).
-
-Watchdog (отдельно от service):
-
-```powershell
-evileye watchdog-install --config configs/single_video.json
-```
-
-## service-uninstall
-
-```bash
-evileye service-uninstall
-```
-
-Повторный вызов безопасен («не установлен»).
-
-## После установки
-
-1. Откройте `http://127.0.0.1:8181` (или хост машины).
-2. Войдите как `admin` (пароль bootstrap — в логе сервиса при первом старте).
-3. Смените пароль и завершите базовую настройку в Web UI.
+Интерактивно (TTY) или флаги `--no-tls`, `--tls-self-signed`, `--tls-ip`, `--ssl-certfile`, … — как в прежнем `install-server`.
 
 ## Troubleshooting
 
 ```bash
-systemctl --user status evileye
+evileye status
+evileye service status
 journalctl --user -u evileye -n 100
-evileye service-uninstall
-evileye service-install --dry-run
+evileye service uninstall
+evileye service install --dry-run --no-tls
 ```
+
+После включения HTTPS перезапустите web-слой: `evileye service restart` или `evileye reload web`.
+
+Watchdog — отдельно: `monitor/scripts/install_timer.sh` или `evileye watchdog-install`.

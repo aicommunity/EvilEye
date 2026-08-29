@@ -15,6 +15,7 @@ import { ConfigFilePage } from './features/admin/ConfigFilePage';
 import { LogsPage } from './features/admin/LogsPage';
 import { UsersPage } from './features/admin/UsersPage';
 import { BansPage } from './features/admin/BansPage';
+import { SettingsPage } from './features/settings/SettingsPage';
 import { MobileLivePage } from './features/live/MobileLivePage';
 import { MobileEventsPage } from './features/journals/MobileEventsPage';
 import './styles/global.css';
@@ -129,6 +130,7 @@ export default function App() {
                     </RequirePermission>
                   }
                 />
+                <Route path="/settings" element={<SettingsPage />} />
                 <Route path="/admin/history" element={<Navigate to="/admin/runs" replace />} />
               </Route>
               <Route path="*" element={<Navigate to="/live" replace />} />

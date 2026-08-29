@@ -49,3 +49,11 @@ export function streamMetadataWsUrl(rid: number, sourceId?: number | null): stri
   const qs = sourceId != null ? `?source_id=${sourceId}` : '';
   return `${proto}://${window.location.host}/api/v1/runs/${rid}/ws${qs}`;
 }
+
+export function streamMetadataUrl(rid: number, sourceId?: number | null): string {
+  const u = `${API_BASE}/runs/${rid}/metadata`;
+  const params = new URLSearchParams();
+  if (sourceId != null) params.set('source_id', String(sourceId));
+  const qs = params.toString();
+  return qs ? `${u}?${qs}` : u;
+}

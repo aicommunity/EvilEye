@@ -1,8 +1,9 @@
-import { useCallback, useEffect, useState } from 'react';
-import { usersApi, type UserRecord } from '../../api';
+import { useCallback, useEffect, useRef, useState } from 'react';
+import { usersApi, type CameraCatalogItem, type UserRecord } from '../../api';
 import { Button } from '../../components/ui';
 import { useToast } from '../../components/ui/Toast';
 import { useI18n } from '../../i18n';
+import { CameraAclEditor } from './CameraAclEditor';
 
 const MIN_PASSWORD_LEN = 8;
 
@@ -17,6 +18,7 @@ export function UsersPage() {
   const { showError, showSuccess } = useToast();
   const { t } = useI18n();
   const [items, setItems] = useState<UserRecord[]>([]);
+  const [catalog, setCatalog] = useState<CameraCatalogItem[]>([]);
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [showCreatePw, setShowCreatePw] = useState(false);
@@ -25,15 +27,31 @@ export function UsersPage() {
   const [resetPw, setResetPw] = useState<Record<string, string>>({});
   const [showResetPw, setShowResetPw] = useState<Record<string, boolean>>({});
   const [savingPw, setSavingPw] = useState<Record<string, boolean>>({});
+  const [draftCams, setDraftCams] = useState<Record<string, string[]>>({});
+  const [savingCams, setSavingCams] = useState<Record<string, boolean>>({});
 
   const load = useCallback(async () => {
+    let users: UserRecord[] = [];
     try {
       const data = await usersApi.list();
-      setItems(data.items ?? []);
+      users = data.items ?? [];
+      setItems(users);
+      const next: Record<string, string[]> = {};
+      for (const u of users) {
+        next[u.id || u.username] = [...(u.allowed_cameras ?? [])];
+      }
+      setDraftCams(next);
     } catch (e) {
       showError(e instanceof Error ? e.message : t('common.error'));
+      return;
     }
-  }, [showError]);
+    try {
+      const cams = await usersApi.cameraCatalog();
+      setCatalog(cams.items ?? []);
+    } catch {
+      setCatalog([]);
+    }
+  }, [showError, t]);
 
   useEffect(() => {
     void load();
@@ -87,6 +105,30 @@ export function UsersPage() {
     } catch (e) {
       showError(e instanceof Error ? e.message : t('common.error'));
       return false;
+    }
+  };
+
+  const camsSaveGen = useRef<Record<string, number>>({});
+
+  const saveCams = async (id: string, next: string[]) => {
+    const gen = (camsSaveGen.current[id] = (camsSaveGen.current[id] ?? 0) + 1);
+    setDraftCams((prev) => ({ ...prev, [id]: next }));
+    setSavingCams((prev) => ({ ...prev, [id]: true }));
+    try {
+      await usersApi.patch(id, { allowed_cameras: next });
+      if (camsSaveGen.current[id] !== gen) return;
+      setItems((prev) =>
+        prev.map((u) => ((u.id || u.username) === id ? { ...u, allowed_cameras: next } : u)),
+      );
+      showSuccess(t('users.camerasUpdated'));
+    } catch (e) {
+      if (camsSaveGen.current[id] !== gen) return;
+      showError(e instanceof Error ? e.message : t('common.error'));
+      await load();
+    } finally {
+      if (camsSaveGen.current[id] === gen) {
+        setSavingCams((prev) => ({ ...prev, [id]: false }));
+      }
     }
   };
 
@@ -199,6 +241,7 @@ export function UsersPage() {
 
         <div className="users-list">
           <h3 className="users-list-title">{t('users.listSection')}</h3>
+          <p className="hint users-create-hint">{t('users.camerasColumnHint')}</p>
           {!items.length ? (
             <p className="empty">{t('users.empty')}</p>
           ) : (
@@ -209,6 +252,7 @@ export function UsersPage() {
                   <th>{t('users.sourceHeader')}</th>
                   <th>{t('users.roleHeader')}</th>
                   <th>{t('users.statusHeader')}</th>
+                  <th>{t('users.cameras')}</th>
                   <th>{t('users.actions')}</th>
                 </tr>
               </thead>
@@ -220,6 +264,8 @@ export function UsersPage() {
                   const pwVisible = Boolean(showResetPw[id]);
                   const pwValue = resetPw[id] ?? '';
                   const pwBusy = Boolean(savingPw[id]);
+                  const isAdmin = u.role === 'admin';
+                  const selected = draftCams[id] ?? [];
                   return (
                     <tr key={`${u.source}:${id}`}>
                       <td>{u.username}</td>
@@ -245,6 +291,18 @@ export function UsersPage() {
                         )}
                       </td>
                       <td>{statusLabel(u.status)}</td>
+                      <td>
+                        {isAdmin ? (
+                          <span className="hint">{t('users.allCamerasAdmin')}</span>
+                        ) : (
+                          <CameraAclEditor
+                            selected={selected}
+                            catalog={catalog.map((c) => c.source_name)}
+                            saving={Boolean(savingCams[id])}
+                            onChange={(next) => void saveCams(id, next)}
+                          />
+                        )}
+                      </td>
                       <td>
                         <div className="users-row-actions">
                           {canApprove ? (
@@ -282,7 +340,6 @@ export function UsersPage() {
                                   e.preventDefault();
                                   const form = e.currentTarget;
                                   const input = form.elements.namedItem('new-password') as HTMLInputElement | null;
-                                  // Read from DOM so Save works even if React state lagged behind typing/autofill.
                                   const raw = input?.value ?? pwValue;
                                   void saveResetPassword(id, raw);
                                 }}

@@ -50,6 +50,25 @@ def test_deploy_creates_monitor_without_starting_services(tmp_path: Path):
     assert "systemctl" not in result.output.lower() or "not enabled" in result.output.lower()
     unit_text = (monitor / "systemd" / "evileye-watchdog.service").read_text(encoding="utf-8")
     assert "KillMode=process" in unit_text
+    assert not (tmp_path / "certs").exists()
+    assert "service install" in result.output
+
+
+def test_deploy_help_has_no_tls_flags():
+    result = runner.invoke(app, ["deploy", "--help"])
+    assert result.exit_code == 0, result.output
+    assert "--tls-self-signed" not in result.output
+    assert "--no-tls" not in result.output
+
+
+def test_deploy_does_not_call_ensure_service(tmp_path: Path, monkeypatch):
+    from unittest.mock import patch
+
+    monkeypatch.chdir(tmp_path)
+    with patch("evileye.service_manager.ensure_service") as ensure:
+        result = runner.invoke(app, ["deploy"])
+    assert result.exit_code == 0, result.output
+    ensure.assert_not_called()
 
 
 def test_deploy_updates_monitor_scripts_on_rerun(tmp_path: Path):

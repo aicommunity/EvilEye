@@ -9,6 +9,7 @@ export type UserRecord = {
   source: 'credentials' | 'store';
   disabled: boolean;
   created_at?: number | null;
+  allowed_cameras?: string[];
 };
 
 export type PatchUserBody = {
@@ -16,11 +17,22 @@ export type PatchUserBody = {
   disabled?: boolean;
   status?: 'pending' | 'approved' | 'rejected' | 'disabled';
   password?: string;
+  allowed_cameras?: string[];
+};
+
+export type CameraCatalogItem = {
+  source_name: string;
+  source_id?: number | null;
+  source_type?: string | null;
+  run_id?: number | null;
 };
 
 export const usersApi = {
   list(): Promise<{ items: UserRecord[] }> {
     return request('/users');
+  },
+  cameraCatalog(): Promise<{ items: CameraCatalogItem[] }> {
+    return request('/users/camera-catalog');
   },
   create(body: { email: string; password: string; role?: 'user' | 'admin' }): Promise<{
     ok: boolean;

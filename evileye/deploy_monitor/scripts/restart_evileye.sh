@@ -7,7 +7,7 @@ source "$SCRIPT_DIR/common.sh"
 
 REASON="${1:-watchdog_restart}"
 # Require a healthy boot marker before declaring restart success.
-BOOT_OK_PATTERN="${BOOT_OK_PATTERN:-GUI shown|Starting main application loop}"
+BOOT_OK_PATTERN="${BOOT_OK_PATTERN:-GUI shown|Starting main application loop|Controller started in headless mode|Starting controller initialization synchronously \\(headless mode\\)}"
 # How long to wait for boot marker after child appears.
 BOOT_WAIT_SEC="${BOOT_WAIT_SEC:-120}"
 # Extra settle time after marker (or after child) before final liveness check.
@@ -24,6 +24,13 @@ fi
 
 touch "$RESTART_LOCK"
 trap 'rm -f "$RESTART_LOCK"' EXIT
+
+SPAWN_LOCK="$MONITOR_DIR/.spawn.lock"
+exec 200>"$SPAWN_LOCK"
+if ! flock -w 30 200; then
+    log_msg "Restart skipped: could not acquire spawn lock"
+    exit 0
+fi
 
 mark_watchdog_restarting
 log_msg "Starting EvilEye restart (reason=$REASON)"
@@ -45,6 +52,11 @@ done
 
 cleanup_orphan_mp_workers
 
+if [[ -n "$(find_child_pid)" ]]; then
+    log_msg "Child already running after stop (another agent); skip restart"
+    exit 0
+fi
+
 # Cleanup stale MP workers if EvilEye package is importable.
 (
     cd "$DEPLOY_DIR"
@@ -61,12 +73,16 @@ PY
 
 export EVILEYE_SCHEDULER_GPU_SETTLE_SEC="${EVILEYE_SCHEDULER_GPU_SETTLE_SEC:-15}"
 export EVILEYE_CLI_LAUNCHED=1
+export EVILEYE_SITE_DIR="${EVILEYE_SITE_DIR:-$DEPLOY_DIR}"
 
 load_gui_env
 
-if [[ -z "${DISPLAY:-}" ]]; then
-    log_msg "ERROR: DISPLAY is empty; refusing GUI restart"
-    exit 1
+USE_NO_GUI=1
+if [[ "$(profile_gui_default)" == "1" && -n "${DISPLAY:-}" ]]; then
+    USE_NO_GUI=0
+fi
+if [[ "$USE_NO_GUI" -eq 1 ]]; then
+    log_msg "Restarting headless (--no-gui)"
 fi
 
 # Snapshot latest log so we only match markers from the new run.
@@ -81,6 +97,32 @@ cd "$DEPLOY_DIR"
 # Launch outside the watchdog oneshot cgroup when possible (defense in depth for
 # KillMode). Falls back to setsid+nohup.
 launch_evileye() {
+    local port="${EVILEYE_PORT:-8181}"
+    if command -v systemctl >/dev/null 2>&1; then
+        if ! systemctl --user is-active evileye.service >/dev/null 2>&1; then
+            log_msg "Web service inactive; starting evileye.service before pipeline"
+            systemctl --user start evileye.service 2>/dev/null || true
+            sleep 3
+        fi
+    fi
+    if ! curl -sf "http://127.0.0.1:${port}/ready" >/dev/null 2>&1; then
+        log_msg "ERROR: Web UI not ready on :${port}; skip pipeline restart (run: evileye service start)"
+        exit 1
+    fi
+
+    if command -v evileye >/dev/null 2>&1; then
+        local gui_args=(--no-gui)
+        if [[ "$USE_NO_GUI" -eq 0 ]]; then
+            gui_args=(--gui)
+        fi
+        (
+            cd "$DEPLOY_DIR"
+            evileye pipeline start "$CONFIG_NAME" --release "${gui_args[@]}"
+        ) >>"$MONITOR_DIR/watchdog_stdout.log" 2>&1 &
+        echo $!
+        return
+    fi
+
     local run_cmd
     run_cmd=(env
         "DISPLAY=${DISPLAY:-}"
@@ -90,6 +132,13 @@ launch_evileye() {
         "EVILEYE_CLI_LAUNCHED=1"
         evileye run "$CONFIG_NAME"
     )
+    if [[ "$USE_NO_GUI" -eq 1 ]]; then
+        run_cmd=(env
+            "EVILEYE_SCHEDULER_GPU_SETTLE_SEC=${EVILEYE_SCHEDULER_GPU_SETTLE_SEC}"
+            "EVILEYE_CLI_LAUNCHED=1"
+            evileye run "$CONFIG_NAME" --no-gui
+        )
+    fi
 
     if command -v systemd-run >/dev/null 2>&1; then
         # Transient scope survives watchdog oneshot exit even if KillMode regresses.
@@ -103,7 +152,8 @@ launch_evileye() {
             --setenv="DBUS_SESSION_BUS_ADDRESS=${DBUS_SESSION_BUS_ADDRESS:-}" \
             --setenv="EVILEYE_SCHEDULER_GPU_SETTLE_SEC=${EVILEYE_SCHEDULER_GPU_SETTLE_SEC}" \
             --setenv="EVILEYE_CLI_LAUNCHED=1" \
-            bash -c 'exec evileye run "$0" >>"$1" 2>&1' "$CONFIG_NAME" "$MONITOR_DIR/watchdog_stdout.log" &
+            bash -c 'if [[ "$2" == 1 ]]; then exec evileye run "$0" --no-gui >>"$1" 2>&1; else exec evileye run "$0" >>"$1" 2>&1; fi' \
+            "$CONFIG_NAME" "$MONITOR_DIR/watchdog_stdout.log" "$USE_NO_GUI" &
         echo $!
         return
     fi
