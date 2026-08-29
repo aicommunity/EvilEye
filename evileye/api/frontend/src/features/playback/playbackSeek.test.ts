@@ -50,13 +50,18 @@ describe('resolveUserSeekTarget', () => {
     ],
   };
 
-  it('keeps target inside playable union', () => {
-    expect(resolveUserSeekTarget(150, segmentsByCam)).toBe(150);
+  it('keeps target inside playable union in playable mode', () => {
+    expect(resolveUserSeekTarget(150, segmentsByCam, 'playable')).toBe(150);
   });
 
-  it('snaps gap seek to nearest playable', () => {
-    expect(resolveUserSeekTarget(250, segmentsByCam)).toBeGreaterThanOrEqual(199);
-    expect(resolveUserSeekTarget(250, segmentsByCam)).toBeLessThanOrEqual(200);
-    expect(resolveUserSeekTarget(50, segmentsByCam)).toBe(100);
+  it('does not snap gap seek in marker mode', () => {
+    expect(resolveUserSeekTarget(250, segmentsByCam, 'marker')).toBe(250);
+    expect(resolveUserSeekTarget(50, segmentsByCam, 'marker')).toBe(50);
+  });
+
+  it('snaps gap seek to nearest playable in playable mode', () => {
+    expect(resolveUserSeekTarget(250, segmentsByCam, 'playable')).toBeGreaterThanOrEqual(199);
+    expect(resolveUserSeekTarget(250, segmentsByCam, 'playable')).toBeLessThanOrEqual(200);
+    expect(resolveUserSeekTarget(50, segmentsByCam, 'playable')).toBe(100);
   });
 });

@@ -14,10 +14,12 @@ import {
   usePlaybackCameraSlot,
 } from './PlaybackCameraView';
 import { SplitPlaybackCell } from './SplitPlaybackCell';
+import { useStaticFrameForCamera } from './useStaticFrameForCamera';
 
 export function ExpandedPlaybackView({
   cameraId,
   camera,
+  date,
   segments,
   getPosition,
   positionSec,
@@ -39,6 +41,7 @@ export function ExpandedPlaybackView({
 }: {
   cameraId: string;
   camera?: PlaybackCamera;
+  date: string;
   segments: PlaybackSegment[];
   getPosition: () => number;
   positionSec: number;
@@ -90,6 +93,15 @@ export function ExpandedPlaybackView({
     globalDetectionTs,
     eventIntervals,
     detectionsReady,
+  });
+
+  const staticFrame = useStaticFrameForCamera({
+    cameraId,
+    positionSec,
+    segments,
+    detections: detectionItems,
+    events: eventIntervals,
+    enabled: !slot?.url,
   });
 
   useEffect(() => {
@@ -181,6 +193,12 @@ export function ExpandedPlaybackView({
             inPlayableGap={inPlayableGap}
             anyCameraPlayableAtPosition={anyCameraPlayableAtPosition}
             onSeekNearestPlayable={onSeekNearestPlayable}
+            staticFrame={staticFrame}
+            date={date}
+            detectionItems={detectionItems}
+            cameraId={cameraId}
+            runId={runId}
+            sourceId={camera?.source_id}
           />
         )}
       </div>

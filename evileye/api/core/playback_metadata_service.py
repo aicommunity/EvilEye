@@ -257,11 +257,18 @@ def _index_cache_valid(cached_mtime: float, cached_at: float, json_mtime: float,
 
 
 def _tick_only_item(item: dict[str, Any]) -> dict[str, Any]:
-    return {
+    out: dict[str, Any] = {
         "ts": item["ts"],
         "kind": item.get("kind"),
         "object_id": item.get("object_id"),
     }
+    preview_path = item.get("preview_path")
+    if preview_path:
+        out["preview_path"] = preview_path
+    bbox = item.get("bounding_box")
+    if bbox:
+        out["bounding_box"] = bbox
+    return out
 
 
 def _filter_index_window(
@@ -321,6 +328,11 @@ def _detection_index_item(
     event_ts = _detection_event_ts(raw, kind, camera=camera, date_folder=date_folder)
     if not event_ts:
         return None
+    preview_path = (
+        raw.get("image_filename")
+        or raw.get("preview_path")
+        or ""
+    )
     return {
         "ts": event_ts.timestamp(),
         "kind": kind,
@@ -334,6 +346,7 @@ def _detection_index_item(
         "class_id": raw.get("class_id"),
         "track_id": raw.get("track_id"),
         "global_id": raw.get("global_id"),
+        "preview_path": preview_path,
     }
 
 
@@ -463,6 +476,41 @@ def load_detection_index(
     return _filter_index_window(items, from_ts, to_ts, ticks_only=ticks_only)
 
 
+def _enrich_detection_ticks(
+    ticks_by_camera: dict[str, list[dict[str, Any]]],
+    full_by_camera: dict[str, list[dict[str, Any]]],
+) -> dict[str, list[dict[str, Any]]]:
+    """Merge preview_path / bounding_box from full index into compact tick rows."""
+    out: dict[str, list[dict[str, Any]]] = {}
+    for cam, rows in ticks_by_camera.items():
+        lookup: dict[tuple[float, Any, Any], dict[str, Any]] = {}
+        for it in full_by_camera.get(cam) or []:
+            if not it.get("ts"):
+                continue
+            key = (float(it["ts"]), it.get("kind"), it.get("object_id"))
+            lookup[key] = it
+        enriched: list[dict[str, Any]] = []
+        for row in rows:
+            if row.get("preview_path"):
+                enriched.append(row)
+                continue
+            key = (float(row["ts"]), row.get("kind"), row.get("object_id"))
+            full_item = lookup.get(key)
+            if not full_item:
+                enriched.append(row)
+                continue
+            merged = dict(row)
+            preview = full_item.get("preview_path") or ""
+            if preview:
+                merged["preview_path"] = preview
+            bbox = full_item.get("bounding_box")
+            if bbox:
+                merged["bounding_box"] = bbox
+            enriched.append(merged)
+        out[cam] = enriched
+    return out
+
+
 def load_detection_index_batch(
     *,
     cameras: list[str],
@@ -484,6 +532,16 @@ def load_detection_index_batch(
                 cameras=cam_list,
                 run_id=run_id,
             )
+            params = _load_params_for_run(run_id)
+            base = _playback_data_dir(params)
+            full_by_camera = _load_day_index_by_camera(
+                base=base,
+                date_folder=date_folder,
+                run_id=run_id,
+                params=params,
+                cameras=cam_list,
+            )
+            by_ticks = _enrich_detection_ticks(by_ticks, full_by_camera)
             out: dict[str, list[dict[str, Any]]] = {}
             for cam in cam_list:
                 rows = by_ticks.get(cam) or []

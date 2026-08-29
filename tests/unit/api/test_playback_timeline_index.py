@@ -32,6 +32,27 @@ def test_tick_row_to_item_accepts_compact_triples():
     assert item["object_id"] == 44
 
 
+def test_tick_row_to_item_accepts_preview_and_bbox():
+    item = idx._tick_row_to_item([12.5, "found", 44, "preview.jpg", {"x": 1, "y": 2, "width": 3, "height": 4}])
+    assert item["preview_path"] == "preview.jpg"
+    assert item["bounding_box"]["width"] == 3
+
+
+def test_compact_tick_row_roundtrip():
+    row = idx._compact_tick_row(
+        {
+            "ts": 12.5,
+            "kind": "found",
+            "object_id": 44,
+            "preview_path": "p.jpg",
+            "bounding_box": {"x": 1, "y": 2, "width": 3, "height": 4},
+        }
+    )
+    item = idx._tick_row_to_item(row)
+    assert item["preview_path"] == "p.jpg"
+    assert item["bounding_box"]["height"] == 4
+
+
 def test_segment_index_roundtrip(tmp_path, monkeypatch):
     date = "2026-08-17"
     streams = tmp_path / "Streams" / date / "Cam1"
@@ -63,7 +84,7 @@ def test_segment_index_roundtrip(tmp_path, monkeypatch):
     path = idx.segment_index_path(tmp_path / "Streams" / date)
     assert path.is_file()
     raw = json.loads(path.read_text(encoding="utf-8"))
-    assert raw["version"] == 1
+    assert raw["version"] == idx.INDEX_VERSION
     by2 = idx.ensure_segment_index(date_folder=date, cameras=["Cam1"])
     assert by2["Cam1"][0]["end_ts"] == 200.0
 

@@ -21,6 +21,7 @@ def events_data(tmp_path, monkeypatch):
                     "event_name": "ZoneA",
                     "zone_name": "ZoneA",
                     "zone_id": "zone-a",
+                    "preview_path": "zone_enter_preview.jpg",
                 }
             ]
         ),
@@ -56,6 +57,7 @@ def test_load_event_intervals_pairs_enter_and_left(events_data):
     end = datetime(2026, 8, 19, 12, 0, 4).timestamp()
     assert abs(interval["start_ts"] - start) < 0.001
     assert abs(interval["end_ts"] - end) < 0.001
+    assert interval["preview_path"] == "zone_enter_preview.jpg"
 
 
 def test_load_event_intervals_filters_by_camera(events_data):

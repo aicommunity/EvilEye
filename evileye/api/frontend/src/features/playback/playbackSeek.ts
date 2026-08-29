@@ -31,7 +31,7 @@ export function applyPostLoadSnapIfNeeded(
     merge?: boolean;
     initialT: number | null;
     getPosition: () => number;
-    seek: (sec: number) => void;
+    seek: (sec: number, seekOpts?: SeekOptions) => void;
     guard: UserSeekGuard;
   },
 ): void {
@@ -39,15 +39,26 @@ export function applyPostLoadSnapIfNeeded(
   if (!opts.guard.shouldApplyPostLoadSnap(opts.initialT)) return;
   const target = opts.initialT != null ? opts.initialT : opts.getPosition();
   const snapped = snapUnionPositionToPlayable(segmentsByCam, target);
-  if (Math.abs(snapped - opts.getPosition()) > 0.5) opts.seek(snapped);
+  if (Math.abs(snapped - opts.getPosition()) > 0.5) {
+    opts.seek(snapped, { mode: 'playable', pauseIfNoVideo: false });
+  }
 }
 
-/** User seek: snap into playable union when the target sits in a gap. */
+export type SeekMode = 'marker' | 'playable';
+
+export type SeekOptions = {
+  mode?: SeekMode;
+  pauseIfNoVideo?: boolean;
+};
+
+/** User seek: marker mode keeps gap position; playable mode snaps to MP4 union. */
 export function resolveUserSeekTarget(
   sec: number,
   segmentsByCam?: Record<string, PlaybackSegment[]>,
+  mode: SeekMode = 'marker',
 ): number {
   if (!segmentsByCam || !Object.keys(segmentsByCam).length) return sec;
+  if (mode === 'marker') return sec;
   if (hasAnyPlayableAtPosition(segmentsByCam, sec)) return sec;
   return snapUnionPositionToPlayable(segmentsByCam, sec);
 }

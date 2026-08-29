@@ -12,6 +12,7 @@ import {
   dayViewSpanSec,
   dayViewUpperBound,
   defaultTimelineView,
+  ensureViewContainsTimestamp,
   hasAnyPlayableAtPosition,
   intersectPlayableCoverage,
   intervalsExtent,
@@ -215,6 +216,24 @@ describe('clipRangeToView', () => {
   });
 });
 
+describe('ensureViewContainsTimestamp', () => {
+  const date = '2026-08-17';
+  const { start } = dayBoundsLocal(date);
+
+  it('pans when target is outside the visible window', () => {
+    const out = ensureViewContainsTimestamp(start + 10_000, start + 12_000, start + 20_000, date);
+    expect(out.changed).toBe(true);
+    expect(out.viewFrom).toBeLessThan(start + 20_000);
+    expect(out.viewTo).toBeGreaterThan(start + 20_000);
+  });
+
+  it('keeps view when target is already visible', () => {
+    const out = ensureViewContainsTimestamp(start + 3600, start + 7200, start + 5000, date);
+    expect(out.changed).toBe(false);
+    expect(out.viewFrom).toBe(start + 3600);
+  });
+});
+
 describe('snapTimelineSeek', () => {
   it('does not snap on a day-long view even when a tick is nearby', () => {
     const dayFrom = 0;
@@ -357,13 +376,13 @@ describe('playable union coverage', () => {
     expect(nextPlayableStart(byCam, 250)).toBe(300);
   });
 
-  it('snapTimelineSeek avoids detection snap into gap when segments provided', () => {
+  it('snapTimelineSeek snaps gap click to nearest marker when segments provided', () => {
     const byCam = {
       Cam1: [{ path: 'a.mp4', start_ts: 100, end_ts: 200, duration_ms: 100_000, playable: true }],
     };
     const detectionTs = [250];
-    const snapped = snapTimelineSeek(248, detectionTs, 100, 400, 500, byCam);
-    expect(snapped).toBeLessThanOrEqual(200);
+    const snapped = snapTimelineSeek(248, detectionTs, 100, 400, 500, byCam, []);
+    expect(snapped).toBe(250);
   });
 });
 

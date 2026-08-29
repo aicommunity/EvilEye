@@ -23,6 +23,8 @@ import { drainVideoElement, reloadVideoMedia } from './drainVideo';
 import { seekPlaybackVideo, shouldEmitPlaybackClock, isPastDecodedEof, seekingAgeMs, SEEKING_STUCK_MS, resetPlaybackClockOwner } from './playbackVideoSync';
 import { usePlaybackMetadata } from './usePlaybackMetadata';
 import { usePlaybackStaticMetadata } from './usePlaybackStaticMetadata';
+import { PlaybackStaticFrame } from './PlaybackStaticFrame';
+import type { StaticFrameSource } from './markerNavigation';
 import { isPositionInRecordingSegment, pickContainingPlayableSegment, isPlayableSegment, isPositionInPlayableGap } from './timelineMath';
 
 const PLAYBACK_EVENT_ZONE_PAD_SEC = 1.5;
@@ -591,6 +593,12 @@ export function PlaybackVideoSurface({
   inPlayableGap = false,
   anyCameraPlayableAtPosition = false,
   onSeekNearestPlayable,
+  staticFrame = null,
+  date = '',
+  detectionItems = [],
+  cameraId = '',
+  runId = null,
+  sourceId,
 }: {
   videoRef: RefObject<HTMLVideoElement | null>;
   preloadRef: RefObject<HTMLVideoElement | null>;
@@ -616,6 +624,12 @@ export function PlaybackVideoSurface({
   inPlayableGap?: boolean;
   anyCameraPlayableAtPosition?: boolean;
   onSeekNearestPlayable?: () => void;
+  staticFrame?: StaticFrameSource | null;
+  date?: string;
+  detectionItems?: PlaybackDetectionItem[];
+  cameraId?: string;
+  runId?: number | null;
+  sourceId?: number | null;
 }) {
   const { t } = useI18n();
   const [seeking, setSeeking] = useState(false);
@@ -703,6 +717,18 @@ export function PlaybackVideoSurface({
             hasObjects={(meta?.objects?.length ?? 0) > 0}
           />
         </>
+      ) : staticFrame?.previewPath ? (
+        <PlaybackStaticFrame
+          frame={staticFrame}
+          date={date}
+          showMetadata={showMetadata}
+          cameraLabel={cameraLabel}
+          detectionItems={detectionItems}
+          cameraId={cameraId || cameraLabel}
+          runId={runId}
+          sourceId={sourceId}
+          expanded={expanded}
+        />
       ) : (
         <div className={`${previewClass} camera-preview-empty`}>
           <span>{emptyMessage}</span>
@@ -716,7 +742,7 @@ export function PlaybackVideoSurface({
       {recordingInProgress && slot?.url ? (
         <div className="playback-recording-banner">{t('playback.recordingInProgress')}</div>
       ) : null}
-      {!showMetadata ? <div className="live-overlay-source">{cameraLabel}</div> : null}
+      {!showMetadata && slot?.url ? <div className="live-overlay-source">{cameraLabel}</div> : null}
       {onExpand ? (
         <div className="camera-card-overlay-actions">
           <button

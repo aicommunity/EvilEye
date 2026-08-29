@@ -221,6 +221,8 @@ export interface PlaybackEventInterval {
   zone_id?: string | null;
   zone_name?: string | null;
   raw_id?: string | number | null;
+  preview_path?: string | null;
+  preview_mode?: 'found' | 'lost';
 }
 
 export interface PlaybackEventsResponse {
@@ -241,6 +243,7 @@ export interface PlaybackDetectionItem {
   class_id?: number | null;
   track_id?: number | null;
   global_id?: number | null;
+  preview_path?: string | null;
 }
 
 export type PlaybackPlayMode = 'normal' | 'detection-sync';

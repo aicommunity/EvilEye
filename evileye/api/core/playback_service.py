@@ -1174,6 +1174,12 @@ def _iter_event_rows(
                     continue
                 source_name = _resolve_event_camera_name(raw, id_to_name)
                 zone_id, zone_name = _event_zone(raw)
+                preview_path = (
+                    raw.get("preview_path")
+                    or raw.get("preview_path_found")
+                    or raw.get("image_filename")
+                    or ""
+                )
                 rows.append(
                     {
                         "ts": ts,
@@ -1184,6 +1190,7 @@ def _iter_event_rows(
                         "zone_id": zone_id,
                         "zone_name": zone_name,
                         "raw_id": raw.get("id") or raw.get("event_id"),
+                        "preview_path": preview_path,
                     }
                 )
     rows.sort(key=lambda r: float(r["ts"]))
@@ -1234,6 +1241,7 @@ def load_event_intervals(
                     "zone_id": start_row.get("zone_id"),
                     "zone_name": start_row.get("zone_name"),
                     "raw_id": start_row.get("raw_id"),
+                    "preview_path": start_row.get("preview_path") or "",
                 }
             )
             continue
@@ -1249,6 +1257,7 @@ def load_event_intervals(
                 "zone_id": row.get("zone_id"),
                 "zone_name": row.get("zone_name"),
                 "raw_id": row.get("raw_id"),
+                "preview_path": row.get("preview_path") or "",
             }
         )
     for start_row in pending.values():
@@ -1264,6 +1273,7 @@ def load_event_intervals(
                 "zone_id": start_row.get("zone_id"),
                 "zone_name": start_row.get("zone_name"),
                 "raw_id": start_row.get("raw_id"),
+                "preview_path": start_row.get("preview_path") or "",
             }
         )
     if from_ts is not None:

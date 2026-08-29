@@ -25,7 +25,17 @@ import {
 } from './playbackDebug';
 import { usePlaybackController } from './usePlaybackController';
 import { usePlaybackSeek } from './usePlaybackSeek';
-import { applyPostLoadSnapIfNeeded, createUserSeekGuard, type UserSeekGuard } from './playbackSeek';
+import {
+  applyPostLoadSnapIfNeeded,
+  createUserSeekGuard,
+  type UserSeekGuard,
+} from './playbackSeek';
+import { prevDetectionTs, nextDetectionTs } from './detectionSync';
+import {
+  globalEventStartTs,
+  nextEventTs,
+  prevEventTs,
+} from './markerNavigation';
 import { useDetectionIndex } from './useDetectionIndex';
 import { usePlaybackLayout } from './usePlaybackLayout';
 import { useTimelineViewport } from './useTimelineViewport';
@@ -669,7 +679,7 @@ export function PlaybackPage() {
   const seekNearestPlayable = useCallback(() => {
     const pos = ctrl.getPosition();
     const snapped = snapUnionPositionToPlayable(segmentsByCam, pos);
-    if (Math.abs(snapped - pos) > 0.5) seek(snapped);
+    if (Math.abs(snapped - pos) > 0.5) seek(snapped, { mode: 'playable', pauseIfNoVideo: false });
   }, [ctrl, segmentsByCam, seek]);
 
   useEffect(() => {
@@ -774,6 +784,40 @@ export function PlaybackPage() {
     }
     return out;
   }, [eventIntervals, selectedIds]);
+  const globalEventStartTsList = useMemo(
+    () => globalEventStartTs(timelineEventIntervals, selectedIds),
+    [timelineEventIntervals, selectedIds],
+  );
+
+  const seekToDetection = useCallback(
+    (direction: -1 | 1) => {
+      const pos = ctrl.getPosition();
+      const ts =
+        direction < 0
+          ? prevDetectionTs(detectionIndex.globalTs, pos)
+          : nextDetectionTs(detectionIndex.globalTs, pos);
+      if (ts != null) seek(ts, { mode: 'marker' });
+    },
+    [ctrl, detectionIndex.globalTs, seek],
+  );
+
+  const seekToEvent = useCallback(
+    (direction: -1 | 1) => {
+      const pos = ctrl.getPosition();
+      const ts =
+        direction < 0
+          ? prevEventTs(globalEventStartTsList, pos)
+          : nextEventTs(globalEventStartTsList, pos);
+      if (ts != null) seek(ts, { mode: 'marker' });
+    },
+    [ctrl, globalEventStartTsList, seek],
+  );
+
+  const prevDetectionAvailable = prevDetectionTs(detectionIndex.globalTs, ctrl.positionSec) != null;
+  const nextDetectionAvailable = nextDetectionTs(detectionIndex.globalTs, ctrl.positionSec) != null;
+  const prevEventAvailable = prevEventTs(globalEventStartTsList, ctrl.positionSec) != null;
+  const nextEventAvailable = nextEventTs(globalEventStartTsList, ctrl.positionSec) != null;
+
   const effectiveCols = mode === 'fit' ? fitColsForCount(selectedIds.length) : cols;
   useEffect(() => {
     if (!segmentsLoaded || viewport.viewFrom == null || viewport.viewTo == null) return;
@@ -844,6 +888,42 @@ export function PlaybackPage() {
                   {s}x
                 </Button>
               ))}
+              <Button
+                size="sm"
+                variant="outline"
+                disabled={!prevDetectionAvailable}
+                onClick={() => seekToDetection(-1)}
+                title={t('playback.prevDetection')}
+              >
+                ◀ {t('playback.prevDetection')}
+              </Button>
+              <Button
+                size="sm"
+                variant="outline"
+                disabled={!nextDetectionAvailable}
+                onClick={() => seekToDetection(1)}
+                title={t('playback.nextDetection')}
+              >
+                {t('playback.nextDetection')} ▶
+              </Button>
+              <Button
+                size="sm"
+                variant="outline"
+                disabled={!prevEventAvailable}
+                onClick={() => seekToEvent(-1)}
+                title={t('playback.prevEvent')}
+              >
+                ◀ {t('playback.prevEvent')}
+              </Button>
+              <Button
+                size="sm"
+                variant="outline"
+                disabled={!nextEventAvailable}
+                onClick={() => seekToEvent(1)}
+                title={t('playback.nextEvent')}
+              >
+                {t('playback.nextEvent')} ▶
+              </Button>
             </div>
             <label className="checkbox-label playback-metadata-toggle">
               <input
@@ -875,6 +955,7 @@ export function PlaybackPage() {
             <ExpandedPlaybackView
               cameraId={expandedCamera.id}
               camera={expandedCamera}
+              date={date}
               segments={segmentsByCam[expandedCamera.id] ?? []}
               getPosition={ctrl.getPosition}
               positionSec={ctrl.positionSec}
@@ -920,6 +1001,7 @@ export function PlaybackPage() {
               cameraDefs={cameraDefs}
               cols={effectiveCols}
               mode={mode}
+              date={date}
               segmentsByCam={segmentsByCam}
               getPosition={ctrl.getPosition}
               positionSec={ctrl.positionSec}
@@ -956,6 +1038,7 @@ export function PlaybackPage() {
             segmentsByCamera={segmentsByCam}
             selectedCameraCount={selectedIds.length}
             detectionTs={detectionIndex.globalTs}
+            eventStartTs={globalEventStartTsList}
             eventIntervals={timelineEventIntervals}
             onSeek={seek}
             onViewChange={onViewChange}

@@ -12,7 +12,7 @@ function detectionsCacheKey(
   toSec: number,
   cameras: string[],
 ): string {
-  return `playback:detections:${date}:${runId ?? 'none'}:${Math.round(fromSec)}:${Math.round(toSec)}:ticks:${cameras.join(',')}`;
+  return `playback:detections:${date}:${runId ?? 'none'}:${Math.round(fromSec)}:${Math.round(toSec)}:ticks-preview-v2:${cameras.join(',')}`;
 }
 
 /** Merge detection tick rows per camera (ts/kind/object_id). */
@@ -75,8 +75,7 @@ async function fetchDetectionTicks(
 }
 
 /**
- * Archive detection index: ticks only (timeline markers + skip).
- * Object bboxes are not drawn in archive — do not fetch full journal scans.
+ * Archive detection index: ticks with optional preview_path / bounding_box for gap static frames.
  */
 export function useDetectionIndex({
   cameras,

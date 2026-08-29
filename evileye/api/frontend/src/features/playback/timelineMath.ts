@@ -154,6 +154,42 @@ export function panViewWithinDay(
   return clampViewToDayBounds(shifted.viewFrom, shifted.viewTo, dateStr, nowSec);
 }
 
+/** Keep playhead visible: pan the window when target falls outside the current span. */
+export function ensureViewContainsTimestamp(
+  viewFrom: number,
+  viewTo: number,
+  targetSec: number,
+  dateStr: string,
+  marginSec = 30,
+): { viewFrom: number; viewTo: number; changed: boolean } {
+  const span = viewTo - viewFrom;
+  if (!(span > 0) || !Number.isFinite(targetSec)) {
+    return { viewFrom, viewTo, changed: false };
+  }
+  if (targetSec >= viewFrom + marginSec && targetSec <= viewTo - marginSec) {
+    return { viewFrom, viewTo, changed: false };
+  }
+  const { start } = dayBoundsLocal(dateStr);
+  const upper = dayViewUpperBound(dateStr);
+  const half = span / 2;
+  let nextFrom = targetSec - half;
+  let nextTo = targetSec + half;
+  if (nextFrom < start) {
+    nextFrom = start;
+    nextTo = Math.min(upper, start + span);
+  }
+  if (nextTo > upper) {
+    nextTo = upper;
+    nextFrom = Math.max(start, upper - span);
+  }
+  const clamped = clampViewToDayBounds(nextFrom, nextTo, dateStr);
+  return {
+    viewFrom: clamped.viewFrom,
+    viewTo: clamped.viewTo,
+    changed: clamped.viewFrom !== viewFrom || clamped.viewTo !== viewTo,
+  };
+}
+
 export function unixAtClientX(
   clientX: number,
   rect: { left: number; width: number },
@@ -196,6 +232,31 @@ export function snapUnixToDetections(
   return unix;
 }
 
+export function nearestMarkerTs(
+  positionSec: number,
+  detectionTs: number[],
+  eventStartTs: number[],
+): number | null {
+  if (!Number.isFinite(positionSec)) return null;
+  type Candidate = { ts: number; kind: 'detection' | 'event' };
+  const candidates: Candidate[] = [];
+  for (const ts of detectionTs) {
+    if (Number.isFinite(ts)) candidates.push({ ts, kind: 'detection' });
+  }
+  for (const ts of eventStartTs) {
+    if (Number.isFinite(ts)) candidates.push({ ts, kind: 'event' });
+  }
+  if (!candidates.length) return null;
+  candidates.sort((a, b) => {
+    const da = Math.abs(a.ts - positionSec);
+    const db = Math.abs(b.ts - positionSec);
+    if (da !== db) return da - db;
+    if (a.kind !== b.kind) return a.kind === 'detection' ? -1 : 1;
+    return a.ts - b.ts;
+  });
+  return candidates[0]?.ts ?? null;
+}
+
 export function snapTimelineSeek(
   unix: number,
   detectionTs: number[],
@@ -203,6 +264,7 @@ export function snapTimelineSeek(
   viewTo: number,
   widthPx: number,
   segmentsByCam?: Record<string, PlaybackSegment[]>,
+  eventStartTs: number[] = [],
 ): number {
   let target = unix;
   if (viewTo - viewFrom < DETECTION_SNAP_VIEW_SPAN_SEC) {
@@ -210,7 +272,8 @@ export function snapTimelineSeek(
   }
   if (segmentsByCam && Object.keys(segmentsByCam).length) {
     if (!hasAnyPlayableAtPosition(segmentsByCam, target)) {
-      return snapUnionPositionToPlayable(segmentsByCam, target);
+      const markerTs = nearestMarkerTs(target, detectionTs, eventStartTs);
+      if (markerTs != null) return markerTs;
     }
   }
   return target;

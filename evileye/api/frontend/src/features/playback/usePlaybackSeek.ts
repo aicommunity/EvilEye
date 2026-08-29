@@ -4,6 +4,7 @@ import {
   dayBoundsLocal,
   dayViewSpanSec,
   dayViewUpperBound,
+  ensureViewContainsTimestamp,
   localDateString,
 } from './timelineMath';
 import {
@@ -14,8 +15,10 @@ import {
   createUserSeekGuard,
   resolveUserSeekTarget,
   SEEK_SETTLE_HOLD_MS,
+  type SeekOptions,
   type UserSeekGuard,
 } from './playbackSeek';
+import { hasAnyPlayableAtPosition } from './timelineMath';
 import type { usePlaybackController } from './usePlaybackController';
 import type { useTimelineViewport } from './useTimelineViewport';
 
@@ -55,8 +58,9 @@ export function usePlaybackSeek(opts: {
   const [userSeeking, setUserSeeking] = useState(false);
 
   const seek = useCallback(
-    (sec: number) => {
-      const target = resolveUserSeekTarget(sec, segmentsByCamRef.current);
+    (sec: number, opts?: SeekOptions) => {
+      const wasPlaying = ctrl.playing;
+      const target = resolveUserSeekTarget(sec, segmentsByCamRef.current, opts?.mode ?? 'marker');
       const nextDate = localDateString(target);
       if (nextDate !== date) {
         dateChangeSourceRef.current = 'seek';
@@ -70,10 +74,28 @@ export function usePlaybackSeek(opts: {
         setDate(nextDate);
         const span = Math.min(dayViewSpanSec(nextDate), INITIAL_WINDOW_SEC);
         viewport.setView(Math.max(start, target - span / 2), Math.min(upper, target + span / 2), nextDate);
+      } else if (viewport.viewFrom != null && viewport.viewTo != null) {
+        const nextView = ensureViewContainsTimestamp(
+          viewport.viewFrom,
+          viewport.viewTo,
+          target,
+          date,
+        );
+        if (nextView.changed) {
+          viewport.setView(nextView.viewFrom, nextView.viewTo, date);
+        }
       }
       userSeekGuardRef.current.markUserSeek();
       ctrl.beginUserSeek(target);
       ctrl.seek(target);
+      const pauseIfNoVideo = opts?.pauseIfNoVideo !== false;
+      if (
+        wasPlaying &&
+        pauseIfNoVideo &&
+        !hasAnyPlayableAtPosition(segmentsByCamRef.current, target)
+      ) {
+        ctrl.setPlaying(false);
+      }
       setUserSeeking(true);
       setHoldVideoClock(true);
       ctrl.setScrubbing(true);

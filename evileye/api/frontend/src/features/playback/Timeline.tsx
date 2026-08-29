@@ -38,6 +38,7 @@ export function Timeline({
   segmentsByCamera,
   selectedCameraCount = 0,
   detectionTs = [],
+  eventStartTs = [],
   eventIntervals = [],
   onSeek,
   onViewChange,
@@ -52,6 +53,7 @@ export function Timeline({
   segmentsByCamera?: Record<string, PlaybackSegment[]>;
   selectedCameraCount?: number;
   detectionTs?: number[];
+  eventStartTs?: number[];
   eventIntervals?: PlaybackEventInterval[];
   onSeek: (sec: number) => void;
   onViewChange: (viewFrom: number, viewTo: number) => void;
@@ -188,7 +190,7 @@ export function Timeline({
     if (!el) return;
     const rect = el.getBoundingClientRect();
     const raw = unixAtClientX(clientX, rect, displayFrom, displayTo);
-    onSeek(snapTimelineSeek(raw, detectionTs, displayFrom, displayTo, rect.width, segmentsByCamera));
+    onSeek(snapTimelineSeek(raw, detectionTs, displayFrom, displayTo, rect.width, segmentsByCamera, eventStartTs));
   };
 
   const updateHover = (clientX: number) => {

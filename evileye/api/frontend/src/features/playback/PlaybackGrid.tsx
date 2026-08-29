@@ -14,11 +14,13 @@ import {
   usePlaybackCameraSlot,
 } from './PlaybackCameraView';
 import { SplitPlaybackCell } from './SplitPlaybackCell';
+import { useStaticFrameForCamera } from './useStaticFrameForCamera';
 
 export function PlaybackGrid({
   cameras,
   cameraDefs,
   cols,
+  date,
   segmentsByCam,
   getPosition,
   positionSec,
@@ -43,6 +45,7 @@ export function PlaybackGrid({
   cameras: string[];
   cameraDefs: Record<string, PlaybackCamera>;
   cols: number;
+  date: string;
   segmentsByCam: Record<string, PlaybackSegment[]>;
   getPosition: () => number;
   positionSec: number;
@@ -76,6 +79,7 @@ export function PlaybackGrid({
         <PlaybackCell
           key={id}
           id={id}
+          date={date}
           camera={cameraDefs[id]}
           segments={segmentsByCam[id] ?? []}
           getPosition={getPosition}
@@ -104,6 +108,7 @@ export function PlaybackGrid({
 
 function PlaybackCell({
   id,
+  date,
   camera,
   segments,
   getPosition,
@@ -126,6 +131,7 @@ function PlaybackCell({
   onSeekNearestPlayable,
 }: {
   id: string;
+  date: string;
   camera?: PlaybackCamera;
   segments: PlaybackSegment[];
   getPosition: () => number;
@@ -194,6 +200,7 @@ function PlaybackCell({
   return (
     <NormalPlaybackCell
       id={id}
+      date={date}
       camera={camera}
       mediaRef={mediaRef}
       videoRef={ref}
@@ -219,6 +226,7 @@ function PlaybackCell({
       globalDetectionTs={globalDetectionTs}
       eventIntervals={eventIntervals}
       onExpand={onExpand}
+      segments={segments}
       segmentsLoading={segmentsLoading}
       detectionsReady={detectionsReady}
       recordingInProgress={recordingInProgress}
@@ -231,6 +239,7 @@ function PlaybackCell({
 
 function NormalPlaybackCell({
   id,
+  date,
   camera,
   mediaRef,
   videoRef,
@@ -256,6 +265,7 @@ function NormalPlaybackCell({
   globalDetectionTs,
   eventIntervals,
   onExpand,
+  segments,
   segmentsLoading = false,
   detectionsReady = true,
   recordingInProgress = false,
@@ -264,6 +274,7 @@ function NormalPlaybackCell({
   onSeekNearestPlayable,
 }: {
   id: string;
+  date: string;
   camera?: PlaybackCamera;
   mediaRef: RefObject<HTMLDivElement>;
   videoRef: RefObject<HTMLVideoElement | null>;
@@ -289,6 +300,7 @@ function NormalPlaybackCell({
   globalDetectionTs: number[];
   eventIntervals: PlaybackEventInterval[];
   onExpand: () => void;
+  segments: PlaybackSegment[];
   segmentsLoading?: boolean;
   detectionsReady?: boolean;
   recordingInProgress?: boolean;
@@ -312,6 +324,15 @@ function NormalPlaybackCell({
     globalDetectionTs,
     eventIntervals,
     detectionsReady,
+  });
+
+  const staticFrame = useStaticFrameForCamera({
+    cameraId: id,
+    positionSec,
+    segments,
+    detections: detectionItems,
+    events: eventIntervals,
+    enabled: !slot?.url,
   });
 
   return (
@@ -344,6 +365,12 @@ function NormalPlaybackCell({
           inPlayableGap={inPlayableGap}
           anyCameraPlayableAtPosition={anyCameraPlayableAtPosition}
           onSeekNearestPlayable={onSeekNearestPlayable}
+          staticFrame={staticFrame}
+          date={date}
+          detectionItems={detectionItems}
+          cameraId={id}
+          runId={runId}
+          sourceId={camera?.source_id}
         />
       </div>
     </article>

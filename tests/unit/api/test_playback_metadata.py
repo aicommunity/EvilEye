@@ -831,6 +831,24 @@ def test_database_mode_falls_back_to_json_when_db_empty(tmp_path, monkeypatch):
     assert payload["objects"][0]["object_id"] == 464
 
 
+def test_enrich_detection_ticks_adds_preview_path():
+    ticks = {
+        "Cam1": [{"ts": 100.0, "kind": "found", "object_id": 7}],
+    }
+    full = {
+        "Cam1": [
+            {
+                "ts": 100.0,
+                "kind": "found",
+                "object_id": 7,
+                "preview_path": "Detections/2026-08-17/Images/FoundPreviews/a.jpg",
+            }
+        ],
+    }
+    out = svc._enrich_detection_ticks(ticks, full)
+    assert out["Cam1"][0]["preview_path"].endswith("a.jpg")
+
+
 def test_load_detection_index_found_and_lost(tmp_path, monkeypatch):
     root = tmp_path / "EvilEyeData"
     date = "2026-08-17"
@@ -846,6 +864,7 @@ def test_load_detection_index_found_and_lost(tmp_path, monkeypatch):
                         "source_id": 1,
                         "object_id": 808,
                         "bounding_box": {"x": 1, "y": 2, "width": 3, "height": 4},
+                        "image_filename": "obj_found_preview.jpg",
                     }
                 ]
             }
@@ -861,6 +880,7 @@ def test_load_detection_index_found_and_lost(tmp_path, monkeypatch):
                         "source_name": "Cam2",
                         "lost_timestamp": "2026-08-17T11:37:13.316823",
                         "bounding_box": {"x": 5, "y": 6, "width": 7, "height": 8},
+                        "preview_path": "obj_lost_preview.jpg",
                     }
                 ]
             }
@@ -879,6 +899,8 @@ def test_load_detection_index_found_and_lost(tmp_path, monkeypatch):
     assert items[0]["kind"] == "found"
     assert items[1]["kind"] == "lost"
     assert items[0]["object_id"] == 808
+    assert items[0]["preview_path"] == "obj_found_preview.jpg"
+    assert items[1]["preview_path"] == "obj_lost_preview.jpg"
 
 
 def test_match_detections_at_exact(tmp_path, monkeypatch):

@@ -14,7 +14,7 @@ from evileye.api.core.singleflight import singleflight
 
 logger = logging.getLogger(__name__)
 
-INDEX_VERSION = 1
+INDEX_VERSION = 2
 # Soft TTL for "today" when source mtime keeps drifting under live capture.
 TODAY_REBUILD_SEC = 300.0
 
@@ -335,7 +335,7 @@ def _rebuild_detection_ticks(
     result: dict[str, list[dict[str, Any]]] = {}
     for cam in cam_list:
         items = full.get(cam) or []
-        compact[cam] = [[float(it["ts"]), it.get("kind"), it.get("object_id")] for it in items]
+        compact[cam] = [_compact_tick_row(it) for it in items]
         result[cam] = [meta._tick_only_item(it) for it in items]
 
     payload = {
@@ -385,19 +385,43 @@ def ensure_detection_ticks(
     )
 
 
+def _compact_tick_row(item: dict[str, Any]) -> list[Any]:
+    row: list[Any] = [float(item["ts"]), item.get("kind"), item.get("object_id")]
+    preview_path = item.get("preview_path")
+    bbox = item.get("bounding_box")
+    if preview_path:
+        row.append(preview_path)
+        if bbox:
+            row.append(bbox)
+    elif bbox:
+        row.append(None)
+        row.append(bbox)
+    return row
+
+
 def _tick_row_to_item(row: Any) -> dict[str, Any]:
     if isinstance(row, dict):
-        return {
+        out: dict[str, Any] = {
             "ts": float(row["ts"]),
             "kind": row.get("kind"),
             "object_id": row.get("object_id"),
         }
+        if row.get("preview_path"):
+            out["preview_path"] = row["preview_path"]
+        if row.get("bounding_box"):
+            out["bounding_box"] = row["bounding_box"]
+        return out
     if isinstance(row, (list, tuple)) and len(row) >= 2:
-        return {
+        out = {
             "ts": float(row[0]),
             "kind": row[1],
             "object_id": row[2] if len(row) > 2 else None,
         }
+        if len(row) > 3 and row[3]:
+            out["preview_path"] = row[3]
+        if len(row) > 4 and row[4]:
+            out["bounding_box"] = row[4]
+        return out
     return {"ts": 0.0, "kind": None, "object_id": None}
 
 
