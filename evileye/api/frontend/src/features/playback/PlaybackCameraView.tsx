@@ -633,6 +633,9 @@ export function PlaybackVideoSurface({
 }) {
   const { t } = useI18n();
   const [seeking, setSeeking] = useState(false);
+  const lastSlotUrlRef = useRef<string | null>(null);
+  if (slot?.url) lastSlotUrlRef.current = slot.url;
+  const videoSrc = slot?.url ?? (seeking ? lastSlotUrlRef.current : null);
 
   const emptyMessage = (() => {
     if (segmentsLoading) return t('playback.loadingSegment');
@@ -677,12 +680,12 @@ export function PlaybackVideoSurface({
 
   return (
     <>
-      {slot?.url ? (
+      {videoSrc ? (
         <>
           <video
             key={`playback-media-${mediaEpoch}`}
             ref={videoRef as RefObject<HTMLVideoElement>}
-            src={slot.url}
+            src={videoSrc}
             playsInline
             preload="auto"
             className={previewClass}

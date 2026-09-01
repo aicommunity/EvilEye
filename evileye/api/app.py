@@ -324,7 +324,7 @@ def create_app() -> FastAPI:
         allow_credentials=True,
         allow_methods=["*"],
         allow_headers=["*"],
-        expose_headers=["X-Export-Truncated"],
+        expose_headers=["X-Export-Truncated", "X-Playback-Cache"],
     )
     app.add_middleware(SecurityHeadersMiddleware)
     logger.info("CORS / protection / security headers middleware configured")
@@ -334,7 +334,11 @@ def create_app() -> FastAPI:
         payload: dict = {"status": "ok"}
         try:
             from evileye.api.core.internal_unix import internal_socket_path
-            from evileye.api.routes.playback import detections_inflight_count, media_inflight_count
+            from evileye.api.routes.playback import (
+                detections_inflight_count,
+                media_inflight_count,
+                memory_cache_stats,
+            )
 
             broker = get_frame_broker()
             stats = broker.get_runtime_stats() if hasattr(broker, "get_runtime_stats") else {}
@@ -370,6 +374,7 @@ def create_app() -> FastAPI:
             }
             payload["playback_detections_inflight"] = detections_inflight_count()
             payload["playback_media_inflight"] = media_inflight_count()
+            payload["playback_memory_cache"] = memory_cache_stats()
             try:
                 from evileye.api.core.rate_guard import get_rate_guard
 

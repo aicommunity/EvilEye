@@ -278,6 +278,7 @@ const ru: Dict = {
     prevEvent: 'Пред. событие',
     nextEvent: 'След. событие',
     loadingSegment: 'Загрузка записи…',
+    preparingArchive: 'Подготавливаем архив…',
     recordingInProgress: 'Идёт запись — архив доступен после закрытия сегмента',
     seekingFrame: 'Ищем кадр…',
     loadingMetadata: 'Загрузка метаданных…',

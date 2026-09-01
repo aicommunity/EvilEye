@@ -167,6 +167,7 @@ export function PlaybackPage() {
   const [segmentsLoaded, setSegmentsLoaded] = useState(false);
   const [segmentsLoading, setSegmentsLoading] = useState(false);
   const [segmentsError, setSegmentsError] = useState<string | null>(null);
+  const [archivePreparing, setArchivePreparing] = useState(false);
   const [showMetadata, setShowMetadata] = useState(true);
   const [, setTimelinePanning] = useState(false);
   const [expandedCameraId, setExpandedCameraId] = useState<string | null>(null);
@@ -215,7 +216,7 @@ export function PlaybackPage() {
     priorityToSec: priorityDetectionWindow?.toSec ?? null,
     backgroundFromSec: dayBounds.fromSec,
     backgroundToSec: dayBounds.toSec,
-    enabled: showMetadata && selectedIds.length > 0,
+    enabled: segmentsLoaded && showMetadata && selectedIds.length > 0,
   });
   const seedTicksRef = useRef(detectionIndex.seedTicks);
   seedTicksRef.current = detectionIndex.seedTicks;
@@ -480,15 +481,36 @@ export function PlaybackPage() {
 
         if (isInitialLoad) {
           setSegmentsLoading(true);
+          setArchivePreparing(false);
           didSetSegmentsLoading = true;
         }
+        const preparingTimer = isInitialLoad
+          ? window.setTimeout(() => setArchivePreparing(true), 2000)
+          : null;
 
         let incoming: Record<string, PlaybackSegment[]> = {};
         let evItems: PlaybackEventInterval[] = [];
         let evLegacy: PlaybackEventMarker[] = [];
         let timelineTicks: Record<string, PlaybackDetectionItem[]> | null = null;
 
-        try {
+        const applyTimelineEnrichment = (timeline: {
+          by_camera?: Record<
+            string,
+            { segments?: PlaybackSegment[]; detection_ticks?: PlaybackDetectionItem[]; events?: PlaybackEventInterval[] }
+          >;
+        }) => {
+          for (const id of nextSelected) {
+            const row = timeline.by_camera?.[id];
+            if (row?.detection_ticks?.length) {
+              if (!timelineTicks) timelineTicks = {};
+              timelineTicks[id] = row.detection_ticks;
+            }
+            if (row?.events?.length) evItems.push(...row.events);
+          }
+          if (timelineTicks) seedTicksRef.current(timelineTicks);
+        };
+
+        const fetchTimelineEnrichment = async () => {
           const timeline = await playbackApi.timeline(useDate ?? date, nextSelected, {
             from: opts?.from,
             to: opts?.to,
@@ -496,42 +518,87 @@ export function PlaybackPage() {
             signal: ac.signal,
           });
           if (ac.signal.aborted) return;
-          incoming = {};
-          for (const id of nextSelected) {
-            const row = timeline.by_camera?.[id];
-            incoming[id] = row?.segments ?? [];
-            if (row?.detection_ticks?.length) {
-              if (!timelineTicks) timelineTicks = {};
-              timelineTicks[id] = row.detection_ticks;
-            }
-            if (row?.events?.length) evItems.push(...row.events);
-          }
-          cacheSet(segKey, { by_camera: incoming, items: Object.values(incoming).flat() }, SEGMENTS_TTL_MS);
+          applyTimelineEnrichment(timeline);
           cacheSet(evKey, { items: evItems, legacy_markers: [] }, SEGMENTS_TTL_MS);
-          if (timelineTicks) {
-            seedTicksRef.current(timelineTicks);
-          }
-        } catch (timelineErr) {
-          if (isAbortError(timelineErr)) throw timelineErr;
-          // Fallback to legacy fan-out if /timeline is unavailable.
-          const [batch, ev] = await Promise.all([
-            playbackApi.segmentsBatch(nextSelected, opts?.from, opts?.to, useDate, {
-              signal: ac.signal,
-              runId,
-            }),
-            playbackApi.events(opts?.from, opts?.to, undefined, useDate, nextSelected, {
-              signal: ac.signal,
-            }),
-          ]);
+          setMarkers((prev) => {
+            const incomingMarkers = evLegacy;
+            if (!opts?.merge) return incomingMarkers;
+            const byKey = new Map<string, PlaybackEventMarker>();
+            for (const m of prev) byKey.set(`${m.ts}:${m.camera}:${m.type}`, m);
+            for (const m of incomingMarkers) byKey.set(`${m.ts}:${m.camera}:${m.type}`, m);
+            return Array.from(byKey.values()).sort((a, b) => a.ts - b.ts);
+          });
+          setEventIntervals((prev) => {
+            if (!opts?.merge) return evItems;
+            const byKey = new Map<string, PlaybackEventInterval>();
+            for (const it of prev) byKey.set(`${it.start_ts}:${it.end_ts}:${it.camera}:${it.event_type}:${it.label}`, it);
+            for (const it of evItems) byKey.set(`${it.start_ts}:${it.end_ts}:${it.camera}:${it.event_type}:${it.label}`, it);
+            return Array.from(byKey.values()).sort((a, b) => a.start_ts - b.start_ts);
+          });
+        };
+
+        try {
+          const batch = await playbackApi.segmentsBatch(nextSelected, opts?.from, opts?.to, useDate, {
+            signal: ac.signal,
+            runId,
+          });
           if (ac.signal.aborted) return;
-          cacheSet(segKey, batch, SEGMENTS_TTL_MS);
-          cacheSet(evKey, ev, SEGMENTS_TTL_MS);
           incoming = { ...(batch.by_camera || {}) };
           for (const id of nextSelected) {
             if (!incoming[id]) incoming[id] = [];
           }
-          evItems = ev.items;
-          evLegacy = ev.legacy_markers ?? [];
+          cacheSet(segKey, batch, SEGMENTS_TTL_MS);
+
+          if (isInitialLoad) {
+            const scheduleEnrich = () => {
+              void fetchTimelineEnrichment().catch((timelineErr) => {
+                if (isAbortError(timelineErr)) return;
+              });
+            };
+            if (typeof window.requestIdleCallback === 'function') {
+              window.requestIdleCallback(scheduleEnrich, { timeout: 3000 });
+            } else {
+              window.setTimeout(scheduleEnrich, 50);
+            }
+          } else {
+            try {
+              await fetchTimelineEnrichment();
+            } catch (timelineErr) {
+              if (isAbortError(timelineErr)) throw timelineErr;
+              const ev = await playbackApi.events(opts?.from, opts?.to, undefined, useDate, nextSelected, {
+                signal: ac.signal,
+              });
+              if (ac.signal.aborted) return;
+              cacheSet(evKey, ev, SEGMENTS_TTL_MS);
+              evItems = ev.items;
+              evLegacy = ev.legacy_markers ?? [];
+            }
+          }
+        } catch (batchErr) {
+          if (isAbortError(batchErr)) throw batchErr;
+          try {
+            const timeline = await playbackApi.timeline(useDate ?? date, nextSelected, {
+              from: opts?.from,
+              to: opts?.to,
+              runId,
+              signal: ac.signal,
+            });
+            if (ac.signal.aborted) return;
+            incoming = {};
+            for (const id of nextSelected) {
+              const row = timeline.by_camera?.[id];
+              incoming[id] = row?.segments ?? [];
+            }
+            applyTimelineEnrichment(timeline);
+            cacheSet(segKey, { by_camera: incoming, items: Object.values(incoming).flat() }, SEGMENTS_TTL_MS);
+            cacheSet(evKey, { items: evItems, legacy_markers: [] }, SEGMENTS_TTL_MS);
+          } catch (timelineErr) {
+            if (isAbortError(timelineErr)) throw timelineErr;
+            throw batchErr;
+          }
+        } finally {
+          if (preparingTimer != null) window.clearTimeout(preparingTimer);
+          setArchivePreparing(false);
         }
 
         setSegmentsByCam((prev) => {
@@ -652,7 +719,7 @@ export function PlaybackPage() {
           merge: true,
           date,
         });
-      }, 250);
+      }, 1500);
     },
     [loadSegments, viewport, date],
   );
@@ -834,6 +901,7 @@ export function PlaybackPage() {
   if (!runResolved || camerasLoading) gridEmpty = t('playback.loadingCamerasGrid');
   else if (!cameras.length) gridEmpty = t('playback.noCamerasForDate');
   else if (!selectedIds.length) gridEmpty = t('playback.selectCameras');
+  else if (archivePreparing) gridEmpty = t('playback.preparingArchive');
   else if (segmentsLoading || (!segmentsLoaded && cameras.length > 0)) gridEmpty = t('playback.loadingSegment');
   else if (segmentsError && !Object.values(segmentsByCam).some((s) => s.length)) gridEmpty = segmentsError;
 

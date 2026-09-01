@@ -276,6 +276,7 @@ const en: Dict = {
     prevEvent: 'Prev event',
     nextEvent: 'Next event',
     loadingSegment: 'Loading recording…',
+    preparingArchive: 'Preparing archive…',
     recordingInProgress: 'Recording in progress — playback available after the segment closes',
     seekingFrame: 'Seeking frame…',
     loadingMetadata: 'Loading metadata…',

@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import { useI18n } from '../../i18n';
 
-const SHOW_DELAY_MS = 2500;
+const SHOW_DELAY_MS = 4000;
 /** Hide "Ищем кадр…" even if video.seeking never clears (503 / hung Range). */
 const SEEK_HINT_MAX_MS = 7000;
 

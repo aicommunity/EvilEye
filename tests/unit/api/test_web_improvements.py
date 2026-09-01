@@ -380,6 +380,38 @@ def test_admin_create_user_approved_and_login(tmp_path, monkeypatch):
     assert login.status_code == 200
 
 
+def test_admin_create_user_with_allowed_cameras(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("EVILEYE_BOOTSTRAP_ADMIN_PASSWORD", "admin")
+    creds_path = tmp_path / "credentials.json"
+    creds_path.write_text(json.dumps({"web_auth": {"enabled": True, "users": []}}), encoding="utf-8")
+    ensure_default_admin_credentials(creds_path)
+
+    app = create_app()
+    client = TestClient(app)
+    assert client.post("/api/v1/auth/login", json={"username": "admin", "password": "admin"}).status_code == 200
+
+    created = client.post(
+        "/api/v1/users",
+        json={
+            "email": "camuser@example.com",
+            "password": "secret12",
+            "role": "user",
+            "allowed_cameras": ["Cam1", "Cam2"],
+        },
+    )
+    assert created.status_code == 200
+    assert created.json()["user"]["allowed_cameras"] == ["Cam1", "Cam2"]
+
+    listed = client.get("/api/v1/users")
+    assert listed.status_code == 200
+    users = listed.json()
+    items = users if isinstance(users, list) else users.get("items") or users.get("users") or []
+    row = next((u for u in items if u.get("email") == "camuser@example.com"), None)
+    assert row is not None
+    assert row.get("allowed_cameras") == ["Cam1", "Cam2"]
+
+
 def test_user_store_create_user_unit(tmp_path):
     from evileye.api.core.user_store import UserStore
 
@@ -388,3 +420,11 @@ def test_user_store_create_user_unit(tmp_path):
     assert record["status"] == "approved"
     assert record["role"] == "admin"
     assert store.authenticate("ops@example.com", "secret12") is not None
+
+    limited = store.create_user(
+        "limited@example.com",
+        "secret12",
+        role="user",
+        allowed_cameras=["Cam1", "Cam3"],
+    )
+    assert limited["allowed_cameras"] == ["Cam1", "Cam3"]

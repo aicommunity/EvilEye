@@ -566,3 +566,30 @@ def build_timeline(
         return {"date": date_folder, "by_camera": by_camera}
 
     return singleflight(key, _build)
+
+
+def build_timeline_segments_only(
+    *,
+    date_folder: str,
+    cameras: list[str],
+    run_id: int | None = None,
+    from_ts: float | None = None,
+    to_ts: float | None = None,
+) -> dict[str, Any]:
+    """Fast timeline payload: segments only (no journal scans)."""
+    cam_list = [c for c in cameras if c]
+    key = f"timeline_segments:{date_folder}:{run_id}:{','.join(sorted(cam_list))}:{from_ts}:{to_ts}"
+
+    def _build() -> dict[str, Any]:
+        segments_by = ensure_segment_index(date_folder=date_folder, cameras=cam_list)
+        by_camera: dict[str, Any] = {}
+        for cam in cam_list:
+            segs = filter_segments_window(segments_by.get(cam) or [], from_ts, to_ts)
+            by_camera[cam] = {
+                "segments": segs,
+                "detection_ticks": [],
+                "events": [],
+            }
+        return {"date": date_folder, "by_camera": by_camera}
+
+    return singleflight(key, _build)

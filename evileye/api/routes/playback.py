@@ -10,7 +10,7 @@ from copy import deepcopy
 from typing import Any, Callable, Optional
 
 from fastapi import APIRouter, HTTPException, Query, Request
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, JSONResponse
 
 from evileye.api.core import playback_service as svc
 from evileye.api.core import playback_metadata_service as metadata_svc
@@ -89,6 +89,47 @@ def _recall(key: str, *, require_fresh: bool = False) -> Any | None:
             if expires_at is None or expires_at <= time.time():
                 return None
         return deepcopy(cached)
+
+
+def memory_cache_stats() -> dict[str, int]:
+    """Observability: in-process playback memory cache size and freshness."""
+    now = time.time()
+    with _memory_lock:
+        keys = len(_memory_cache)
+        fresh = 0
+        expired = 0
+        sticky = 0
+        for expires_at, _ in _memory_cache.values():
+            if expires_at is None:
+                sticky += 1
+            elif expires_at > now:
+                fresh += 1
+            else:
+                expired += 1
+    return {
+        "keys": keys,
+        "fresh": fresh,
+        "expired": expired,
+        "sticky": sticky,
+    }
+
+
+def clear_memory_cache() -> int:
+    """Clear in-process playback memory cache (diagnostics / cold-server simulation)."""
+    with _memory_lock:
+        cleared = len(_memory_cache)
+        _memory_cache.clear()
+    return cleared
+
+
+def _json_with_cache(payload: Any, cache_status: str | None = None) -> JSONResponse:
+    headers: dict[str, str] = {}
+    status = cache_status
+    if isinstance(payload, dict) and payload.get("stale"):
+        status = "stale"
+    if status:
+        headers["X-Playback-Cache"] = status
+    return JSONResponse(content=payload, headers=headers)
 
 
 async def _to_thread_with_timeout_or_cached(
@@ -215,16 +256,23 @@ async def playback_cameras(
             return svc.list_logical_cameras(run_id, date)
         return svc.discover_cameras(date)
 
+    cached_fresh = _recall(cache_key, require_fresh=True)
+    if cached_fresh is not None:
+        access = resolve_camera_access(request)
+        filtered = filter_by_source_name(cached_fresh or [], access, key="id", use_visible=True)
+        return _json_with_cache({"items": filtered}, "hit")
+
     items = await _to_thread_with_timeout_or_cached(
         _load,
         lambda: _recall(cache_key),
         err_detail="playback_cameras timeout",
         executor=_light_pool,
     )
+    cache_status = "miss" if items is not None else "stale"
     _remember(cache_key, items)
     access = resolve_camera_access(request)
     filtered = filter_by_source_name(items or [], access, key="id", use_visible=True)
-    return {"items": filtered}
+    return _json_with_cache({"items": filtered}, cache_status)
 
 
 @router.get("/segments")
@@ -305,6 +353,7 @@ async def playback_timeline(
     run_id: Optional[int] = Query(None),
     from_ts: Optional[float] = Query(None, alias="from"),
     to_ts: Optional[float] = Query(None, alias="to"),
+    segments_only: bool = Query(False, description="Return segments only (skip detection/event scans)"),
 ) -> dict:
     """Compact day timeline: segments + detection ticks + event intervals in one round-trip."""
     from evileye.api.core.playback_timeline_index import (
@@ -312,19 +361,29 @@ async def playback_timeline(
         schedule_event_intervals_refresh,
         schedule_segment_index_refresh,
         build_timeline,
+        build_timeline_segments_only,
     )
 
     access = resolve_camera_access(request)
     cam_list = _require_cameras(access, [c.strip() for c in cameras.split(",") if c.strip()], single=False)
     if not cam_list:
         raise HTTPException(status_code=400, detail="cameras query required")
-    mem_key = f"playback:timeline:{date}:{run_id}:{from_ts}:{to_ts}:{','.join(cam_list)}"
+    mode = "segments" if segments_only else "full"
+    mem_key = f"playback:timeline:{mode}:{date}:{run_id}:{from_ts}:{to_ts}:{','.join(cam_list)}"
 
     fresh = _recall(mem_key, require_fresh=True)
     if fresh is not None:
-        return fresh
+        return _json_with_cache(fresh, "hit")
 
     def _load():
+        if segments_only:
+            return build_timeline_segments_only(
+                date_folder=date,
+                cameras=cam_list,
+                run_id=run_id,
+                from_ts=from_ts,
+                to_ts=to_ts,
+            )
         return build_timeline(
             date_folder=date,
             cameras=cam_list,
@@ -351,7 +410,7 @@ async def playback_timeline(
         cached = _cached()
         if cached is not None:
             _on_timeout()
-            return cached
+            return _json_with_cache(cached, "stale")
         try:
             await asyncio.wait_for(_timeline_slots.acquire(), timeout=_TIMELINE_SLOT_WAIT_SEC)
         except asyncio.TimeoutError:
@@ -363,7 +422,7 @@ async def playback_timeline(
             stale = _cached()
             if stale is not None:
                 _on_timeout()
-                return stale
+                return _json_with_cache(stale, "stale")
             raise HTTPException(status_code=503, detail="playback_timeline slot busy")
     try:
         payload = await _to_thread_with_timeout_or_cached(
@@ -375,8 +434,9 @@ async def playback_timeline(
         )
     finally:
         _timeline_slots.release()
+    cache_status = "stale" if isinstance(payload, dict) and payload.get("stale") else "miss"
     _remember(mem_key, payload, ttl_sec=_TIMELINE_HAPPY_TTL_SEC)
-    return payload
+    return _json_with_cache(payload, cache_status)
 
 
 @router.get("/events")
@@ -743,7 +803,11 @@ async def playback_detections(
             )
             return {"by_camera": by_camera, "items": [item for items in by_camera.values() for item in items]}
 
-        return await _coalesced_detections_load(
+        fresh = _recall(scan_key, require_fresh=True)
+        if fresh is not None:
+            sliced = _slice_detections_payload(fresh, from_ts=from_ts, to_ts=to_ts, ticks_only=False)
+            return _json_with_cache(sliced, "hit")
+        result = await _coalesced_detections_load(
             scan_key,
             _batch,
             from_ts=from_ts,
@@ -751,6 +815,7 @@ async def playback_detections(
             ticks_only=False,  # scan already applied ticks_only mode
             log_ctx={"date": date, "n_cameras": len(cam_list), "route": "detections"},
         )
+        return _json_with_cache(result, "miss")
     if not camera:
         raise HTTPException(status_code=400, detail="camera or cameras query required")
     _require_cameras(access, [camera], single=True)
@@ -770,14 +835,19 @@ async def playback_detections(
         )
         return {"items": items}
 
-    return await _coalesced_detections_load(
+    fresh = _recall(scan_key, require_fresh=True)
+    if fresh is not None:
+        sliced = _slice_detections_payload(fresh, from_ts=from_ts, to_ts=to_ts, ticks_only=ticks_only)
+        return _json_with_cache(sliced, "hit")
+    result = await _coalesced_detections_load(
         scan_key,
         _one,
         from_ts=from_ts,
         to_ts=to_ts,
-        ticks_only=False,  # scan already applied ticks_only mode
+        ticks_only=ticks_only,
         log_ctx={"date": date, "n_cameras": 1, "route": "detections"},
     )
+    return _json_with_cache(result, "miss")
 
 
 @router.get("/media")
@@ -861,3 +931,18 @@ async def playback_media(request: Request, path: str = Query(...)):
     except Exception:
         _release_media_inflight()
         raise
+
+
+@router.post("/_debug/clear-memory-cache")
+async def playback_debug_clear_memory_cache(request: Request) -> dict:
+    """Opt-in: simulate cold server memory cache (requires EVILEYE_PLAYBACK_DEBUG=1 + admin)."""
+    import os
+
+    flag = os.getenv("EVILEYE_PLAYBACK_DEBUG", "").strip().lower()
+    if flag not in ("1", "true", "yes", "on"):
+        raise HTTPException(status_code=404, detail="Not found")
+    from evileye.api.security import require_permission
+
+    require_permission(request, "system:admin")
+    cleared = clear_memory_cache()
+    return {"cleared": cleared, "stats": memory_cache_stats()}

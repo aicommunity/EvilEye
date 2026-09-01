@@ -25,6 +25,7 @@ class CreateUserPayload(BaseModel):
     email: str = Field(..., min_length=3)
     password: str = Field(..., min_length=8)
     role: str = Field(default="user")
+    allowed_cameras: Optional[list[str]] = None
 
 
 class PatchUserPayload(BaseModel):
@@ -154,7 +155,12 @@ async def create_user(payload: CreateUserPayload, request: Request) -> dict:
     if role not in {"user", "admin"}:
         raise HTTPException(status_code=400, detail="role must be user|admin")
     try:
-        item = get_user_store().create_user(payload.email, payload.password, role=role)
+        item = get_user_store().create_user(
+            payload.email,
+            payload.password,
+            role=role,
+            allowed_cameras=payload.allowed_cameras,
+        )
     except ValueError as exc:
         msg = str(exc)
         code = 409 if "already" in msg.lower() else 400
