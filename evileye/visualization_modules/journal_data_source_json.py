@@ -3,6 +3,10 @@ import json
 import hashlib
 import time
 from typing import List, Dict, Tuple, Callable, Optional
+from evileye.database_controller.json_adapter_schedule_alarm_events import (
+    JSON_FOUND_FILENAMES,
+    JSON_LOST_FILENAMES,
+)
 from .journal_data_source import EventJournalDataSource
 from ..core.logger import get_module_logger
 
@@ -110,18 +114,21 @@ class JsonLabelJournalDataSource(EventJournalDataSource):
     def _metadata_files_for_date(self, date_folder: str) -> List[tuple[str, str, str]]:
         detections_metadata = os.path.join(self.base_dir, 'Detections', date_folder, 'Metadata')
         events_metadata = os.path.join(self.base_dir, 'Events', date_folder, 'Metadata')
-        return [
+        files = [
             (os.path.join(detections_metadata, 'objects_found.json'), 'found', date_folder),
             (os.path.join(detections_metadata, 'objects_lost.json'), 'lost', date_folder),
             (os.path.join(events_metadata, 'attribute_events_found.json'), 'attr_found', date_folder),
             (os.path.join(events_metadata, 'attribute_events_finished.json'), 'attr_lost', date_folder),
-            (os.path.join(events_metadata, 'fov_events_found.json'), 'fov_found', date_folder),
-            (os.path.join(events_metadata, 'fov_events_lost.json'), 'fov_lost', date_folder),
             (os.path.join(events_metadata, 'zone_events_entered.json'), 'zone_entered', date_folder),
             (os.path.join(events_metadata, 'zone_events_left.json'), 'zone_left', date_folder),
             (os.path.join(events_metadata, 'camera_events.json'), 'cam', date_folder),
             (os.path.join(events_metadata, 'system_events.json'), 'sys', date_folder),
         ]
+        for found_name in JSON_FOUND_FILENAMES:
+            files.append((os.path.join(events_metadata, found_name), 'schedule_alarm_found', date_folder))
+        for lost_name in JSON_LOST_FILENAMES:
+            files.append((os.path.join(events_metadata, lost_name), 'schedule_alarm_lost', date_folder))
+        return files
 
     def _purge_cache_for_file(self, filepath: str) -> None:
         self._cache = [entry for entry in self._cache if entry.get('_source_file') != filepath]
@@ -290,17 +297,19 @@ class JsonLabelJournalDataSource(EventJournalDataSource):
                     'video_path_lost': item.get('video_path_finished') if event_type == 'attr_lost' else None,
                     'date_folder': date_folder,
                 }
-            elif event_type in ('fov_found', 'fov_lost'):
+            elif event_type in ('schedule_alarm_found', 'schedule_alarm_lost', 'fov_found', 'fov_lost'):
+                normalized_type = 'schedule_alarm_found' if event_type.endswith('_found') else 'schedule_alarm_lost'
                 return {
                     'event_id': event_id_str,
                     'event_id_numeric': event_id_numeric,
-                    'event_type': event_type,
+                    'event_type': normalized_type,
                     'ts': timestamp,
                     'source_id': item.get('source_id'),
                     'object_id': item.get('object_id'),
+                    'class_id': item.get('class_id'),
                     'image_filename': item.get('preview_path'),
-                    'video_path': item.get('video_path') if event_type == 'fov_found' else None,
-                    'video_path_lost': item.get('video_path_lost') if event_type == 'fov_lost' else None,
+                    'video_path': item.get('video_path') if normalized_type == 'schedule_alarm_found' else None,
+                    'video_path_lost': item.get('video_path_lost') if normalized_type == 'schedule_alarm_lost' else None,
                     'date_folder': date_folder,
                 }
             elif event_type in ('zone_entered', 'zone_left'):

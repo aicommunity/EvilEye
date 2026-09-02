@@ -1,1003 +1,1017 @@
 {
-    "pipeline": {
-        "sources": [
-            {
-                "source": "IpCamera",
-                "camera": "rtsp://10.245.1.200",
-                "apiPreference": "CAP_FFMPEG",
-                "split": false,
-                "num_split": 0,
-                "src_coords": [
-                    0
-                ],
-                "source_ids": [
-                    0
-                ],
-                "source_names": [
-                    "Cam1"
-                ]
-            },
-            {
-                "source": "IpCamera",
-                "camera": "rtsp://10.245.1.199",
-                "apiPreference": "CAP_FFMPEG",
-                "split": true,
-                "num_split": 2,
-                "src_coords": [
-                    [
-                        0,
-                        0,
-                        2304,
-                        1300
-                    ],
-                    [
-                        0,
-                        1300,
-                        2304,
-                        1292
-                    ]
-                ],
-                "source_ids": [
-                    1,
-                    2
-                ],
-                "source_names": [
-                    "Cam2",
-                    "Cam3"
-                ]
-            },
-            {
-                "source": "IpCamera",
-                "camera": "rtsp://10.245.1.202",
-                "apiPreference": "CAP_FFMPEG",
-                "split": true,
-                "num_split": 2,
-                "src_coords": [
-                    [
-                        0,
-                        0,
-                        2304,
-                        1300
-                    ],
-                    [
-                        0,
-                        1300,
-                        2304,
-                        1292
-                    ]
-                ],
-                "source_ids": [
-                    3,
-                    4
-                ],
-                "source_names": [
-                    "Cam4",
-                    "Cam5"
-                ]
-            }
+  "pipeline": {
+    "sources": [
+      {
+        "source": "IpCamera",
+        "camera": "rtsp://10.245.1.200",
+        "apiPreference": "CAP_FFMPEG",
+        "split": false,
+        "num_split": 0,
+        "src_coords": [
+          0
         ],
-        "detectors": [
-            {
-                "source_ids": [
-                    0
-                ],
-                "model": "models/yolov8n.pt",
-                "show": false,
-                "inference_size": 640,
-                "device": null,
-                "conf": 0.4,
-                "save": false,
-                "stride_type": "frames",
-                "vid_stride": 1,
-                "classes": [
-                    0,
-                    1,
-                    24,
-                    25,
-                    63,
-                    66,
-                    67
-                ],
-                "num_detection_threads": 3,
-                "roi": [
-                    [
-                        [
-                            1790,
-                            0,
-                            500,
-                            400
-                        ],
-                        [
-                            1700,
-                            0,
-                            1000,
-                            1045
-                        ],
-                        [
-                            1500,
-                            0,
-                            2340,
-                            2160
-                        ]
-                    ]
-                ]
-            },
-            {
-                "source_ids": [
-                    1
-                ],
-                "model": "models/yolov8n.pt",
-                "show": false,
-                "inference_size": 1280,
-                "device": null,
-                "conf": 0.4,
-                "save": false,
-                "stride_type": "frames",
-                "vid_stride": 1,
-                "classes": [
-                    0,
-                    1,
-                    24,
-                    25,
-                    63,
-                    66,
-                    67
-                ],
-                "num_detection_threads": 3,
-                "roi": [
-                    []
-                ]
-            },
-            {
-                "source_ids": [
-                    2
-                ],
-                "model": "models/yolov8n.pt",
-                "show": false,
-                "inference_size": 640,
-                "device": null,
-                "conf": 0.4,
-                "save": false,
-                "stride_type": "frames",
-                "vid_stride": 1,
-                "classes": [
-                    0,
-                    1,
-                    24,
-                    25,
-                    63,
-                    66,
-                    67
-                ],
-                "num_detection_threads": 3,
-                "roi": [
-                    [
-                        [
-                            0,
-                            0,
-                            250,
-                            200
-                        ],
-                        [
-                            0,
-                            0,
-                            500,
-                            400
-                        ],
-                        [
-                            0,
-                            0,
-                            1000,
-                            800
-                        ],
-                        [
-                            0,
-                            0,
-                            2304,
-                            1292
-                        ]
-                    ]
-                ]
-            },
-            {
-                "source_ids": [
-                    3
-                ],
-                "model": "models/yolov8n.pt",
-                "show": false,
-                "conf": 0.4,
-                "inference_size": 640,
-                "device": null,
-                "save": false,
-                "stride_type": "frames",
-                "vid_stride": 1,
-                "classes": [
-                    0,
-                    1,
-                    24,
-                    25,
-                    63,
-                    66,
-                    67
-                ],
-                "num_detection_threads": 3,
-                "roi": [
-                    [
-                        [
-                            0,
-                            0,
-                            2304,
-                            1300
-                        ],
-                        [
-                            736,
-                            0,
-                            640,
-                            670
-                        ],
-                        [
-                            905,
-                            0,
-                            310,
-                            265
-                        ]
-                    ]
-                ]
-            },
-            {
-                "source_ids": [
-                    4
-                ],
-                "model": "models/yolov8n.pt",
-                "show": false,
-                "inference_size": 1280,
-                "device": null,
-                "conf": 0.4,
-                "save": false,
-                "stride_type": "frames",
-                "vid_stride": 1,
-                "classes": [
-                    0,
-                    1,
-                    24,
-                    25,
-                    63,
-                    66,
-                    67
-                ],
-                "num_detection_threads": 3,
-                "roi": [
-                    []
-                ]
-            }
+        "source_ids": [
+          0
         ],
-        "trackers": [
-            {
-                "source_ids": [
-                    0
-                ],
-                "fps": 5,
-                "botsort_cfg": {
-                    "appearance_thresh": 0.25,
-                    "gmc_method": "sparseOptFlow",
-                    "match_thresh": 0.8,
-                    "new_track_thresh": 0.6,
-                    "proximity_thresh": 0.5,
-                    "track_buffer": 30,
-                    "track_high_thresh": 0.5,
-                    "track_low_thresh": 0.1,
-                    "tracker_type": "botsort",
-                    "with_reid": true
-                }
-            },
-            {
-                "source_ids": [
-                    1
-                ],
-                "fps": 5,
-                "botsort_cfg": {
-                    "appearance_thresh": 0.25,
-                    "gmc_method": "sparseOptFlow",
-                    "match_thresh": 0.8,
-                    "new_track_thresh": 0.6,
-                    "proximity_thresh": 0.5,
-                    "track_buffer": 30,
-                    "track_high_thresh": 0.5,
-                    "track_low_thresh": 0.1,
-                    "tracker_type": "botsort",
-                    "with_reid": true
-                }
-            },
-            {
-                "source_ids": [
-                    2
-                ],
-                "fps": 5,
-                "botsort_cfg": {
-                    "appearance_thresh": 0.25,
-                    "gmc_method": "sparseOptFlow",
-                    "match_thresh": 0.8,
-                    "new_track_thresh": 0.6,
-                    "proximity_thresh": 0.5,
-                    "track_buffer": 30,
-                    "track_high_thresh": 0.5,
-                    "track_low_thresh": 0.1,
-                    "tracker_type": "botsort",
-                    "with_reid": true
-                }
-            },
-            {
-                "source_ids": [
-                    3
-                ],
-                "fps": 5,
-                "botsort_cfg": {
-                    "appearance_thresh": 0.25,
-                    "gmc_method": "sparseOptFlow",
-                    "match_thresh": 0.8,
-                    "new_track_thresh": 0.6,
-                    "proximity_thresh": 0.5,
-                    "track_buffer": 30,
-                    "track_high_thresh": 0.5,
-                    "track_low_thresh": 0.1,
-                    "tracker_type": "botsort",
-                    "with_reid": true
-                }
-            },
-            {
-                "source_ids": [
-                    4
-                ],
-                "fps": 5,
-                "botsort_cfg": {
-                    "appearance_thresh": 0.25,
-                    "gmc_method": "sparseOptFlow",
-                    "match_thresh": 0.8,
-                    "new_track_thresh": 0.6,
-                    "proximity_thresh": 0.5,
-                    "track_buffer": 30,
-                    "track_high_thresh": 0.5,
-                    "track_low_thresh": 0.1,
-                    "tracker_type": "botsort",
-                    "with_reid": true
-                }
-            }
-        ],
-        "mc_trackers": [
-            {
-                "source_ids": [
-                    0,
-                    1,
-                    2,
-                    3,
-                    4
-                ],
-                "enable": true
-            }
+        "source_names": [
+          "Cam1"
         ]
-    },
-    "events_detectors": {
-        "ZoneEventsDetector": {
-            "event_threshold": 0.5,
-            "zone_left_threshold": 0.3,
-            "sources": {}
-        },
-        "FieldOfViewEventsDetector": {
-            "event_threshold": 0.5,
-            "sources": {}
-        },
-        "AttributeEventsDetector": {
-            "event_threshold": 0.7,
-            "attr_confidence_threshold": 0.5,
-            "sources": {}
-        }
-    },
-    "events_processor": {},
-    "database_adapters": {
-        "DatabaseAdapterObjects": {
-            "table_name": "objects"
-        },
-        "DatabaseAdapterCamEvents": {
-            "table_name": "camera_events",
-            "event_name": "CameraEvent"
-        },
-        "DatabaseAdapterFieldOfViewEvents": {
-            "table_name": "fov_events",
-            "event_name": "FieldOfViewEvent"
-        },
-        "DatabaseAdapterZoneEvents": {
-            "table_name": "zone_events",
-            "event_name": "ZoneEvent"
-        }
-    },
-    "visualizer": {
-        "basic_visualizer": {
-            "num_width": 3,
-            "num_height": 2,
-            "visual_buffer_num_frames": 10,
-            "source_ids": [
-                0,
-                1,
-                2,
-                3,
-                4
-            ],
-            "fps": [
-                5,
-                5,
-                5,
-                5,
-                5
-            ],
-            "gui_enabled": true,
-            "show_debug_info": true,
-            "objects_journal_enabled": true
-        },
-        "text_settings": {
-            "font_scale": 0.7,
-            "font_thickness": 2,
-            "text_color": [
-                255,
-                255,
-                255
-            ],
-            "text_background_color": [
-                0,
-                0,
-                0
-            ],
-            "show_object_ids": true,
-            "show_object_classes": true,
-            "show_confidence": true
-        },
-        "event_signalization": {
-            "event_signal_enabled": true,
-            "event_signal_color": [
-                0,
-                0,
-                255
-            ],
-            "event_signal_duration": 3,
-            "event_signal_size": 10,
-            "show_event_text": true
-        },
-        "attributes_display": {
-            "show_attributes": false,
-            "max_attributes_display": 5,
-            "show_important_attributes_only": true,
-            "attributes_filter": []
-        },
-        "layout_settings": {
-            "auto_resize": true,
-            "fullscreen": false,
-            "show_grid": false,
-            "grid_color": [
-                128,
-                128,
-                128
-            ],
-            "grid_thickness": 1
-        }
-    },
-    "objects_handler": {
-        "objects_handling": {
-            "history_len": 30,
-            "lost_store_time_secs": 60,
-            "lost_thresh": 5,
-            "max_objects_per_frame": 100
-        },
-        "class_manager": {
-            "enable_class_manager": true,
-            "class_mapping": {}
-        },
-        "attributes_handling": {
-            "enable_attributes_handling": false,
-            "max_attributes_per_object": 10,
-            "attributes_cache_time": 300,
-            "attributes_filter": []
-        },
-        "objects_lifecycle": {
-            "object_lifetime": 60,
-            "min_tracking_time": 5,
-            "auto_cleanup_objects": true,
-            "cleanup_interval": 300
-        }
-    },
-    "controller": {
-        "autoclose": false,
-        "fps": 30,
-        "class_names": [
-            "person",
-            "bicycle",
-            "car",
-            "motorcycle",
-            "airplane",
-            "bus",
-            "train",
-            "truck",
-            "boat",
-            "traffic light",
-            "fire hydrant",
-            "stop sign",
-            "parking meter",
-            "bench",
-            "bird",
-            "cat",
-            "dog",
-            "horse",
-            "sheep",
-            "cow",
-            "elephant",
-            "bear",
-            "zebra",
-            "giraffe",
-            "backpack",
-            "umbrella",
-            "handbag",
-            "tie",
-            "suitcase",
-            "frisbee",
-            "skis",
-            "snowboard",
-            "sports ball",
-            "kite",
-            "baseball bat",
-            "baseball glove",
-            "skateboard",
-            "surfboard",
-            "tennis racket",
-            "bottle",
-            "wine glass",
-            "cup",
-            "fork",
-            "knife",
-            "spoon",
-            "bowl",
-            "banana",
-            "apple",
-            "sandwich",
-            "orange",
-            "broccoli",
-            "carrot",
-            "hot dog",
-            "pizza",
-            "donut",
-            "cake",
-            "chair",
-            "couch",
-            "potted plant",
-            "bed",
-            "dining table",
-            "toilet",
-            "tv",
-            "laptop",
-            "mouse",
-            "remote",
-            "keyboard",
-            "cell phone",
-            "microwave",
-            "oven",
-            "toaster",
-            "sink",
-            "refrigerator",
-            "book",
-            "clock",
-            "vase",
-            "scissors",
-            "teddy bear",
-            "hair drier",
-            "toothbrush"
+      },
+      {
+        "source": "IpCamera",
+        "camera": "rtsp://10.245.1.199",
+        "apiPreference": "CAP_FFMPEG",
+        "split": true,
+        "num_split": 2,
+        "src_coords": [
+          [
+            0,
+            0,
+            2304,
+            1300
+          ],
+          [
+            0,
+            1300,
+            2304,
+            1292
+          ]
+        ],
+        "source_ids": [
+          1,
+          2
+        ],
+        "source_names": [
+          "Cam2",
+          "Cam3"
         ]
-    },
-    "sources": {
-        "sources": [
-            {
-                "camera": "rtsp://10.245.1.200",
-                "source": "IpCamera",
-                "apiPreference": "CAP_FFMPEG",
-                "split": false,
-                "num_split": 0,
-                "src_coords": [
-                    0
-                ],
-                "source_ids": [
-                    0
-                ],
-                "source_names": [
-                    "'Cam1'"
-                ],
-                "loop_play": false
-            },
-            {
-                "camera": "rtsp://10.245.1.199",
-                "source": "IpCamera",
-                "apiPreference": "CAP_FFMPEG",
-                "split": true,
-                "num_split": 2,
-                "src_coords": [
-                    [
-                        0,
-                        0,
-                        2304,
-                        1300
-                    ],
-                    [
-                        0,
-                        1300,
-                        2304,
-                        1292
-                    ]
-                ],
-                "source_ids": [
-                    1,
-                    2
-                ],
-                "source_names": [
-                    "'Cam2'",
-                    "'Cam3'"
-                ],
-                "loop_play": true
-            },
-            {
-                "camera": "rtsp://10.245.1.202",
-                "source": "IpCamera",
-                "apiPreference": "CAP_FFMPEG",
-                "split": true,
-                "num_split": 2,
-                "src_coords": [
-                    [
-                        0,
-                        0,
-                        2304,
-                        1300
-                    ],
-                    [
-                        0,
-                        1300,
-                        2304,
-                        1292
-                    ]
-                ],
-                "source_ids": [
-                    3,
-                    4
-                ],
-                "source_names": [
-                    "'Cam4'",
-                    "'Cam5'"
-                ],
-                "loop_play": true
-            }
+      },
+      {
+        "source": "IpCamera",
+        "camera": "rtsp://10.245.1.202",
+        "apiPreference": "CAP_FFMPEG",
+        "split": true,
+        "num_split": 2,
+        "src_coords": [
+          [
+            0,
+            0,
+            2304,
+            1300
+          ],
+          [
+            0,
+            1300,
+            2304,
+            1292
+          ]
         ],
-        "preprocessing": {
-            "buffer_size": 10,
-            "frame_skip": 1,
-            "enable_resize": false,
-            "resize_width": 640,
-            "resize_height": 480,
-            "enable_roi": false,
-            "roi_coords": "",
-            "gstreamer_pipeline": "",
-            "rtsp_username": "",
-            "rtsp_password": ""
-        }
-    },
-    "detectors": {
-        "detectors": [
-            {
-                "source_ids": [
-                    0
-                ],
-                "model": "models/yolov8n.pt",
-                "inference_size": 640,
-                "conf": 0.4,
-                "classes": [
-                    0,
-                    1,
-                    24,
-                    25,
-                    63,
-                    66,
-                    67
-                ],
-                "num_detection_threads": 3,
-                "roi": [
-                    [
-                        [
-                            1790,
-                            0,
-                            500,
-                            400
-                        ],
-                        [
-                            1700,
-                            0,
-                            1000,
-                            1045
-                        ],
-                        [
-                            1500,
-                            0,
-                            2340,
-                            2160
-                        ]
-                    ]
-                ]
-            },
-            {
-                "source_ids": [
-                    1
-                ],
-                "model": "models/yolov8n.pt",
-                "inference_size": 1280,
-                "conf": 0.4,
-                "classes": [
-                    0,
-                    1,
-                    24,
-                    25,
-                    63,
-                    66,
-                    67
-                ],
-                "num_detection_threads": 3,
-                "roi": [
-                    []
-                ]
-            },
-            {
-                "source_ids": [
-                    2
-                ],
-                "model": "models/yolov8n.pt",
-                "inference_size": 640,
-                "conf": 0.4,
-                "classes": [
-                    0,
-                    1,
-                    24,
-                    25,
-                    63,
-                    66,
-                    67
-                ],
-                "num_detection_threads": 3,
-                "roi": [
-                    [
-                        [
-                            0,
-                            0,
-                            250,
-                            200
-                        ],
-                        [
-                            0,
-                            0,
-                            500,
-                            400
-                        ],
-                        [
-                            0,
-                            0,
-                            1000,
-                            800
-                        ],
-                        [
-                            0,
-                            0,
-                            2304,
-                            1292
-                        ]
-                    ]
-                ]
-            },
-            {
-                "source_ids": [
-                    3
-                ],
-                "model": "models/yolov8n.pt",
-                "inference_size": 640,
-                "conf": 0.4,
-                "classes": [
-                    0,
-                    1,
-                    24,
-                    25,
-                    63,
-                    66,
-                    67
-                ],
-                "num_detection_threads": 3,
-                "roi": [
-                    [
-                        [
-                            0,
-                            0,
-                            2304,
-                            1300
-                        ],
-                        [
-                            736,
-                            0,
-                            640,
-                            670
-                        ],
-                        [
-                            905,
-                            0,
-                            310,
-                            265
-                        ]
-                    ]
-                ]
-            },
-            {
-                "source_ids": [
-                    4
-                ],
-                "model": "models/yolov8n.pt",
-                "inference_size": 1280,
-                "conf": 0.4,
-                "classes": [
-                    0,
-                    1,
-                    24,
-                    25,
-                    63,
-                    66,
-                    67
-                ],
-                "num_detection_threads": 3,
-                "roi": [
-                    []
-                ]
-            }
+        "source_ids": [
+          3,
+          4
         ],
-        "attributes_detection": {
-            "enabled": false,
-            "model": "",
-            "attrs": "",
-            "conf_threshold": 0.5,
-            "inference_size": 224
-        },
-        "class_mapping": {
-            "enabled": false,
-            "mapping": ""
-        }
-    },
-    "trackers": {
-        "trackers": [
-            {
-                "source_ids": [
-                    0
-                ],
-                "fps": 5,
-                "inference_size": null,
-                "botsort_cfg": {
-                    "appearance_thresh": 0.25,
-                    "gmc_method": "sparseOptFlow",
-                    "match_thresh": 0.8,
-                    "new_track_thresh": 0.6,
-                    "proximity_thresh": 0.5,
-                    "track_buffer": 30,
-                    "track_high_thresh": 0.5,
-                    "track_low_thresh": 0.1,
-                    "tracker_type": "botsort",
-                    "with_reid": true
-                }
-            },
-            {
-                "source_ids": [
-                    1
-                ],
-                "fps": 5,
-                "inference_size": null,
-                "botsort_cfg": {
-                    "appearance_thresh": 0.25,
-                    "gmc_method": "sparseOptFlow",
-                    "match_thresh": 0.8,
-                    "new_track_thresh": 0.6,
-                    "proximity_thresh": 0.5,
-                    "track_buffer": 30,
-                    "track_high_thresh": 0.5,
-                    "track_low_thresh": 0.1,
-                    "tracker_type": "botsort",
-                    "with_reid": true
-                }
-            },
-            {
-                "source_ids": [
-                    2
-                ],
-                "fps": 5,
-                "inference_size": null,
-                "botsort_cfg": {
-                    "appearance_thresh": 0.25,
-                    "gmc_method": "sparseOptFlow",
-                    "match_thresh": 0.8,
-                    "new_track_thresh": 0.6,
-                    "proximity_thresh": 0.5,
-                    "track_buffer": 30,
-                    "track_high_thresh": 0.5,
-                    "track_low_thresh": 0.1,
-                    "tracker_type": "botsort",
-                    "with_reid": true
-                }
-            },
-            {
-                "source_ids": [
-                    3
-                ],
-                "fps": 5,
-                "inference_size": null,
-                "botsort_cfg": {
-                    "appearance_thresh": 0.25,
-                    "gmc_method": "sparseOptFlow",
-                    "match_thresh": 0.8,
-                    "new_track_thresh": 0.6,
-                    "proximity_thresh": 0.5,
-                    "track_buffer": 30,
-                    "track_high_thresh": 0.5,
-                    "track_low_thresh": 0.1,
-                    "tracker_type": "botsort",
-                    "with_reid": true
-                }
-            },
-            {
-                "source_ids": [
-                    4
-                ],
-                "fps": 5,
-                "inference_size": null,
-                "botsort_cfg": {
-                    "appearance_thresh": 0.25,
-                    "gmc_method": "sparseOptFlow",
-                    "match_thresh": 0.8,
-                    "new_track_thresh": 0.6,
-                    "proximity_thresh": 0.5,
-                    "track_buffer": 30,
-                    "track_high_thresh": 0.5,
-                    "track_low_thresh": 0.1,
-                    "tracker_type": "botsort",
-                    "with_reid": true
-                }
-            }
+        "source_names": [
+          "Cam4",
+          "Cam5"
+        ]
+      }
+    ],
+    "detectors": [
+      {
+        "source_ids": [
+          0
         ],
-        "botsort_advanced": {
-            "track_high_thresh": 0.5,
-            "track_low_thresh": 0.1,
-            "new_track_thresh": 0.6,
-            "match_thresh": 0.8,
-            "track_buffer": 30,
-            "gmc_method": "sparseOptFlow",
-            "proximity_thresh": 0.5,
-            "appearance_thresh": 0.25,
-            "with_reid": false
-        },
-        "encoder": {
-            "enabled": false,
-            "onnx_path": "",
-            "input_size": 128,
-            "batch_size": 1,
-            "device": "auto"
-        },
-        "multi_camera": {
-            "enabled": false,
-            "sources": "",
-            "cross_camera_thresh": 0.7,
-            "cross_camera_max_distance": 100.0
+        "model": "models/yolov8n.pt",
+        "show": false,
+        "inference_size": 640,
+        "device": null,
+        "conf": 0.4,
+        "save": false,
+        "stride_type": "frames",
+        "vid_stride": 1,
+        "classes": [
+          0,
+          1,
+          24,
+          25,
+          63,
+          66,
+          67
+        ],
+        "num_detection_threads": 3,
+        "roi": [
+          [
+            [
+              1790,
+              0,
+              500,
+              400
+            ],
+            [
+              1700,
+              0,
+              1000,
+              1045
+            ],
+            [
+              1500,
+              0,
+              2340,
+              2160
+            ]
+          ]
+        ]
+      },
+      {
+        "source_ids": [
+          1
+        ],
+        "model": "models/yolov8n.pt",
+        "show": false,
+        "inference_size": 1280,
+        "device": null,
+        "conf": 0.4,
+        "save": false,
+        "stride_type": "frames",
+        "vid_stride": 1,
+        "classes": [
+          0,
+          1,
+          24,
+          25,
+          63,
+          66,
+          67
+        ],
+        "num_detection_threads": 3,
+        "roi": [
+          []
+        ]
+      },
+      {
+        "source_ids": [
+          2
+        ],
+        "model": "models/yolov8n.pt",
+        "show": false,
+        "inference_size": 640,
+        "device": null,
+        "conf": 0.4,
+        "save": false,
+        "stride_type": "frames",
+        "vid_stride": 1,
+        "classes": [
+          0,
+          1,
+          24,
+          25,
+          63,
+          66,
+          67
+        ],
+        "num_detection_threads": 3,
+        "roi": [
+          [
+            [
+              0,
+              0,
+              250,
+              200
+            ],
+            [
+              0,
+              0,
+              500,
+              400
+            ],
+            [
+              0,
+              0,
+              1000,
+              800
+            ],
+            [
+              0,
+              0,
+              2304,
+              1292
+            ]
+          ]
+        ]
+      },
+      {
+        "source_ids": [
+          3
+        ],
+        "model": "models/yolov8n.pt",
+        "show": false,
+        "conf": 0.4,
+        "inference_size": 640,
+        "device": null,
+        "save": false,
+        "stride_type": "frames",
+        "vid_stride": 1,
+        "classes": [
+          0,
+          1,
+          24,
+          25,
+          63,
+          66,
+          67
+        ],
+        "num_detection_threads": 3,
+        "roi": [
+          [
+            [
+              0,
+              0,
+              2304,
+              1300
+            ],
+            [
+              736,
+              0,
+              640,
+              670
+            ],
+            [
+              905,
+              0,
+              310,
+              265
+            ]
+          ]
+        ]
+      },
+      {
+        "source_ids": [
+          4
+        ],
+        "model": "models/yolov8n.pt",
+        "show": false,
+        "inference_size": 1280,
+        "device": null,
+        "conf": 0.4,
+        "save": false,
+        "stride_type": "frames",
+        "vid_stride": 1,
+        "classes": [
+          0,
+          1,
+          24,
+          25,
+          63,
+          66,
+          67
+        ],
+        "num_detection_threads": 3,
+        "roi": [
+          []
+        ]
+      }
+    ],
+    "trackers": [
+      {
+        "source_ids": [
+          0
+        ],
+        "fps": 5,
+        "botsort_cfg": {
+          "appearance_thresh": 0.25,
+          "gmc_method": "sparseOptFlow",
+          "match_thresh": 0.8,
+          "new_track_thresh": 0.6,
+          "proximity_thresh": 0.5,
+          "track_buffer": 30,
+          "track_high_thresh": 0.5,
+          "track_low_thresh": 0.1,
+          "tracker_type": "botsort",
+          "with_reid": true
         }
-    },
+      },
+      {
+        "source_ids": [
+          1
+        ],
+        "fps": 5,
+        "botsort_cfg": {
+          "appearance_thresh": 0.25,
+          "gmc_method": "sparseOptFlow",
+          "match_thresh": 0.8,
+          "new_track_thresh": 0.6,
+          "proximity_thresh": 0.5,
+          "track_buffer": 30,
+          "track_high_thresh": 0.5,
+          "track_low_thresh": 0.1,
+          "tracker_type": "botsort",
+          "with_reid": true
+        }
+      },
+      {
+        "source_ids": [
+          2
+        ],
+        "fps": 5,
+        "botsort_cfg": {
+          "appearance_thresh": 0.25,
+          "gmc_method": "sparseOptFlow",
+          "match_thresh": 0.8,
+          "new_track_thresh": 0.6,
+          "proximity_thresh": 0.5,
+          "track_buffer": 30,
+          "track_high_thresh": 0.5,
+          "track_low_thresh": 0.1,
+          "tracker_type": "botsort",
+          "with_reid": true
+        }
+      },
+      {
+        "source_ids": [
+          3
+        ],
+        "fps": 5,
+        "botsort_cfg": {
+          "appearance_thresh": 0.25,
+          "gmc_method": "sparseOptFlow",
+          "match_thresh": 0.8,
+          "new_track_thresh": 0.6,
+          "proximity_thresh": 0.5,
+          "track_buffer": 30,
+          "track_high_thresh": 0.5,
+          "track_low_thresh": 0.1,
+          "tracker_type": "botsort",
+          "with_reid": true
+        }
+      },
+      {
+        "source_ids": [
+          4
+        ],
+        "fps": 5,
+        "botsort_cfg": {
+          "appearance_thresh": 0.25,
+          "gmc_method": "sparseOptFlow",
+          "match_thresh": 0.8,
+          "new_track_thresh": 0.6,
+          "proximity_thresh": 0.5,
+          "track_buffer": 30,
+          "track_high_thresh": 0.5,
+          "track_low_thresh": 0.1,
+          "tracker_type": "botsort",
+          "with_reid": true
+        }
+      }
+    ],
     "mc_trackers": [
-        {
-            "source_ids": [
-                0,
-                1,
-                2,
-                3,
-                4
-            ],
-            "enable": true
-        }
+      {
+        "source_ids": [
+          0,
+          1,
+          2,
+          3,
+          4
+        ],
+        "enable": true
+      }
     ]
+  },
+  "events_detectors": {
+    "ZoneEventsDetector": {
+      "event_threshold": 0.5,
+      "zone_left_threshold": 0.3,
+      "sources": {}
+    },
+    "AttributeEventsDetector": {
+      "event_threshold": 0.7,
+      "attr_confidence_threshold": 0.5,
+      "sources": {}
+    },
+    "ScheduleAlarmEventsDetector": {
+      "event_threshold": 0.5,
+      "sources": {},
+      "default_schedule": {
+        "enabled": false,
+        "weekdays": [
+          0,
+          1,
+          2,
+          3,
+          4,
+          5,
+          6
+        ],
+        "periods": [],
+        "class_ids": []
+      }
+    }
+  },
+  "events_processor": {},
+  "database_adapters": {
+    "DatabaseAdapterObjects": {
+      "table_name": "objects"
+    },
+    "DatabaseAdapterCamEvents": {
+      "table_name": "camera_events",
+      "event_name": "CameraEvent"
+    },
+    "DatabaseAdapterZoneEvents": {
+      "table_name": "zone_events",
+      "event_name": "ZoneEvent"
+    },
+    "DatabaseAdapterScheduleAlarmEvents": {
+      "table_name": "schedule_alarm_events",
+      "event_name": "ScheduleAlarmEvent"
+    }
+  },
+  "visualizer": {
+    "basic_visualizer": {
+      "num_width": 3,
+      "num_height": 2,
+      "visual_buffer_num_frames": 10,
+      "source_ids": [
+        0,
+        1,
+        2,
+        3,
+        4
+      ],
+      "fps": [
+        5,
+        5,
+        5,
+        5,
+        5
+      ],
+      "gui_enabled": true,
+      "show_debug_info": true,
+      "objects_journal_enabled": true
+    },
+    "text_settings": {
+      "font_scale": 0.7,
+      "font_thickness": 2,
+      "text_color": [
+        255,
+        255,
+        255
+      ],
+      "text_background_color": [
+        0,
+        0,
+        0
+      ],
+      "show_object_ids": true,
+      "show_object_classes": true,
+      "show_confidence": true
+    },
+    "event_signalization": {
+      "event_signal_enabled": true,
+      "event_signal_color": [
+        0,
+        0,
+        255
+      ],
+      "event_signal_duration": 3,
+      "event_signal_size": 10,
+      "show_event_text": true
+    },
+    "attributes_display": {
+      "show_attributes": false,
+      "max_attributes_display": 5,
+      "show_important_attributes_only": true,
+      "attributes_filter": []
+    },
+    "layout_settings": {
+      "auto_resize": true,
+      "fullscreen": false,
+      "show_grid": false,
+      "grid_color": [
+        128,
+        128,
+        128
+      ],
+      "grid_thickness": 1
+    }
+  },
+  "objects_handler": {
+    "objects_handling": {
+      "history_len": 30,
+      "lost_store_time_secs": 60,
+      "lost_thresh": 5,
+      "max_objects_per_frame": 100
+    },
+    "class_manager": {
+      "enable_class_manager": true,
+      "class_mapping": {}
+    },
+    "attributes_handling": {
+      "enable_attributes_handling": false,
+      "max_attributes_per_object": 10,
+      "attributes_cache_time": 300,
+      "attributes_filter": []
+    },
+    "objects_lifecycle": {
+      "object_lifetime": 60,
+      "min_tracking_time": 5,
+      "auto_cleanup_objects": true,
+      "cleanup_interval": 300
+    }
+  },
+  "controller": {
+    "autoclose": false,
+    "fps": 30,
+    "class_names": [
+      "person",
+      "bicycle",
+      "car",
+      "motorcycle",
+      "airplane",
+      "bus",
+      "train",
+      "truck",
+      "boat",
+      "traffic light",
+      "fire hydrant",
+      "stop sign",
+      "parking meter",
+      "bench",
+      "bird",
+      "cat",
+      "dog",
+      "horse",
+      "sheep",
+      "cow",
+      "elephant",
+      "bear",
+      "zebra",
+      "giraffe",
+      "backpack",
+      "umbrella",
+      "handbag",
+      "tie",
+      "suitcase",
+      "frisbee",
+      "skis",
+      "snowboard",
+      "sports ball",
+      "kite",
+      "baseball bat",
+      "baseball glove",
+      "skateboard",
+      "surfboard",
+      "tennis racket",
+      "bottle",
+      "wine glass",
+      "cup",
+      "fork",
+      "knife",
+      "spoon",
+      "bowl",
+      "banana",
+      "apple",
+      "sandwich",
+      "orange",
+      "broccoli",
+      "carrot",
+      "hot dog",
+      "pizza",
+      "donut",
+      "cake",
+      "chair",
+      "couch",
+      "potted plant",
+      "bed",
+      "dining table",
+      "toilet",
+      "tv",
+      "laptop",
+      "mouse",
+      "remote",
+      "keyboard",
+      "cell phone",
+      "microwave",
+      "oven",
+      "toaster",
+      "sink",
+      "refrigerator",
+      "book",
+      "clock",
+      "vase",
+      "scissors",
+      "teddy bear",
+      "hair drier",
+      "toothbrush"
+    ]
+  },
+  "sources": {
+    "sources": [
+      {
+        "camera": "rtsp://10.245.1.200",
+        "source": "IpCamera",
+        "apiPreference": "CAP_FFMPEG",
+        "split": false,
+        "num_split": 0,
+        "src_coords": [
+          0
+        ],
+        "source_ids": [
+          0
+        ],
+        "source_names": [
+          "'Cam1'"
+        ],
+        "loop_play": false
+      },
+      {
+        "camera": "rtsp://10.245.1.199",
+        "source": "IpCamera",
+        "apiPreference": "CAP_FFMPEG",
+        "split": true,
+        "num_split": 2,
+        "src_coords": [
+          [
+            0,
+            0,
+            2304,
+            1300
+          ],
+          [
+            0,
+            1300,
+            2304,
+            1292
+          ]
+        ],
+        "source_ids": [
+          1,
+          2
+        ],
+        "source_names": [
+          "'Cam2'",
+          "'Cam3'"
+        ],
+        "loop_play": true
+      },
+      {
+        "camera": "rtsp://10.245.1.202",
+        "source": "IpCamera",
+        "apiPreference": "CAP_FFMPEG",
+        "split": true,
+        "num_split": 2,
+        "src_coords": [
+          [
+            0,
+            0,
+            2304,
+            1300
+          ],
+          [
+            0,
+            1300,
+            2304,
+            1292
+          ]
+        ],
+        "source_ids": [
+          3,
+          4
+        ],
+        "source_names": [
+          "'Cam4'",
+          "'Cam5'"
+        ],
+        "loop_play": true
+      }
+    ],
+    "preprocessing": {
+      "buffer_size": 10,
+      "frame_skip": 1,
+      "enable_resize": false,
+      "resize_width": 640,
+      "resize_height": 480,
+      "enable_roi": false,
+      "roi_coords": "",
+      "gstreamer_pipeline": "",
+      "rtsp_username": "",
+      "rtsp_password": ""
+    }
+  },
+  "detectors": {
+    "detectors": [
+      {
+        "source_ids": [
+          0
+        ],
+        "model": "models/yolov8n.pt",
+        "inference_size": 640,
+        "conf": 0.4,
+        "classes": [
+          0,
+          1,
+          24,
+          25,
+          63,
+          66,
+          67
+        ],
+        "num_detection_threads": 3,
+        "roi": [
+          [
+            [
+              1790,
+              0,
+              500,
+              400
+            ],
+            [
+              1700,
+              0,
+              1000,
+              1045
+            ],
+            [
+              1500,
+              0,
+              2340,
+              2160
+            ]
+          ]
+        ]
+      },
+      {
+        "source_ids": [
+          1
+        ],
+        "model": "models/yolov8n.pt",
+        "inference_size": 1280,
+        "conf": 0.4,
+        "classes": [
+          0,
+          1,
+          24,
+          25,
+          63,
+          66,
+          67
+        ],
+        "num_detection_threads": 3,
+        "roi": [
+          []
+        ]
+      },
+      {
+        "source_ids": [
+          2
+        ],
+        "model": "models/yolov8n.pt",
+        "inference_size": 640,
+        "conf": 0.4,
+        "classes": [
+          0,
+          1,
+          24,
+          25,
+          63,
+          66,
+          67
+        ],
+        "num_detection_threads": 3,
+        "roi": [
+          [
+            [
+              0,
+              0,
+              250,
+              200
+            ],
+            [
+              0,
+              0,
+              500,
+              400
+            ],
+            [
+              0,
+              0,
+              1000,
+              800
+            ],
+            [
+              0,
+              0,
+              2304,
+              1292
+            ]
+          ]
+        ]
+      },
+      {
+        "source_ids": [
+          3
+        ],
+        "model": "models/yolov8n.pt",
+        "inference_size": 640,
+        "conf": 0.4,
+        "classes": [
+          0,
+          1,
+          24,
+          25,
+          63,
+          66,
+          67
+        ],
+        "num_detection_threads": 3,
+        "roi": [
+          [
+            [
+              0,
+              0,
+              2304,
+              1300
+            ],
+            [
+              736,
+              0,
+              640,
+              670
+            ],
+            [
+              905,
+              0,
+              310,
+              265
+            ]
+          ]
+        ]
+      },
+      {
+        "source_ids": [
+          4
+        ],
+        "model": "models/yolov8n.pt",
+        "inference_size": 1280,
+        "conf": 0.4,
+        "classes": [
+          0,
+          1,
+          24,
+          25,
+          63,
+          66,
+          67
+        ],
+        "num_detection_threads": 3,
+        "roi": [
+          []
+        ]
+      }
+    ],
+    "attributes_detection": {
+      "enabled": false,
+      "model": "",
+      "attrs": "",
+      "conf_threshold": 0.5,
+      "inference_size": 224
+    },
+    "class_mapping": {
+      "enabled": false,
+      "mapping": ""
+    }
+  },
+  "trackers": {
+    "trackers": [
+      {
+        "source_ids": [
+          0
+        ],
+        "fps": 5,
+        "inference_size": null,
+        "botsort_cfg": {
+          "appearance_thresh": 0.25,
+          "gmc_method": "sparseOptFlow",
+          "match_thresh": 0.8,
+          "new_track_thresh": 0.6,
+          "proximity_thresh": 0.5,
+          "track_buffer": 30,
+          "track_high_thresh": 0.5,
+          "track_low_thresh": 0.1,
+          "tracker_type": "botsort",
+          "with_reid": true
+        }
+      },
+      {
+        "source_ids": [
+          1
+        ],
+        "fps": 5,
+        "inference_size": null,
+        "botsort_cfg": {
+          "appearance_thresh": 0.25,
+          "gmc_method": "sparseOptFlow",
+          "match_thresh": 0.8,
+          "new_track_thresh": 0.6,
+          "proximity_thresh": 0.5,
+          "track_buffer": 30,
+          "track_high_thresh": 0.5,
+          "track_low_thresh": 0.1,
+          "tracker_type": "botsort",
+          "with_reid": true
+        }
+      },
+      {
+        "source_ids": [
+          2
+        ],
+        "fps": 5,
+        "inference_size": null,
+        "botsort_cfg": {
+          "appearance_thresh": 0.25,
+          "gmc_method": "sparseOptFlow",
+          "match_thresh": 0.8,
+          "new_track_thresh": 0.6,
+          "proximity_thresh": 0.5,
+          "track_buffer": 30,
+          "track_high_thresh": 0.5,
+          "track_low_thresh": 0.1,
+          "tracker_type": "botsort",
+          "with_reid": true
+        }
+      },
+      {
+        "source_ids": [
+          3
+        ],
+        "fps": 5,
+        "inference_size": null,
+        "botsort_cfg": {
+          "appearance_thresh": 0.25,
+          "gmc_method": "sparseOptFlow",
+          "match_thresh": 0.8,
+          "new_track_thresh": 0.6,
+          "proximity_thresh": 0.5,
+          "track_buffer": 30,
+          "track_high_thresh": 0.5,
+          "track_low_thresh": 0.1,
+          "tracker_type": "botsort",
+          "with_reid": true
+        }
+      },
+      {
+        "source_ids": [
+          4
+        ],
+        "fps": 5,
+        "inference_size": null,
+        "botsort_cfg": {
+          "appearance_thresh": 0.25,
+          "gmc_method": "sparseOptFlow",
+          "match_thresh": 0.8,
+          "new_track_thresh": 0.6,
+          "proximity_thresh": 0.5,
+          "track_buffer": 30,
+          "track_high_thresh": 0.5,
+          "track_low_thresh": 0.1,
+          "tracker_type": "botsort",
+          "with_reid": true
+        }
+      }
+    ],
+    "botsort_advanced": {
+      "track_high_thresh": 0.5,
+      "track_low_thresh": 0.1,
+      "new_track_thresh": 0.6,
+      "match_thresh": 0.8,
+      "track_buffer": 30,
+      "gmc_method": "sparseOptFlow",
+      "proximity_thresh": 0.5,
+      "appearance_thresh": 0.25,
+      "with_reid": false
+    },
+    "encoder": {
+      "enabled": false,
+      "onnx_path": "",
+      "input_size": 128,
+      "batch_size": 1,
+      "device": "auto"
+    },
+    "multi_camera": {
+      "enabled": false,
+      "sources": "",
+      "cross_camera_thresh": 0.7,
+      "cross_camera_max_distance": 100.0
+    }
+  },
+  "mc_trackers": [
+    {
+      "source_ids": [
+        0,
+        1,
+        2,
+        3,
+        4
+      ],
+      "enable": true
+    }
+  ]
 }

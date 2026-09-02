@@ -376,11 +376,6 @@
   },
   "events_detectors": {
     "CamEventsDetector": {},
-    "FieldOfViewEventsDetector": {
-      "sources": {
-        "0": []
-      }
-    },
     "ZoneEventsDetector": {
       "sources": {
         "0": [],
@@ -410,6 +405,38 @@
     },
     "AttributeEventsDetector": {
       "sources": {}
+    },
+    "ScheduleAlarmEventsDetector": {
+      "sources": {
+        "0": {
+          "enabled": false,
+          "weekdays": [
+            0,
+            1,
+            2,
+            3,
+            4,
+            5,
+            6
+          ],
+          "periods": [],
+          "class_ids": []
+        }
+      },
+      "default_schedule": {
+        "enabled": false,
+        "weekdays": [
+          0,
+          1,
+          2,
+          3,
+          4,
+          5,
+          6
+        ],
+        "periods": [],
+        "class_ids": []
+      }
     }
   },
   "events_processor": {},
@@ -435,13 +462,13 @@
       "table_name": "camera_events",
       "event_name": "CameraEvent"
     },
-    "DatabaseAdapterFieldOfViewEvents": {
-      "table_name": "fov_events",
-      "event_name": "FieldOfViewEvent"
-    },
     "DatabaseAdapterZoneEvents": {
       "table_name": "zone_events",
       "event_name": "ZoneEvent"
+    },
+    "DatabaseAdapterScheduleAlarmEvents": {
+      "table_name": "schedule_alarm_events",
+      "event_name": "ScheduleAlarmEvent"
     }
   },
   "visualizer": {

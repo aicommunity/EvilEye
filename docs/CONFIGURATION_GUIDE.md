@@ -1059,8 +1059,22 @@ Samples поставляются с `enabled: false`. Для production-like з�
 ```json
 "events_detectors": {
   "CamEventsDetector": {},
-  "FieldOfViewEventsDetector": {
-    "sources": {}
+  "ScheduleAlarmEventsDetector": {
+    "camera_cooldown_sec": 60,
+    "default_schedule": {
+      "enabled": true,
+      "weekdays": [0, 1, 2, 3, 4, 5, 6],
+      "periods": [["22:00:00", "06:00:00"]],
+      "class_ids": []
+    },
+    "sources": {
+      "0": {
+        "enabled": true,
+        "weekdays": [0, 1, 2, 3, 4],
+        "periods": [["18:00:00", "08:00:00"]],
+        "class_ids": []
+      }
+    }
   },
   "ZoneEventsDetector": {
     "sources": {},
@@ -1077,7 +1091,7 @@ Samples поставляются с `enabled: false`. Для production-like з�
 **Типы детекторов событий**:
 
 - **CamEventsDetector** - События камер (старт, стоп, ошибки)
-- **FieldOfViewEventsDetector** - События появления объектов в поле зрения
+- **ScheduleAlarmEventsDetector** - Тревога при обнаружении объектов в запрещённое по расписанию время (дни недели, интервалы, фильтр классов, антиспам по объекту и камере)
 - **ZoneEventsDetector** - События входа/выхода объектов из зон
 - **AttributeEventsDetector** - События изменения атрибутов объектов
 - **SystemEventsDetector** - Системные события

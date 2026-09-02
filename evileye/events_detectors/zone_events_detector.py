@@ -1,6 +1,5 @@
 import time
 from threading import Lock, Event
-from .event_fov import FieldOfViewEvent
 from .events_detector import EventsDetector
 from evileye.core.event_time import obj_found_datetime, obj_lost_datetime
 from .zone import Zone, ZoneForm

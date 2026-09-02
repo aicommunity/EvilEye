@@ -8,20 +8,25 @@ from evileye.core.interfaces import IEventDetector, IObjectHandler, IPipeline
 from evileye.core.logger import get_module_logger
 from evileye.database_controller.json_adapter_attribute_events import JsonAdapterAttributeEvents
 from evileye.database_controller.json_adapter_cam_events import JsonAdapterCamEvents
-from evileye.database_controller.json_adapter_fov_events import JsonAdapterFovEvents
+from evileye.database_controller.json_adapter_schedule_alarm_events import JsonAdapterScheduleAlarmEvents
 from evileye.database_controller.json_adapter_system_events import JsonAdapterSystemEvents
 from evileye.database_controller.json_adapter_zone_events import JsonAdapterZoneEvents
 from evileye.events_control.events_controller import EventsDetectorsController
 from evileye.events_control.events_processor import EventsProcessor
 from evileye.events_detectors.attribute_events_detector import AttributeEventsDetector
 from evileye.events_detectors.cam_events_detector import CamEventsDetector
-from evileye.events_detectors.fov_events_detector import FieldOfViewEventsDetector
+from evileye.events_detectors.schedule_alarm_events_detector import ScheduleAlarmEventsDetector
+from evileye.events_detectors.schedule_alarm_logic import (
+    DETECTOR_CONFIG_KEY,
+    LEGACY_DETECTOR_CONFIG_KEY,
+    resolve_detector_section,
+)
 from evileye.events_detectors.system_events_detector import SystemEventsDetector
 from evileye.events_detectors.zone_events_detector import ZoneEventsDetector
 
 JSON_EVENT_ADAPTER_CLASSES = (
     JsonAdapterAttributeEvents,
-    JsonAdapterFovEvents,
+    JsonAdapterScheduleAlarmEvents,
     JsonAdapterZoneEvents,
     JsonAdapterCamEvents,
     JsonAdapterSystemEvents,
@@ -51,11 +56,16 @@ class EventsService:
         self._detectors["CamEventsDetector"].set_params(**params.get("CamEventsDetector", {}))
         self._detectors["CamEventsDetector"].init()
 
-        self._detectors["FieldOfViewEventsDetector"] = FieldOfViewEventsDetector(objects_handler)
-        self._detectors["FieldOfViewEventsDetector"].set_params(
-            **params.get("FieldOfViewEventsDetector", {})
+        pipeline_source_ids = list(range(len(sources)))
+        schedule_params = resolve_detector_section(params)
+        schedule_detector = ScheduleAlarmEventsDetector(
+            objects_handler,
+            pipeline_source_ids=pipeline_source_ids,
         )
-        self._detectors["FieldOfViewEventsDetector"].init()
+        schedule_detector.set_params(**schedule_params)
+        schedule_detector.init()
+        self._detectors[DETECTOR_CONFIG_KEY] = schedule_detector
+        self._detectors[LEGACY_DETECTOR_CONFIG_KEY] = schedule_detector
 
         self._detectors["ZoneEventsDetector"] = ZoneEventsDetector(objects_handler)
         self._detectors["ZoneEventsDetector"].set_params(**params.get("ZoneEventsDetector", {}))
@@ -72,7 +82,7 @@ class EventsService:
         self._detectors["SystemEventsDetector"].init()
 
         objects_handler.subscribe(
-            self._detectors["FieldOfViewEventsDetector"],
+            self._detectors[DETECTOR_CONFIG_KEY],
             self._detectors["ZoneEventsDetector"],
             self._detectors["AttributeEventsDetector"],
         )
@@ -114,7 +124,7 @@ class EventsService:
         """Инициализировать контроллер детекторов."""
         detectors_list = [
             self._detectors.get("CamEventsDetector"),
-            self._detectors.get("FieldOfViewEventsDetector"),
+            self._detectors.get(DETECTOR_CONFIG_KEY),
             self._detectors.get("ZoneEventsDetector"),
         ]
         if self._detectors.get("AttributeEventsDetector"):
@@ -202,7 +212,8 @@ class EventsService:
     def apply_legacy_detector_refs(self, host: Any) -> None:
         """Синхронизировать legacy-атрибуты Controller с детекторами сервиса."""
         host.cam_events_detector = self.get_detector("CamEventsDetector")
-        host.fov_events_detector = self.get_detector("FieldOfViewEventsDetector")
+        host.schedule_alarm_events_detector = self.get_detector(DETECTOR_CONFIG_KEY)
+        host.fov_events_detector = host.schedule_alarm_events_detector
         host.zone_events_detector = self.get_detector("ZoneEventsDetector")
         host.attr_events_detector = self.get_detector("AttributeEventsDetector")
         host.system_events_detector = self.get_detector("SystemEventsDetector")

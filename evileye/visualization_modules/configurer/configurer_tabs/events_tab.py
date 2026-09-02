@@ -196,7 +196,7 @@ class EventsTab(BaseTab):
         fov_layout.addWidget(sources_group)
 
         fov_tab.setLayout(fov_layout)
-        self.events_tab_widget.addTab(fov_tab, "FOV Events")
+        self.events_tab_widget.addTab(fov_tab, "Schedule Alarm")
 
     def _setup_attribute_events_tab(self):
         """Настройка вкладки Attribute Events Detector"""

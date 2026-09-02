@@ -28,7 +28,7 @@ class DatabaseAdapterFieldOfViewEvents(DatabaseAdapterBase):
 
     def set_params_impl(self):
         super().set_params_impl()
-        self.event_name = self.params['event_name']
+        self.event_name = self.params.get('event_name', 'ScheduleAlarmEvent')
 
     def _insert_impl(self, event):
         fields, data, preview_path = self._prepare_for_saving(event)

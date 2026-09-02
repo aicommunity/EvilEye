@@ -29,6 +29,15 @@ from evileye.api.core.roi_config import (
     ui_rois_from_detector,
     ui_rois_to_detector,
 )
+from evileye.api.core.schedule_alarm_config import (
+    get_effective_source_schedule,
+    get_global_schedule_alarm_params,
+    set_global_schedule_alarm_params,
+    set_source_schedule_override,
+    source_has_override,
+    validate_schedule_alarm_section,
+    schedule_alarm_detector_section,
+)
 from evileye.api.core.zone_config import (
     detector_zones_for_source,
     set_detector_zones_for_source,
@@ -87,6 +96,22 @@ class ZoneDetectorParamsUpdate(BaseModel):
 
 class ClassMappingUpdate(BaseModel):
     mapping: dict[str, str] = Field(default_factory=dict)
+
+
+class SourceScheduleModel(BaseModel):
+    enabled: bool = True
+    weekdays: list[int] = Field(default_factory=lambda: list(range(7)))
+    periods: list[list[str]] = Field(default_factory=list)
+    class_ids: list[int] = Field(default_factory=list)
+
+
+class ScheduleAlarmGlobalUpdate(BaseModel):
+    camera_cooldown_sec: int = Field(ge=0, default=0)
+    default_schedule: SourceScheduleModel
+
+
+class ScheduleAlarmSourceUpdate(BaseModel):
+    schedule: SourceScheduleModel | None = None
 
 
 @router.get("/{name}/sections")
@@ -243,6 +268,11 @@ def _apply_roi_runtime(source_id: int, rois_xywh: list[list[float]]) -> bool:
     return bool(isinstance(response, dict) and response.get("ok"))
 
 
+def _apply_schedule_alarm_runtime(scope: str, **kwargs) -> bool:
+    response = send_control_command({"cmd": "apply_schedule_alarm", "scope": scope, **kwargs})
+    return bool(isinstance(response, dict) and response.get("ok"))
+
+
 def _apply_zones_runtime(source_id: int, zones: list[list[list[float]]]) -> bool:
     response = send_control_command(
         {
@@ -324,6 +354,79 @@ async def put_zone_detector_params(name: str, payload: ZoneDetectorParamsUpdate)
     return {
         "status": "updated",
         **zone_detector_params(body),
+        **apply_meta,
+    }
+
+
+@router.get("/{name}/schedule-alarm")
+async def get_schedule_alarm_global(name: str) -> dict:
+    body = _load(name)
+    return get_global_schedule_alarm_params(body)
+
+
+@router.put("/{name}/schedule-alarm")
+async def put_schedule_alarm_global(name: str, payload: ScheduleAlarmGlobalUpdate) -> dict:
+    body = _load(name)
+    set_global_schedule_alarm_params(
+        body,
+        camera_cooldown_sec=payload.camera_cooldown_sec,
+        default_schedule=payload.default_schedule.model_dump(),
+    )
+    errors = validate_schedule_alarm_section(schedule_alarm_detector_section(body))
+    if errors:
+        raise HTTPException(status_code=400, detail="; ".join(errors))
+    _save(name, body)
+    applied = False
+    if _find_runtime_id_for_config(name) is not None:
+        applied = _apply_schedule_alarm_runtime(
+            "global",
+            params={
+                "camera_cooldown_sec": payload.camera_cooldown_sec,
+                "default_schedule": payload.default_schedule.model_dump(),
+            },
+        )
+    apply_meta = _runtime_apply_result(name, applied)
+    return {
+        "status": "updated",
+        **get_global_schedule_alarm_params(body),
+        **apply_meta,
+    }
+
+
+@router.get("/{name}/sources/{source_id}/schedule-alarm")
+async def get_source_schedule_alarm(name: str, source_id: int) -> dict:
+    body = _load(name)
+    return {
+        "schedule": get_effective_source_schedule(body, source_id),
+        "has_override": source_has_override(body, source_id),
+    }
+
+
+@router.put("/{name}/sources/{source_id}/schedule-alarm")
+async def put_source_schedule_alarm(
+    name: str,
+    source_id: int,
+    payload: ScheduleAlarmSourceUpdate,
+) -> dict:
+    body = _load(name)
+    schedule = payload.schedule.model_dump() if payload.schedule is not None else None
+    set_source_schedule_override(body, source_id, schedule)
+    errors = validate_schedule_alarm_section(schedule_alarm_detector_section(body))
+    if errors:
+        raise HTTPException(status_code=400, detail="; ".join(errors))
+    _save(name, body)
+    applied = False
+    if _find_runtime_id_for_config(name) is not None:
+        applied = _apply_schedule_alarm_runtime(
+            "source",
+            source_id=int(source_id),
+            schedule=schedule,
+        )
+    apply_meta = _runtime_apply_result(name, applied)
+    return {
+        "status": "updated",
+        "schedule": get_effective_source_schedule(body, source_id),
+        "has_override": source_has_override(body, source_id),
         **apply_meta,
     }
 

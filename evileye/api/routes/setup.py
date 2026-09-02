@@ -27,6 +27,21 @@ from evileye.service_manager.state import load_state
 router = APIRouter(prefix="/api/v1/setup", tags=["setup"])
 
 
+class AlarmScheduleModel(BaseModel):
+    enabled: bool = False
+    weekdays: list[int] = Field(default_factory=lambda: list(range(7)))
+    periods: list[list[str]] = Field(default_factory=list)
+    class_ids: list[int] = Field(default_factory=list)
+    camera_cooldown_sec: int = 0
+
+
+class BasicAlarmCameraModel(BaseModel):
+    id: int = 0
+    name: str = "Cam1"
+    alarm_enabled: Optional[bool] = None
+    alarm_schedule: Optional[AlarmScheduleModel] = None
+
+
 class BasicSourceModel(BaseModel):
     id: int = 0
     name: str = "Cam1"
@@ -37,6 +52,10 @@ class BasicSourceModel(BaseModel):
     record: bool = True
     # Projection-only (split tails); ignored on apply.
     extra_names: Optional[list[str]] = None
+    logical_ids: Optional[list[int]] = None
+    # Deprecated: use alarm_cameras instead.
+    alarm_enabled: Optional[bool] = None
+    alarm_schedule: Optional[AlarmScheduleModel] = None
 
 
 class BasicDatabaseModel(BaseModel):
@@ -55,6 +74,8 @@ class BasicSetupModel(BaseModel):
     sources: list[BasicSourceModel] = Field(default_factory=list)
     analytics_enabled: bool = False
     recording_enabled: bool = False
+    alarm_schedule: Optional[AlarmScheduleModel] = None
+    alarm_cameras: list[BasicAlarmCameraModel] = Field(default_factory=list)
 
 
 class DataDirPayload(BaseModel):

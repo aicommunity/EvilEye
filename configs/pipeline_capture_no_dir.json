@@ -129,9 +129,6 @@
   },
   "events_detectors": {
     "CamEventsDetector": {},
-    "FieldOfViewEventsDetector": {
-      "sources": {}
-    },
     "ZoneEventsDetector": {
       "sources": {},
       "event_threshold": 0,
@@ -139,6 +136,23 @@
     },
     "AttributeEventsDetector": {
       "sources": {}
+    },
+    "ScheduleAlarmEventsDetector": {
+      "sources": {},
+      "default_schedule": {
+        "enabled": false,
+        "weekdays": [
+          0,
+          1,
+          2,
+          3,
+          4,
+          5,
+          6
+        ],
+        "periods": [],
+        "class_ids": []
+      }
     }
   },
   "events_processor": {},

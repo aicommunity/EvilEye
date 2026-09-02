@@ -16,17 +16,34 @@ export type SetupStatus = {
   service?: { hint?: string; installed?: boolean | null };
 };
 
+export type BasicAlarmCamera = {
+  id: number;
+  name: string;
+  alarm_enabled?: boolean;
+  alarm_schedule?: AlarmSchedule | null;
+};
+
 export type BasicSource = {
   id: number;
   name: string;
   /** Extra logical names for split sources (Cam3 when card is Cam2). */
   extra_names?: string[];
+  /** All logical source_ids in this capture row (projection-only). */
+  logical_ids?: number[];
   type: string;
   address: string | number;
   username?: string;
   password?: string;
   password_set?: boolean;
   record?: boolean;
+};
+
+export type AlarmSchedule = {
+  enabled: boolean;
+  weekdays: number[];
+  periods: [string, string][];
+  class_ids: number[];
+  camera_cooldown_sec?: number;
 };
 
 export type BasicSetup = {
@@ -44,6 +61,8 @@ export type BasicSetup = {
   sources: BasicSource[];
   analytics_enabled: boolean;
   recording_enabled: boolean;
+  alarm_schedule?: AlarmSchedule | null;
+  alarm_cameras?: BasicAlarmCamera[];
 };
 
 export const setupApi = {

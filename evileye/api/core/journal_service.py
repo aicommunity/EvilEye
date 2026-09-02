@@ -324,7 +324,7 @@ def load_filters_meta() -> dict[str, Any]:
         "source_names": sorted(_current_source_names()),
         "event_types_events": [
             "attr_found", "attr_lost", "zone_entered", "zone_left",
-            "fov_found", "fov_lost", "cam", "sys",
+            "schedule_alarm_found", "schedule_alarm_lost", "fov_found", "fov_lost", "cam", "sys",
         ],
         "event_types_objects": ["found", "lost"],
     }

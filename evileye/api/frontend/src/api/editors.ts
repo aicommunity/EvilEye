@@ -26,6 +26,27 @@ export interface ZonesPayload {
   applied_live?: boolean;
 }
 
+export interface SourceSchedule {
+  enabled: boolean;
+  weekdays: number[];
+  periods: [string, string][];
+  class_ids: number[];
+}
+
+export interface ScheduleAlarmGlobalPayload {
+  camera_cooldown_sec: number;
+  default_schedule: SourceSchedule;
+  restart_required?: boolean;
+  applied_live?: boolean;
+}
+
+export interface SourceScheduleAlarmPayload {
+  schedule: SourceSchedule;
+  has_override: boolean;
+  restart_required?: boolean;
+  applied_live?: boolean;
+}
+
 export interface ZoneDetectorParamsPayload {
   event_threshold: number;
   zone_left_threshold: number;
@@ -75,6 +96,31 @@ export const editorsApi = {
     return request(`/configs/${encodeURIComponent(name)}/class-mapping`, {
       method: 'PUT',
       body: JSON.stringify({ mapping }),
+    });
+  },
+  getScheduleAlarm(name: string): Promise<ScheduleAlarmGlobalPayload> {
+    return request(`/configs/${encodeURIComponent(name)}/schedule-alarm`);
+  },
+  putScheduleAlarm(
+    name: string,
+    body: Pick<ScheduleAlarmGlobalPayload, 'camera_cooldown_sec' | 'default_schedule'>,
+  ): Promise<ScheduleAlarmGlobalPayload & { status: string }> {
+    return request(`/configs/${encodeURIComponent(name)}/schedule-alarm`, {
+      method: 'PUT',
+      body: JSON.stringify(body),
+    });
+  },
+  getSourceScheduleAlarm(name: string, sourceId: number): Promise<SourceScheduleAlarmPayload> {
+    return request(`/configs/${encodeURIComponent(name)}/sources/${sourceId}/schedule-alarm`);
+  },
+  putSourceScheduleAlarm(
+    name: string,
+    sourceId: number,
+    schedule: SourceSchedule | null,
+  ): Promise<SourceScheduleAlarmPayload & { status: string }> {
+    return request(`/configs/${encodeURIComponent(name)}/sources/${sourceId}/schedule-alarm`, {
+      method: 'PUT',
+      body: JSON.stringify({ schedule }),
     });
   },
 };

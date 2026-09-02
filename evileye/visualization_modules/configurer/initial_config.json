@@ -1,18 +1,17 @@
 {
-  "sources": [{
-
-  }
+  "sources": [
+    {}
   ],
-  "detectors":[
+  "detectors": [
     {
-      "show" : false,
+      "show": false,
       "device": null,
-      "save" : false,
+      "save": false,
       "stride_type": "frames",
       "vid_stride": 1
     }
   ],
-  "trackers":[
+  "trackers": [
     {
       "botsort_cfg": {
         "appearance_thresh": 0.25,
@@ -31,19 +30,29 @@
   "events_detectors": {
     "CamEventsDetector": {},
     "ZoneEventsDetector": {
-      "sources": {
-      },
+      "sources": {},
       "event_threshold": 5,
       "zone_left_threshold": 3
     },
-    "FieldOfViewEventsDetector": {
-      "sources": {
+    "ScheduleAlarmEventsDetector": {
+      "sources": {},
+      "default_schedule": {
+        "enabled": false,
+        "weekdays": [
+          0,
+          1,
+          2,
+          3,
+          4,
+          5,
+          6
+        ],
+        "periods": [],
+        "class_ids": []
       }
     }
   },
-  "events_processor": {
-
-  },
+  "events_processor": {},
   "database_adapters": {
     "DatabaseAdapterObjects": {
       "table_name": "objects"
@@ -52,21 +61,33 @@
       "table_name": "camera_events",
       "event_name": "CameraEvent"
     },
-    "DatabaseAdapterFieldOfViewEvents": {
-      "table_name": "fov_events",
-      "event_name": "FieldOfViewEvent"
-    },
     "DatabaseAdapterZoneEvents": {
       "table_name": "zone_events",
       "event_name": "ZoneEvent"
+    },
+    "DatabaseAdapterScheduleAlarmEvents": {
+      "table_name": "schedule_alarm_events",
+      "event_name": "ScheduleAlarmEvent"
     }
   },
-  "visualizer" : {
+  "visualizer": {
     "num_width": 3,
     "num_height": 2,
     "visual_buffer_num_frames": 10,
-    "source_ids": [0, 1, 2, 3, 4],
-    "fps": [5, 5, 5, 5, 5],
+    "source_ids": [
+      0,
+      1,
+      2,
+      3,
+      4
+    ],
+    "fps": [
+      5,
+      5,
+      5,
+      5,
+      5
+    ],
     "gui_enabled": true,
     "show_debug_info": true,
     "objects_journal_enabled": false
@@ -98,7 +119,7 @@
         "configuration_info": "json",
         "project_id": "integer REFERENCES projects (project_id) ON DELETE CASCADE"
       },
-      "camera_information":  {
+      "camera_information": {
         "full_address": "text PRIMARY KEY",
         "short_address": "text",
         "sources": "integer[]",
@@ -137,18 +158,6 @@
         "job_id": "integer REFERENCES jobs (job_id) ON DELETE CASCADE",
         "project_id": "integer REFERENCES projects (project_id) ON DELETE CASCADE"
       },
-      "fov_events": {
-        "event_id": "integer PRIMARY KEY",
-        "source_id": "integer",
-        "time_stamp": "timestamp",
-        "time_obj_detected": "timestamp",
-        "time_lost": "timestamp",
-        "preview_path": "text",
-        "lost_preview_path": "text",
-        "object_id": "integer",
-        "job_id": "integer REFERENCES jobs (job_id) ON DELETE CASCADE",
-        "project_id": "integer REFERENCES projects (project_id) ON DELETE CASCADE"
-      },
       "zone_events": {
         "event_id": "integer PRIMARY KEY",
         "source_id": "integer",
@@ -162,6 +171,18 @@
         "object_id": "integer",
         "box_entered": "real ARRAY[4]",
         "box_left": "real ARRAY[4]",
+        "job_id": "integer REFERENCES jobs (job_id) ON DELETE CASCADE",
+        "project_id": "integer REFERENCES projects (project_id) ON DELETE CASCADE"
+      },
+      "schedule_alarm_events": {
+        "event_id": "integer PRIMARY KEY",
+        "source_id": "integer",
+        "time_stamp": "timestamp",
+        "time_obj_detected": "timestamp",
+        "time_lost": "timestamp",
+        "preview_path": "text",
+        "lost_preview_path": "text",
+        "object_id": "integer",
         "job_id": "integer REFERENCES jobs (job_id) ON DELETE CASCADE",
         "project_id": "integer REFERENCES projects (project_id) ON DELETE CASCADE"
       }
@@ -179,85 +200,87 @@
   "controller": {
     "autoclose": false,
     "fps": 5,
-    "class_names": [ "person",
-                     "bicycle",
-                     "car",
-                     "motorcycle",
-                     "airplane",
-                     "bus",
-                     "train",
-                     "truck",
-                     "boat",
-                     "traffic light",
-                     "fire hydrant",
-                     "stop sign",
-                     "parking meter",
-                     "bench",
-                     "bird",
-                     "cat",
-                     "dog",
-                     "horse",
-                     "sheep",
-                     "cow",
-                     "elephant",
-                     "bear",
-                     "zebra",
-                     "giraffe",
-                     "backpack",
-                     "umbrella",
-                     "handbag",
-                     "tie",
-                     "suitcase",
-                     "frisbee",
-                     "skis",
-                     "snowboard",
-                     "sports ball",
-                     "kite",
-                     "baseball bat",
-                     "baseball glove",
-                     "skateboard",
-                     "surfboard",
-                     "tennis racket",
-                     "bottle",
-                     "wine glass",
-                     "cup",
-                     "fork",
-                     "knife",
-                     "spoon",
-                     "bowl",
-                     "banana",
-                     "apple",
-                     "sandwich",
-                     "orange",
-                     "broccoli",
-                     "carrot",
-                     "hot dog",
-                     "pizza",
-                     "donut",
-                     "cake",
-                     "chair",
-                     "couch",
-                     "potted plant",
-                     "bed",
-                     "dining table",
-                     "toilet",
-                     "tv",
-                     "laptop",
-                     "mouse",
-                     "remote",
-                     "keyboard",
-                     "cell phone",
-                     "microwave",
-                     "oven",
-                     "toaster",
-                     "sink",
-                     "refrigerator",
-                     "book",
-                     "clock",
-                     "vase",
-                     "scissors",
-                     "teddy bear",
-                     "hair drier",
-                     "toothbrush" ]
+    "class_names": [
+      "person",
+      "bicycle",
+      "car",
+      "motorcycle",
+      "airplane",
+      "bus",
+      "train",
+      "truck",
+      "boat",
+      "traffic light",
+      "fire hydrant",
+      "stop sign",
+      "parking meter",
+      "bench",
+      "bird",
+      "cat",
+      "dog",
+      "horse",
+      "sheep",
+      "cow",
+      "elephant",
+      "bear",
+      "zebra",
+      "giraffe",
+      "backpack",
+      "umbrella",
+      "handbag",
+      "tie",
+      "suitcase",
+      "frisbee",
+      "skis",
+      "snowboard",
+      "sports ball",
+      "kite",
+      "baseball bat",
+      "baseball glove",
+      "skateboard",
+      "surfboard",
+      "tennis racket",
+      "bottle",
+      "wine glass",
+      "cup",
+      "fork",
+      "knife",
+      "spoon",
+      "bowl",
+      "banana",
+      "apple",
+      "sandwich",
+      "orange",
+      "broccoli",
+      "carrot",
+      "hot dog",
+      "pizza",
+      "donut",
+      "cake",
+      "chair",
+      "couch",
+      "potted plant",
+      "bed",
+      "dining table",
+      "toilet",
+      "tv",
+      "laptop",
+      "mouse",
+      "remote",
+      "keyboard",
+      "cell phone",
+      "microwave",
+      "oven",
+      "toaster",
+      "sink",
+      "refrigerator",
+      "book",
+      "clock",
+      "vase",
+      "scissors",
+      "teddy bear",
+      "hair drier",
+      "toothbrush"
+    ]
   }
 }

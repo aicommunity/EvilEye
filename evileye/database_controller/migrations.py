@@ -31,10 +31,23 @@ def apply_startup_migrations(db_controller, logger: Optional[object] = None) -> 
         pass
 
     stmts: Tuple[str, ...] = (
+        # Rename legacy FOV events table if present
+        """
+        DO $$
+        BEGIN
+          IF to_regclass('public.fov_events') IS NOT NULL
+             AND to_regclass('public.schedule_alarm_events') IS NULL THEN
+            ALTER TABLE fov_events RENAME TO schedule_alarm_events;
+          END IF;
+        END $$;
+        """,
         # zone_events video fragments
         "ALTER TABLE zone_events ADD COLUMN IF NOT EXISTS video_path_entered text;",
         "ALTER TABLE zone_events ADD COLUMN IF NOT EXISTS video_path_left text;",
-        # fov_events video fragments
+        # schedule_alarm_events video fragments
+        "ALTER TABLE schedule_alarm_events ADD COLUMN IF NOT EXISTS video_path text;",
+        "ALTER TABLE schedule_alarm_events ADD COLUMN IF NOT EXISTS video_path_lost text;",
+        # legacy fov_events video fragments
         "ALTER TABLE fov_events ADD COLUMN IF NOT EXISTS video_path text;",
         "ALTER TABLE fov_events ADD COLUMN IF NOT EXISTS video_path_lost text;",
         # attribute_events additional payload

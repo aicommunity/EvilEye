@@ -9,6 +9,7 @@ from evileye.core.logger import get_module_logger
 from evileye.database_controller.database_controller_pg import DatabaseControllerPg
 from evileye.database_controller.db_adapter_objects import DatabaseAdapterObjects
 from evileye.database_controller.db_adapter_cam_events import DatabaseAdapterCamEvents
+from evileye.database_controller.db_adapter_schedule_alarm_events import DatabaseAdapterScheduleAlarmEvents
 from evileye.database_controller.db_adapter_fov_events import DatabaseAdapterFieldOfViewEvents
 from evileye.database_controller.db_adapter_zone_events import DatabaseAdapterZoneEvents
 from evileye.database_controller.db_adapter_system_events import DatabaseAdapterSystemEvents
@@ -82,6 +83,7 @@ class DatabaseService:
         adapter_classes = {
             'DatabaseAdapterObjects': DatabaseAdapterObjects,
             'DatabaseAdapterCamEvents': DatabaseAdapterCamEvents,
+            'DatabaseAdapterScheduleAlarmEvents': DatabaseAdapterScheduleAlarmEvents,
             'DatabaseAdapterFieldOfViewEvents': DatabaseAdapterFieldOfViewEvents,
             'DatabaseAdapterZoneEvents': DatabaseAdapterZoneEvents,
             'DatabaseAdapterAttributeEvents': DatabaseAdapterAttributeEvents,
@@ -95,6 +97,10 @@ class DatabaseService:
                     adapter.set_params(**adapters_config[adapter_name])
                     adapter.init()
                     self._adapters[adapter_name] = adapter
+                    if adapter_name == 'DatabaseAdapterFieldOfViewEvents':
+                        self._adapters['DatabaseAdapterScheduleAlarmEvents'] = adapter
+                    elif adapter_name == 'DatabaseAdapterScheduleAlarmEvents':
+                        self._adapters['DatabaseAdapterFieldOfViewEvents'] = adapter
                     self.logger.debug(f"Initialized adapter: {adapter_name}")
                 except Exception as e:
                     self.logger.error(f"Failed to initialize adapter {adapter_name}: {e}")

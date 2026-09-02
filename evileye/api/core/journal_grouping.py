@@ -89,9 +89,9 @@ def group_events_rows(
                 grouped[key]["found"] = ev
             else:
                 grouped[key]["lost"] = ev
-        elif event_type in ("fov_found", "fov_lost"):
-            key = ("fov", ev.get("source_id"), ev.get("object_id"))
-            if event_type == "fov_found":
+        elif event_type in ("schedule_alarm_found", "schedule_alarm_lost", "fov_found", "fov_lost"):
+            key = ("schedule_alarm", ev.get("source_id"), ev.get("object_id"))
+            if event_type in ("schedule_alarm_found", "fov_found"):
                 grouped[key]["found"] = ev
             else:
                 grouped[key]["lost"] = ev
@@ -122,8 +122,8 @@ def group_events_rows(
             zone_id = base.get("zone_id")
             info = f"ZoneEvent obj={base.get('object_id')} zone={zone_id}" if zone_id is not None else f"ZoneEvent obj={base.get('object_id')}"
         else:
-            event_name = "FOVEvent"
-            info = f"FOVEvent obj={base.get('object_id')}"
+            event_name = "ScheduleAlarmEvent"
+            info = f"ScheduleAlarmEvent obj={base.get('object_id')}"
 
         table_rows.append(
             {

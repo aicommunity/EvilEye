@@ -5,6 +5,15 @@ from __future__ import annotations
 import copy
 from typing import Any, Optional
 
+from evileye.events_detectors.schedule_alarm_logic import (
+    DETECTOR_CONFIG_KEY,
+    SourceSchedule,
+    parse_detector_params,
+    resolve_detector_section,
+    schedule_to_json,
+    normalize_schedule_dict,
+)
+
 
 SOURCE_TYPE_MAP = {
     "IpCamera": "IpCamera",
@@ -76,6 +85,19 @@ def source_recording_flag(
     return True
 
 
+def _enumerate_logical_cameras(pipeline: dict[str, Any]) -> list[tuple[int, str]]:
+    """All logical source_ids after capture split (one entry per detector/tracker camera)."""
+    out: list[tuple[int, str]] = []
+    for idx, raw in enumerate(_as_list(pipeline.get("sources"))):
+        row = _as_dict(raw)
+        ids = _row_source_ids(row, idx)
+        names = _row_source_names(row, ids)
+        for i, sid in enumerate(ids):
+            name = names[i] if i < len(names) else f"Cam{sid + 1}"
+            out.append((sid, name))
+    return out
+
+
 def _row_source_ids(row: dict[str, Any], fallback_idx: int) -> list[int]:
     ids = row.get("source_ids")
     out: list[int] = []
@@ -142,6 +164,124 @@ def _source_key(row: dict[str, Any]) -> tuple[Any, ...]:
     return ("addr", str(row.get("camera") or row.get("address") or ""))
 
 
+def _schedules_equivalent(a: SourceSchedule, b: SourceSchedule) -> bool:
+    return (
+        a.enabled == b.enabled
+        and a.weekdays == b.weekdays
+        and a.periods == b.periods
+        and a.class_ids == b.class_ids
+    )
+
+
+def _read_alarm_schedule_from_config(
+    config: dict[str, Any],
+) -> tuple[dict[str, Any], dict[int, dict[str, Any]], dict[int, bool]]:
+    section = resolve_detector_section(config.get("events_detectors") or {})
+    cfg = parse_detector_params(section)
+    global_sched = schedule_to_json(cfg.default_schedule)
+    per_source: dict[int, dict[str, Any]] = {}
+    alarm_enabled: dict[int, bool] = {}
+
+    pipeline = _as_dict(config.get("pipeline"))
+    source_ids: list[int] = []
+    for idx, raw in enumerate(_as_list(pipeline.get("sources"))):
+        row = _as_dict(raw)
+        source_ids.extend(_row_source_ids(row, idx))
+
+    for sid in source_ids:
+        override = cfg.sources.get(sid)
+        if override is None:
+            alarm_enabled[sid] = bool(cfg.default_schedule.enabled)
+            continue
+        if not override.enabled:
+            alarm_enabled[sid] = False
+            continue
+        alarm_enabled[sid] = True
+        if not _schedules_equivalent(override, cfg.default_schedule):
+            per_source[sid] = schedule_to_json(override)
+
+    for sid, override in cfg.sources.items():
+        if sid in alarm_enabled:
+            continue
+        if override.enabled:
+            alarm_enabled[sid] = True
+            if not _schedules_equivalent(override, cfg.default_schedule):
+                per_source[sid] = schedule_to_json(override)
+        else:
+            alarm_enabled[sid] = False
+
+    return global_sched, per_source, alarm_enabled
+
+
+def _write_alarm_schedule_to_config(config: dict[str, Any], basic: dict[str, Any]) -> None:
+    events = config.setdefault("events_detectors", {})
+    if not isinstance(events, dict):
+        config["events_detectors"] = {}
+        events = config["events_detectors"]
+    section = events.setdefault(DETECTOR_CONFIG_KEY, {})
+    if not isinstance(section, dict):
+        section = {}
+        events[DETECTOR_CONFIG_KEY] = section
+
+    global_raw = basic.get("alarm_schedule")
+    global_enabled = bool(global_raw.get("enabled")) if isinstance(global_raw, dict) else False
+
+    if isinstance(global_raw, dict):
+        section["default_schedule"] = schedule_to_json(
+            normalize_schedule_dict(global_raw, default_enabled=global_enabled)
+        )
+        try:
+            section["camera_cooldown_sec"] = max(0, int(global_raw.get("camera_cooldown_sec") or 0))
+        except (TypeError, ValueError):
+            section["camera_cooldown_sec"] = 0
+
+    sources_map: dict[str, dict[str, Any]] = {}
+    cameras = _as_list(basic.get("alarm_cameras"))
+    if cameras:
+        for cam in cameras:
+            if not isinstance(cam, dict):
+                continue
+            sid = int(cam.get("id", 0))
+            custom = cam.get("alarm_schedule")
+            if isinstance(custom, dict) and custom:
+                sources_map[str(sid)] = schedule_to_json(
+                    normalize_schedule_dict(custom, default_enabled=bool(custom.get("enabled", False)))
+                )
+                continue
+            enabled = cam.get("alarm_enabled")
+            if enabled is None:
+                enabled = global_enabled
+            if not bool(enabled):
+                sources_map[str(sid)] = {
+                    "enabled": False,
+                    "weekdays": [],
+                    "periods": [],
+                    "class_ids": [],
+                }
+    else:
+        for src in _as_list(basic.get("sources")):
+            if not isinstance(src, dict):
+                continue
+            sid = int(src.get("id", 0))
+            custom = src.get("alarm_schedule")
+            if isinstance(custom, dict) and custom:
+                sources_map[str(sid)] = schedule_to_json(
+                    normalize_schedule_dict(custom, default_enabled=bool(custom.get("enabled", False)))
+                )
+                continue
+            enabled = src.get("alarm_enabled")
+            if enabled is None:
+                enabled = global_enabled
+            if not bool(enabled):
+                sources_map[str(sid)] = {
+                    "enabled": False,
+                    "weekdays": [],
+                    "periods": [],
+                    "class_ids": [],
+                }
+    section["sources"] = sources_map
+
+
 def project_basic_from_config(
     config: dict[str, Any],
     credentials: dict[str, Any] | None = None,
@@ -160,6 +300,19 @@ def project_basic_from_config(
     detectors = _as_list(pipeline.get("detectors"))
     trackers = _as_list(pipeline.get("trackers"))
     analytics = bool(detectors or trackers)
+
+    global_sched, per_source, alarm_enabled_map = _read_alarm_schedule_from_config(config)
+
+    alarm_cameras_out: list[dict[str, Any]] = []
+    for sid, name in _enumerate_logical_cameras(pipeline):
+        alarm_cameras_out.append(
+            {
+                "id": sid,
+                "name": name,
+                "alarm_enabled": alarm_enabled_map.get(sid, bool(global_sched.get("enabled"))),
+                "alarm_schedule": per_source.get(sid),
+            }
+        )
 
     sources_out: list[dict[str, Any]] = []
     for idx, raw in enumerate(_as_list(pipeline.get("sources"))):
@@ -186,6 +339,7 @@ def project_basic_from_config(
                 "username": str(cred.get("username") or ""),
                 "password_set": bool(cred.get("password") or cred.get("password_hash")),
                 "record": rec_flag,
+                "logical_ids": ids,
             }
         )
 
@@ -215,6 +369,8 @@ def project_basic_from_config(
         "sources": sources_out,
         "analytics_enabled": analytics,
         "recording_enabled": recording_effectively_enabled(config),
+        "alarm_schedule": global_sched,
+        "alarm_cameras": alarm_cameras_out,
     }
 
 
@@ -458,5 +614,7 @@ def apply_basic_setup(
         config["events_processor"] = {}
     if "visualizer" not in config:
         config["visualizer"] = {"num_width": 1, "num_height": 1}
+
+    _write_alarm_schedule_to_config(config, basic)
 
     return config, creds

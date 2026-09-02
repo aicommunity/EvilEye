@@ -34,6 +34,7 @@ import { JsonAdvancedTab } from './JsonAdvancedTab';
 import { ConfigHistoryPanel } from './ConfigHistoryPanel';
 import { RoiCanvas } from './RoiCanvas';
 import { ZoneCanvas } from './ZoneCanvas';
+import { AlarmScheduleEditor } from './AlarmScheduleEditor';
 import { ClassMappingEditor } from './ClassMappingEditor';
 import { configBasename, stableStringify, tabsFromLegacySections } from './studioTabs';
 import { useI18n } from '../../i18n';
@@ -109,7 +110,7 @@ export function ConfigStudio({
   const activePath = activeTab?.path ?? activeId;
 
   const specialIds = useMemo(() => {
-    const extra = ['roi', 'zones', 'classes', 'json'];
+    const extra = ['roi', 'zones', 'schedule', 'classes', 'json'];
     if (allowConfigHistory) extra.push('history');
     return extra;
   }, [allowConfigHistory]);
@@ -377,6 +378,16 @@ export function ConfigStudio({
           />
         ) : activeId === 'zones' ? (
           <ZoneCanvas
+            configName={name}
+            sourceId={sourceId}
+            onSourceIdChange={setSourceId}
+            readOnly={!canEdit}
+            onSaved={(restartRequired) => {
+              if (restartRequired) markPendingApply(true);
+            }}
+          />
+        ) : activeId === 'schedule' ? (
+          <AlarmScheduleEditor
             configName={name}
             sourceId={sourceId}
             onSourceIdChange={setSourceId}

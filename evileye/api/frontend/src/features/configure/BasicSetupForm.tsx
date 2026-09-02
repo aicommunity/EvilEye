@@ -5,6 +5,7 @@ import {
   configPutSection,
   type BasicSetup,
   type BasicSource,
+  type BasicAlarmCamera,
   type SetupStatus,
   ApiError,
 } from '../../api';
@@ -15,7 +16,11 @@ import { useI18n } from '../../i18n';
 import { FormField, FormGrid } from './formLayout';
 import { restartConfigRun } from './restartConfigRun';
 import { SourceAdvancedEditor } from './SourceAdvancedEditor';
+import { WeekdayPicker, PeriodListEditor } from './AlarmScheduleEditor';
+import type { AlarmSchedule } from '../../api/setup';
 import { cloneSourceRow, collectOccupiedSourceIds, findSourceRowIndex } from './sourceRowUtils';
+import { deriveAlarmCameras, withDerivedAlarmCameras } from './alarmCameras';
+import { listCamerasFromConfig, type ConfigCameraOption } from './cameraList';
 import { formatInt, INT_STEP, parseIntInput } from './numberFormat';
 
 const SOURCE_TYPES = ['IpCamera', 'VideoFile', 'Device'] as const;
@@ -35,6 +40,13 @@ function emptyBasic(configName: string): BasicSetup {
     sources: [],
     analytics_enabled: false,
     recording_enabled: false,
+    alarm_schedule: {
+      enabled: false,
+      weekdays: [0, 1, 2, 3, 4, 5, 6],
+      periods: [['22:00:00', '06:00:00']],
+      class_ids: [],
+      camera_cooldown_sec: 0,
+    },
   };
 }
 
@@ -63,15 +75,22 @@ export function BasicSetupForm({
     row: Record<string, unknown>;
     occupiedIds: number[];
   } | null>(null);
+  const [pipelineCameras, setPipelineCameras] = useState<ConfigCameraOption[]>([]);
   const hasLoadedRef = useRef(false);
 
   const load = useCallback(async () => {
     if (!hasLoadedRef.current) setLoading(true);
     try {
-      const [st, body] = await Promise.all([setupApi.status(configName), setupApi.basicGet(configName)]);
+      const [st, body, full] = await Promise.all([
+        setupApi.status(configName),
+        setupApi.basicGet(configName),
+        configGet(configName).catch(() => null),
+      ]);
+      const fromPipeline = full ? listCamerasFromConfig(full) : [];
+      setPipelineCameras(fromPipeline);
       setStatus(st);
       onStatus?.(st);
-      setBasic({ ...body, config_name: configName });
+      setBasic(withDerivedAlarmCameras({ ...body, config_name: configName }, fromPipeline));
       hasLoadedRef.current = true;
     } catch (e) {
       showError(e instanceof Error ? e.message : t('common.error'));
@@ -97,9 +116,25 @@ export function BasicSetupForm({
     });
   };
 
+  const updateAlarmCamera = (cameraId: number, patch: Partial<BasicAlarmCamera>) => {
+    setBasic((prev) => {
+      const cameras = deriveAlarmCameras(
+        prev.sources,
+        prev.alarm_schedule,
+        prev.alarm_cameras,
+        pipelineCameras,
+      );
+      return {
+        ...prev,
+        alarm_cameras: cameras.map((c) => (c.id === cameraId ? { ...c, ...patch } : c)),
+      };
+    });
+  };
+
   const addSource = () => {
     setBasic((prev) => {
       const nextId = prev.sources.reduce((m, s) => Math.max(m, s.id), -1) + 1;
+      const alarmOn = Boolean(prev.alarm_schedule?.enabled);
       return {
         ...prev,
         sources: [
@@ -112,14 +147,27 @@ export function BasicSetupForm({
             username: '',
             password: '',
             record: true,
+            logical_ids: [nextId],
           },
+        ],
+        alarm_cameras: [
+          ...(prev.alarm_cameras ?? []),
+          { id: nextId, name: `Cam${nextId + 1}`, alarm_enabled: alarmOn },
         ],
       };
     });
   };
 
   const removeSource = (index: number) => {
-    setBasic((prev) => ({ ...prev, sources: prev.sources.filter((_, i) => i !== index) }));
+    setBasic((prev) => {
+      const row = prev.sources[index];
+      const dropIds = new Set(row?.logical_ids?.length ? row.logical_ids : row ? [row.id] : []);
+      return {
+        ...prev,
+        sources: prev.sources.filter((_, i) => i !== index),
+        alarm_cameras: (prev.alarm_cameras ?? []).filter((c) => !dropIds.has(c.id)),
+      };
+    });
   };
 
   const recordingSummary = useMemo(() => {
@@ -129,17 +177,25 @@ export function BasicSetupForm({
     return t('setup.recordingSummaryOn', { names, count: recording.length });
   }, [basic.sources, lang, t]);
 
+  const alarmCameras = useMemo(
+    () => deriveAlarmCameras(basic.sources, basic.alarm_schedule, basic.alarm_cameras, pipelineCameras),
+    [basic.sources, basic.alarm_schedule, basic.alarm_cameras, pipelineCameras],
+  );
+
   const buildPayload = (): BasicSetup => {
     const sources = basic.sources;
-    return {
-      ...basic,
-      config_name: configName,
-      recording_enabled: sources.some((s) => Boolean(s.record)),
-      database: {
-        ...basic.database,
-        password: dbPassword || undefined,
+    return withDerivedAlarmCameras(
+      {
+        ...basic,
+        config_name: configName,
+        recording_enabled: sources.some((s) => Boolean(s.record)),
+        database: {
+          ...basic.database,
+          password: dbPassword || undefined,
+        },
       },
-    };
+      pipelineCameras,
+    );
   };
 
   const save = async () => {
@@ -422,6 +478,139 @@ export function BasicSetupForm({
           </Button>
         </div>
       ) : null}
+
+      <h3>{t('scheduleAlarm.basicTitle')}</h3>
+      <p className="hint">{t('scheduleAlarm.basicHint')}</p>
+      <p className="hint">{t('scheduleAlarm.logicalCamerasHint')}</p>
+      <FormGrid>
+        <FormField label={t('scheduleAlarm.enabled')}>
+          <input
+            type="checkbox"
+            disabled={!canEdit}
+            checked={Boolean(basic.alarm_schedule?.enabled)}
+            onChange={(e) => {
+              const enabled = e.target.checked;
+              const cameras = deriveAlarmCameras(
+                basic.sources,
+                basic.alarm_schedule,
+                basic.alarm_cameras,
+                pipelineCameras,
+              );
+              update({
+                alarm_schedule: {
+                  ...(basic.alarm_schedule ?? emptyBasic(configName).alarm_schedule!),
+                  enabled,
+                },
+                alarm_cameras: cameras.map((c) => ({ ...c })),
+              });
+            }}
+          />
+        </FormField>
+        <FormField label={t('scheduleAlarm.camerasLabel')}>
+          {alarmCameras.length > 0 ? (
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
+              {alarmCameras.map((cam) => (
+                <div key={cam.id} className="basic-alarm-camera-row">
+                  <label>
+                    <input
+                      type="checkbox"
+                      disabled={!canEdit}
+                      checked={cam.alarm_enabled !== false}
+                      onChange={(e) =>
+                        updateAlarmCamera(cam.id, {
+                          alarm_enabled: e.target.checked,
+                          ...(e.target.checked ? {} : { alarm_schedule: null }),
+                        })
+                      }
+                    />{' '}
+                    {cam.name || `Cam${cam.id + 1}`}
+                  </label>
+                  {cam.alarm_enabled !== false ? (
+                      <div style={{ marginTop: 8, marginLeft: 20 }}>
+                        <FormField label={t('scheduleAlarm.useOwnSchedule')}>
+                          <input
+                            type="checkbox"
+                            disabled={!canEdit}
+                            checked={Boolean(cam.alarm_schedule)}
+                            onChange={(e) =>
+                              updateAlarmCamera(
+                                cam.id,
+                                e.target.checked
+                                  ? {
+                                      alarm_schedule: {
+                                        enabled: true,
+                                        weekdays: basic.alarm_schedule?.weekdays ?? [0, 1, 2, 3, 4, 5, 6],
+                                        periods: basic.alarm_schedule?.periods ?? [['22:00:00', '06:00:00']],
+                                        class_ids: [],
+                                      },
+                                    }
+                                  : { alarm_schedule: null },
+                              )
+                            }
+                          />
+                        </FormField>
+                        {cam.alarm_schedule ? (
+                          <>
+                            <FormField label={t('scheduleAlarm.weekdaysLabel')}>
+                              <WeekdayPicker
+                                disabled={!canEdit}
+                                value={cam.alarm_schedule.weekdays}
+                                onChange={(weekdays) =>
+                                  updateAlarmCamera(cam.id, {
+                                    alarm_schedule: { ...cam.alarm_schedule!, weekdays },
+                                  })
+                                }
+                              />
+                            </FormField>
+                            <FormField label={t('scheduleAlarm.periods')}>
+                              <PeriodListEditor
+                                disabled={!canEdit}
+                                periods={cam.alarm_schedule.periods}
+                                onChange={(periods) =>
+                                  updateAlarmCamera(cam.id, {
+                                    alarm_schedule: { ...cam.alarm_schedule!, periods },
+                                  })
+                                }
+                              />
+                            </FormField>
+                          </>
+                        ) : null}
+                      </div>
+                    ) : null}
+                  </div>
+                ))}
+              </div>
+            ) : (
+              <p className="hint">{t('scheduleAlarm.noCamerasYet')}</p>
+            )}
+            <p className="hint">{t('scheduleAlarm.camerasHint')}</p>
+            {!basic.alarm_schedule?.enabled ? (
+              <p className="hint">{t('scheduleAlarm.camerasDisabledHint')}</p>
+            ) : null}
+          </FormField>
+        <FormField label={t('scheduleAlarm.weekdaysLabel')}>
+          <WeekdayPicker
+            disabled={!canEdit}
+            value={basic.alarm_schedule?.weekdays ?? [0, 1, 2, 3, 4, 5, 6]}
+            onChange={(weekdays) =>
+              update({
+                alarm_schedule: { ...(basic.alarm_schedule ?? emptyBasic(configName).alarm_schedule!), weekdays },
+              })
+            }
+          />
+        </FormField>
+        <FormField label={t('scheduleAlarm.periods')}>
+          <PeriodListEditor
+            disabled={!canEdit}
+            periods={basic.alarm_schedule?.periods ?? [['22:00:00', '06:00:00']]}
+            onChange={(periods) =>
+              update({
+                alarm_schedule: { ...(basic.alarm_schedule ?? emptyBasic(configName).alarm_schedule!), periods },
+              })
+            }
+          />
+        </FormField>
+      </FormGrid>
 
       <h3>{t('setup.sectionOptions')}</h3>
       <FormGrid>

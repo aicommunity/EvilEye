@@ -19,7 +19,8 @@ import time
 from timeit import default_timer as timer
 from evileye.visualization_modules.visualizer import Visualizer
 from evileye.events_detectors.cam_events_detector import CamEventsDetector
-from evileye.events_detectors.fov_events_detector import FieldOfViewEventsDetector
+from evileye.events_detectors.schedule_alarm_events_detector import ScheduleAlarmEventsDetector
+from evileye.events_detectors.schedule_alarm_logic import DETECTOR_CONFIG_KEY
 from evileye.events_detectors.zone_events_detector import ZoneEventsDetector
 from evileye.events_detectors.attribute_events_detector import AttributeEventsDetector
 from evileye.events_detectors.event_system import SystemEvent
@@ -133,6 +134,7 @@ class Controller(ControllerProcessingMixin):
         self.events_detectors_controller = None
         self.events_processor = None
         self.cam_events_detector = None
+        self.schedule_alarm_events_detector = None
         self.fov_events_detector = None
         self.zone_events_detector = None
         self.attr_events_detector = None
@@ -141,6 +143,7 @@ class Controller(ControllerProcessingMixin):
         self.db_controller = None
         self.db_adapter_obj = None
         self.db_adapter_cam_events = None
+        self.db_adapter_schedule_alarm_events = None
         self.db_adapter_fov_events = None
         self.db_adapter_zone_events = None
         self.db_adapter_attr_events = None
@@ -1002,6 +1005,8 @@ class Controller(ControllerProcessingMixin):
 
     def _handle_control_command(self, command: dict) -> dict:
         cmd = str(command.get("cmd") or "")
+        if cmd == "apply_schedule_alarm":
+            return self._control_apply_schedule_alarm(command)
         if cmd == "apply_zones":
             return self._control_apply_zones(command)
         if cmd == "apply_zone_detector_params":
@@ -1020,6 +1025,43 @@ class Controller(ControllerProcessingMixin):
             return {"ok": True, "stats": handler.get_runtime_stats()}
         except Exception as exc:
             return {"ok": False, "error": str(exc)}
+
+    def _control_apply_schedule_alarm(self, command: dict) -> dict:
+        detector = self.schedule_alarm_events_detector or self.fov_events_detector
+        if detector is None:
+            return {"ok": False, "error": "schedule_alarm_detector_unavailable"}
+
+        scope = str(command.get("scope") or "")
+        try:
+            if scope == "source":
+                source_id = int(command.get("source_id"))
+                override = command.get("schedule")
+                if override is not None and not isinstance(override, dict):
+                    return {"ok": False, "error": "invalid_schedule"}
+                detector.apply_source_schedule(source_id, override)
+                events_cfg = self.params.setdefault("events_detectors", {})
+                section = events_cfg.setdefault(DETECTOR_CONFIG_KEY, {})
+                sources = section.setdefault("sources", {})
+                key = str(source_id)
+                if override is None:
+                    sources.pop(key, None)
+                else:
+                    sources[key] = override
+            elif scope == "global":
+                params = command.get("params") or {}
+                if not isinstance(params, dict):
+                    return {"ok": False, "error": "invalid_params"}
+                merged = {**detector.get_params(), **params}
+                detector.apply_schedule(merged)
+                events_cfg = self.params.setdefault("events_detectors", {})
+                events_cfg[DETECTOR_CONFIG_KEY] = detector.get_params()
+            else:
+                return {"ok": False, "error": "invalid_scope"}
+        except (TypeError, ValueError):
+            return {"ok": False, "error": "invalid_source_id"}
+
+        self._publish_runtime_snapshot(state="running")
+        return {"ok": True}
 
     def _control_apply_zones(self, command: dict) -> dict:
         try:
@@ -1377,7 +1419,11 @@ class Controller(ControllerProcessingMixin):
                 # Сохраняем ссылки на адаптеры для обратной совместимости
                 self.db_adapter_obj = self._database_service.get_adapter('DatabaseAdapterObjects')
                 self.db_adapter_cam_events = self._database_service.get_adapter('DatabaseAdapterCamEvents')
-                self.db_adapter_fov_events = self._database_service.get_adapter('DatabaseAdapterFieldOfViewEvents')
+                self.db_adapter_schedule_alarm_events = (
+                    self._database_service.get_adapter('DatabaseAdapterScheduleAlarmEvents')
+                    or self._database_service.get_adapter('DatabaseAdapterFieldOfViewEvents')
+                )
+                self.db_adapter_fov_events = self.db_adapter_schedule_alarm_events
                 self.db_adapter_zone_events = self._database_service.get_adapter('DatabaseAdapterZoneEvents')
                 self.db_adapter_attr_events = self._database_service.get_adapter('DatabaseAdapterAttributeEvents')
                 self.db_adapter_system_events = self._database_service.get_adapter('DatabaseAdapterSystemEvents')
@@ -1608,7 +1654,9 @@ class Controller(ControllerProcessingMixin):
 
         self.params['events_detectors'] = dict()
         self.params['events_detectors']['CamEventsDetector'] = self.cam_events_detector.get_params()
-        self.params['events_detectors']['FieldOfViewEventsDetector'] = self.fov_events_detector.get_params()
+        self.params['events_detectors'][DETECTOR_CONFIG_KEY] = (
+            (self.schedule_alarm_events_detector or self.fov_events_detector).get_params()
+        )
         self.params['events_detectors']['ZoneEventsDetector'] = self.zone_events_detector.get_params()
         if self.attr_events_detector:
             self.params['events_detectors']['AttributeEventsDetector'] = self.attr_events_detector.get_params()
@@ -1947,10 +1995,12 @@ class Controller(ControllerProcessingMixin):
             self.debug_info.setdefault("cam_events_detector", {}))
         total_memory_usage += comp_debug_info["memory_measure_results"]
 
-        self.fov_events_detector.calc_memory_consumption()
-        comp_debug_info = self.fov_events_detector.insert_debug_info_by_id(
-            self.debug_info.setdefault("fov_events_detector", {}))
-        total_memory_usage += comp_debug_info["memory_measure_results"]
+        detector = self.schedule_alarm_events_detector or self.fov_events_detector
+        if detector:
+            detector.calc_memory_consumption()
+            comp_debug_info = detector.insert_debug_info_by_id(
+                self.debug_info.setdefault("schedule_alarm_events_detector", {}))
+            total_memory_usage += comp_debug_info["memory_measure_results"]
 
         self.zone_events_detector.calc_memory_consumption()
         comp_debug_info = self.zone_events_detector.insert_debug_info_by_id(
@@ -1979,10 +2029,12 @@ class Controller(ControllerProcessingMixin):
                 self.debug_info.setdefault("db_adapter_cam_events", {}))
             total_memory_usage += comp_debug_info["memory_measure_results"]
 
-            self.db_adapter_fov_events.calc_memory_consumption()
-            comp_debug_info = self.db_adapter_fov_events.insert_debug_info_by_id(
-                self.debug_info.setdefault("db_adapter_fov_events", {}))
-            total_memory_usage += comp_debug_info["memory_measure_results"]
+            db_schedule = self.db_adapter_schedule_alarm_events or self.db_adapter_fov_events
+            if db_schedule:
+                db_schedule.calc_memory_consumption()
+                comp_debug_info = db_schedule.insert_debug_info_by_id(
+                    self.debug_info.setdefault("db_adapter_schedule_alarm_events", {}))
+                total_memory_usage += comp_debug_info["memory_measure_results"]
 
             self.db_adapter_zone_events.calc_memory_consumption()
             comp_debug_info = self.db_adapter_zone_events.insert_debug_info_by_id(
