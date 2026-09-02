@@ -256,6 +256,7 @@ class StreamingService:
         self._last_publish_ts_by_key: dict[str, float] = {}
         self._server_process_manager = None
         self._frame_relay: FrameRelayClient | None = None
+        self._relay_token: str | None = None
         self._encoder: JpegEncoderBackend = create_jpeg_encoder()
         self._worker_count = 1
         self._preview_max_edge = 960
@@ -293,6 +294,7 @@ class StreamingService:
             self._publish_fps = max(0.0, float(publish_fps or 0.0))
             self._last_publish_ts_by_key.clear()
             self._server_process_manager = server_process_manager
+            self._relay_token = relay_token
             if self._frame_relay is not None:
                 try:
                     self._frame_relay.close()
@@ -317,6 +319,8 @@ class StreamingService:
 
     def set_frame_relay(self, relay_base_url: str | None, relay_token: str | None = None) -> None:
         with self._condition:
+            if relay_token is not None:
+                self._relay_token = relay_token
             if self._frame_relay is not None:
                 try:
                     self._frame_relay.close()
@@ -329,6 +333,19 @@ class StreamingService:
             elif relay_base_url:
                 self.logger.warning("Ignoring non-unix frame relay URL: %s", relay_base_url)
             self._condition.notify_all()
+
+    def _ensure_frame_relay_locked(self) -> None:
+        if self._frame_relay is not None:
+            return
+        if os.environ.get("EVILEYE_MANAGED_RUN") != "1":
+            return
+        from evileye.api.core.internal_unix import internal_relay_target_url
+
+        unix_url = _unix_relay_url(internal_relay_target_url())
+        if not unix_url:
+            return
+        self._frame_relay = FrameRelayClient(unix_url, token=self._relay_token or "")
+        self.logger.info("Lazy frame relay enabled: %s", unix_url)
 
     def submit_frame(
         self,
@@ -643,6 +660,16 @@ class StreamingService:
                 self._server_process_manager.publish_frame(pipeline_id, jpeg_bytes, metadata=metadata)
             except Exception:
                 pass
+        if self._frame_relay is not None:
+            self._frame_relay.publish_jpeg(
+                pipeline_id,
+                jpeg_bytes,
+                source_id=job.source_id,
+                metadata=metadata,
+            )
+            return
+        with self._condition:
+            self._ensure_frame_relay_locked()
         if self._frame_relay is not None:
             self._frame_relay.publish_jpeg(
                 pipeline_id,

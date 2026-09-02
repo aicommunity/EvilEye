@@ -159,6 +159,8 @@ export interface StreamMetadataObject {
 export interface StreamMetadata {
   source_id?: number | null;
   ts?: number;
+  timestamp?: number;
+  frame_id?: number | null;
   /** Pixel size of the reference frame used for normalized coords (logical/display frame). */
   coord_ref?: { w: number; h: number };
   objects?: StreamMetadataObject[];

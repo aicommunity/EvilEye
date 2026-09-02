@@ -21,6 +21,13 @@ OUT="$OUT_DIR/live_bbox_baseline_${STAMP}.txt"
   echo "## /ready"
   curl -sS 'http://127.0.0.1:8181/ready' | python3 -m json.tool 2>/dev/null || curl -sS 'http://127.0.0.1:8181/ready' || true
   echo
+  echo "## metadata object counts (run 26, sources 0-4)"
+  for sid in 0 1 2 3 4; do
+    cnt=$(curl -sS "http://127.0.0.1:8181/api/v1/runs/26/metadata?source_id=${sid}" 2>/dev/null \
+      | python3 -c "import sys,json; d=json.load(sys.stdin); print(len(d.get('objects',[])))" 2>/dev/null || echo "?")
+    echo "source ${sid}: objects=${cnt}"
+  done
+  echo
   echo "## Top evileye memory"
   ps aux --sort=-%mem | grep -E 'evileye|det-mp|tracker' | head -15 || true
 } | tee "$OUT"

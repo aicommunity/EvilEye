@@ -39,11 +39,9 @@ class ControllerProcessingMixin:
                     )
                 except Exception:
                     track_info = []
-        if not track_info:
-            # Frame ids can drift when ObjectsHandler lags behind live preview; include
-            # genuinely active tracks (not counting down to lost) without reviving stale bbox.
+        if track_info:
             track_info = [
-                obj for obj in object_list.objects
+                obj for obj in track_info
                 if getattr(obj, "lost_frames", 0) == 0
             ]
         if (
@@ -98,6 +96,12 @@ class ControllerProcessingMixin:
         frame_id = getattr(frame, "frame_id", None)
         object_list = objects_by_source.get(source_id, ObjectResultList())
         track_info = self._resolve_preview_track_info(object_list, frame_id)
+        if source_id is not None:
+            track_info = [
+                obj for obj in track_info
+                if getattr(obj, "lost_frames", 0) == 0
+                and getattr(obj, "source_id", None) == source_id
+            ]
         event_entries = self._get_preview_event_entries(source_id)
         event_cfg = self._get_preview_event_cfg()
         vis_cfg = self._get_preview_visualizer_cfg()

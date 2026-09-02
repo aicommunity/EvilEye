@@ -36,3 +36,25 @@ def test_expire_stale_source_objects_moves_active_to_lost():
     assert stale_obj in handler.lost_objs.objects
     assert fresh_obj in handler.active_objs.objects
     assert stale_obj not in handler.active_objs.objects
+
+
+def test_get_runtime_stats_includes_queue_pressure():
+    handler = _make_handler()
+    handler.objs_queue_maxsize = 200
+    stats = handler.get_runtime_stats()
+    assert stats["queue_maxsize"] == 200
+    assert "queue_pressure" in stats
+
+
+def test_expire_stale_while_queue_backlogged():
+    """Stale expire must not depend on an empty objs_queue."""
+    handler = _make_handler()
+    stale_obj = _make_active(0, 1)
+    handler.active_objs.objects = [stale_obj]
+    handler._last_frame_ts_by_source = {0: 100.0}
+    handler._last_stale_check_ts = 0.0
+
+    handler._expire_stale_source_objects(now=200.0)
+
+    assert stale_obj not in handler.active_objs.objects
+    assert stale_obj in handler.lost_objs.objects

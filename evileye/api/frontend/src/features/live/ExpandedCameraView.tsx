@@ -26,8 +26,7 @@ export function ExpandedCameraView({
   });
   const meta = useRunMetadataWs(running ? camera.run_id : null, camera.source_id ?? null);
   const metaFresh = useMetadataFreshness(running ? camera.run_id : null, camera.source_id ?? null);
-  const hasOverlayObjects = (meta?.objects?.length ?? 0) > 0;
-  const overlayMeta = meta && (metaFresh || hasOverlayObjects) ? meta : null;
+  const overlayMeta = meta && metaFresh ? meta : null;
   const [imgLoaded, setImgLoaded] = useState(0);
   const layoutBox = useImageLetterbox(mediaRef, imgRef, [src, attempt, imgLoaded]);
 

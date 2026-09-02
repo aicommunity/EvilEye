@@ -48,6 +48,14 @@ def test_broker_keeps_overlay_metadata():
     assert out["event_labels"] == ["AttributeEvent [9]"]
 
 
+def test_internal_relay_target_url_without_socket_file(tmp_path, monkeypatch):
+    from evileye.api.core.internal_unix import internal_relay_target_url, internal_relay_url
+
+    monkeypatch.setattr("evileye.api.core.internal_unix.internal_socket_path", lambda: tmp_path / "internal.sock")
+    assert internal_relay_url() is None
+    assert internal_relay_target_url() == f"unix://{tmp_path / 'internal.sock'}"
+
+
 def test_frame_relay_jpeg_and_metadata_header():
     from evileye.api.core.internal_unix import (
         internal_socket_path,

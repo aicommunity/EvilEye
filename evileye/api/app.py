@@ -387,7 +387,22 @@ def create_app() -> FastAPI:
                 if control_socket_path().exists():
                     ipc_resp = send_control_command({"cmd": "get_objects_handler_stats"}, timeout=1.0)
                     if isinstance(ipc_resp, dict) and ipc_resp.get("ok") and isinstance(ipc_resp.get("stats"), dict):
-                        payload["objects_handler"] = ipc_resp["stats"]
+                        oh_stats = dict(ipc_resp["stats"])
+                        qsize = oh_stats.get("queue_size")
+                        qmax = oh_stats.get("queue_maxsize") or 200
+                        pressure = oh_stats.get("queue_pressure")
+                        if pressure is None and qsize is not None and qmax:
+                            try:
+                                pressure = float(qsize) / float(qmax)
+                                oh_stats["queue_pressure"] = pressure
+                            except Exception:
+                                pass
+                        last_img = int(oh_stats.get("active_last_image_bytes") or 0)
+                        oh_stats["alert"] = bool(
+                            (pressure is not None and pressure >= 0.9)
+                            or last_img > 100_000_000
+                        )
+                        payload["objects_handler"] = oh_stats
             except Exception:
                 pass
         except Exception:

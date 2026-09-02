@@ -1446,9 +1446,10 @@ class Controller(ControllerProcessingMixin):
             )
 
         server_cfg = self.params.get("server", {}) if isinstance(self.params, dict) else {}
-        from evileye.api.core.internal_unix import internal_relay_url
+        managed_run = os.environ.get("EVILEYE_MANAGED_RUN") == "1"
+        from evileye.api.core.internal_unix import internal_relay_target_url, internal_relay_url
 
-        relay_base_url = internal_relay_url()
+        relay_base_url = internal_relay_target_url() if managed_run else internal_relay_url()
         relay_token = os.environ.get("EVILEYE_INTERNAL_TOKEN") or load_web_auth_config().internal_token
         default_workers = 2 if bool(server_cfg.get("enabled")) else 1
         default_render_workers = max(3, default_workers)
@@ -1472,20 +1473,14 @@ class Controller(ControllerProcessingMixin):
             )
 
         # Managed API runs already have an outer web server; do not start another one inside the child runtime.
-        managed_run = os.environ.get("EVILEYE_MANAGED_RUN") == "1"
         # Initialize web server in a separate process if configured
         if managed_run and server_cfg.get("enabled", False):
             self.logger.info("Skipping embedded web server for managed runtime launch")
             if self._streaming_service is not None:
-                from evileye.api.core.internal_unix import internal_relay_url
-
-                unix_relay = internal_relay_url()
-                if unix_relay:
-                    self._streaming_service.set_frame_relay(unix_relay, relay_token)
+                self._streaming_service.set_frame_relay(internal_relay_target_url(), relay_token)
         elif server_cfg.get("enabled", False) and str(server_cfg.get("execution_mode", "process")).lower() == "process":
             host = server_cfg.get("host", "127.0.0.1")
             port = int(server_cfg.get("port", 8181))
-            from evileye.api.core.internal_unix import internal_relay_url
             from evileye.service_manager import is_web_os_service_active, is_web_os_service_enabled
 
             ssl_certfile = ssl_keyfile = None
@@ -1500,7 +1495,7 @@ class Controller(ControllerProcessingMixin):
             except SslConfigError as exc:
                 self.logger.error("Invalid TLS configuration for embedded web server: %s", exc)
                 raise
-            inferred_base_url = internal_relay_url()
+            inferred_base_url = internal_relay_target_url()
             if is_web_os_service_enabled() or is_web_os_service_active():
                 if is_web_os_service_enabled() and not is_web_os_service_active():
                     self.logger.warning(

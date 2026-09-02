@@ -264,10 +264,19 @@ class ObjectsHandler(EvilEyeBase):
             src for src, last_ts in self._last_frame_ts_by_source.items()
             if self.source_stale_sec > 0 and (now - last_ts) > self.source_stale_sec
         ]
+        maxsize = max(1, int(self.objs_queue_maxsize or 1))
+        queue_pressure = None
+        if queue_size is not None:
+            try:
+                queue_pressure = float(queue_size) / float(maxsize)
+            except Exception:
+                queue_pressure = None
         return {
             "active_objects": len(self.active_objs.objects),
             "lost_objects": len(self.lost_objs.objects),
             "queue_size": queue_size,
+            "queue_maxsize": maxsize,
+            "queue_pressure": queue_pressure,
             "history_items": active_history_items,
             "active_with_last_image": active_with_last_image,
             "active_last_image_bytes": active_last_image_bytes,
@@ -414,14 +423,14 @@ class ObjectsHandler(EvilEyeBase):
         self.logger.info('Handler working: waiting for objects...')
         while self.run_flag:
             begin_it = timer()
+            now = time.time()
+            if (now - self._last_stale_check_ts) >= 1.0:
+                self._last_stale_check_ts = now
+                with self.lock:
+                    self._expire_stale_source_objects(now)
             # Не замедляемся искусственно, если очередь непустая.
             # Если пустая — чуть спим, чтобы не крутить busy-loop.
             if self.objs_queue.empty():
-                now = time.time()
-                if (now - self._last_stale_check_ts) >= 1.0:
-                    self._last_stale_check_ts = now
-                    with self.lock:
-                        self._expire_stale_source_objects(now)
                 time.sleep(0.005)
                 continue
             tracking_results = self.objs_queue.get()
@@ -816,6 +825,7 @@ class ObjectsHandler(EvilEyeBase):
                         self._object_history_pool.release(old_hist)
                 track_object.last_update = True
                 track_object.lost_frames = 0
+                track_object.last_image = None
             else:
                 # Используем пул объектов для оптимизации памяти
                 if self._use_object_pool and self._object_result_pool:
@@ -890,6 +900,7 @@ class ObjectsHandler(EvilEyeBase):
                     except Exception as e:
                         self.logger.error(f"Labeling data saving error for found object: {e}")
 
+                obj.last_image = None
                 self.active_objs.objects.append(obj)
             # print(f"active_objs len={len(self.active_objs.objects)} size={asizeof.asizeof(self.active_objs.objects)/(1024.0*1024.0)}")
             # print(f"lost_objs len={len(self.lost_objs.objects)} size={asizeof.asizeof(self.lost_objs.objects)/(1024.0*1024.0)}")

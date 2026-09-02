@@ -45,7 +45,7 @@ def test_preview_matches_objects_within_track_frame_match_window():
     assert ctx.track_info == [obj]
 
 
-def test_preview_returns_active_objects_when_frame_id_far_without_env():
+def test_preview_returns_empty_when_frame_id_far_without_env():
     host = _PreviewHost(vis_cfg={"track_frame_match_window": 1})
     frame = Frame()
     frame.source_id = 0
@@ -53,7 +53,7 @@ def test_preview_returns_active_objects_when_frame_id_far_without_env():
 
     obj, obj_list = _make_obj(frame_id=100)
     ctx = host._build_preview_render_context(frame, {0: obj_list})
-    assert ctx.track_info == [obj]
+    assert ctx.track_info == []
 
 
 def test_preview_skips_lost_countdown_objects_when_frame_id_far():
