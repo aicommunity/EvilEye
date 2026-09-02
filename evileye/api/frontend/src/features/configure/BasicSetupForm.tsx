@@ -13,17 +13,24 @@ import { Button } from '../../components/ui';
 import { useToast } from '../../components/ui/Toast';
 import { useAuth } from '../../auth/AuthContext';
 import { useI18n } from '../../i18n';
-import { FormField, FormGrid } from './formLayout';
 import { restartConfigRun } from './restartConfigRun';
 import { SourceAdvancedEditor } from './SourceAdvancedEditor';
-import { WeekdayPicker, PeriodListEditor } from './AlarmScheduleEditor';
-import type { AlarmSchedule } from '../../api/setup';
 import { cloneSourceRow, collectOccupiedSourceIds, findSourceRowIndex } from './sourceRowUtils';
 import { deriveAlarmCameras, withDerivedAlarmCameras } from './alarmCameras';
 import { listCamerasFromConfig, type ConfigCameraOption } from './cameraList';
-import { formatInt, INT_STEP, parseIntInput } from './numberFormat';
-
-const SOURCE_TYPES = ['IpCamera', 'VideoFile', 'Device'] as const;
+import { BasicSetupSection } from './BasicSetupSection';
+import { useBasicSetupSections } from './useBasicSetupSections';
+import {
+  alarmSummary,
+  analyticsSummary,
+  sourcesSummary,
+  systemSummary,
+} from './basicSetupSummaries';
+import { BasicSystemSection } from './BasicSystemSection';
+import { BasicSourcesSection } from './BasicSourcesSection';
+import { BasicAnalyticsSection } from './BasicAnalyticsSection';
+import { BasicAlarmScheduleSection } from './BasicAlarmScheduleSection';
+import { AlarmCameraScheduleModal } from './AlarmCameraScheduleModal';
 
 function emptyBasic(configName: string): BasicSetup {
   return {
@@ -70,6 +77,7 @@ export function BasicSetupForm({
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [dbPassword, setDbPassword] = useState('');
+  const [alarmModalCameraId, setAlarmModalCameraId] = useState<number | null>(null);
   const [advancedOpen, setAdvancedOpen] = useState<{
     index: number;
     row: Record<string, unknown>;
@@ -77,6 +85,18 @@ export function BasicSetupForm({
   } | null>(null);
   const [pipelineCameras, setPipelineCameras] = useState<ConfigCameraOption[]>([]);
   const hasLoadedRef = useRef(false);
+
+  const sectionDefaults = useMemo(
+    () => ({
+      system: Boolean(status?.needs_setup || !status?.data_dir_confirmed),
+      sources: basic.sources.length === 0,
+      analytics: false,
+      alarm: false,
+    }),
+    [status?.needs_setup, status?.data_dir_confirmed, basic.sources.length],
+  );
+
+  const { isOpen, setOpen } = useBasicSetupSections(configName, sectionDefaults);
 
   const load = useCallback(async () => {
     if (!hasLoadedRef.current) setLoading(true);
@@ -97,7 +117,7 @@ export function BasicSetupForm({
     } finally {
       setLoading(false);
     }
-  }, [configName, onStatus, showError]);
+  }, [configName, onStatus, showError, t]);
 
   useEffect(() => {
     hasLoadedRef.current = false;
@@ -182,6 +202,19 @@ export function BasicSetupForm({
     [basic.sources, basic.alarm_schedule, basic.alarm_cameras, pipelineCameras],
   );
 
+  const summaries = useMemo(
+    () => ({
+      system: systemSummary(basic, status, t),
+      sources: sourcesSummary(basic.sources, pipelineCameras, t),
+      analytics: analyticsSummary(basic, recordingSummary, t),
+      alarm: alarmSummary(basic.alarm_schedule, alarmCameras, basic.analytics_enabled, t),
+    }),
+    [basic, status, pipelineCameras, recordingSummary, alarmCameras, t],
+  );
+
+  const alarmSchedule = basic.alarm_schedule ?? emptyBasic(configName).alarm_schedule!;
+  const analyticsOn = basic.analytics_enabled;
+
   const buildPayload = (): BasicSetup => {
     const sources = basic.sources;
     return withDerivedAlarmCameras(
@@ -224,7 +257,6 @@ export function BasicSetupForm({
         showError(t('setup.notReadyToRun'));
         return;
       }
-      // pendingApply cleared inside restartConfigRun before the request.
       onPendingApplyChange?.(false);
       const res = await restartConfigRun(configName);
       onPendingApplyChange?.(false);
@@ -290,341 +322,94 @@ export function BasicSetupForm({
     return <p className="hint">{t('configure.loading')}</p>;
   }
 
+  const modalCamera = alarmCameras.find((c) => c.id === alarmModalCameraId) ?? null;
+
   return (
     <div className="basic-setup-form">
       {status?.needs_setup ? <p className="setup-banner">{t('setup.needsSetupBanner')}</p> : null}
 
-      <h3>{t('setup.sectionDataDir')}</h3>
-      <FormGrid>
-        <FormField label={t('setup.dataDir')}>
-          <input
-            disabled={!canEdit}
-            value={basic.data_dir}
-            onChange={(e) => update({ data_dir: e.target.value })}
-            placeholder="EvilEyeData"
-          />
-        </FormField>
-        <div className="form-actions-inline">
-          <Button
-            size="sm"
-            variant="outline"
-            disabled={!basic.data_dir}
-            onClick={() =>
-              void setupApi
-                .checkDataDir(basic.data_dir)
-                .then((r) => (r.ok ? showSuccess(r.message) : showError(r.message)))
-                .catch((e) => showError(e.message))
-            }
-          >
-            {t('setup.checkPath')}
-          </Button>
-        </div>
-      </FormGrid>
+      <BasicSetupSection
+        id="system"
+        title={t('setup.sectionSystem')}
+        summary={summaries.system}
+        open={isOpen('system')}
+        onOpenChange={(open) => setOpen('system', open)}
+      >
+        <BasicSystemSection
+          basic={basic}
+          canEdit={canEdit}
+          dbPassword={dbPassword}
+          setDbPassword={setDbPassword}
+          update={update}
+          onCheckDataDir={() =>
+            void setupApi
+              .checkDataDir(basic.data_dir)
+              .then((r) => (r.ok ? showSuccess(r.message) : showError(r.message)))
+              .catch((e) => showError(e instanceof Error ? e.message : String(e)))
+          }
+          onTestDb={() =>
+            void setupApi
+              .testDatabase({ ...basic.database, password: dbPassword })
+              .then((r) => (r.ok ? showSuccess(r.message) : showError(r.message)))
+              .catch((e) => showError(e instanceof Error ? e.message : String(e)))
+          }
+        />
+      </BasicSetupSection>
 
-      <h3>{t('setup.sectionStorage')}</h3>
-      <FormGrid>
-        <FormField label={t('setup.storageMode')}>
-          <select
-            disabled={!canEdit}
-            value={basic.storage_mode}
-            onChange={(e) => update({ storage_mode: e.target.value === 'database' ? 'database' : 'json' })}
-          >
-            <option value="json">{t('setup.storageJson')}</option>
-            <option value="database">{t('setup.storageDb')}</option>
-          </select>
-        </FormField>
-      </FormGrid>
-      {basic.storage_mode === 'database' ? (
-        <FormGrid>
-          <FormField label={t('setup.dbHost')}>
-            <input
-              disabled={!canEdit}
-              value={basic.database.host_name}
-              onChange={(e) => update({ database: { ...basic.database, host_name: e.target.value } })}
-            />
-          </FormField>
-          <FormField label={t('setup.dbPort')}>
-            <input
-              type="number"
-              step={INT_STEP}
-              disabled={!canEdit}
-              value={formatInt(Number(basic.database.port))}
-              onChange={(e) => {
-                const n = parseIntInput(e.target.value);
-                update({ database: { ...basic.database, port: n ?? 5432 } });
-              }}
-            />
-          </FormField>
-          <FormField label={t('setup.dbName')}>
-            <input
-              disabled={!canEdit}
-              value={basic.database.database_name}
-              onChange={(e) => update({ database: { ...basic.database, database_name: e.target.value } })}
-            />
-          </FormField>
-          <FormField label={t('setup.dbUser')}>
-            <input
-              disabled={!canEdit}
-              value={basic.database.user_name}
-              onChange={(e) => update({ database: { ...basic.database, user_name: e.target.value } })}
-            />
-          </FormField>
-          <FormField label={t('setup.dbPassword')}>
-            <input
-              type="password"
-              disabled={!canEdit}
-              placeholder={basic.database.password_set ? '••••••••' : ''}
-              value={dbPassword}
-              onChange={(e) => setDbPassword(e.target.value)}
-              autoComplete="new-password"
-            />
-          </FormField>
-          <div className="form-actions-inline">
-            <Button
-              size="sm"
-              variant="outline"
-              onClick={() =>
-                void setupApi
-                  .testDatabase({ ...basic.database, password: dbPassword })
-                  .then((r) => (r.ok ? showSuccess(r.message) : showError(r.message)))
-                  .catch((e) => showError(e.message))
-              }
-            >
-              {t('setup.testDb')}
-            </Button>
-          </div>
-        </FormGrid>
-      ) : (
-        <p className="hint">{t('setup.storageJsonHint')}</p>
-      )}
+      <BasicSetupSection
+        id="sources"
+        title={t('setup.sectionSources')}
+        summary={summaries.sources}
+        open={isOpen('sources')}
+        onOpenChange={(open) => setOpen('sources', open)}
+      >
+        <BasicSourcesSection
+          sources={basic.sources}
+          canEdit={canEdit}
+          cameraTitle={cameraTitle}
+          onUpdateSource={updateSource}
+          onAdd={addSource}
+          onRemove={removeSource}
+          onAdvanced={openAdvanced}
+        />
+      </BasicSetupSection>
 
-      <h3>{t('setup.sectionSources')}</h3>
-      <p className="hint">{t('setup.sourcesHint')}</p>
-      <div className="basic-sources-list">
-        {basic.sources.map((src, i) => (
-          <div key={`${src.id}-${i}`} className="basic-source-card">
-            <div className="basic-source-card__title">{cameraTitle(src, i)}</div>
-            <FormGrid>
-              <FormField label={t('setup.sourceName')}>
-                <input
-                  disabled={!canEdit}
-                  value={src.name}
-                  onChange={(e) => updateSource(i, { name: e.target.value })}
-                />
-              </FormField>
-              <FormField label={t('setup.sourceType')}>
-                <select
-                  disabled={!canEdit}
-                  value={src.type}
-                  onChange={(e) => updateSource(i, { type: e.target.value })}
-                >
-                  {SOURCE_TYPES.map((tp) => (
-                    <option key={tp} value={tp}>
-                      {tp}
-                    </option>
-                  ))}
-                </select>
-              </FormField>
-              <FormField label={t('setup.sourceAddress')}>
-                <input
-                  disabled={!canEdit}
-                  value={String(src.address ?? '')}
-                  onChange={(e) => updateSource(i, { address: e.target.value })}
-                />
-              </FormField>
-              <FormField label={t('setup.sourceUser')}>
-                <input
-                  disabled={!canEdit}
-                  value={src.username ?? ''}
-                  onChange={(e) => updateSource(i, { username: e.target.value })}
-                />
-              </FormField>
-              <FormField label={t('setup.sourcePassword')}>
-                <input
-                  type="password"
-                  disabled={!canEdit}
-                  placeholder={src.password_set ? '••••••••' : ''}
-                  value={src.password ?? ''}
-                  onChange={(e) => updateSource(i, { password: e.target.value })}
-                  autoComplete="new-password"
-                />
-              </FormField>
-              <FormField label={t('setup.sourceRecord')}>
-                <input
-                  type="checkbox"
-                  disabled={!canEdit}
-                  checked={Boolean(src.record)}
-                  onChange={(e) => updateSource(i, { record: e.target.checked })}
-                />
-              </FormField>
-            </FormGrid>
-            {canEdit ? (
-              <div className="basic-source-card__actions">
-                <Button size="sm" variant="outline" onClick={() => void openAdvanced(i)}>
-                  {t('setup.sourceAdvanced')}
-                </Button>
-                <Button size="sm" variant="danger" onClick={() => removeSource(i)}>
-                  {t('setup.removeSource')}
-                </Button>
-              </div>
-            ) : null}
-          </div>
-        ))}
-      </div>
-      {canEdit ? (
-        <div className="basic-add-source-bar">
-          <Button size="sm" variant="success" onClick={addSource}>
-            {t('setup.addSource')}
-          </Button>
-        </div>
-      ) : null}
+      <BasicSetupSection
+        id="analytics"
+        title={t('setup.sectionAnalytics')}
+        summary={summaries.analytics}
+        open={isOpen('analytics')}
+        onOpenChange={(open) => setOpen('analytics', open)}
+      >
+        <BasicAnalyticsSection
+          analyticsEnabled={basic.analytics_enabled}
+          recordingSummary={recordingSummary}
+          canEdit={canEdit}
+          onChange={(enabled) => update({ analytics_enabled: enabled })}
+        />
+      </BasicSetupSection>
 
-      <h3>{t('scheduleAlarm.basicTitle')}</h3>
-      <p className="hint">{t('scheduleAlarm.basicHint')}</p>
-      <p className="hint">{t('scheduleAlarm.logicalCamerasHint')}</p>
-      <FormGrid>
-        <FormField label={t('scheduleAlarm.enabled')}>
-          <input
-            type="checkbox"
-            disabled={!canEdit}
-            checked={Boolean(basic.alarm_schedule?.enabled)}
-            onChange={(e) => {
-              const enabled = e.target.checked;
-              const cameras = deriveAlarmCameras(
-                basic.sources,
-                basic.alarm_schedule,
-                basic.alarm_cameras,
-                pipelineCameras,
-              );
-              update({
-                alarm_schedule: {
-                  ...(basic.alarm_schedule ?? emptyBasic(configName).alarm_schedule!),
-                  enabled,
-                },
-                alarm_cameras: cameras.map((c) => ({ ...c })),
-              });
-            }}
-          />
-        </FormField>
-        <FormField label={t('scheduleAlarm.camerasLabel')}>
-          {alarmCameras.length > 0 ? (
-            <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
-              {alarmCameras.map((cam) => (
-                <div key={cam.id} className="basic-alarm-camera-row">
-                  <label>
-                    <input
-                      type="checkbox"
-                      disabled={!canEdit}
-                      checked={cam.alarm_enabled !== false}
-                      onChange={(e) =>
-                        updateAlarmCamera(cam.id, {
-                          alarm_enabled: e.target.checked,
-                          ...(e.target.checked ? {} : { alarm_schedule: null }),
-                        })
-                      }
-                    />{' '}
-                    {cam.name || `Cam${cam.id + 1}`}
-                  </label>
-                  {cam.alarm_enabled !== false ? (
-                      <div style={{ marginTop: 8, marginLeft: 20 }}>
-                        <FormField label={t('scheduleAlarm.useOwnSchedule')}>
-                          <input
-                            type="checkbox"
-                            disabled={!canEdit}
-                            checked={Boolean(cam.alarm_schedule)}
-                            onChange={(e) =>
-                              updateAlarmCamera(
-                                cam.id,
-                                e.target.checked
-                                  ? {
-                                      alarm_schedule: {
-                                        enabled: true,
-                                        weekdays: basic.alarm_schedule?.weekdays ?? [0, 1, 2, 3, 4, 5, 6],
-                                        periods: basic.alarm_schedule?.periods ?? [['22:00:00', '06:00:00']],
-                                        class_ids: [],
-                                      },
-                                    }
-                                  : { alarm_schedule: null },
-                              )
-                            }
-                          />
-                        </FormField>
-                        {cam.alarm_schedule ? (
-                          <>
-                            <FormField label={t('scheduleAlarm.weekdaysLabel')}>
-                              <WeekdayPicker
-                                disabled={!canEdit}
-                                value={cam.alarm_schedule.weekdays}
-                                onChange={(weekdays) =>
-                                  updateAlarmCamera(cam.id, {
-                                    alarm_schedule: { ...cam.alarm_schedule!, weekdays },
-                                  })
-                                }
-                              />
-                            </FormField>
-                            <FormField label={t('scheduleAlarm.periods')}>
-                              <PeriodListEditor
-                                disabled={!canEdit}
-                                periods={cam.alarm_schedule.periods}
-                                onChange={(periods) =>
-                                  updateAlarmCamera(cam.id, {
-                                    alarm_schedule: { ...cam.alarm_schedule!, periods },
-                                  })
-                                }
-                              />
-                            </FormField>
-                          </>
-                        ) : null}
-                      </div>
-                    ) : null}
-                  </div>
-                ))}
-              </div>
-            ) : (
-              <p className="hint">{t('scheduleAlarm.noCamerasYet')}</p>
-            )}
-            <p className="hint">{t('scheduleAlarm.camerasHint')}</p>
-            {!basic.alarm_schedule?.enabled ? (
-              <p className="hint">{t('scheduleAlarm.camerasDisabledHint')}</p>
-            ) : null}
-          </FormField>
-        <FormField label={t('scheduleAlarm.weekdaysLabel')}>
-          <WeekdayPicker
-            disabled={!canEdit}
-            value={basic.alarm_schedule?.weekdays ?? [0, 1, 2, 3, 4, 5, 6]}
-            onChange={(weekdays) =>
-              update({
-                alarm_schedule: { ...(basic.alarm_schedule ?? emptyBasic(configName).alarm_schedule!), weekdays },
-              })
-            }
-          />
-        </FormField>
-        <FormField label={t('scheduleAlarm.periods')}>
-          <PeriodListEditor
-            disabled={!canEdit}
-            periods={basic.alarm_schedule?.periods ?? [['22:00:00', '06:00:00']]}
-            onChange={(periods) =>
-              update({
-                alarm_schedule: { ...(basic.alarm_schedule ?? emptyBasic(configName).alarm_schedule!), periods },
-              })
-            }
-          />
-        </FormField>
-      </FormGrid>
-
-      <h3>{t('setup.sectionOptions')}</h3>
-      <FormGrid>
-        <FormField label={t('setup.analytics')}>
-          <input
-            type="checkbox"
-            disabled={!canEdit}
-            checked={basic.analytics_enabled}
-            onChange={(e) => update({ analytics_enabled: e.target.checked })}
-          />
-        </FormField>
-      </FormGrid>
-      <p className="hint">{t('setup.analyticsHint')}</p>
-      <p className="basic-recording-summary">{recordingSummary}</p>
+      <BasicSetupSection
+        id="alarm"
+        title={t('scheduleAlarm.basicTitle')}
+        summary={summaries.alarm}
+        open={isOpen('alarm')}
+        onOpenChange={(open) => setOpen('alarm', open)}
+        disabled={!analyticsOn}
+        disabledHint={t('setup.requiresAnalytics')}
+      >
+        <BasicAlarmScheduleSection
+          canEdit={canEdit}
+          analyticsDisabled={!analyticsOn}
+          alarmSchedule={alarmSchedule}
+          alarmCameras={alarmCameras}
+          onUpdateSchedule={(patch) =>
+            update({ alarm_schedule: { ...alarmSchedule, ...patch } })
+          }
+          onUpdateCamera={updateAlarmCamera}
+          onOpenCameraModal={setAlarmModalCameraId}
+        />
+      </BasicSetupSection>
 
       {canEdit || canRun ? (
         <div className="modal-actions" style={{ marginTop: '1rem' }}>
@@ -650,6 +435,15 @@ export function BasicSetupForm({
         readOnly={!canEdit}
         onClose={() => setAdvancedOpen(null)}
         onApplied={applyAdvanced}
+      />
+
+      <AlarmCameraScheduleModal
+        open={alarmModalCameraId != null}
+        camera={modalCamera}
+        defaultSchedule={alarmSchedule}
+        canEdit={canEdit && analyticsOn}
+        onClose={() => setAlarmModalCameraId(null)}
+        onApply={updateAlarmCamera}
       />
     </div>
   );
