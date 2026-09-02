@@ -203,6 +203,12 @@ export function ConfigStudio({
     if (!name || !canRun) return;
     setApplying(true);
     try {
+      if (canEdit && dirty && sectionData != null && !specialIds.includes(activeId)) {
+        await configPutSection(name, activePath, sectionData);
+        setSectionData(sectionData);
+        setBaselineJson(stableStringify(sectionData));
+        setDirty(false);
+      }
       markPendingApply(false);
       const res = await restartConfigRun(name);
       markPendingApply(false);

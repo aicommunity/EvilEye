@@ -170,3 +170,29 @@ def test_frontend_needs_build_missing_static():
         static_dir.return_value = static
         frontend_dir.return_value = MagicMock()
         assert frontend_needs_build() is True
+
+
+def test_pipeline_restart_uses_replace_and_waits_for_alive(tmp_path: Path):
+    from evileye.stack_control import SpawnResult, pipeline_restart
+
+    spawn = SpawnResult(pid=1234, mode="managed", config_path="configs/a.json")
+    with patch("evileye.stack_control.stop_pipelines"), patch(
+        "evileye.stack_control.pipeline_start", return_value=spawn
+    ) as start, patch("evileye.stack_control._wait_pipeline_alive") as wait_alive, patch(
+        "evileye.stack_control.time.sleep"
+    ):
+        result = pipeline_restart("configs/a.json", site_dir=tmp_path, hold=False)
+
+    start.assert_called_once()
+    assert start.call_args.kwargs.get("replace") is True
+    assert start.call_args.kwargs.get("release_hold") is True
+    wait_alive.assert_called_once_with(1234)
+    assert result.pid == 1234
+
+
+def test_wait_pipeline_alive_raises_when_process_dies():
+    from evileye.stack_control import _wait_pipeline_alive
+
+    with patch("evileye.stack_control.pid_exists", return_value=False):
+        with pytest.raises(RuntimeError, match="exited immediately"):
+            _wait_pipeline_alive(999)

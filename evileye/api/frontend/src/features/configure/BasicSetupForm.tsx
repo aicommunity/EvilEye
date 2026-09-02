@@ -84,6 +84,7 @@ export function BasicSetupForm({
     occupiedIds: number[];
   } | null>(null);
   const [pipelineCameras, setPipelineCameras] = useState<ConfigCameraOption[]>([]);
+  const [dirty, setDirty] = useState(false);
   const hasLoadedRef = useRef(false);
 
   const sectionDefaults = useMemo(
@@ -111,6 +112,7 @@ export function BasicSetupForm({
       setStatus(st);
       onStatus?.(st);
       setBasic(withDerivedAlarmCameras({ ...body, config_name: configName }, fromPipeline));
+      setDirty(false);
       hasLoadedRef.current = true;
     } catch (e) {
       showError(e instanceof Error ? e.message : t('common.error'));
@@ -127,9 +129,13 @@ export function BasicSetupForm({
     void load();
   }, [load]);
 
-  const update = (patch: Partial<BasicSetup>) => setBasic((prev) => ({ ...prev, ...patch }));
+  const update = (patch: Partial<BasicSetup>) => {
+    setDirty(true);
+    setBasic((prev) => ({ ...prev, ...patch }));
+  };
 
   const updateSource = (index: number, patch: Partial<BasicSource>) => {
+    setDirty(true);
     setBasic((prev) => {
       const sources = prev.sources.map((s, i) => (i === index ? { ...s, ...patch } : s));
       return { ...prev, sources };
@@ -137,6 +143,7 @@ export function BasicSetupForm({
   };
 
   const updateAlarmCamera = (cameraId: number, patch: Partial<BasicAlarmCamera>) => {
+    setDirty(true);
     setBasic((prev) => {
       const cameras = deriveAlarmCameras(
         prev.sources,
@@ -152,6 +159,7 @@ export function BasicSetupForm({
   };
 
   const addSource = () => {
+    setDirty(true);
     setBasic((prev) => {
       const nextId = prev.sources.reduce((m, s) => Math.max(m, s.id), -1) + 1;
       const alarmOn = Boolean(prev.alarm_schedule?.enabled);
@@ -179,6 +187,7 @@ export function BasicSetupForm({
   };
 
   const removeSource = (index: number) => {
+    setDirty(true);
     setBasic((prev) => {
       const row = prev.sources[index];
       const dropIds = new Set(row?.logical_ids?.length ? row.logical_ids : row ? [row.id] : []);
@@ -231,8 +240,8 @@ export function BasicSetupForm({
     );
   };
 
-  const save = async () => {
-    if (!canEdit) return;
+  const save = async (): Promise<boolean> => {
+    if (!canEdit) return true;
     setSaving(true);
     try {
       const res = await setupApi.basicPut(buildPayload());
@@ -240,10 +249,13 @@ export function BasicSetupForm({
       setStatus(res.status);
       onStatus?.(res.status);
       setDbPassword('');
+      setDirty(false);
       showSuccess(t('setup.saved'));
       onPendingApplyChange?.(true);
+      return true;
     } catch (e) {
       showError(e instanceof ApiError ? e.message : e instanceof Error ? e.message : t('common.saveFail'));
+      return false;
     } finally {
       setSaving(false);
     }
@@ -256,6 +268,10 @@ export function BasicSetupForm({
       if (status && !status.ready_to_run) {
         showError(t('setup.notReadyToRun'));
         return;
+      }
+      if (canEdit && (dirty || Boolean(dbPassword))) {
+        const saved = await save();
+        if (!saved) return;
       }
       onPendingApplyChange?.(false);
       const res = await restartConfigRun(configName);

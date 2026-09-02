@@ -25,15 +25,23 @@ fi
 touch "$RESTART_LOCK"
 trap 'rm -f "$RESTART_LOCK"' EXIT
 
-SPAWN_LOCK="$MONITOR_DIR/.spawn.lock"
-exec 200>"$SPAWN_LOCK"
-if ! flock -w 30 200; then
-    log_msg "Restart skipped: could not acquire spawn lock"
-    exit 0
-fi
-
 mark_watchdog_restarting
 log_msg "Starting EvilEye restart (reason=$REASON)"
+
+SPAWN_LOCK="$MONITOR_DIR/.spawn.lock"
+_spawn_lock() {
+    exec 200>"$SPAWN_LOCK"
+    if ! flock -w 30 200; then
+        log_msg "Restart skipped: could not acquire spawn lock"
+        exit 0
+    fi
+}
+
+_spawn_unlock() {
+    flock -u 200 2>/dev/null || true
+}
+
+_spawn_lock
 
 # Stop existing processes gracefully, then force-kill leftovers.
 for pid in $(pgrep -f "$CHILD_PATTERN" 2>/dev/null || true); do
@@ -118,7 +126,7 @@ launch_evileye() {
         (
             cd "$DEPLOY_DIR"
             evileye pipeline start "$CONFIG_NAME" --release "${gui_args[@]}"
-        ) >>"$MONITOR_DIR/watchdog_stdout.log" 2>&1 &
+        ) >>"$MONITOR_DIR/watchdog_stdout.log" 2>&1
         echo $!
         return
     fi
@@ -165,32 +173,38 @@ launch_evileye() {
 launcher_pid="$(launch_evileye)"
 log_msg "Launched evileye via pid=$launcher_pid DISPLAY=$DISPLAY config=$CONFIG_NAME (GPU settle=${EVILEYE_SCHEDULER_GPU_SETTLE_SEC}s)"
 
-# Wait up to 90s for child process.py to appear.
+# Release spawn lock before long boot waits so web service / other agents are not blocked.
+_spawn_unlock
+
+# Wait up to 90s for child process.py to appear (managed mode may have no evileye run cli).
 child_pid=""
 cli_pid=""
 for _ in $(seq 1 18); do
     sleep 5
     cli_pid="$(find_cli_pid)"
     child_pid="$(find_child_pid)"
-    if [[ -n "$child_pid" && -n "$cli_pid" ]]; then
+    if [[ -n "$child_pid" ]]; then
         break
     fi
 done
 
-if [[ -z "$child_pid" || -z "$cli_pid" ]]; then
-    log_msg "ERROR: process.py/cli did not start within 90s after restart (cli=$cli_pid child=$child_pid)"
+if [[ -z "$child_pid" ]]; then
+    log_msg "ERROR: process.py did not start within 90s after restart (cli=$cli_pid child=$child_pid)"
     exit 1
 fi
 
-log_msg "Child appeared: cli_pid=$cli_pid child_pid=$child_pid — waiting for boot marker"
+log_msg "Child appeared: cli_pid=${cli_pid:-none} child_pid=$child_pid — waiting for boot marker"
 
 boot_ok=false
 deadline=$(($(date +%s) + BOOT_WAIT_SEC))
 while (( $(date +%s) < deadline )); do
-    # Processes must stay alive while we wait for the marker.
-    if ! kill -0 "$cli_pid" 2>/dev/null || ! kill -0 "$child_pid" 2>/dev/null; then
-        log_msg "ERROR: process died before boot marker (cli=$cli_pid child=$child_pid)"
+    # Child must stay alive while we wait for the marker (cli optional in managed mode).
+    if ! kill -0 "$child_pid" 2>/dev/null; then
+        log_msg "ERROR: process died before boot marker (cli=${cli_pid:-none} child=$child_pid)"
         exit 1
+    fi
+    if [[ -n "$cli_pid" ]] && ! kill -0 "$cli_pid" 2>/dev/null; then
+        cli_pid=""
     fi
     # Prefer the newest main log; also accept growth of the previous file.
     main_log="$(latest_main_log)"
@@ -227,16 +241,16 @@ sleep "$POST_BOOT_SETTLE_SEC"
 # Re-resolve pids (CLI pid from systemd-run wrapper may differ from evileye pid).
 cli_pid="$(find_cli_pid)"
 child_pid="$(find_child_pid)"
-if [[ -z "$cli_pid" || -z "$child_pid" ]]; then
-    log_msg "ERROR: process disappeared after boot settle (cli=$cli_pid child=$child_pid)"
+if [[ -z "$child_pid" ]]; then
+    log_msg "ERROR: process disappeared after boot settle (cli=${cli_pid:-none} child=$child_pid)"
     exit 1
 fi
-if ! kill -0 "$cli_pid" 2>/dev/null || ! kill -0 "$child_pid" 2>/dev/null; then
-    log_msg "ERROR: process not alive after boot settle (cli=$cli_pid child=$child_pid)"
+if ! kill -0 "$child_pid" 2>/dev/null; then
+    log_msg "ERROR: process not alive after boot settle (cli=${cli_pid:-none} child=$child_pid)"
     exit 1
 fi
 
-log_msg "Restart OK: cli_pid=$cli_pid child_pid=$child_pid"
+log_msg "Restart OK: cli_pid=${cli_pid:-none} child_pid=$child_pid"
 set_restart_grace
 reset_restart_backoff
 update_state "$cli_pid" "$child_pid" "$(latest_main_log)" ""

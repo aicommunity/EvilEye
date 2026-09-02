@@ -474,6 +474,18 @@ def spawn_direct_pipeline(
     return SpawnResult(pid=proc.pid, mode="direct", config_path=str(config_path))
 
 
+def _wait_pipeline_alive(pid: int, *, timeout: float = 5.0) -> None:
+    """Ensure a freshly spawned pipeline process is still alive after start."""
+    if not pid:
+        raise RuntimeError("Pipeline did not return a pid")
+    deadline = time.time() + max(0.5, float(timeout))
+    while time.time() < deadline:
+        if pid_exists(int(pid)):
+            return
+        time.sleep(0.2)
+    raise RuntimeError(f"Pipeline process {pid} exited immediately after start")
+
+
 def pipeline_start(
     config: str,
     *,
@@ -483,6 +495,7 @@ def pipeline_start(
     release_hold: bool = False,
     replace: bool = False,
     skip_if_running: bool = False,
+    api_base_url: Optional[str] = None,
 ) -> SpawnResult:
     from evileye.site_runtime_guard import ensure_pipeline_singleton, spawn_lock
     from evileye.watchdog_native import clear_manual_stop_cooldown
@@ -508,7 +521,7 @@ def pipeline_start(
                 config_path=guard.config_path or config,
             )
         if should_use_managed_launch(root):
-            return spawn_managed_pipeline(config, site_dir=root)
+            return spawn_managed_pipeline(config, site_dir=root, api_base_url=api_base_url)
         return spawn_direct_pipeline(config, site_dir=root, gui=gui, detach=detach)
 
 
@@ -519,16 +532,21 @@ def pipeline_restart(
     hold: bool = True,
     gui: Optional[bool] = None,
     detach: bool = False,
+    api_base_url: Optional[str] = None,
 ) -> SpawnResult:
     stop_pipelines(site_dir=site_dir, config=config, stop_all=False, hold=hold)
     time.sleep(1.0)
-    return pipeline_start(
+    result = pipeline_start(
         config,
         site_dir=site_dir,
         gui=gui,
         detach=detach,
         release_hold=not hold,
+        replace=True,
+        api_base_url=api_base_url,
     )
+    _wait_pipeline_alive(result.pid)
+    return result
 
 
 def frontend_needs_build(site_dir: Path | None = None) -> bool:
