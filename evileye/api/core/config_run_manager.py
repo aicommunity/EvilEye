@@ -131,6 +131,15 @@ class ConfigRunManager:
         except ValueError:
             return 60.0
 
+    def _wait_config_pipeline_stopped(self, config_name: str, *, timeout: float) -> None:
+        from evileye.site_runtime_guard import find_alive_pipelines_for_config
+
+        deadline = time.time() + max(0.0, timeout)
+        while time.time() < deadline:
+            if not find_alive_pipelines_for_config(site_root(), config_name):
+                return
+            time.sleep(0.2)
+
     def _terminate_process_tree(self, pid: int, *, grace_sec: float) -> bool:
         if not pid:
             return True
@@ -236,17 +245,48 @@ class ConfigRunManager:
                 "restart_cmd": cmd,
             }
 
-        # External / managed run under standalone API: classic stop + recreate.
-        try:
-            self.stop(rid)
-        except KeyError:
-            pass
-        except RuntimeError as exc:
-            # Should not be self-hosted here, but surface clearly.
-            raise
+        # External run under standalone API.
+        site = site_root()
+        from evileye.stack_control import pipeline_restart, should_use_managed_launch
+
+        if should_use_managed_launch(site):
+            # Site runs API as a service and pipelines via stack_control; use the
+            # same stop→wait→start path as `evileye pipeline restart --no-hold`.
+            spawn = pipeline_restart(safe_name, site_dir=site, hold=False)
+            if not spawn.pid:
+                raise RuntimeError(
+                    f"Pipeline restart for {safe_name} did not return a running pid"
+                )
+            self.logger.info(
+                "Managed-site restart via stack_control: config=%s pid=%s mode=%s",
+                safe_name,
+                spawn.pid,
+                spawn.mode,
+            )
+            return {
+                "mode": "managed_restart",
+                "scheduled": False,
+                "config_name": safe_name,
+                "previous_rid": rid,
+                "pid": spawn.pid,
+                "spawn_mode": spawn.mode,
+                "managed": True,
+            }
+
+        # Direct-launch sites: stop + recreate via ConfigRunManager.
+        from evileye.stack_control import stop_pipelines
+
+        stop_pipelines(site_dir=site, config=safe_name, hold=False)
+        self._wait_config_pipeline_stopped(safe_name, timeout=self._stop_grace_sec())
         new_rid = self.next_run_id()
         self.create(new_rid, Path(safe_name).stem, config_name=safe_name)
-        started = self.start(new_rid, api_base_url=api_base_url)
+        started = self.start(
+            new_rid,
+            api_base_url=api_base_url,
+            singleton_policy="replace",
+        )
+        if started.get("state") == ConfigRunState.ERROR:
+            raise RuntimeError(started.get("error") or "Pipeline failed to start after restart")
         return {
             "mode": "managed_restart",
             "scheduled": False,
@@ -382,7 +422,13 @@ class ConfigRunManager:
             self.logger.info(f"ConfigRun '{rid}' deleted")
             return {"id": rid, "status": "deleted"}
 
-    def start(self, rid: int, *, api_base_url: str | None = None) -> Dict:
+    def start(
+        self,
+        rid: int,
+        *,
+        api_base_url: str | None = None,
+        singleton_policy: str = "fail",
+    ) -> Dict:
         with self._lock:
             item = self._items.get(rid)
             if item is None:
@@ -403,9 +449,10 @@ class ConfigRunManager:
         from evileye.site_runtime_guard import DuplicatePipelineError, ensure_pipeline_singleton, spawn_lock
 
         site = site_root()
+        policy = singleton_policy if singleton_policy in {"fail", "replace", "skip"} else "fail"
         try:
             with spawn_lock(site):
-                ensure_pipeline_singleton(str(item.config_path), site, policy="fail")
+                ensure_pipeline_singleton(str(item.config_path), site, policy=policy)
         except DuplicatePipelineError as exc:
             item.state = ConfigRunState.ERROR
             item.error = str(exc)

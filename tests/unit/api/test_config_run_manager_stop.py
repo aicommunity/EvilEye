@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from pathlib import Path
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 import pytest
 
@@ -106,6 +106,67 @@ def test_restart_self_hosted_spawns_helper_and_terms_pid():
     assert result["helper_pid"] == 555
     spawn.assert_called_once()
     term.assert_called_once_with(9999)
+
+
+def test_restart_managed_site_uses_stack_control():
+    manager = ConfigRunManager()
+    spawn = MagicMock()
+    spawn.pid = 4242
+    spawn.mode = "managed"
+    with patch("evileye.api.core.runtime_registry.list_runtime_records", return_value={
+        24: {
+            "id": 24,
+            "pid": 2083042,
+            "config_path": "/home/user/EvilEyeDeploy/configs/poly-cameras-gst.json",
+            "state": "running",
+            "alive": True,
+            "managed": True,
+            "source": "web",
+        }
+    }), patch.object(manager, "list", return_value={}), \
+            patch("evileye.api.core.process_restart.pid_hosts_current_process", return_value=False), \
+            patch("evileye.stack_control.should_use_managed_launch", return_value=True), \
+            patch("evileye.stack_control.pipeline_restart", return_value=spawn) as restart:
+        result = manager.restart_for_config("poly-cameras-gst.json")
+
+    restart.assert_called_once()
+    assert restart.call_args.kwargs.get("hold") is False
+    assert result["mode"] == "managed_restart"
+    assert result["pid"] == 4242
+    assert result["previous_rid"] == 24
+    assert manager._items == {}
+
+
+def test_restart_direct_site_raises_when_start_fails(tmp_path: Path):
+    manager = ConfigRunManager()
+    cfg = tmp_path / "configs"
+    cfg.mkdir(parents=True)
+    (cfg / "test.json").write_text("{}", encoding="utf-8")
+
+    with patch("evileye.api.core.runtime_registry.list_runtime_records", return_value={
+        1: {
+            "id": 1,
+            "pid": 100,
+            "config_path": str(cfg / "test.json"),
+            "state": "running",
+            "alive": True,
+            "managed": False,
+            "source": "process",
+        }
+    }), patch.object(manager, "list", return_value={}), \
+            patch("evileye.api.core.process_restart.pid_hosts_current_process", return_value=False), \
+            patch("evileye.stack_control.should_use_managed_launch", return_value=False), \
+            patch("evileye.stack_control.stop_pipelines"), \
+            patch.object(manager, "_wait_config_pipeline_stopped"), \
+            patch.object(manager, "next_run_id", return_value=2), \
+            patch.object(manager, "create", return_value={"id": 2}), \
+            patch.object(
+                manager,
+                "start",
+                return_value={"id": 2, "state": ConfigRunState.ERROR, "error": "blocked"},
+            ):
+        with pytest.raises(RuntimeError, match="blocked"):
+            manager.restart_for_config("test.json")
 
 
 def test_pid_hosts_current_process_self():
