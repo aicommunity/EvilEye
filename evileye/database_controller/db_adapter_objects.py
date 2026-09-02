@@ -127,12 +127,15 @@ class DatabaseAdapterObjects(DatabaseAdapterBase):
         fields_for_updating['lost_frame_path'] = self._get_img_path('frame', 'lost',
                                                                     src_name, obj)
 
-        image_height, image_width, _ = obj.last_image.image.shape
-        fields_for_updating['lost_bounding_box'] = copy.deepcopy(fields_for_updating['lost_bounding_box'])
-        fields_for_updating['lost_bounding_box'][0] /= image_width
-        fields_for_updating['lost_bounding_box'][1] /= image_height
-        fields_for_updating['lost_bounding_box'][2] /= image_width
-        fields_for_updating['lost_bounding_box'][3] /= image_height
+        last_image = getattr(obj, 'last_image', None)
+        image = getattr(last_image, 'image', None) if last_image is not None else None
+        if image is not None:
+            image_height, image_width, _ = image.shape
+            fields_for_updating['lost_bounding_box'] = copy.deepcopy(fields_for_updating['lost_bounding_box'])
+            fields_for_updating['lost_bounding_box'][0] /= image_width
+            fields_for_updating['lost_bounding_box'][1] /= image_height
+            fields_for_updating['lost_bounding_box'][2] /= image_width
+            fields_for_updating['lost_bounding_box'][3] /= image_height
         return (list(fields_for_updating.keys()), list(fields_for_updating.values()),
                 fields_for_updating['lost_preview_path'], fields_for_updating['lost_frame_path'])
 
@@ -170,12 +173,15 @@ class DatabaseAdapterObjects(DatabaseAdapterBase):
         fields_for_saving['frame_path'] = self._get_img_path('frame', 'detected',
                                                              fields_for_saving['source_name'], obj)
 
-        image_height, image_width, _ = obj.last_image.image.shape
-        fields_for_saving['bounding_box'] = copy.deepcopy(fields_for_saving['bounding_box'])
-        fields_for_saving['bounding_box'][0] /= image_width
-        fields_for_saving['bounding_box'][1] /= image_height
-        fields_for_saving['bounding_box'][2] /= image_width
-        fields_for_saving['bounding_box'][3] /= image_height
+        last_image = getattr(obj, 'last_image', None)
+        image = getattr(last_image, 'image', None) if last_image is not None else None
+        if image is not None:
+            image_height, image_width, _ = image.shape
+            fields_for_saving['bounding_box'] = copy.deepcopy(fields_for_saving['bounding_box'])
+            fields_for_saving['bounding_box'][0] /= image_width
+            fields_for_saving['bounding_box'][1] /= image_height
+            fields_for_saving['bounding_box'][2] /= image_width
+            fields_for_saving['bounding_box'][3] /= image_height
         return (list(fields_for_saving.keys()), list(fields_for_saving.values()),
                 fields_for_saving['preview_path'], fields_for_saving['frame_path'])
 

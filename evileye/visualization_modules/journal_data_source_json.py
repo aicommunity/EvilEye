@@ -1,6 +1,7 @@
 import os
 import json
 import hashlib
+import time
 from typing import List, Dict, Tuple, Callable, Optional
 from .journal_data_source import EventJournalDataSource
 from ..core.logger import get_module_logger
@@ -188,6 +189,12 @@ class JsonLabelJournalDataSource(EventJournalDataSource):
                 except json.JSONDecodeError as json_err:
                     self.logger.warning(
                         f"JSON parse error in {filepath}: {json_err}. File may be corrupted or incomplete. Skipping file.")
+                    try:
+                        backup_path = f"{filepath}.corrupt.{int(time.time())}.bak"
+                        os.replace(filepath, backup_path)
+                        self.logger.warning("Backed up corrupted JSON to %s", backup_path)
+                    except Exception:
+                        pass
                     # Mark file as failed
                     self._failed_files.add(filepath)
                     try:

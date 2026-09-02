@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import datetime
+import os
 import pprint
 import time
 
@@ -38,7 +39,19 @@ class ControllerProcessingMixin:
                     )
                 except Exception:
                     track_info = []
-        if not track_info and object_list.get_num_objects() > 0:
+        if not track_info:
+            # Frame ids can drift when ObjectsHandler lags behind live preview; include
+            # genuinely active tracks (not counting down to lost) without reviving stale bbox.
+            track_info = [
+                obj for obj in object_list.objects
+                if getattr(obj, "lost_frames", 0) == 0
+            ]
+        if (
+            not track_info
+            and object_list.get_num_objects() > 0
+            and os.getenv("EVILEYE_PREVIEW_FALLBACK_ALL", "").strip().lower()
+            in {"1", "true", "yes", "on"}
+        ):
             track_info = list(object_list.objects)
         return track_info
 

@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import { request, streamMetadataWsUrl, type StreamMetadata } from '../../api';
 
 const REST_FALLBACK_MS = 1500;
+export const METADATA_TTL_MS = 4000;
 
 function metadataFingerprint(payload: StreamMetadata): string {
   try {
@@ -33,6 +34,7 @@ async function parseWsPayload(data: unknown): Promise<string | null> {
 
 type SourceKey = number | null;
 type Subscriber = (payload: StreamMetadata) => void;
+type FreshnessSubscriber = (fresh: boolean) => void;
 
 class RunMetadataStore {
   readonly rid: number;
@@ -44,8 +46,11 @@ class RunMetadataStore {
   private restTimer: number | null = null;
 
   private listenersBySource: Map<SourceKey, Set<Subscriber>> = new Map();
+  private freshnessListenersBySource: Map<SourceKey, Set<FreshnessSubscriber>> = new Map();
   private latestBySource: Map<SourceKey, StreamMetadata> = new Map();
+  private latestAtBySource: Map<SourceKey, number> = new Map();
   private fpBySource: Map<SourceKey, string> = new Map();
+  private freshnessTimer: number | null = null;
 
   constructor(rid: number) {
     this.rid = rid;
@@ -59,6 +64,7 @@ class RunMetadataStore {
     if (latest) cb(latest);
     // Lazily connect: first subscriber triggers connect.
     if (!this.ws) void this.connect();
+    this._ensureFreshnessTimer();
     return () => {
       this.listenersBySource.get(sourceId)?.delete(cb);
       // Stop only when the last subscriber for all source keys is removed.
@@ -68,9 +74,56 @@ class RunMetadataStore {
     };
   }
 
+  subscribeFreshness(sourceId: SourceKey, cb: FreshnessSubscriber): () => void {
+    if (!this.freshnessListenersBySource.has(sourceId)) {
+      this.freshnessListenersBySource.set(sourceId, new Set());
+    }
+    this.freshnessListenersBySource.get(sourceId)!.add(cb);
+    cb(this.isFresh(sourceId));
+    this._ensureFreshnessTimer();
+    return () => {
+      this.freshnessListenersBySource.get(sourceId)?.delete(cb);
+      if ([...this.freshnessListenersBySource.values()].every((s) => s.size === 0)) {
+        this._stopFreshnessTimer();
+      }
+    };
+  }
+
+  isFresh(sourceId: SourceKey, ttlMs = METADATA_TTL_MS): boolean {
+    const at = this.latestAtBySource.get(sourceId);
+    return at != null && Date.now() - at < ttlMs;
+  }
+
+  private _ensureFreshnessTimer() {
+    if (this.freshnessTimer != null) return;
+    this.freshnessTimer = window.setInterval(() => this._notifyFreshness(), 500);
+  }
+
+  private _stopFreshnessTimer() {
+    if (this.freshnessTimer != null) {
+      window.clearInterval(this.freshnessTimer);
+      this.freshnessTimer = null;
+    }
+  }
+
+  private _notifyFreshness() {
+    const keys = new Set<SourceKey>([
+      ...this.freshnessListenersBySource.keys(),
+      ...this.latestAtBySource.keys(),
+    ]);
+    for (const key of keys) {
+      const subs = this.freshnessListenersBySource.get(key);
+      if (!subs?.size) continue;
+      const fresh = this.isFresh(key);
+      subs.forEach((fn) => fn(fresh));
+    }
+  }
+
   private pushPayload(payload: StreamMetadata) {
     if (this.cancelled) return;
     const key: SourceKey = payload.source_id ?? null;
+    this.latestAtBySource.set(key, Date.now());
+    this._notifyFreshness();
     const fp = metadataFingerprint(payload);
     const lastFp = this.fpBySource.get(key);
     if (fp === lastFp) return;
@@ -171,6 +224,7 @@ class RunMetadataStore {
 
   private close() {
     this.cancelled = true;
+    this._stopFreshnessTimer();
     if (this.retryTimer != null) window.clearTimeout(this.retryTimer);
     if (this.restTimer != null) window.clearInterval(this.restTimer);
     this.retryTimer = null;
@@ -209,4 +263,25 @@ export function useRunMetadataWs(rid: number | null, sourceId: number | null | u
   }, [rid, sourceId]);
 
   return meta;
+}
+
+export function useMetadataFreshness(
+  rid: number | null,
+  sourceId: number | null | undefined,
+  ttlMs = METADATA_TTL_MS,
+) {
+  const [fresh, setFresh] = useState(false);
+  useEffect(() => {
+    setFresh(false);
+    if (rid == null) return;
+    const key: SourceKey = sourceId ?? null;
+    const store = getRunStore(rid);
+    const unsub = store.subscribeFreshness(key, (isFresh) => setFresh(isFresh));
+    const timer = window.setInterval(() => setFresh(store.isFresh(key, ttlMs)), 500);
+    return () => {
+      unsub();
+      window.clearInterval(timer);
+    };
+  }, [rid, sourceId, ttlMs]);
+  return fresh;
 }

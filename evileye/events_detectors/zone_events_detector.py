@@ -115,7 +115,14 @@ class ZoneEventsDetector(EventsDetector):
                                 continue
                             # Передаём текущий объект (с актуальным изображением),
                             # а метку времени выхода берём из истории
-                            event = ZoneEvent(obj_found_datetime(hist_obj), 'Alarm', obj, zone, is_finished=True)
+                            event = ZoneEvent(
+                                obj_found_datetime(hist_obj),
+                                'Alarm',
+                                obj,
+                                zone,
+                                is_finished=True,
+                                hist_obj=hist_obj,
+                            )
                             if obj.object_id not in self.left_frame_id[source_id]:
                                 self.left_frame_id[source_id][obj.object_id] = {}
                             self.left_frame_id[source_id][obj.object_id][zone_id] = hist_obj.frame_id

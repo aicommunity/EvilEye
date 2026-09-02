@@ -114,6 +114,13 @@ Foreground `evileye server --no-reload` без systemd. Не запускает�
 
 Рекомендуемые команды: `evileye pipeline stop --all`, `evileye service restart`.
 
+### Залипшие bbox на Live / рост RAM pipeline
+
+1. Снимок baseline: `scripts/diagnose_live_bbox_baseline.sh` (RSS, `/ready`, top процессов).
+2. Метрики handler: `curl -s http://127.0.0.1:8181/ready | jq .objects_handler` — `active_objects`, `active_last_image_bytes`, `stale_source_ids`.
+3. Подробные счётчики в логе pipeline: `EVILEYE_PERF_DIAG=1 EVILEYE_PERF_DIAG_EVERY=30` (systemd unit или env перед `evileye reload pipeline`).
+4. После hotfix: `evileye reload pipeline <config>` — сбрасывает накопленную память; проверить Live bbox на пустой сцене.
+
 ## Docker
 
 В контейнере `evileye service *` недоступен. Используйте:

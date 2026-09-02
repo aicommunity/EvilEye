@@ -6,7 +6,7 @@ import { OverlayCanvas } from '../overlay/OverlayCanvas';
 import { useImageLetterbox } from '../overlay/useMediaLetterbox';
 import { resolvePreviewMode, type PreviewMode } from './liveHealth';
 import { wantLiveSnapshotPoll, wantLiveWsPreview } from './livePreviewPrefer';
-import { useRunMetadataWs } from './useRunMetadataWs';
+import { useRunMetadataWs, useMetadataFreshness } from './useRunMetadataWs';
 
 const LIVE_SNAPSHOT_MS = 3000;
 const STALE_SNAPSHOT_BACKOFF_MS = [2000, 4000, 8000];
@@ -94,6 +94,9 @@ export function CameraTile({
     wantMetaSub && mode !== 'error' && camera.reconnecting !== true && (mode === 'live' || mode === 'stale');
   const overlayDimmed = mode === 'stale';
   const meta = useRunMetadataWs(wantMetaSub ? camera.run_id : null, camera.source_id ?? null);
+  const metaFresh = useMetadataFreshness(wantMetaSub ? camera.run_id : null, camera.source_id ?? null);
+  const hasOverlayObjects = (meta?.objects?.length ?? 0) > 0;
+  const overlayMeta = meta && (metaFresh || hasOverlayObjects) ? meta : null;
   // Keep snapshot polling until the first WS blob arrives — otherwise onopen
   // (connected=true) blanks the tile after Live remount from Playback.
   const hasWsFrame = Boolean(previewBlobUrl);
@@ -204,7 +207,7 @@ export function CameraTile({
               />
               {showOverlay ? (
                 <OverlayCanvas
-                  meta={meta as StreamMetadata | null}
+                  meta={overlayMeta as StreamMetadata | null}
                   layoutBox={layoutBox}
                   density={gridMode ? 'compact' : 'full'}
                   dimmed={overlayDimmed}
@@ -291,7 +294,7 @@ export function CameraTile({
               />
               {showOverlay ? (
                 <OverlayCanvas
-                  meta={meta as StreamMetadata | null}
+                  meta={overlayMeta as StreamMetadata | null}
                   layoutBox={layoutBox}
                   density="full"
                   dimmed={overlayDimmed}

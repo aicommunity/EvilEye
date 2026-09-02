@@ -381,6 +381,15 @@ def create_app() -> FastAPI:
                 payload["ws_reject_counts"] = get_rate_guard().ws_reject_counts()
             except Exception:
                 pass
+            try:
+                from evileye.api.core.control_ipc import control_socket_path, send_control_command
+
+                if control_socket_path().exists():
+                    ipc_resp = send_control_command({"cmd": "get_objects_handler_stats"}, timeout=1.0)
+                    if isinstance(ipc_resp, dict) and ipc_resp.get("ok") and isinstance(ipc_resp.get("stats"), dict):
+                        payload["objects_handler"] = ipc_resp["stats"]
+            except Exception:
+                pass
         except Exception:
             pass
         return payload

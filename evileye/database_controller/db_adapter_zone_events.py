@@ -1,4 +1,6 @@
 import time
+import time
+
 from .db_adapter import DatabaseAdapterBase
 from .constants import QueryType, EventType
 from ..utils.utils import ObjectResultEncoder
@@ -15,6 +17,8 @@ from .event_image_writer import EventImageWriter
 
 
 class DatabaseAdapterZoneEvents(DatabaseAdapterBase):
+    _image_none_warn_ts = 0.0
+
     def __init__(self, db_controller):
         super().__init__(db_controller)
         self.image_dir = self.db_params['image_dir']
@@ -141,7 +145,10 @@ class DatabaseAdapterZoneEvents(DatabaseAdapterBase):
             return
 
         if image is None:
-            self.logger.warning('DB: Image is None in RETURNING; skipping image save')
+            now = time.time()
+            if (now - DatabaseAdapterZoneEvents._image_none_warn_ts) >= 60.0:
+                DatabaseAdapterZoneEvents._image_none_warn_ts = now
+                self.logger.warning('DB: Image is None in RETURNING; skipping image save')
             return
 
         self._save_image(preview_path, frame_path, image, box, zone_coords)

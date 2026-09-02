@@ -3,21 +3,41 @@ import copy
 from evileye.core.event_time import datetime_from_ts
 
 
+def _copy_frame_image(frame):
+    if frame is None:
+        return None
+    if not hasattr(frame, "image") or frame.image is None:
+        return frame
+    copied = copy.copy(frame)
+    copied.image = frame.image.copy()
+    return copied
+
+
+def _resolve_event_image(obj, hist_obj=None):
+    """Pick a frame snapshot for zone event metadata (enter/exit)."""
+    for candidate in (obj, hist_obj):
+        if candidate is None:
+            continue
+        last_image = getattr(candidate, "last_image", None)
+        if last_image is not None and getattr(last_image, "image", None) is not None:
+            return _copy_frame_image(last_image)
+    history = getattr(obj, "history", None) or []
+    for hist in reversed(history):
+        hist_image = getattr(hist, "last_image", None)
+        if hist_image is not None and getattr(hist_image, "image", None) is not None:
+            return _copy_frame_image(hist_image)
+    return None
+
+
 class ZoneEvent(Event):
-    def __init__(self, timestamp, alarm_type, obj, zone, is_finished=False):
+    def __init__(self, timestamp, alarm_type, obj, zone, is_finished=False, hist_obj=None):
         ts = datetime_from_ts(timestamp) or datetime_from_ts(getattr(obj, "time_stamp", None))
         super().__init__(ts or timestamp, alarm_type, is_finished)
         self.source_id = obj.source_id
         self.zone = zone
         self.object_id = obj.object_id
         if not is_finished:
-            # Use shallow copy + numpy array copy instead of deepcopy for images
-            if obj.last_image and hasattr(obj.last_image, 'image') and obj.last_image.image is not None:
-                self.img_entered = copy.copy(obj.last_image)
-                if hasattr(self.img_entered, 'image'):
-                    self.img_entered.image = obj.last_image.image.copy()
-            else:
-                self.img_entered = obj.last_image
+            self.img_entered = _resolve_event_image(obj)
             self.img_left = None
             self.box_entered = obj.track.bounding_box
             self.box_left = None
@@ -27,13 +47,7 @@ class ZoneEvent(Event):
             self.video_path_left = None
         else:
             self.img_entered = None
-            # Use shallow copy + numpy array copy instead of deepcopy for images
-            if obj.last_image and hasattr(obj.last_image, 'image') and obj.last_image.image is not None:
-                self.img_left = copy.copy(obj.last_image)
-                if hasattr(self.img_left, 'image'):
-                    self.img_left.image = obj.last_image.image.copy()
-            else:
-                self.img_left = obj.last_image
+            self.img_left = _resolve_event_image(obj, hist_obj=hist_obj)
             self.box_entered = None
             self.box_left = obj.track.bounding_box
             self.time_entered = None

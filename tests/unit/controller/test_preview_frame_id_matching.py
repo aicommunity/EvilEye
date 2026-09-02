@@ -11,6 +11,7 @@ class _PreviewHost(ControllerProcessingMixin):
         self.source_id_name_table = {}
         self.debug_info = {}
         self.class_mapping = {}
+        self.params = {}
         self._preview_zones_by_source = {}
         self._vis_cfg = vis_cfg or {}
 
@@ -44,7 +45,31 @@ def test_preview_matches_objects_within_track_frame_match_window():
     assert ctx.track_info == [obj]
 
 
-def test_preview_fallback_active_objects_when_frame_id_far():
+def test_preview_returns_active_objects_when_frame_id_far_without_env():
+    host = _PreviewHost(vis_cfg={"track_frame_match_window": 1})
+    frame = Frame()
+    frame.source_id = 0
+    frame.frame_id = 200
+
+    obj, obj_list = _make_obj(frame_id=100)
+    ctx = host._build_preview_render_context(frame, {0: obj_list})
+    assert ctx.track_info == [obj]
+
+
+def test_preview_skips_lost_countdown_objects_when_frame_id_far():
+    host = _PreviewHost(vis_cfg={"track_frame_match_window": 1})
+    frame = Frame()
+    frame.source_id = 0
+    frame.frame_id = 200
+
+    obj, obj_list = _make_obj(frame_id=100)
+    obj.lost_frames = 3
+    ctx = host._build_preview_render_context(frame, {0: obj_list})
+    assert ctx.track_info == []
+
+
+def test_preview_fallback_active_objects_when_frame_id_far_with_env(monkeypatch):
+    monkeypatch.setenv("EVILEYE_PREVIEW_FALLBACK_ALL", "1")
     host = _PreviewHost(vis_cfg={"track_frame_match_window": 1})
     frame = Frame()
     frame.source_id = 0

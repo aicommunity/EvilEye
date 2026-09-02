@@ -1008,7 +1008,18 @@ class Controller(ControllerProcessingMixin):
             return self._control_apply_zone_detector_params(command)
         if cmd == "apply_roi":
             return self._control_apply_roi(command)
+        if cmd == "get_objects_handler_stats":
+            return self._control_get_objects_handler_stats()
         return {"ok": False, "error": "unknown_command"}
+
+    def _control_get_objects_handler_stats(self) -> dict:
+        handler = getattr(self, "obj_handler", None)
+        if handler is None or not hasattr(handler, "get_runtime_stats"):
+            return {"ok": False, "error": "objects_handler_unavailable"}
+        try:
+            return {"ok": True, "stats": handler.get_runtime_stats()}
+        except Exception as exc:
+            return {"ok": False, "error": str(exc)}
 
     def _control_apply_zones(self, command: dict) -> dict:
         try:
