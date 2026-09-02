@@ -439,6 +439,21 @@ def _database_mode_status() -> dict[str, Any]:
     }
 
 
+def database_operational() -> bool:
+    """True when the live stack is configured for PostgreSQL and connected."""
+    if configured_storage_mode() != "database":
+        return False
+    controller = _db_controller()
+    if controller is not None:
+        try:
+            if controller.is_connected():
+                return True
+        except Exception:
+            pass
+    avail = journal_availability()
+    return bool(avail.get("available") and avail.get("mode") == "database")
+
+
 def journal_availability() -> dict[str, Any]:
     if configured_storage_mode() == "database":
         return _database_mode_status()

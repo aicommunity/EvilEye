@@ -9,6 +9,7 @@ export type SetupStatus = {
   data_dir: string;
   data_dir_confirmed: boolean;
   use_database: boolean;
+  storage_mode?: 'json' | 'database';
   has_sources: boolean;
   source_count: number;
   analytics_enabled: boolean;
