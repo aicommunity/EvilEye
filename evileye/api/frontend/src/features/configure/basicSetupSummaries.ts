@@ -1,10 +1,24 @@
-import type { BasicAlarmCamera, BasicSetup, AlarmSchedule } from '../../api/setup';
+import type { BasicAlarmCamera, BasicSetup, BasicSource, AlarmSchedule } from '../../api/setup';
 import type { ConfigCameraOption } from './cameraList';
 import type { SetupStatus } from '../../api/setup';
 
 const WEEKDAY_KEYS = ['mon', 'tue', 'wed', 'thu', 'fri', 'sat', 'sun'] as const;
 
 type TFn = (key: string, params?: Record<string, string | number>) => string;
+
+/** Label for one capture card: split logical cameras joined with '+'. */
+export function formatCaptureSourceLabel(src: BasicSource): string {
+  const base = (src.name || `Cam${src.id + 1}`).trim() || `Cam${src.id + 1}`;
+  const extras = (src.extra_names ?? []).map((n) => String(n || '').trim()).filter(Boolean);
+  return extras.length ? `${base}+${extras.join('+')}` : base;
+}
+
+export function recordingSummary(sources: BasicSource[], t: TFn): string {
+  const recording = sources.filter((s) => Boolean(s.record));
+  if (!recording.length) return t('setup.recordingSummaryOff');
+  const names = recording.map(formatCaptureSourceLabel).join(', ');
+  return t('setup.recordingSummaryOn', { names });
+}
 
 export function formatWeekdaysShort(weekdays: number[], t: TFn): string {
   const sorted = [...new Set(weekdays)].sort((a, b) => a - b);

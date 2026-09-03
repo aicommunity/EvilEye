@@ -1,8 +1,10 @@
 import { describe, expect, it } from 'vitest';
 import {
   alarmSummary,
+  formatCaptureSourceLabel,
   formatPeriodsShort,
   formatWeekdaysShort,
+  recordingSummary,
   sourcesSummary,
 } from './basicSetupSummaries';
 
@@ -16,6 +18,8 @@ const t = (key: string, params?: Record<string, string | number>) => {
     'scheduleAlarm.weekdays.sat': 'Сб',
     'scheduleAlarm.weekdays.sun': 'Вс',
     'setup.sourcesSummary': '{{capture}} захват · {{logical}} камер',
+    'setup.recordingSummaryOn': 'Запись: {{names}}',
+    'setup.recordingSummaryOff': 'Запись выключена',
     'scheduleAlarm.summaryNeedsAnalytics': 'Требуется аналитика',
     'scheduleAlarm.summaryDisabled': 'Выкл',
     'scheduleAlarm.summaryEnabled': 'Вкл · {{active}}/{{total}} камер · {{days}} {{times}}',
@@ -62,6 +66,55 @@ describe('basicSetupSummaries', () => {
         t,
       ),
     ).toBe('2 захват · 3 камер');
+  });
+
+  it('formats capture source label with extras joined by +', () => {
+    expect(formatCaptureSourceLabel({ id: 0, name: 'Cam1', type: 'IpCamera', address: '' })).toBe('Cam1');
+    expect(
+      formatCaptureSourceLabel({
+        id: 1,
+        name: 'Cam2',
+        extra_names: ['Cam3'],
+        logical_ids: [1, 2],
+        type: 'IpCamera',
+        address: '',
+      }),
+    ).toBe('Cam2+Cam3');
+  });
+
+  it('recording summary joins split cameras with + and omits count', () => {
+    expect(
+      recordingSummary(
+        [
+          { id: 0, name: 'Cam1', record: true, type: 'IpCamera', address: '' },
+          {
+            id: 1,
+            name: 'Cam2',
+            extra_names: ['Cam3'],
+            logical_ids: [1, 2],
+            record: true,
+            type: 'IpCamera',
+            address: '',
+          },
+          {
+            id: 3,
+            name: 'Cam4',
+            extra_names: ['Cam5'],
+            logical_ids: [3, 4],
+            record: true,
+            type: 'IpCamera',
+            address: '',
+          },
+        ],
+        t,
+      ),
+    ).toBe('Запись: Cam1, Cam2+Cam3, Cam4+Cam5');
+  });
+
+  it('recording summary off when no sources record', () => {
+    expect(
+      recordingSummary([{ id: 0, name: 'Cam1', record: false, type: 'IpCamera', address: '' }], t),
+    ).toBe('Запись выключена');
   });
 
   it('alarm summary needs analytics', () => {

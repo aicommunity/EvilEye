@@ -23,6 +23,7 @@ import { useBasicSetupSections } from './useBasicSetupSections';
 import {
   alarmSummary,
   analyticsSummary,
+  recordingSummary as buildRecordingSummary,
   sourcesSummary,
   systemSummary,
 } from './basicSetupSummaries';
@@ -199,12 +200,10 @@ export function BasicSetupForm({
     });
   };
 
-  const recordingSummary = useMemo(() => {
-    const recording = basic.sources.filter((s) => Boolean(s.record));
-    if (!recording.length) return t('setup.recordingSummaryOff');
-    const names = recording.map((s) => s.name || `Cam${s.id + 1}`).join(', ');
-    return t('setup.recordingSummaryOn', { names, count: recording.length });
-  }, [basic.sources, lang, t]);
+  const recordingSummary = useMemo(
+    () => buildRecordingSummary(basic.sources, t),
+    [basic.sources, lang, t],
+  );
 
   const alarmCameras = useMemo(
     () => deriveAlarmCameras(basic.sources, basic.alarm_schedule, basic.alarm_cameras, pipelineCameras),
