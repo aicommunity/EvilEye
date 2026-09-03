@@ -62,6 +62,7 @@ cleanup_orphan_mp_workers
 
 if [[ -n "$(find_child_pid)" ]]; then
     log_msg "Child already running after stop (another agent); skip restart"
+    _spawn_unlock
     exit 0
 fi
 
@@ -78,6 +79,10 @@ except Exception as exc:
     print(f"cleanup_skipped={exc}")
 PY
 ) || true
+
+# Release spawn lock BEFORE launching: `evileye pipeline start` acquires the same
+# monitor/.spawn.lock. Holding it here deadlocks the child forever.
+_spawn_unlock
 
 export EVILEYE_SCHEDULER_GPU_SETTLE_SEC="${EVILEYE_SCHEDULER_GPU_SETTLE_SEC:-15}"
 export EVILEYE_CLI_LAUNCHED=1
@@ -125,8 +130,9 @@ launch_evileye() {
         fi
         (
             cd "$DEPLOY_DIR"
+            # pipeline start has its own spawn flock; do not hold bash flock across this call
             evileye pipeline start "$CONFIG_NAME" --release "${gui_args[@]}"
-        ) >>"$MONITOR_DIR/watchdog_stdout.log" 2>&1
+        ) >>"$MONITOR_DIR/watchdog_stdout.log" 2>&1 &
         echo $!
         return
     fi
@@ -160,6 +166,7 @@ launch_evileye() {
             --setenv="DBUS_SESSION_BUS_ADDRESS=${DBUS_SESSION_BUS_ADDRESS:-}" \
             --setenv="EVILEYE_SCHEDULER_GPU_SETTLE_SEC=${EVILEYE_SCHEDULER_GPU_SETTLE_SEC}" \
             --setenv="EVILEYE_CLI_LAUNCHED=1" \
+            --setenv="EVILEYE_SITE_DIR=${EVILEYE_SITE_DIR}" \
             bash -c 'if [[ "$2" == 1 ]]; then exec evileye run "$0" --no-gui >>"$1" 2>&1; else exec evileye run "$0" >>"$1" 2>&1; fi' \
             "$CONFIG_NAME" "$MONITOR_DIR/watchdog_stdout.log" "$USE_NO_GUI" &
         echo $!
@@ -172,9 +179,6 @@ launch_evileye() {
 
 launcher_pid="$(launch_evileye)"
 log_msg "Launched evileye via pid=$launcher_pid DISPLAY=$DISPLAY config=$CONFIG_NAME (GPU settle=${EVILEYE_SCHEDULER_GPU_SETTLE_SEC}s)"
-
-# Release spawn lock before long boot waits so web service / other agents are not blocked.
-_spawn_unlock
 
 # Wait up to 90s for child process.py to appear (managed mode may have no evileye run cli).
 child_pid=""

@@ -99,7 +99,8 @@ def test_reload_web_infers_config_from_running_pipeline(tmp_path: Path):
     ), patch("evileye.stack_control.restart_web_layer"), patch(
         "evileye.stack_control.wait_web_ready", return_value=True
     ), patch("evileye.stack_control.pipeline_start") as start, patch(
-        "evileye.stack_control.resolve_production_config", return_value=None
+        "evileye.stack_control.resolve_pipeline_config",
+        return_value="configs/was_running.json",
     ):
         from evileye.stack_control import SpawnResult
 

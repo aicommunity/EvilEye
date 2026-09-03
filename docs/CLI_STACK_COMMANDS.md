@@ -2,6 +2,8 @@
 
 Единый интерфейс для Web UI, OS-сервиса и pipeline runtime.
 
+**Site directory** = текущий cwd (обычно каталог deploy-сайта, например `~/EvilEyeDeploy`). Запускайте команды из корня сайта.
+
 ## Миграция со старых команд
 
 | Было | Стало |
@@ -11,7 +13,7 @@
 | `evileye install-server` | `evileye service install` |
 | `evileye uninstall-server` | `evileye service uninstall` |
 | `systemctl --user restart evileye` | `evileye service restart` |
-| ручной stop + restart pipeline | `evileye pipeline restart CONFIG` |
+| ручной stop + restart pipeline | `evileye pipeline restart` (CONFIG optional) |
 | неясно что запущено | `evileye status` |
 
 ## Три сценария
@@ -22,9 +24,48 @@
 | **Разработка Web UI / API** | `evileye dev server`, `evileye reload web` |
 | **Production на хосте** | `evileye prod init CONFIG` → `evileye prod up` |
 
+## Что нажать когда (decision table)
+
+| Ситуация | Команда |
+|----------|---------|
+| Всё ок / посмотреть состояние | `evileye status` |
+| После правки SPA/API, pipeline не трогать | `evileye reload web` |
+| Перезапустить только pipeline | `evileye pipeline restart` или `evileye reload pipeline` |
+| Полный reload web + pipeline | `evileye prod restart` или `evileye reload web --with-pipeline` |
+| Web service не активен | `evileye service start` |
+| Дубли pipeline | `evileye pipeline stop --all` затем `evileye pipeline start` |
+| Web collision (service + stray foreground) | `evileye service restart` |
+| Остановить prod (hold watchdog) | `evileye prod down` |
+| Поднять prod заново | `evileye prod up` |
+
+**`prod restart`** по умолчанию **с pipeline** (`--with-pipeline`).  
+**`reload web`** по умолчанию **только web** (pipeline не трогает).
+
+## Резолв CONFIG (порядок)
+
+Для `pipeline restart`, `reload pipeline`, `prod up/restart`, `reload web --with-pipeline`:
+
+1. Явный аргумент / `--config`
+2. Ровно один живой pipeline на site → его `config_path`
+3. `production_config` из `.evileye_service.json`
+4. `watchdog_config` из профиля
+5. Иначе — ошибка с подсказкой (`prod init` / `service install`)
+
+Если запущено **несколько** разных configs — нужно указать CONFIG явно.
+
+Для `pipeline start` без аргумента: только профиль (п.3–4), **не** берётся уже running config.
+
 ## `evileye status [--json]`
 
-Показывает OS-сервис, порт :8181, foreground server, pipeline runs, watchdog hold/grace и рекомендуемую команду.
+Показывает:
+
+1. Таблицу стека (OS service, порт, PIDs, pipeline counts, watchdog)
+2. Active pipeline runs
+3. Warnings
+4. **Recommended** — контекстные команды (1–3), с приоритетом проблем (дубли, collision, service down)
+5. **Commands** — компактный справочник основных операций
+
+`--json` включает `suggested_commands` и `command_catalog`.
 
 ## `evileye web`
 
@@ -39,67 +80,68 @@
 
 | Подкоманда | Описание |
 |------------|----------|
-| `install [CONFIG]` | TLS (опционально) + OS unit (systemd / Windows Task) |
+| `install [CONFIG]` | TLS (опционально) + OS unit (systemd / Windows Task); пишет `production_config` |
 | `uninstall` | Удаление сервиса |
 | `start` / `stop` / `restart` / `status` | Управление unit |
 
-Флаги TLS те же, что у прежнего `install-server`: `--no-tls`, `--tls-self-signed`, `--tls-ip`, `--ssl-certfile`, …
+Флаги TLS: `--no-tls`, `--tls-self-signed`, `--tls-ip`, `--ssl-certfile`, …
 
 ## `evileye pipeline`
 
 | Подкоманда | Описание |
 |------------|----------|
 | `status` | Активные runs |
-| `stop [--all] [--hold]` | Остановка + опционально блокировка watchdog |
-| `start CONFIG [--gui] [--detach] [--release] [--replace]` | managed (если web active) или direct run |
-| `restart CONFIG` | stop + start с grace |
+| `stop --config CONFIG` / `stop --all` | Остановка; **обязателен** `--config` или `--all` |
+| `start [CONFIG] [--gui] [--detach] [--release] [--replace]` | managed (если web active) или direct; CONFIG optional из профиля |
+| `restart [CONFIG]` | stop + start; CONFIG optional (unique run или профиль) |
 
-**Singleton policy (per-site):** без `--replace` команды `pipeline start`, `evileye run` и API start завершаются с ошибкой, если для того же config уже есть живой `process.py` на этом site. `evileye prod up` идемпотентен (пропускает уже запущенный pipeline). Явный перезапуск: `--replace` или `pipeline restart`.
+**Singleton policy (per-site):** без `--replace` команды `pipeline start`, `evileye run` и API start завершаются с ошибкой, если для того же config уже есть живой `process.py`. `evileye prod up` идемпотентен. Явный перезапуск: `pipeline restart` или `pipeline start --replace`.
 
 `--hold` пишет `monitor/.manual_stop_until` (watchdog не перезапустит pipeline ~1ч).
+
+Примеры:
+
+```bash
+evileye pipeline restart                          # один живой run
+evileye pipeline restart configs/poly-cameras-gst.json
+evileye pipeline stop --all --hold
+evileye pipeline start --release                  # из production_config
+```
 
 ## `evileye reload`
 
 | Подкоманда | Описание |
 |------------|----------|
-| `web [--force-build] [--with-pipeline] [--config CONFIG]` | Build → service restart → (опционально) pipeline restart |
+| `web [--force-build] [--with-pipeline] [--config CONFIG]` | Build → service restart → (опционально) pipeline |
 | `backend` | Только restart OS web service |
-| `pipeline CONFIG` | Только pipeline |
+| `pipeline [CONFIG]` | Только pipeline (как `pipeline restart`) |
 
-**`reload web` без `--with-pipeline` не трогает pipeline** — только web-слой (build + `service restart`). Используйте это после правок SPA/API, когда pipeline должен продолжать работать.
-
-**`reload web --with-pipeline`** останавливает pipeline, перезапускает web и стартует pipeline с `--replace` (на случай managed-only child, не попавшего в stop).
-
-**Типичный dev-цикл после правки SPA/API (pipeline трогать не нужно):**
+**`reload web` без `--with-pipeline` не трогает pipeline.**
 
 ```bash
 evileye reload web
-```
-
-**Полный reload web + pipeline:**
-
-```bash
-evileye reload web --with-pipeline --config configs/system.json
+evileye reload web --with-pipeline
+evileye reload pipeline
 ```
 
 ## `evileye run`
 
 | Флаг | Описание |
 |------|----------|
-| `--replace` | Остановить существующий run для этого config на site, затем запустить |
+| `--replace` | Остановить существующий run для этого config, затем запустить |
 
-Без `--replace` — fail fast с pid и подсказкой, если pipeline уже запущен.
+Без `--replace` — fail fast с pid и подсказкой `pipeline restart`.
 
 ## `evileye prod`
 
 | Подкоманда | Описание |
 |------------|----------|
 | `init CONFIG` | `deploy` + `service install` + watchdog + site profile |
-| `up` | `service start` + pipeline (auto managed/direct) |
-| `down [--stop-service]` | `pipeline stop --hold` |
-| `restart [--with-pipeline]` | Полный ordered reload |
+| `up` | `service start` + pipeline (profile / unique running); idempotent |
+| `down [--stop-service]` | stop all pipelines + hold |
+| `restart [--with-pipeline/--web-only] [--config]` | Ordered reload; default **with pipeline** |
 
-Профиль сайта: `.evileye_service.json` (`production_config`, `pipeline_launch: auto`).
+Профиль сайта: `.evileye_service.json` (`production_config`, `pipeline_launch: auto`, `gui_default: false`).
 
 ## `evileye dev server`
 
@@ -109,17 +151,15 @@ Foreground `evileye server --no-reload` без systemd. Не запускает�
 
 `evileye status` показывает предупреждения:
 
-- `duplicate_pipeline_detected` — несколько живых `process.py` на один config
-- `web_collision` — OS service активен и одновременно есть foreground server
-
-Рекомендуемые команды: `evileye pipeline stop --all`, `evileye service restart`.
+- `duplicate_pipeline_detected` — несколько живых `process.py` на один config → Recommended: `pipeline stop --all`
+- `web_collision` — OS service + лишний foreground server → Recommended: `service restart`
 
 ### Залипшие bbox на Live / рост RAM pipeline
 
 1. Снимок baseline: `scripts/diagnose_live_bbox_baseline.sh` (RSS, `/ready`, top процессов).
-2. Метрики handler: `curl -s http://127.0.0.1:8181/ready | jq .objects_handler` — `active_objects`, `active_last_image_bytes`, `stale_source_ids`.
-3. Подробные счётчики в логе pipeline: `EVILEYE_PERF_DIAG=1 EVILEYE_PERF_DIAG_EVERY=30` (systemd unit или env перед `evileye reload pipeline`).
-4. После hotfix: `evileye reload pipeline <config>` — сбрасывает накопленную память; проверить Live bbox на пустой сцене.
+2. Метрики handler: `curl -s http://127.0.0.1:8181/ready | jq .objects_handler`
+3. Диагностика в логе: `EVILEYE_PERF_DIAG=1 EVILEYE_PERF_DIAG_EVERY=30`
+4. Сброс памяти: `evileye reload pipeline` (CONFIG optional при одном run)
 
 ## Docker
 
@@ -128,7 +168,7 @@ Foreground `evileye server --no-reload` без systemd. Не запускает�
 | Native | Docker Compose |
 |--------|----------------|
 | `evileye reload web` | `docker compose restart web` |
-| `evileye pipeline stop` | `docker compose stop app` |
+| `evileye pipeline stop --all` | `docker compose stop app` |
 | `evileye prod up` | `docker compose up -d` |
 
 Compose по-прежнему запускает `evileye server` и `evileye run` в отдельных контейнерах `web` и `app`.

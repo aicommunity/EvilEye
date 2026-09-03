@@ -322,7 +322,9 @@ def ensure_pipeline_singleton(
     if policy == "fail":
         hint = (
             f"Pipeline already running for {config_basename(config)} "
-            f"(pid={pid}). Use: evileye pipeline start {config} --replace"
+            f"(pid={pid}). Use: evileye pipeline restart"
+            + (f" {config}" if config else "")
+            + " (or: pipeline start CONFIG --replace)"
         )
         raise DuplicatePipelineError(hint, pid=pid or None, config_path=config_path)
 

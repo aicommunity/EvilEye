@@ -59,11 +59,20 @@ def prod_init(
 @app.command("up")
 def prod_up() -> None:
     from evileye.service_manager import control_service, is_service_installed
-    from evileye.site_profile import resolve_production_config, service_port
-    from evileye.stack_control import pipeline_start, wait_web_ready
+    from evileye.site_profile import service_port
+    from evileye.stack_control import (
+        AmbiguousPipelineConfigError,
+        pipeline_start,
+        resolve_pipeline_config,
+        wait_web_ready,
+    )
 
     site_dir = Path.cwd()
-    cfg = resolve_production_config(site_dir)
+    try:
+        cfg = resolve_pipeline_config(site_dir, allow_running=True)
+    except AmbiguousPipelineConfigError as exc:
+        console.print(f"[red]{exc}[/red]")
+        raise typer.Exit(1)
     if is_service_installed(site_dir):
         result = control_service("start", site_dir=site_dir)
         if not result.ok:
@@ -73,7 +82,10 @@ def prod_up() -> None:
             console.print("[red]Web service did not become ready.[/red]")
             raise typer.Exit(1)
     if not cfg:
-        console.print("[yellow]No production_config in site profile; web service only.[/yellow]")
+        console.print(
+            "[yellow]No production_config in site profile and no unique running pipeline; "
+            "web service only.[/yellow]"
+        )
         raise typer.Exit(0)
     spawn = pipeline_start(cfg, site_dir=site_dir, detach=True, release_hold=True, gui=False, skip_if_running=True)
     console.print(f"[green]Production stack up[/green] pipeline pid={spawn.pid} mode={spawn.mode}")
@@ -98,12 +110,21 @@ def prod_restart(
     with_pipeline: bool = typer.Option(True, "--with-pipeline/--web-only"),
     config: Path | None = typer.Option(None, "--config"),
 ) -> None:
-    from evileye.site_profile import resolve_production_config
-    from evileye.stack_control import reload_web
+    from evileye.stack_control import AmbiguousPipelineConfigError, reload_web, resolve_pipeline_config
 
-    cfg = str(config) if config else resolve_production_config(Path.cwd())
+    site_dir = Path.cwd()
+    cfg: str | None
+    try:
+        cfg = resolve_pipeline_config(
+            site_dir,
+            explicit=str(config) if config else None,
+            allow_running=True,
+        )
+    except AmbiguousPipelineConfigError as exc:
+        console.print(f"[red]{exc}[/red]")
+        raise typer.Exit(1)
     result = reload_web(
-        site_dir=Path.cwd(),
+        site_dir=site_dir,
         with_pipeline=with_pipeline,
         config=cfg,
         release_hold=True,

@@ -28,6 +28,27 @@ class ContainerOperationError(RuntimeError):
     """Raised when an OS-service operation is requested inside Docker."""
 
 
+COMMAND_CATALOG: list[tuple[str, str]] = [
+    ("status", "Show this overview"),
+    ("prod up / down", "Start/stop production stack"),
+    ("service start|stop|restart", "Manage OS web service"),
+    ("pipeline start|stop|restart [CONFIG]", "Pipeline lifecycle (CONFIG optional when unique)"),
+    ("reload web [--with-pipeline]", "Rebuild/restart web; optional pipeline restart"),
+    ("reload pipeline [CONFIG]", "Restart pipeline only"),
+    ("web build|check", "Frontend/deps"),
+    ("run CONFIG", "Direct pipeline (dev)"),
+]
+
+CONFIG_RESOLVE_HINT = (
+    "Specify CONFIG, or set production_config via: evileye prod init CONFIG / "
+    "evileye service install CONFIG"
+)
+
+
+class AmbiguousPipelineConfigError(RuntimeError):
+    """Raised when multiple alive pipelines exist and CONFIG was not specified."""
+
+
 @dataclass
 class StackState:
     site_dir: Path
@@ -48,6 +69,7 @@ class StackState:
     manual_stop_active: bool = False
     warnings: list[str] = field(default_factory=list)
     suggested_command: Optional[str] = None
+    suggested_commands: list[str] = field(default_factory=list)
 
 
 @dataclass
@@ -85,6 +107,82 @@ def _stop_grace_sec() -> float:
 
 def _resolve_site(site_dir: Path | None) -> Path:
     return Path(site_dir).resolve() if site_dir is not None else site_root()
+
+
+def _alive_pipeline_configs(site_dir: Path | None = None) -> list[str]:
+    """Unique config paths from alive pipeline runs on this site."""
+    root = _resolve_site(site_dir)
+    paths: list[str] = []
+    seen: set[str] = set()
+    runs: list[dict[str, Any]] = []
+    try:
+        from evileye.site_runtime_guard import discover_site_runs
+
+        runs = list(discover_site_runs(root).pipeline_runs)
+    except Exception:
+        try:
+            from evileye.api.core.runtime_registry import list_runtime_records
+
+            for rec in list_runtime_records(discover=True).values():
+                if not isinstance(rec, dict):
+                    continue
+                alive = bool(rec.get("alive")) or rec.get("state") in {"running", "starting"}
+                if alive:
+                    runs.append(rec)
+        except Exception:
+            runs = []
+    for rec in runs:
+        if not isinstance(rec, dict):
+            continue
+        path = str(rec.get("config_path") or "").strip()
+        if not path or path in seen:
+            continue
+        seen.add(path)
+        paths.append(path)
+    return paths
+
+
+def resolve_pipeline_config(
+    site_dir: Path | None = None,
+    *,
+    explicit: Optional[str] = None,
+    allow_running: bool = True,
+) -> Optional[str]:
+    """Resolve pipeline config: CLI → unique running → production → watchdog.
+
+    Raises AmbiguousPipelineConfigError when allow_running and multiple distinct
+    alive configs exist without an explicit choice.
+    """
+    if explicit is not None and str(explicit).strip():
+        return str(explicit).strip()
+
+    root = _resolve_site(site_dir)
+    if allow_running:
+        configs = _alive_pipeline_configs(root)
+        if len(configs) == 1:
+            return configs[0]
+        if len(configs) > 1:
+            listed = ", ".join(configs)
+            raise AmbiguousPipelineConfigError(
+                f"Multiple pipeline configs are running ({listed}). "
+                f"Specify CONFIG explicitly. {CONFIG_RESOLVE_HINT}"
+            )
+
+    return resolve_production_config(root) or resolve_watchdog_config(root)
+
+
+def require_pipeline_config(
+    site_dir: Path | None = None,
+    *,
+    explicit: Optional[str] = None,
+    allow_running: bool = True,
+) -> str:
+    cfg = resolve_pipeline_config(site_dir, explicit=explicit, allow_running=allow_running)
+    if cfg:
+        return cfg
+    raise FileNotFoundError(
+        f"No pipeline config resolved. {CONFIG_RESOLVE_HINT}"
+    )
 
 
 def _port_listener_pid(port: int, host: str = "127.0.0.1") -> Optional[int]:
@@ -204,16 +302,39 @@ def discover_stack_state(site_dir: Path | None = None) -> StackState:
 
     for warning in singleton_warnings(root):
         stack.warnings.append(warning)
-        if warning.startswith("duplicate_pipeline_detected"):
-            stack.suggested_command = "evileye pipeline stop --all"
-        elif warning.startswith("web_collision"):
-            stack.suggested_command = "evileye service restart"
+
+    # Default recommendation by site mode, then override with problem-specific hints.
     if stack.in_container:
-        stack.suggested_command = "docker compose restart web"
+        defaults = ["docker compose restart web"]
     elif stack.service_installed:
-        stack.suggested_command = "evileye reload web"
+        defaults = ["evileye reload web"]
     else:
-        stack.suggested_command = "evileye dev server"
+        defaults = ["evileye dev server"]
+
+    problem_hints: list[str] = []
+    for warning in stack.warnings:
+        if warning.startswith("duplicate_pipeline_detected"):
+            problem_hints.append("evileye pipeline stop --all")
+        elif warning.startswith("web_collision"):
+            problem_hints.append("evileye service restart")
+        elif "OS web service is enabled but not active" in warning:
+            problem_hints.append("evileye service start")
+        elif "manual stop" in warning.lower():
+            cfg = stack.watchdog_config or resolve_production_config(root)
+            if cfg:
+                problem_hints.append(f"evileye pipeline start {cfg} --release")
+            else:
+                problem_hints.append("evileye pipeline start CONFIG --release")
+
+    # Preserve order, unique
+    seen: set[str] = set()
+    suggested: list[str] = []
+    for cmd in problem_hints + defaults:
+        if cmd not in seen:
+            seen.add(cmd)
+            suggested.append(cmd)
+    stack.suggested_commands = suggested[:3]
+    stack.suggested_command = stack.suggested_commands[0] if stack.suggested_commands else None
     return stack
 
 
@@ -630,13 +751,12 @@ def reload_web(
 ) -> ReloadResult:
     state = discover_stack_state(site_dir)
     root = state.site_dir
-    cfg = config or resolve_production_config(root)
-    if with_pipeline and not cfg:
-        for rec in state.console_runs + state.managed_runs:
-            path = rec.get("config_path")
-            if path:
-                cfg = str(path)
-                break
+    cfg: Optional[str] = config
+    if with_pipeline:
+        try:
+            cfg = resolve_pipeline_config(root, explicit=config, allow_running=True)
+        except AmbiguousPipelineConfigError as exc:
+            return ReloadResult(ok=False, message=str(exc))
 
     try:
         if with_pipeline:
@@ -650,8 +770,7 @@ def reload_web(
                     ok=False,
                     message=(
                         "Pipeline restart requested but no config specified (--config or site profile). "
-                        "Start manually: evileye pipeline start CONFIG --release. "
-                        "Persist for next reload: evileye service install CONFIG"
+                        f"{CONFIG_RESOLVE_HINT}"
                     ),
                 )
             spawn = pipeline_start(
@@ -715,4 +834,6 @@ def stack_state_to_json(state: StackState) -> dict[str, Any]:
         "manual_stop_active": state.manual_stop_active,
         "warnings": state.warnings,
         "suggested_command": state.suggested_command,
+        "suggested_commands": list(state.suggested_commands),
+        "command_catalog": [{"command": cmd, "description": desc} for cmd, desc in COMMAND_CATALOG],
     }

@@ -8,13 +8,13 @@ import typer
 from rich.table import Table
 
 from evileye.cli_commands.console import console
-from evileye.stack_control import discover_stack_state, stack_state_to_json
+from evileye.stack_control import COMMAND_CATALOG, discover_stack_state, stack_state_to_json
 
 
 def status_cmd(
     as_json: bool = typer.Option(False, "--json", help="Machine-readable JSON output"),
 ) -> None:
-    """Show unified EvilEye stack status."""
+    """Show unified EvilEye stack status, recommendations, and command catalog."""
     state = discover_stack_state()
     if as_json:
         console.print(json.dumps(stack_state_to_json(state), indent=2, default=str))
@@ -58,5 +58,15 @@ def status_cmd(
 
     for warning in state.warnings:
         console.print(f"[yellow]Warning:[/yellow] {warning}")
-    if state.suggested_command:
-        console.print(f"[dim]Suggested:[/dim] {state.suggested_command}")
+
+    recommended = state.suggested_commands or (
+        [state.suggested_command] if state.suggested_command else []
+    )
+    if recommended:
+        console.print("[bold]Recommended[/bold]")
+        for cmd in recommended:
+            console.print(f"  {cmd}")
+
+    console.print("[bold]Commands[/bold]")
+    for cmd, desc in COMMAND_CATALOG:
+        console.print(f"  [cyan]{cmd:<40}[/cyan] {desc}")
