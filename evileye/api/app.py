@@ -7,8 +7,8 @@ from pathlib import Path
 from fastapi import FastAPI, Response, Request
 from fastapi.middleware.cors import CORSMiddleware
 from starlette.middleware.base import BaseHTTPMiddleware
-from starlette.middleware.sessions import SessionMiddleware
 from starlette.middleware.trustedhost import TrustedHostMiddleware
+from uvicorn.middleware.proxy_headers import ProxyHeadersMiddleware
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 from contextlib import asynccontextmanager
@@ -33,6 +33,7 @@ from evileye.api.core.web_auth_bootstrap import ensure_default_admin_credentials
 from evileye.api.core.ip_ban_store import get_ip_ban_store
 from evileye.api.core.rate_guard import get_rate_guard, load_protection_config
 from evileye.api.middleware.ip_protection import ProtectionMiddleware
+from evileye.api.middleware.adaptive_session import AdaptiveSessionMiddleware
 from evileye.api.security import (
     current_user,
     is_api_request_protected,
@@ -302,17 +303,31 @@ def create_app() -> FastAPI:
 
     allow_origins = _cors_origins(web_auth)
 
+    protection_cfg = load_protection_config({})
+    try:
+        creds_file = creds_path()
+        if creds_file.exists():
+            payload = json.loads(creds_file.read_text(encoding="utf-8"))
+            section = payload.get("web_auth") if isinstance(payload, dict) else {}
+            protection_cfg = load_protection_config(section if isinstance(section, dict) else {})
+    except Exception:
+        pass
+
     # Starlette: last added = outermost. Desired order:
-    # SecurityHeaders -> CORS -> TrustedHost? -> Session -> Protection -> AuthGuard -> routes
+    # SecurityHeaders -> CORS -> TrustedHost? -> ProxyHeaders? -> Session -> Protection -> AuthGuard -> routes
     app.add_middleware(AuthGuardMiddleware)
     app.add_middleware(ProtectionMiddleware)
     app.add_middleware(
-        SessionMiddleware,
+        AdaptiveSessionMiddleware,
         secret_key=web_auth.session_secret,
         session_cookie=web_auth.cookie_name,
         same_site="lax",
-        https_only=web_auth.secure_cookies,
+        secure_cookies=web_auth.secure_cookies,
     )
+    if protection_cfg.trust_proxy:
+        trusted_hosts = [ip for ip in (protection_cfg.trusted_proxy_ips or []) if ip]
+        if trusted_hosts:
+            app.add_middleware(ProxyHeadersMiddleware, trusted_hosts=trusted_hosts)
     allowed_hosts = os.getenv("EVILEYE_ALLOWED_HOSTS", "").strip()
     if allowed_hosts:
         hosts = [h.strip() for h in allowed_hosts.split(",") if h.strip()]
