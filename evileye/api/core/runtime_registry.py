@@ -528,3 +528,39 @@ def list_runtime_records(*, include_stopped: bool = True, discover: bool = True)
             continue
         items[rid] = record
     return items
+
+
+def merge_run_views(
+    runtime_info: Optional[Dict],
+    manager_info: Optional[Dict],
+) -> Optional[Dict]:
+    """Combine ConfigRunManager + runtime registry views.
+
+    Process liveness (state/pid/alive) from the registry wins when the process is
+    alive. Otherwise a stale in-memory manager row (e.g. ``created`` after a failed
+    web restart) can hide a watchdog-started pipeline and break Live WS / streams.
+    """
+    if not runtime_info and not manager_info:
+        return None
+    if not runtime_info:
+        return dict(manager_info or {})
+    if not manager_info:
+        return dict(runtime_info)
+
+    merged = {**manager_info, **runtime_info}
+    rt_alive = bool(
+        runtime_info.get("alive")
+        or runtime_info.get("state") in {"running", "starting"}
+    )
+    if rt_alive:
+        if runtime_info.get("state"):
+            merged["state"] = runtime_info["state"]
+        if runtime_info.get("pid") is not None:
+            merged["pid"] = runtime_info["pid"]
+        merged["alive"] = True
+    elif manager_info.get("state") in {"starting", "running", "stopping"}:
+        # Registry lag while manager is intentionally transitioning.
+        for key in ("state", "pid", "error", "session_id"):
+            if key in manager_info:
+                merged[key] = manager_info[key]
+    return merged

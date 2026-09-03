@@ -134,15 +134,14 @@ def _camera_access_from_websocket(websocket: WebSocket):
 
 
 def _resolve_run(rid: int) -> dict:
+    from evileye.api.core.runtime_registry import merge_run_views
+
     runtime_info = load_runtime_record(rid)
     try:
-        run_info = get_config_run_manager().describe(rid)
+        manager_info = get_config_run_manager().describe(rid)
     except KeyError:
-        run_info = None
-    if run_info and runtime_info:
-        run_info = {**runtime_info, **run_info}
-    elif runtime_info:
-        run_info = runtime_info
+        manager_info = None
+    run_info = merge_run_views(runtime_info, manager_info)
     if not run_info:
         raise KeyError(rid)
     return run_info

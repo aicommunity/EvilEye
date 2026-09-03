@@ -75,17 +75,16 @@ class StreamStatusTouch(BaseModel):
 def _resolve_run(rid: int) -> dict:
     """Resolve run id to runtime record and validate availability.
 
-    First checks the legacy ConfigRunManager, then the shared runtime registry.
+    Merge ConfigRunManager with the shared runtime registry; registry liveness wins.
     """
+    from evileye.api.core.runtime_registry import merge_run_views
+
     runtime_info = load_runtime_record(rid)
     try:
-        run_info = get_config_run_manager().describe(rid)
+        manager_info = get_config_run_manager().describe(rid)
     except KeyError:
-        run_info = None
-    if run_info and runtime_info:
-        run_info = {**runtime_info, **run_info}
-    elif runtime_info:
-        run_info = runtime_info
+        manager_info = None
+    run_info = merge_run_views(runtime_info, manager_info)
     if not run_info:
         raise HTTPException(status_code=404, detail=f"Run '{rid}' not found")
     if run_info.get("state") != "running":

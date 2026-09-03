@@ -1,4 +1,5 @@
 import { runsList, runCreate, runStart, runStop, request } from '../../api';
+import { ApiError } from '../../api/client';
 import type { ConfigRun } from '../../api/types';
 import { configBasename } from './studioTabs';
 import { writePendingApply } from './pendingApply';
@@ -66,8 +67,14 @@ export async function restartConfigRun(configName: string): Promise<SystemRestar
       method: 'POST',
       body: JSON.stringify({ config_name: configName }),
     });
-  } catch {
-    // Fallback for older API builds: previous stop→create→start path.
+  } catch (err) {
+    // Only fall back for older APIs that lack /system/restart (404).
+    // A catch-all fallback (stop→create→start) races a hung server restart and
+    // leaves orphan ConfigRun rows in "created" that break Live WS.
+    const status = err instanceof ApiError ? err.status : 0;
+    if (status !== 404) {
+      throw err;
+    }
     const runs = await runsList();
     const list = Object.values(runs);
     const matching = list.filter((r) => pathMatches(r.config_path, configName));

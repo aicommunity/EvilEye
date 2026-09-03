@@ -14,10 +14,12 @@ router = APIRouter(prefix="/api/v1/configs", tags=["configs"])
 
 
 def _list_combined_runs() -> Dict[int, Dict]:
+    from evileye.api.core.runtime_registry import merge_run_views
+
     items = list_runtime_records()
     for rid, item in get_config_run_manager().list().items():
-        existing = items.get(rid, {})
-        merged = {**existing, **item}
+        existing = items.get(rid)
+        merged = merge_run_views(existing, item) or dict(item)
         merged.setdefault("managed", True)
         merged.setdefault("source", "web")
         merged.setdefault("alive", merged.get("state") in {"starting", "running"})

@@ -415,6 +415,28 @@ class ConfigRunManager:
         }
 
     def _refresh_item_state_locked(self, item: ConfigRunItem) -> None:
+        # Adopt an externally started pipeline (watchdog / CLI) that reuses this rid.
+        try:
+            runtime = load_runtime_record(item.id, refresh_state=True)
+        except Exception:
+            runtime = None
+        if runtime and (
+            runtime.get("alive") or runtime.get("state") in {"running", "starting"}
+        ):
+            pid = runtime.get("pid")
+            if pid:
+                item.pid = int(pid)
+            item.state = (
+                ConfigRunState.STARTING
+                if runtime.get("state") == "starting"
+                else ConfigRunState.RUNNING
+            )
+            item.error = None
+            sid = runtime.get("session_id")
+            if sid:
+                item.session_id = sid
+            return
+
         pid = item.pid
         if not pid or item.state not in (
                 ConfigRunState.STARTING,
