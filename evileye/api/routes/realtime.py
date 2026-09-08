@@ -274,7 +274,12 @@ async def live_grid_preview_ws(websocket: WebSocket, rid: int):
 
     await websocket.accept()
     _touch_preview_demand_ws(websocket, rid, "grid")
-    client = await hub.register(websocket, rid)
+    session = websocket.scope.get("session") or {}
+    raw_user = session.get("user") if isinstance(session, dict) else None
+    ws_username = (
+        str(raw_user.get("username") or "") if isinstance(raw_user, dict) else None
+    ) or None
+    client = await hub.register(websocket, rid, username=ws_username)
     if client is None:
         await websocket.close(code=4429)
         return

@@ -11,6 +11,7 @@ import {
   playbackDebugMarkSettleEnter,
   playbackDebugMarkSettleExit,
 } from './playbackDebug';
+import { clientTelemetryLog } from '../../diagnostics/clientTelemetry';
 import {
   createUserSeekGuard,
   resolveUserSeekTarget,
@@ -88,6 +89,18 @@ export function usePlaybackSeek(opts: {
       userSeekGuardRef.current.markUserSeek();
       ctrl.beginUserSeek(target);
       ctrl.seek(target);
+      clientTelemetryLog(
+        'timeline_seek',
+        {
+          positionSec: sec,
+          target,
+          snapped: Math.abs(target - sec) > 1e-3,
+          wasPlaying,
+          anyPlayable: hasAnyPlayableAtPosition(segmentsByCamRef.current, target),
+          date: nextDate,
+        },
+        'playback',
+      );
       const pauseIfNoVideo = opts?.pauseIfNoVideo !== false;
       if (
         wasPlaying &&

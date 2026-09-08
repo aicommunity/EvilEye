@@ -450,7 +450,6 @@ export function SplitPlaybackCell({
         loading={metaLoading}
         hasObjects={(displayMeta?.objects?.length ?? 0) > 0}
       />
-      {!showMetadata ? <div className="live-overlay-source">{label}</div> : null}
       {onExpand ? (
         <div className="camera-card-overlay-actions">
           <button
@@ -475,6 +474,9 @@ export function SplitPlaybackCell({
     <article className="camera-card camera-card-mini camera-card-grid playback-cell" onDoubleClick={onExpand}>
       <div className="camera-card-media" style={{ position: 'relative' }}>
         {inner}
+        <div className="camera-card-overlay-top">
+          <span className="camera-name">{label}</span>
+        </div>
       </div>
     </article>
   );

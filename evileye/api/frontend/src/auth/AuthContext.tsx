@@ -8,6 +8,7 @@ import {
   type ReactNode,
 } from 'react';
 import { authApi, ApiError, type AuthUser, type UserPrefs } from '../api';
+import { applyClientDebugFromAuth } from '../diagnostics/clientTelemetry';
 
 interface AuthState {
   loading: boolean;
@@ -18,6 +19,7 @@ interface AuthState {
   allowedCameras: string[];
   cameraAccess: 'all' | 'restricted';
   prefs: UserPrefs | null;
+  clientDebug: boolean;
   refresh: () => Promise<boolean>;
   login: (username: string, password: string) => Promise<void>;
   register: (email: string, password: string) => Promise<string>;
@@ -43,6 +45,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [allowedCameras, setAllowedCameras] = useState<string[]>([]);
   const [cameraAccess, setCameraAccess] = useState<'all' | 'restricted'>('restricted');
   const [prefs, setPrefs] = useState<UserPrefs | null>(null);
+  const [clientDebug, setClientDebug] = useState(false);
 
   const apply = useCallback(
     (
@@ -54,6 +57,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         allowed_cameras?: string[];
         camera_access?: 'all' | 'restricted';
         prefs?: UserPrefs;
+        client_debug?: boolean;
       },
     ) => {
       setAuthEnabled(enabled);
@@ -63,6 +67,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       setAllowedCameras(extra?.allowed_cameras ?? []);
       setCameraAccess(extra?.camera_access ?? (enabled ? 'restricted' : 'all'));
       setPrefs(extra?.prefs ?? emptyPrefs());
+      const debugOn = Boolean(extra?.client_debug);
+      setClientDebug(debugOn);
+      applyClientDebugFromAuth(debugOn, nextUser?.username ?? null);
     },
     [],
   );
@@ -74,6 +81,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         allowed_cameras: me.allowed_cameras,
         camera_access: me.camera_access,
         prefs: me.prefs,
+        client_debug: me.client_debug,
       });
       setLoading(false);
       if (!me.auth_enabled) return true;
@@ -105,6 +113,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           allowed_cameras: result.allowed_cameras,
           camera_access: result.camera_access,
           prefs: result.prefs,
+          client_debug: result.client_debug,
         },
       );
     },
@@ -141,6 +150,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       allowedCameras,
       cameraAccess,
       prefs,
+      clientDebug,
       refresh,
       login,
       register,
@@ -157,6 +167,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       allowedCameras,
       cameraAccess,
       prefs,
+      clientDebug,
       refresh,
       login,
       register,

@@ -880,6 +880,12 @@ def _resolve_journal_frame_path_uncached(
         journal_type: str,
         mode: str = "found",
 ) -> str | None:
+    """Resolve a full-resolution frame path for archive UI.
+
+    Never fall back to tiny ``*_preview`` thumbnails (~150px): archive tiles
+    upscale them and look extremely soft. Prefer ``None`` (404) so the client
+    can show an empty placeholder instead.
+    """
     preview = _resolve_journal_preview_path_uncached(
         path=path,
         date=date,
@@ -888,8 +894,11 @@ def _resolve_journal_frame_path_uncached(
     )
     if not preview:
         return None
+    # Already a non-preview asset (full image stored under another name).
+    if "preview" not in os.path.basename(preview).lower():
+        return preview
     frame = JournalPathResolver.resolve_frame_path(preview, journal_type=journal_type)
-    return frame or preview
+    return frame
 
 
 def resolve_journal_video_path(*, path: str | None = None) -> str | None:

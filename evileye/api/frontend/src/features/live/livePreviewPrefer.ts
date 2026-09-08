@@ -31,3 +31,14 @@ export function cameraTileActive(opts: {
 }): boolean {
   return opts.mode === 'fit' || !opts.ioReady || opts.visible || opts.selected;
 }
+
+/**
+ * Raise previewError (yellow status) only when there is no healthy WS blob to keep showing.
+ * Avoids 1–2s green blink when a brief snapshot 404 coincides with a live WS frame.
+ */
+export function shouldRaisePreviewError(opts: {
+  previewWsActive: boolean;
+  hasWsFrame: boolean;
+}): boolean {
+  return !(opts.previewWsActive && opts.hasWsFrame);
+}

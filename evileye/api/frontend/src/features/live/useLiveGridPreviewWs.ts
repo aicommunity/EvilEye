@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { streamSnapshotUrl } from '../../api';
+import { clientTelemetryLog } from '../../diagnostics/clientTelemetry';
 
 export interface PreviewFrame {
   sourceId: number;
@@ -105,6 +106,7 @@ export function useLiveGridPreviewWs(runId: number | null, sourceIds: number[]) 
         reconnectAttemptRef.current = 0;
         setConnected(true);
         setFailed(false);
+        clientTelemetryLog('ws_open', { runId, sourceIds }, 'live');
         ws.send(JSON.stringify({ op: 'subscribe', source_ids: sourceIds }));
         if (pingTimer != null) window.clearInterval(pingTimer);
         pingTimer = window.setInterval(() => {
@@ -146,7 +148,10 @@ export function useLiveGridPreviewWs(runId: number | null, sourceIds: number[]) 
         }
         const header = pendingHeaderRef.current;
         pendingHeaderRef.current = null;
-        if (!header) return;
+        if (!header) {
+          clientTelemetryLog('ws_drop_no_header', { runId }, 'live');
+          return;
+        }
         const blob =
           ev.data instanceof Blob
             ? ev.data
@@ -154,23 +159,34 @@ export function useLiveGridPreviewWs(runId: number | null, sourceIds: number[]) 
         applyBlob(header.source_id, blob, header.etag || '', header.ts);
       };
 
-      ws.onclose = () => {
+      ws.onclose = (ev) => {
         setConnected(false);
         wsRef.current = null;
         if (pingTimer != null) {
           window.clearInterval(pingTimer);
           pingTimer = null;
         }
+        clientTelemetryLog(
+          'ws_close',
+          { runId, code: ev.code, reason: ev.reason || '', wasClean: ev.wasClean },
+          'live',
+        );
         // Keep last blob URLs until unmount or a newer frame arrives (avoid empty flash).
         if (!cancelled) {
           setFailed(true);
           const delay = Math.min(30000, 1000 * 2 ** reconnectAttemptRef.current);
           reconnectAttemptRef.current += 1;
+          clientTelemetryLog(
+            'ws_reconnect',
+            { runId, attempt: reconnectAttemptRef.current, delayMs: delay },
+            'live',
+          );
           reconnectTimer = window.setTimeout(connect, delay);
         }
       };
 
       ws.onerror = () => {
+        clientTelemetryLog('ws_error', { runId }, 'live');
         ws.close();
       };
     };

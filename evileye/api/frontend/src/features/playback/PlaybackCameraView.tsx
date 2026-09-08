@@ -19,6 +19,7 @@ import { PlaybackBusyHint } from './PlaybackBusyHint';
 import { PlaybackMediaWithOverlay } from './PlaybackMediaWithOverlay';
 import { mergePlaybackMetadata } from './mergePlaybackMetadata';
 import { playbackDebugInc } from './playbackDebug';
+import { clientTelemetryLog } from '../../diagnostics/clientTelemetry';
 import { drainVideoElement, reloadVideoMedia } from './drainVideo';
 import { seekPlaybackVideo, shouldEmitPlaybackClock, isPastDecodedEof, seekingAgeMs, SEEKING_STUCK_MS, resetPlaybackClockOwner } from './playbackVideoSync';
 import { usePlaybackMetadata } from './usePlaybackMetadata';
@@ -267,6 +268,17 @@ export function usePlaybackCameraSlot(
     const onError = () => {
       setVideoSeeking(false);
       playbackDebugInc('playRejects');
+      clientTelemetryLog(
+        'video_error',
+        {
+          camera: clockId ?? null,
+          code: ref.current?.error?.code ?? null,
+          networkState: ref.current?.networkState ?? null,
+          readyState: ref.current?.readyState ?? null,
+          src: slotRef.current?.url ?? null,
+        },
+        'playback',
+      );
       // 503 / aborted Range → black tile until src is re-requested.
       const el = ref.current;
       if (el && slotRef.current) {
@@ -746,7 +758,6 @@ export function PlaybackVideoSurface({
       {recordingInProgress && slot?.url ? (
         <div className="playback-recording-banner">{t('playback.recordingInProgress')}</div>
       ) : null}
-      {!showMetadata && slot?.url ? <div className="live-overlay-source">{cameraLabel}</div> : null}
       {onExpand ? (
         <div className="camera-card-overlay-actions">
           <button

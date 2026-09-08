@@ -293,6 +293,7 @@ const ru: Dict = {
     preparingArchive: 'Подготавливаем архив…',
     recordingInProgress: 'Идёт запись — архив доступен после закрытия сегмента',
     seekingFrame: 'Ищем кадр…',
+    frameMissing: 'Нет кадра',
     loadingMetadata: 'Загрузка метаданных…',
     showMetadata: 'Показать метаданные',
     currentTime: 'Текущий момент воспроизведения',

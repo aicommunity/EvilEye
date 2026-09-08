@@ -291,6 +291,7 @@ const en: Dict = {
     preparingArchive: 'Preparing archive…',
     recordingInProgress: 'Recording in progress — playback available after the segment closes',
     seekingFrame: 'Seeking frame…',
+    frameMissing: 'No frame',
     loadingMetadata: 'Loading metadata…',
     showMetadata: 'Show metadata',
     currentTime: 'Current playback time',

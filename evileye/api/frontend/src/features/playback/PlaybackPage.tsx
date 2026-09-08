@@ -885,7 +885,7 @@ export function PlaybackPage() {
   const prevEventAvailable = prevEventTs(globalEventStartTsList, ctrl.positionSec) != null;
   const nextEventAvailable = nextEventTs(globalEventStartTsList, ctrl.positionSec) != null;
 
-  const effectiveCols = mode === 'fit' ? fitColsForCount(selectedIds.length) : cols;
+  const effectiveCols = mode === 'fit' ? fitColsForCount(selectedIds.length, 4) : cols;
   useEffect(() => {
     if (!segmentsLoaded || viewport.viewFrom == null || viewport.viewTo == null) return;
     ensureAdjacentLoad(viewport.viewFrom, viewport.viewTo);
@@ -908,12 +908,11 @@ export function PlaybackPage() {
   return (
     <section className={`panel active playback-page${mode === 'fit' ? ' playback-page--fit' : ''}`}>
       <div className="card playback-card">
-        <div className="toolbar" style={{ justifyContent: 'space-between', flexWrap: 'wrap' }}>
-          <div>
-            <h2 style={{ margin: 0 }}>{t('playback.title')}</h2>
-            <p className="hint">{t('playback.hint')}</p>
+        <div className="playback-header">
+          <div className="playback-header-title">
+            <h2>{t('playback.title')}</h2>
           </div>
-          <div className="toolbar playback-controls-toolbar">
+          <div className="playback-controls-toolbar">
             <DatePickerField
               className="playback-date-input"
               value={date}
@@ -956,57 +955,59 @@ export function PlaybackPage() {
                   {s}x
                 </Button>
               ))}
-              <Button
-                size="sm"
-                variant="outline"
-                disabled={!prevDetectionAvailable}
-                onClick={() => seekToDetection(-1)}
-                title={t('playback.prevDetection')}
-              >
-                ◀ {t('playback.prevDetection')}
-              </Button>
-              <Button
-                size="sm"
-                variant="outline"
-                disabled={!nextDetectionAvailable}
-                onClick={() => seekToDetection(1)}
-                title={t('playback.nextDetection')}
-              >
-                {t('playback.nextDetection')} ▶
-              </Button>
-              <Button
-                size="sm"
-                variant="outline"
-                disabled={!prevEventAvailable}
-                onClick={() => seekToEvent(-1)}
-                title={t('playback.prevEvent')}
-              >
-                ◀ {t('playback.prevEvent')}
-              </Button>
-              <Button
-                size="sm"
-                variant="outline"
-                disabled={!nextEventAvailable}
-                onClick={() => seekToEvent(1)}
-                title={t('playback.nextEvent')}
-              >
-                {t('playback.nextEvent')} ▶
-              </Button>
+              <span className="playback-nav-group" role="group" aria-label={t('playback.hint')}>
+                <Button
+                  size="sm"
+                  variant="outline"
+                  disabled={!prevDetectionAvailable}
+                  onClick={() => seekToDetection(-1)}
+                  title={t('playback.prevDetection')}
+                >
+                  ◀Det
+                </Button>
+                <Button
+                  size="sm"
+                  variant="outline"
+                  disabled={!nextDetectionAvailable}
+                  onClick={() => seekToDetection(1)}
+                  title={t('playback.nextDetection')}
+                >
+                  Det▶
+                </Button>
+                <Button
+                  size="sm"
+                  variant="outline"
+                  disabled={!prevEventAvailable}
+                  onClick={() => seekToEvent(-1)}
+                  title={t('playback.prevEvent')}
+                >
+                  ◀Ev
+                </Button>
+                <Button
+                  size="sm"
+                  variant="outline"
+                  disabled={!nextEventAvailable}
+                  onClick={() => seekToEvent(1)}
+                  title={t('playback.nextEvent')}
+                >
+                  Ev▶
+                </Button>
+              </span>
+              <label className="checkbox-label playback-metadata-toggle">
+                <input
+                  type="checkbox"
+                  checked={showMetadata}
+                  onChange={(e) => setShowMetadata(e.target.checked)}
+                />
+                {t('playback.showMetadata')}
+              </label>
             </div>
-            <label className="checkbox-label playback-metadata-toggle">
-              <input
-                type="checkbox"
-                checked={showMetadata}
-                onChange={(e) => setShowMetadata(e.target.checked)}
-              />
-              {t('playback.showMetadata')}
-            </label>
           </div>
         </div>
         {!flags.loading && flags.recordingEnabled === false ? (
-          <p className="setup-banner">{t('playback.recordingDisabled')}</p>
+          <p className="setup-banner playback-setup-banner">{t('playback.recordingDisabled')}</p>
         ) : null}
-        <div className="toolbar" style={{ flexWrap: 'wrap' }}>
+        <div className="playback-camera-picker">
           {(!runResolved || camerasLoading) ? <span className="hint">{t('playback.loadingCameras')}</span> : null}
           {runResolved && !camerasLoading && !cameras.length ? <span className="hint">{t('playback.noCameras')}</span> : null}
           {cameras.map((c) => {
@@ -1044,7 +1045,7 @@ export function PlaybackPage() {
               onSeekNearestPlayable={seekNearestPlayable}
             />
           ) : gridEmpty ? (
-            <div className="empty" style={{ display: 'grid', gap: 12, justifyItems: 'start' }}>
+            <div className="empty" style={{ display: 'grid', gap: 12, placeItems: 'start' }}>
               <p style={{ margin: 0 }}>{gridEmpty}</p>
               {segmentsError ? (
                 <Button
@@ -1092,10 +1093,7 @@ export function PlaybackPage() {
             />
           )}
         </div>
-        <div className="playback-timeline-footer">
-          <p className="hint" style={{ margin: '0 0 2px', fontSize: '0.75rem' }}>
-            {t('playback.timelineHint')}
-          </p>
+        <div className="playback-timeline-footer" title={t('playback.timelineHint')}>
           <Timeline
             date={date}
             viewFrom={viewport.viewFrom}

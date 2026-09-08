@@ -7,6 +7,7 @@ import type {
   PlaybackPlayMode,
   PlaybackSegment,
 } from '../../api';
+import { clientTelemetryLog } from '../../diagnostics/clientTelemetry';
 import { useI18n } from '../../i18n';
 import {
   PlaybackVideoSurface,
@@ -335,6 +336,30 @@ function NormalPlaybackCell({
     enabled: !slot?.url,
   });
 
+  useEffect(() => {
+    if (userSeeking || scrubbing) return;
+    const timer = window.setTimeout(() => {
+      const kind = slot?.url
+        ? 'playable'
+        : staticFrame?.previewPath
+          ? 'static'
+          : 'empty';
+      clientTelemetryLog(
+        'slot_state',
+        {
+          id,
+          kind,
+          positionSec,
+          path: slot?.url ?? staticFrame?.previewPath ?? null,
+          readyState: videoRef.current?.readyState ?? null,
+          mediaError: videoRef.current?.error?.code ?? null,
+        },
+        'playback',
+      );
+    }, 280);
+    return () => window.clearTimeout(timer);
+  }, [id, positionSec, slot?.url, staticFrame?.previewPath, userSeeking, scrubbing, videoRef]);
+
   return (
     <article
       className="camera-card camera-card-mini camera-card-grid playback-cell"
@@ -372,6 +397,9 @@ function NormalPlaybackCell({
           runId={runId}
           sourceId={camera?.source_id}
         />
+        <div className="camera-card-overlay-top">
+          <span className="camera-name">{id}</span>
+        </div>
       </div>
     </article>
   );

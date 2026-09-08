@@ -1,5 +1,10 @@
 import { describe, expect, it } from 'vitest';
-import { cameraTileActive, wantLiveSnapshotPoll, wantLiveWsPreview } from './livePreviewPrefer';
+import {
+  cameraTileActive,
+  shouldRaisePreviewError,
+  wantLiveSnapshotPoll,
+  wantLiveWsPreview,
+} from './livePreviewPrefer';
 
 describe('wantLiveSnapshotPoll / wantLiveWsPreview (A1)', () => {
   it('keeps snapshot while WS connected but no blob yet', () => {
@@ -34,5 +39,16 @@ describe('cameraTileActive (A2)', () => {
 
   it('fit mode always active', () => {
     expect(cameraTileActive({ mode: 'fit', ioReady: true, visible: false, selected: false })).toBe(true);
+  });
+});
+
+describe('shouldRaisePreviewError', () => {
+  it('suppresses error while WS blob is healthy', () => {
+    expect(shouldRaisePreviewError({ previewWsActive: true, hasWsFrame: true })).toBe(false);
+  });
+
+  it('raises when WS inactive or no frame', () => {
+    expect(shouldRaisePreviewError({ previewWsActive: false, hasWsFrame: true })).toBe(true);
+    expect(shouldRaisePreviewError({ previewWsActive: true, hasWsFrame: false })).toBe(true);
   });
 });

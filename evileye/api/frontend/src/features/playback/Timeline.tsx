@@ -20,7 +20,7 @@ import {
   zoomViewWithinDay,
 } from './timelineMath';
 
-const TIMELINE_HEIGHT_PX = 92;
+const TIMELINE_HEIGHT_PX = 72;
 /** Commit wheel zoom to parent only after the gesture settles. */
 const ZOOM_COMMIT_MS = 160;
 /** Hide hover tooltip when it would sit on top of the playhead label. */

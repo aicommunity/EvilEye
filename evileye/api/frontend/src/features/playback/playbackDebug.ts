@@ -193,6 +193,16 @@ export function isPlaybackDebugEnabled(): boolean {
   return enabled;
 }
 
+export function playbackDebugSetEnabled(on: boolean): void {
+  enabled = on;
+  if (on) {
+    ensurePeriodic();
+  } else {
+    clearPeriodic();
+  }
+  publishApi();
+}
+
 export function initPlaybackDebug(): void {
   if (typeof window === 'undefined') return;
   const win = window as Window & { __playbackDebug?: boolean | PlaybackDebugApi };

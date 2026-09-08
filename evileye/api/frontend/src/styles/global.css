@@ -208,8 +208,86 @@ body {
 
 .playback-controls-toolbar .playback-date-input {
   flex: 0 0 auto;
-  min-width: 12.5rem;
+  min-width: 10.5rem;
   width: auto;
+}
+
+.playback-header {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.35rem 0.65rem;
+  margin: 0 0 0.35rem;
+  flex-shrink: 0;
+}
+
+.playback-header-title {
+  flex: 0 0 auto;
+}
+
+.playback-header-title h2 {
+  margin: 0;
+  font-size: 1.05rem;
+  line-height: 1.2;
+  font-weight: 600;
+}
+
+.playback-header .playback-controls-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.35rem 0.45rem;
+  flex: 1 1 auto;
+  min-width: 0;
+  margin: 0;
+}
+
+.playback-controls-main {
+  display: inline-flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.3rem;
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.playback-metadata-toggle {
+  flex: 0 0 auto;
+  margin: 0;
+  white-space: nowrap;
+  font-size: 0.8rem;
+}
+
+.playback-nav-group {
+  display: inline-flex;
+  flex-wrap: nowrap;
+  align-items: center;
+  gap: 0.2rem;
+}
+
+.playback-camera-picker {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.3rem;
+  margin: 0 0 0.35rem;
+  flex-shrink: 0;
+}
+
+.playback-camera-picker .hint {
+  margin: 0;
+  font-size: 0.75rem;
+}
+
+.playback-camera-picker .btn {
+  padding: 0.2rem 0.5rem;
+  font-size: 0.75rem;
+}
+
+.playback-setup-banner {
+  margin: 0 0 0.35rem;
+  padding: 0.35rem 0.6rem;
+  font-size: 0.8rem;
 }
 
 .playback-position-clock {
@@ -220,7 +298,7 @@ body {
   width: auto;
   font-variant-numeric: tabular-nums;
   font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
-  font-size: 0.875rem;
+  font-size: 0.8rem;
   color: var(--text-muted);
   flex: 0 0 auto;
   line-height: 1;
@@ -329,21 +407,6 @@ body {
 .date-picker-day.is-empty {
   opacity: 0.35;
   cursor: default;
-}
-
-.playback-controls-main {
-  display: inline-flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 0.5rem;
-  flex: 1 1 auto;
-  min-width: 0;
-}
-
-.playback-metadata-toggle {
-  flex: 0 0 auto;
-  margin: 0;
-  white-space: nowrap;
 }
 
 .journal-toolbar .toolbar-label {
@@ -1399,6 +1462,11 @@ body {
   gap: 1rem;
 }
 
+.playback-page--fit .playback-main .camera-group-grid,
+.playback-page:not(.playback-page--fit) .playback-main .camera-group-grid {
+  gap: 0.35rem;
+}
+
 .camera-group-grid--fit {
   height: 100%;
   min-height: 0;
@@ -1430,7 +1498,8 @@ body {
 .camera-group-grid--fit .camera-card-grid .camera-preview,
 .camera-group-grid--fit .camera-preview,
 .camera-group-grid--fit video,
-.camera-group-grid--fit img {
+.camera-group-grid--fit img,
+.camera-group-grid--fit .playback-static-frame {
   width: 100%;
   height: 100%;
   object-fit: contain;
@@ -1515,7 +1584,8 @@ body {
   min-height: 0;
   height: 100%;
   overflow: auto;
-  grid-auto-rows: minmax(160px, 1fr);
+  /* Match Live fit rows: stretch tiles instead of a short 160px floor. */
+  grid-auto-rows: minmax(0, 1fr);
   align-content: stretch;
 }
 
@@ -2798,6 +2868,7 @@ body {
   display: flex;
   flex-direction: column;
   min-height: 0;
+  padding: 0.65rem 0.85rem 0.5rem;
 }
 
 .playback-main {
@@ -2811,7 +2882,7 @@ body {
 .playback-timeline-footer {
   flex-shrink: 0;
   position: relative;
-  padding-top: 0.35rem;
+  padding-top: 0.2rem;
   background: var(--bg-card);
   border-top: 1px solid var(--border);
   z-index: 2;
@@ -3058,7 +3129,17 @@ body {
   background: #000;
 }
 
-.playback-cell.camera-card-grid video.camera-preview {
+.playback-cell.camera-card-grid .playback-static-frame {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  display: block;
+  background: #000;
+}
+
+.playback-cell.camera-card-grid video.camera-preview,
+.playback-cell.camera-card-grid img.camera-preview {
   width: 100%;
   height: 100%;
   object-fit: contain;
@@ -3066,6 +3147,7 @@ body {
   background: #000;
   border-radius: 0;
   display: block;
+  aspect-ratio: auto;
 }
 
 /* Duplicate fit override removed — see .camera-group-grid--fit rules above. */

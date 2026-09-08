@@ -116,6 +116,7 @@ export interface AuthMeResponse {
   allowed_cameras?: string[];
   camera_access?: 'all' | 'restricted';
   prefs?: UserPrefs;
+  client_debug?: boolean;
 }
 
 export interface OverviewResponse {

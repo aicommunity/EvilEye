@@ -10,9 +10,11 @@ import threading
 from evileye.api.core.config_run_access import get_config_run_manager
 from evileye.api.core.runtime_registry import load_runtime_record
 from evileye.api.core.server_state import get_run_summary
+from evileye.core.logger import get_module_logger
 from evileye.core.runtime_services import get_frame_broker
 
 router = APIRouter(prefix="/api/v1", tags=["streaming"])
+diag_logger = get_module_logger("api.diag")
 
 _mjpeg_clients_lock = threading.Lock()
 _mjpeg_clients = 0
@@ -166,6 +168,23 @@ async def _snapshot_impl(
     """
     Return the latest available JPEG snapshot for the given runtime.
     """
+    t0 = time.perf_counter()
+    from evileye.api.security import current_user
+
+    user = current_user(request)
+    username = str((user or {}).get("username") or "") or None
+
+    def _log(status: int) -> None:
+        diag_logger.info(
+            "snapshot user=%s run_id=%s source_id=%s full=%s status=%s ms=%.1f",
+            username,
+            rid,
+            source_id,
+            full,
+            status,
+            (time.perf_counter() - t0) * 1000.0,
+        )
+
     _touch_preview_demand(request, rid, source_id=source_id, level="grid")
     if full and source_id is not None:
         # Demand key for full-frame publisher throttle.
@@ -191,10 +210,12 @@ async def _snapshot_impl(
     payload = broker.latest_payload(broker_key)
     if not payload and full and source_id is not None:
         # No full frame yet — do not fall back to cropped (would confuse split editor).
+        _log(404)
         raise HTTPException(status_code=404, detail="No full frame available")
     if not payload and source_id is not None:
         payload = broker.latest_payload(run_id_str)
     if not payload or not payload.data:
+        _log(404)
         raise HTTPException(status_code=404, detail="No frame available")
     data = payload.data
     meta = payload.metadata or {}
@@ -204,6 +225,7 @@ async def _snapshot_impl(
         etag = hashlib.md5(data).hexdigest()
     if_none_match = request.headers.get("if-none-match")
     if if_none_match and if_none_match.strip('"') == str(etag):
+        _log(304)
         return Response(
             status_code=304,
             headers={
@@ -211,6 +233,7 @@ async def _snapshot_impl(
                 "Cache-Control": "no-cache",
             },
         )
+    _log(200)
     return Response(
         content=data,
         media_type="image/jpeg",

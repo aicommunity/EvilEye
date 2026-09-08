@@ -1,11 +1,12 @@
 import { useEffect, useRef, useState } from 'react';
 import { streamSnapshotUrl, type StateCamera, type StreamMetadata } from '../../api';
 import { Button, Badge } from '../../components/ui';
+import { clientTelemetryLog } from '../../diagnostics/clientTelemetry';
 import { useI18n } from '../../i18n';
 import { OverlayCanvas } from '../overlay/OverlayCanvas';
 import { useImageLetterbox } from '../overlay/useMediaLetterbox';
 import { resolvePreviewMode, type PreviewMode } from './liveHealth';
-import { wantLiveSnapshotPoll, wantLiveWsPreview } from './livePreviewPrefer';
+import { shouldRaisePreviewError, wantLiveSnapshotPoll, wantLiveWsPreview } from './livePreviewPrefer';
 import { useRunMetadataWs, useMetadataFreshness } from './useRunMetadataWs';
 
 const LIVE_SNAPSHOT_MS = 3000;
@@ -70,6 +71,7 @@ export function CameraTile({
   const mediaRef = useRef<HTMLDivElement>(null);
   const imgRef = useRef<HTMLImageElement>(null);
   const [imgLoaded, setImgLoaded] = useState(0);
+  const prevModeRef = useRef<PreviewMode | null>(null);
 
   const [mode, setMode] = useState<PreviewMode>(() =>
     resolvePreviewMode(camera, false, {
@@ -114,6 +116,42 @@ export function CameraTile({
     hasWsFrame,
   });
 
+  const imgSrcKind = useMjpeg ? 'mjpeg' : wantWsPreview ? 'ws' : 'snapshot';
+
+  useEffect(() => {
+    if (prevModeRef.current != null && prevModeRef.current !== mode) {
+      clientTelemetryLog(
+        'mode_change',
+        {
+          source_id: camera.source_id,
+          camera: camera.source_name,
+          from: prevModeRef.current,
+          to: mode,
+          frameAge: previewFrameAgeSec ?? null,
+          reconnecting: camera.reconnecting === true,
+          is_working: camera.is_working,
+          preview_available: camera.preview_available,
+          imgSrcKind,
+          previewWsActive,
+          hasWsFrame,
+        },
+        'live',
+      );
+    }
+    prevModeRef.current = mode;
+  }, [
+    mode,
+    camera.source_id,
+    camera.source_name,
+    camera.reconnecting,
+    camera.is_working,
+    camera.preview_available,
+    previewFrameAgeSec,
+    imgSrcKind,
+    previewWsActive,
+    hasWsFrame,
+  ]);
+
   useEffect(() => {
     setPreviewError(false);
     setBackoffStep(0);
@@ -142,7 +180,21 @@ export function CameraTile({
   }, []);
 
   const onImgError = () => {
-    setPreviewError(true);
+    const raise = shouldRaisePreviewError({ previewWsActive, hasWsFrame });
+    if (raise) setPreviewError(true);
+    clientTelemetryLog(
+      'img_error',
+      {
+        source_id: camera.source_id,
+        camera: camera.source_name,
+        imgSrcKind,
+        hasWsFrame,
+        previewWsActive,
+        mode,
+        raisedPreviewError: raise,
+      },
+      'live',
+    );
     if (retryTimer.current != null) window.clearTimeout(retryTimer.current);
     const delay = ERROR_BACKOFF_MS[Math.min(backoffStep, ERROR_BACKOFF_MS.length - 1)];
     retryTimer.current = window.setTimeout(() => {
