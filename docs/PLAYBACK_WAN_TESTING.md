@@ -28,8 +28,8 @@ python3 scripts/ensure_playback_test_user.py
 |------|-------------|-----------|-----------|-----|----------------------------|
 | SPA in-memory | `evileye/api/frontend/src/api/dataCache.ts` | **Да** (per-browser) | `playback:segments:…`, `playback:detections:…` | 30–90 с | Только тот же браузер |
 | Static metadata | `usePlaybackStaticMetadata` module Map | **Да** | camera+date+ts | session | Тот же браузер |
-| Server memory | `evileye/api/routes/playback.py` `_memory_cache` | **Нет** | `playback:timeline:{date}:{run_id}:{from}:{to}:{cam_list}` | 45 с | Разный `cam_list` после ACL → разные ключи |
-| Detections memory | `_memory_cache` | **Нет** | `playback:detections:scan:{date}:{run_id}:ticks:{cam_list}` | 30 с | То же |
+| Server memory | `evileye/api/routes/playback.py` `_memory_cache` | **Нет** | `playback:timeline:{mode}:{date}:{run_id}:{from}:{to}:{cam_list}` (`mode`=`segments`\|`full`) | 45 с | Разный `cam_list` после ACL → разные ключи |
+| Detections memory | `_memory_cache` | **Нет** | `playback:detections:scan:{date}:{run_id}:{ticks\|full}` (**без** `cam_list`; ACL режется при slice) | 30 с | Admin warm обслуживает restricted user |
 | Cameras memory | `_memory_cache` | **Нет** (до ACL) | `playback:cameras:{run_id}:{date}` | sticky | Общий для всех |
 | On-disk segment index | `Streams/{date}/_timeline_segments.json` | **Общий** | по дате | до rebuild | Admin открыл день → user быстрее |
 | On-disk detection ticks | `Detections/{date}/Metadata/detection_ticks.json` | **Общий** | по дате | до rebuild | Любой пользователь |
@@ -116,7 +116,7 @@ npx playwright test tests/e2e/playback_cache_diagnostics.spec.ts
 | C4 ≈ C1 | User реально страдает на cold day |
 | C6 ratio > 2× | Browser cache маскирует у частого посетителя |
 | `X-Playback-Cache: stale` на cold | UI повторяет запросы → растянутая загрузка |
-| Admin fast, user slow на C1 | ACL cam_list или WAN, не per-user server cache |
+| Admin fast, user slow на C1 | WAN / disk; detections memory key больше не зависит от ACL cam_list |
 
 ## Связанные файлы
 

@@ -1,5 +1,5 @@
 import { useEffect, useLayoutEffect, useRef, useState } from 'react';
-import type { PlaybackEventInterval, PlaybackEventMarker, PlaybackSegment } from '../../api';
+import type { PlaybackEventInterval, PlaybackEventMarker, PlaybackSegment, PlaybackTimelineBand } from '../../api';
 import { useI18n } from '../../i18n';
 import { EventMarkers } from './EventMarkers';
 import {
@@ -40,6 +40,7 @@ export function Timeline({
   detectionTs = [],
   eventStartTs = [],
   eventIntervals = [],
+  inferenceGaps = [],
   onSeek,
   onViewChange,
   onPanningChange,
@@ -55,6 +56,7 @@ export function Timeline({
   detectionTs?: number[];
   eventStartTs?: number[];
   eventIntervals?: PlaybackEventInterval[];
+  inferenceGaps?: PlaybackTimelineBand[];
   onSeek: (sec: number) => void;
   onViewChange: (viewFrom: number, viewTo: number) => void;
   onPanningChange?: (panning: boolean) => void;
@@ -383,6 +385,28 @@ export function Timeline({
                     'repeating-linear-gradient(135deg, rgba(148, 163, 184, 0.35) 0 6px, rgba(100, 116, 139, 0.2) 6px 12px)',
                   borderRadius: 4,
                   border: '1px dashed rgba(148, 163, 184, 0.75)',
+                  pointerEvents: 'none',
+                }}
+              />
+            );
+          })}
+          {inferenceGaps.map((interval, idx) => {
+            const clipped = clipRangeToView(interval.from, interval.to, displayFrom, displayTo);
+            if (!clipped) return null;
+            return (
+              <div
+                key={`gap-${interval.from}-${idx}`}
+                className="timeline-segment-block timeline-segment-block--inference-gap"
+                title={t('playback.inferenceGapHint')}
+                aria-label={t('playback.inferenceGap')}
+                style={{
+                  position: 'absolute',
+                  left: `${clipped.leftPct}%`,
+                  width: `${Math.max(0.15, clipped.widthPct)}%`,
+                  top: '68%',
+                  height: '18%',
+                  background: 'rgba(244, 63, 94, 0.45)',
+                  borderRadius: 2,
                   pointerEvents: 'none',
                 }}
               />

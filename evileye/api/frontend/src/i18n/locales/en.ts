@@ -270,6 +270,10 @@ const en: Dict = {
     recordingDisabled: 'Recording is currently disabled. Enable recording for cameras in Settings.',
     loadingCamerasGrid: 'Loading cameras…',
     noCamerasForDate: 'No cameras for the selected date.',
+    noStreamSegmentsRetention:
+      'No continuous recordings for this day (video may have been cleaned by retention). Events or detection marks may still be available.',
+    overnightSessionHint:
+      'Live recording may still be stored under the previous calendar day until the session restarts.',
     selectCameras: 'Select cameras.',
     pressLoad: 'Press Load to open recordings.',
     unavailable: 'Playback unavailable',
@@ -278,6 +282,8 @@ const en: Dict = {
     timelineEmpty: 'Day timeline. Recordings appear after segments load.',
     timelineNoRecordings: 'No recordings or events for the selected day.',
     timelineHint: 'Wheel zooms, drag pans, click seeks (snaps to a nearby detection mark).',
+    inferenceGap: 'No detection journal',
+    inferenceGapHint: 'Video exists, but the detection/event journal is missing or stopped in this interval.',
     noSegment: 'No segment',
     noRecordingAtTime: 'No recording for this period',
     cameraNotRecordingAtTime: 'This camera was not recording at this time',

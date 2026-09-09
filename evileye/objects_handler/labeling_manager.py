@@ -303,41 +303,46 @@ class LabelingManager:
         Args:
             object_data: Dictionary containing object information
         """
+        should_flush = False
         with self.buffer_lock:
             self.found_buffer.append(object_data)
-
-            # Save if buffer is full
-            if len(self.found_buffer) >= self.buffer_size:
-                self._save_found_buffer()
+            should_flush = len(self.found_buffer) >= self.buffer_size
+        # Flush outside the lock: nested acquire on threading.Lock deadlocks.
+        if should_flush:
+            self._save_found_buffer()
 
     def _save_found_buffer(self):
         """Save found objects buffer to file."""
-        if not self.found_buffer:
-            return
-
         with self.buffer_lock:
-            grouped: dict[str, list] = {}
-            for obj in self.found_buffer:
-                grouped.setdefault(self._date_str_from_label(obj, lost=False), []).append(obj)
-            saved_all = True
-            for date_str, batch in grouped.items():
-                found_file, _lost_file = self._metadata_files_for_date(date_str)
-                data = self._load_json(found_file, self.found_file_lock)
-                if "objects" not in data:
-                    data["objects"] = []
-                existing_timestamps = {row.get("timestamp") for row in data["objects"]}
-                existing_ids = {row.get("object_id") for row in data["objects"]}
-                new_objects = [
-                    row for row in batch
-                    if row.get("timestamp") not in existing_timestamps or row.get("object_id") not in existing_ids
-                ]
-                if new_objects:
-                    data["objects"].extend(new_objects)
-                self._update_metadata(data, len(data["objects"]))
-                if not self._save_json(found_file, data, self.found_file_lock):
-                    saved_all = False
-            if saved_all:
-                self.found_buffer.clear()
+            if not self.found_buffer:
+                return
+            snapshot = list(self.found_buffer)
+            self.found_buffer.clear()
+
+        grouped: dict[str, list] = {}
+        for obj in snapshot:
+            grouped.setdefault(self._date_str_from_label(obj, lost=False), []).append(obj)
+        saved_all = True
+        for date_str, batch in grouped.items():
+            found_file, _lost_file = self._metadata_files_for_date(date_str)
+            data = self._load_json(found_file, self.found_file_lock)
+            if "objects" not in data:
+                data["objects"] = []
+            existing_timestamps = {row.get("timestamp") for row in data["objects"]}
+            existing_ids = {row.get("object_id") for row in data["objects"]}
+            new_objects = [
+                row for row in batch
+                if row.get("timestamp") not in existing_timestamps or row.get("object_id") not in existing_ids
+            ]
+            if new_objects:
+                data["objects"].extend(new_objects)
+            self._update_metadata(data, len(data["objects"]))
+            if not self._save_json(found_file, data, self.found_file_lock):
+                saved_all = False
+        if not saved_all:
+            # Re-queue snapshot so a later flush can retry.
+            with self.buffer_lock:
+                self.found_buffer = snapshot + self.found_buffer
 
     def add_object_lost(self, object_data: Dict[str, Any]):
         """
@@ -346,42 +351,45 @@ class LabelingManager:
         Args:
             object_data: Dictionary containing object information
         """
+        should_flush = False
         with self.buffer_lock:
             self.lost_buffer.append(object_data)
-
-            # Save if buffer is full
-            if len(self.lost_buffer) >= self.buffer_size:
-                self._save_lost_buffer()
+            should_flush = len(self.lost_buffer) >= self.buffer_size
+        if should_flush:
+            self._save_lost_buffer()
 
     def _save_lost_buffer(self):
         """Save lost objects buffer to file."""
-        if not self.lost_buffer:
-            return
-
         with self.buffer_lock:
-            grouped: dict[str, list] = {}
-            for obj in self.lost_buffer:
-                grouped.setdefault(self._date_str_from_label(obj, lost=True), []).append(obj)
-            saved_all = True
-            for date_str, batch in grouped.items():
-                _found_file, lost_file = self._metadata_files_for_date(date_str)
-                data = self._load_json(lost_file, self.lost_file_lock)
-                if "objects" not in data:
-                    data["objects"] = []
-                existing_timestamps = {row.get("detected_timestamp") for row in data["objects"]}
-                existing_ids = {row.get("object_id") for row in data["objects"]}
-                new_objects = [
-                    row for row in batch
-                    if row.get("detected_timestamp") not in existing_timestamps
-                    or row.get("object_id") not in existing_ids
-                ]
-                if new_objects:
-                    data["objects"].extend(new_objects)
-                self._update_metadata(data, len(data["objects"]))
-                if not self._save_json(lost_file, data, self.lost_file_lock):
-                    saved_all = False
-            if saved_all:
-                self.lost_buffer.clear()
+            if not self.lost_buffer:
+                return
+            snapshot = list(self.lost_buffer)
+            self.lost_buffer.clear()
+
+        grouped: dict[str, list] = {}
+        for obj in snapshot:
+            grouped.setdefault(self._date_str_from_label(obj, lost=True), []).append(obj)
+        saved_all = True
+        for date_str, batch in grouped.items():
+            _found_file, lost_file = self._metadata_files_for_date(date_str)
+            data = self._load_json(lost_file, self.lost_file_lock)
+            if "objects" not in data:
+                data["objects"] = []
+            existing_timestamps = {row.get("detected_timestamp") for row in data["objects"]}
+            existing_ids = {row.get("object_id") for row in data["objects"]}
+            new_objects = [
+                row for row in batch
+                if row.get("detected_timestamp") not in existing_timestamps
+                or row.get("object_id") not in existing_ids
+            ]
+            if new_objects:
+                data["objects"].extend(new_objects)
+            self._update_metadata(data, len(data["objects"]))
+            if not self._save_json(lost_file, data, self.lost_file_lock):
+                saved_all = False
+        if not saved_all:
+            with self.buffer_lock:
+                self.lost_buffer = snapshot + self.lost_buffer
 
     def create_found_object_data(self, obj, image_width: int, image_height: int,
                                  image_filename: str, preview_filename: str) -> Dict[str, Any]:
@@ -641,11 +649,29 @@ class LabelingManager:
         """
         found_data = self._load_json(self.found_labels_file, self.found_file_lock)
         lost_data = self._load_json(self.lost_labels_file, self.lost_file_lock)
+        with self.buffer_lock:
+            found_buffered = len(self.found_buffer)
+            lost_buffered = len(self.lost_buffer)
+        save_alive = False
+        try:
+            save_alive = bool(self.save_thread and self.save_thread.is_alive())
+        except Exception:
+            save_alive = False
+        found_mtime_age = None
+        try:
+            if os.path.isfile(self.found_labels_file):
+                found_mtime_age = time.time() - os.path.getmtime(self.found_labels_file)
+        except OSError:
+            found_mtime_age = None
 
         return {
             "found_objects": len(found_data.get("objects", [])),
             "lost_objects": len(lost_data.get("objects", [])),
             "total_objects": len(found_data.get("objects", [])) + len(lost_data.get("objects", [])),
+            "found_buffered": found_buffered,
+            "lost_buffered": lost_buffered,
+            "save_thread_alive": save_alive,
+            "objects_found_mtime_age_sec": found_mtime_age,
             "found_labels_file": self.found_labels_file,
             "lost_labels_file": self.lost_labels_file,
             "date": self.date_str

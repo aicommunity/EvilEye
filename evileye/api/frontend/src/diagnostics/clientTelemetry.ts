@@ -40,6 +40,7 @@ const counters: Record<string, number> = {};
 let flushTimer: number | null = null;
 let pendingUpload: DiagEvent[] = [];
 let sessionId = '';
+let lifecycleBound = false;
 
 function ensureSessionId(): string {
   if (sessionId) return sessionId;
@@ -53,7 +54,7 @@ function ensureSessionId(): string {
     /* ignore */
   }
   sessionId =
-    typeof crypto !== 'undefined' && 'randomUUID' in crypto
+    typeof crypto !== 'undefined' && 'crypto' in globalThis && 'randomUUID' in crypto
       ? crypto.randomUUID()
       : `s-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
   try {
@@ -84,6 +85,20 @@ function bump(kind: string) {
   counters[kind] = (counters[kind] ?? 0) + 1;
 }
 
+function requeueBatch(batch: DiagEvent[]) {
+  pendingUpload = [...batch, ...pendingUpload].slice(0, MAX_EVENTS);
+}
+
+function buildBody(batch: DiagEvent[]): string {
+  return JSON.stringify({
+    session_id: ensureSessionId(),
+    user: userName,
+    ua: typeof navigator !== 'undefined' ? navigator.userAgent.slice(0, 512) : undefined,
+    page: batch[0]?.page,
+    events: batch,
+  });
+}
+
 function buildSnapshot(): Record<string, unknown> {
   return {
     enabled,
@@ -97,29 +112,50 @@ function buildSnapshot(): Record<string, unknown> {
   };
 }
 
-async function flushNow(): Promise<void> {
-  if (!enabled || !autoUpload || !pendingUpload.length) return;
+/** Exported for unit tests — HTTP errors must re-queue like network failures. */
+export async function flushNow(): Promise<void> {
+  // Intentionally does not require `enabled` so disable-path can flush pending.
+  if (!autoUpload || !pendingUpload.length) return;
   if (typeof fetch === 'undefined') return;
   const batch = pendingUpload.splice(0, FLUSH_BATCH);
   try {
-    await fetch('/api/v1/diagnostics/client', {
+    const res = await fetch('/api/v1/diagnostics/client', {
       method: 'POST',
       credentials: 'same-origin',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        session_id: ensureSessionId(),
-        user: userName,
-        ua: typeof navigator !== 'undefined' ? navigator.userAgent.slice(0, 512) : undefined,
-        page: batch[0]?.page,
-        events: batch,
-      }),
+      body: buildBody(batch),
+      keepalive: true,
     });
+    if (!res.ok) {
+      bump('upload_http_error');
+      // eslint-disable-next-line no-console
+      if (typeof console !== 'undefined') console.warn('[evileyeDebug] upload failed', res.status);
+      requeueBatch(batch);
+      return;
+    }
+    bump('upload_ok');
   } catch {
-    // Re-queue on failure (keep ring bound).
-    pendingUpload = [...batch, ...pendingUpload].slice(0, MAX_EVENTS);
+    bump('upload_network_error');
+    requeueBatch(batch);
   }
   if (pendingUpload.length >= FLUSH_BATCH) {
     void flushNow();
+  }
+}
+
+function flushBeacon(): void {
+  if (!autoUpload || !pendingUpload.length) return;
+  if (typeof navigator === 'undefined' || typeof navigator.sendBeacon !== 'function') {
+    void flushNow();
+    return;
+  }
+  const batch = pendingUpload.splice(0, FLUSH_BATCH);
+  try {
+    const ok = navigator.sendBeacon('/api/v1/diagnostics/client', new Blob([buildBody(batch)], { type: 'application/json' }));
+    if (!ok) requeueBatch(batch);
+    else bump('upload_beacon');
+  } catch {
+    requeueBatch(batch);
   }
 }
 
@@ -135,6 +171,18 @@ function clearFlushTimer() {
   if (flushTimer == null || typeof window === 'undefined') return;
   window.clearInterval(flushTimer);
   flushTimer = null;
+}
+
+function bindLifecycleFlush() {
+  if (lifecycleBound || typeof window === 'undefined') return;
+  lifecycleBound = true;
+  const onHide = () => {
+    if (typeof document !== 'undefined' && document.visibilityState === 'hidden') {
+      flushBeacon();
+    }
+  };
+  window.addEventListener('pagehide', () => flushBeacon());
+  document.addEventListener('visibilitychange', onHide);
 }
 
 function publishApi(): void {
@@ -178,7 +226,6 @@ export function isClientTelemetryEnabled(): boolean {
 }
 
 export function setClientTelemetryEnabled(on: boolean, opts?: { autoUpload?: boolean }): void {
-  enabled = on;
   if (opts?.autoUpload != null) autoUpload = opts.autoUpload;
   else if (on && autoUpload === false && (readStorageFlag() || readQueryFlag())) autoUpload = true;
   try {
@@ -186,9 +233,13 @@ export function setClientTelemetryEnabled(on: boolean, opts?: { autoUpload?: boo
   } catch {
     /* playbackDebug may not export setter yet during circular init */
   }
-  if (on) ensureFlushTimer();
-  else {
+  if (on) {
+    enabled = true;
+    ensureFlushTimer();
+    bindLifecycleFlush();
+  } else {
     clearFlushTimer();
+    enabled = false;
     void flushNow();
   }
   publishApi();

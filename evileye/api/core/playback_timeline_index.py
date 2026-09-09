@@ -17,6 +17,78 @@ logger = logging.getLogger(__name__)
 INDEX_VERSION = 2
 # Soft TTL for "today" when source mtime keeps drifting under live capture.
 TODAY_REBUILD_SEC = 300.0
+# Half-window around each detection tick used to build journal coverage bands.
+INFERENCE_TICK_HALF_WINDOW_SEC = 30.0
+
+
+def _merge_intervals(intervals: list[tuple[float, float]]) -> list[tuple[float, float]]:
+    if not intervals:
+        return []
+    ordered = sorted((float(a), float(b)) for a, b in intervals if b > a)
+    if not ordered:
+        return []
+    merged: list[tuple[float, float]] = [ordered[0]]
+    for start, end in ordered[1:]:
+        prev_start, prev_end = merged[-1]
+        if start <= prev_end:
+            merged[-1] = (prev_start, max(prev_end, end))
+        else:
+            merged.append((start, end))
+    return merged
+
+
+def _subtract_intervals(
+    universe: list[tuple[float, float]],
+    cover: list[tuple[float, float]],
+) -> list[tuple[float, float]]:
+    """Return universe − cover as disjoint intervals."""
+    gaps: list[tuple[float, float]] = []
+    cover_m = _merge_intervals(cover)
+    for u_start, u_end in _merge_intervals(universe):
+        cursor = u_start
+        for c_start, c_end in cover_m:
+            if c_end <= cursor:
+                continue
+            if c_start >= u_end:
+                break
+            if c_start > cursor:
+                gaps.append((cursor, min(c_start, u_end)))
+            cursor = max(cursor, c_end)
+            if cursor >= u_end:
+                break
+        if cursor < u_end:
+            gaps.append((cursor, u_end))
+    return [(a, b) for a, b in gaps if b > a]
+
+
+def inference_gap_bands(
+    segments: list[dict[str, Any]],
+    ticks: list[dict[str, Any]],
+    *,
+    half_window_sec: float = INFERENCE_TICK_HALF_WINDOW_SEC,
+) -> list[dict[str, Any]]:
+    """Playable segment ranges not covered by detection-tick windows."""
+    universe: list[tuple[float, float]] = []
+    for seg in segments or []:
+        try:
+            start = float(seg.get("start_ts"))
+            end = float(seg.get("end_ts"))
+        except (TypeError, ValueError):
+            continue
+        if end > start:
+            universe.append((start, end))
+    if not universe:
+        return []
+    cover: list[tuple[float, float]] = []
+    hw = max(0.0, float(half_window_sec))
+    for tick in ticks or []:
+        try:
+            ts = float(tick["ts"] if isinstance(tick, dict) else tick[0])
+        except (TypeError, ValueError, KeyError, IndexError):
+            continue
+        cover.append((ts - hw, ts + hw))
+    gaps = _subtract_intervals(universe, cover)
+    return [{"from": a, "to": b, "kind": "inference_gap"} for a, b in gaps]
 
 
 def _atomic_write_json(path: Path, payload: dict[str, Any]) -> None:
@@ -562,6 +634,7 @@ def build_timeline(
                 "segments": segs,
                 "detection_ticks": ticks,
                 "events": cam_events,
+                "bands": inference_gap_bands(segs, ticks),
             }
         return {"date": date_folder, "by_camera": by_camera}
 
@@ -589,6 +662,7 @@ def build_timeline_segments_only(
                 "segments": segs,
                 "detection_ticks": [],
                 "events": [],
+                "bands": inference_gap_bands(segs, []),
             }
         return {"date": date_folder, "by_camera": by_camera}
 

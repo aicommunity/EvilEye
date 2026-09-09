@@ -272,4 +272,8 @@ def required_permissions_for_request(path: str, method: str) -> set[str]:
         return {"config:view"} if method == "GET" else {"config:edit"}
     if path.startswith("/api/v1/version"):
         return {"live:view"}
+    if path.startswith("/api/v1/diagnostics"):
+        # Ingest is authenticated-only at the route; any live viewer may upload
+        # client_debug batches (force-allowlist users are typically role=user).
+        return {"live:view"}
     return {"system:admin"} if method not in {"GET"} else {"live:view"}

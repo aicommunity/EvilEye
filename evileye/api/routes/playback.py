@@ -568,12 +568,17 @@ def _slice_detections_payload(
     from_ts: float | None,
     to_ts: float | None,
     ticks_only: bool,
+    cameras: list[str] | None = None,
 ) -> dict[str, Any]:
-    """Filter a day-wide detections payload to the caller's time window."""
+    """Filter a day-wide detections payload to the caller's time window and cameras."""
+    cam_filter = {str(c) for c in cameras} if cameras else None
     if "by_camera" in payload:
         by_camera: dict[str, list] = {}
         for cam, items in (payload.get("by_camera") or {}).items():
-            by_camera[str(cam)] = metadata_svc._filter_index_window(
+            cam_key = str(cam)
+            if cam_filter is not None and cam_key not in cam_filter:
+                continue
+            by_camera[cam_key] = metadata_svc._filter_index_window(
                 list(items or []),
                 from_ts,
                 to_ts,
@@ -589,6 +594,13 @@ def _slice_detections_payload(
         to_ts,
         ticks_only=ticks_only,
     )
+    if cam_filter is not None:
+        items = [
+            it
+            for it in items
+            if str((it or {}).get("camera") or (it or {}).get("source_name") or "") in cam_filter
+            or not ((it or {}).get("camera") or (it or {}).get("source_name"))
+        ]
     return {"items": items}
 
 
@@ -608,17 +620,27 @@ async def _coalesced_detections_load(
     from_ts: float | None,
     to_ts: float | None,
     ticks_only: bool,
+    cameras: list[str] | None = None,
     log_ctx: dict[str, Any] | None = None,
 ) -> Any:
-    """One journal scan per day/cameras/mode; waiters share the same Future.
+    """One journal scan per day/mode; waiters share the same Future.
 
-    Time windows are applied after the scan so wheel/seek remounts coalesce
-    instead of starting orphan workers. After asyncio wait timeout the executor
+    Time windows and ACL camera lists are applied after the scan so admin warm
+    hits serve restricted users. After asyncio wait timeout the executor
     thread may still finish and populate the memory cache via done-callback.
     """
+    def _slice(payload: dict[str, Any]) -> dict[str, Any]:
+        return _slice_detections_payload(
+            payload,
+            from_ts=from_ts,
+            to_ts=to_ts,
+            ticks_only=ticks_only,
+            cameras=cameras,
+        )
+
     fresh = _recall(scan_key, require_fresh=True)
     if fresh is not None:
-        return _slice_detections_payload(fresh, from_ts=from_ts, to_ts=to_ts, ticks_only=ticks_only)
+        return _slice(fresh)
 
     loop = asyncio.get_running_loop()
     owned = False
@@ -638,11 +660,11 @@ async def _coalesced_detections_load(
         timeout = playback_detections_timeout_sec()
         try:
             payload = await asyncio.wait_for(asyncio.shield(shared), timeout=timeout)
-            return _slice_detections_payload(payload, from_ts=from_ts, to_ts=to_ts, ticks_only=ticks_only)
+            return _slice(payload)
         except asyncio.TimeoutError:
             cached = _recall(scan_key)
             if cached is not None:
-                return _slice_detections_payload(cached, from_ts=from_ts, to_ts=to_ts, ticks_only=ticks_only)
+                return _slice(cached)
             raise HTTPException(status_code=503, detail="playback_detections timeout")
         except asyncio.CancelledError:
             raise
@@ -651,7 +673,7 @@ async def _coalesced_detections_load(
                 raise
             cached = _recall(scan_key)
             if cached is not None:
-                return _slice_detections_payload(cached, from_ts=from_ts, to_ts=to_ts, ticks_only=ticks_only)
+                return _slice(cached)
             raise HTTPException(status_code=503, detail="playback_detections timeout") from exc
 
     acquired = False
@@ -681,7 +703,7 @@ async def _coalesced_detections_load(
                 shared.set_result(fresh)
             _detections_slots.release()
             acquired = False
-            return _slice_detections_payload(fresh, from_ts=from_ts, to_ts=to_ts, ticks_only=ticks_only)
+            return _slice(fresh)
 
         with _detections_inflight_count_lock:
             _detections_inflight_count += 1
@@ -725,7 +747,7 @@ async def _coalesced_detections_load(
         timeout = playback_detections_timeout_sec()
         try:
             payload = await asyncio.wait_for(asyncio.shield(shared), timeout=timeout)
-            return _slice_detections_payload(payload, from_ts=from_ts, to_ts=to_ts, ticks_only=ticks_only)
+            return _slice(payload)
         except asyncio.TimeoutError:
             logger.warning(
                 "playback route timeout detail=playback_detections timeout timeout_sec=%s executor=detections %s",
@@ -734,7 +756,7 @@ async def _coalesced_detections_load(
             )
             cached = _recall(scan_key)
             if cached is not None:
-                return _slice_detections_payload(cached, from_ts=from_ts, to_ts=to_ts, ticks_only=ticks_only)
+                return _slice(cached)
             raise HTTPException(status_code=503, detail="playback_detections timeout")
     finally:
         async with _detections_inflight_lock:
@@ -782,19 +804,35 @@ async def playback_detections(
 
             date = dt.now().strftime("%Y-%m-%d")
 
-    # Quantize was previously part of the mem key and caused orphan scans per wheel tick.
-    # Coalesce on day+cameras+mode; filter the caller's window after the shared scan.
+    # Day-wide memory key (no ACL cam_list) so admin warm serves restricted users.
+    # Caller camera list is applied when slicing the cached payload.
+
+    mode = "ticks" if ticks_only else "full"
+    scan_key = f"playback:detections:scan:{date}:{run_id}:{mode}"
+
+    def _warm_cameras() -> list[str]:
+        try:
+            rows = svc.list_logical_cameras(run_id, date)
+            ids = [str(r.get("id") or "") for r in rows if r.get("id") and "-" not in str(r.get("id"))]
+            if ids:
+                return ids
+        except Exception:
+            pass
+        try:
+            rows = svc.discover_cameras(date)
+            return [str(r.get("id") or "") for r in rows if r.get("id") and "-" not in str(r.get("id"))]
+        except Exception:
+            return []
 
     if cameras:
         cam_list = _require_cameras(access, [c.strip() for c in cameras.split(",") if c.strip()], single=False)
-        scan_key = (
-            f"playback:detections:scan:{date}:{run_id}:"
-            f"{'ticks' if ticks_only else 'full'}:{','.join(cam_list)}"
-        )
 
         def _batch():
+            warm = _warm_cameras() or list(cam_list)
+            # Union so requested cams are always included even if discover lagged.
+            warm_set = list(dict.fromkeys([*warm, *cam_list]))
             by_camera = metadata_svc.load_detection_index_batch(
-                cameras=cam_list,
+                cameras=warm_set,
                 date_folder=date,
                 run_id=run_id,
                 from_ts=None,
@@ -805,7 +843,9 @@ async def playback_detections(
 
         fresh = _recall(scan_key, require_fresh=True)
         if fresh is not None:
-            sliced = _slice_detections_payload(fresh, from_ts=from_ts, to_ts=to_ts, ticks_only=False)
+            sliced = _slice_detections_payload(
+                fresh, from_ts=from_ts, to_ts=to_ts, ticks_only=False, cameras=cam_list
+            )
             return _json_with_cache(sliced, "hit")
         result = await _coalesced_detections_load(
             scan_key,
@@ -813,31 +853,33 @@ async def playback_detections(
             from_ts=from_ts,
             to_ts=to_ts,
             ticks_only=False,  # scan already applied ticks_only mode
+            cameras=cam_list,
             log_ctx={"date": date, "n_cameras": len(cam_list), "route": "detections"},
         )
         return _json_with_cache(result, "miss")
     if not camera:
         raise HTTPException(status_code=400, detail="camera or cameras query required")
     _require_cameras(access, [camera], single=True)
-    scan_key = (
-        f"playback:detections:scan:{date}:{run_id}:"
-        f"{'ticks' if ticks_only else 'full'}:{camera}"
-    )
+    cam_list = [camera]
 
     def _one():
-        items = metadata_svc.load_detection_index(
-            camera=camera,
+        warm = _warm_cameras() or cam_list
+        warm_set = list(dict.fromkeys([*warm, *cam_list]))
+        by_camera = metadata_svc.load_detection_index_batch(
+            cameras=warm_set,
             date_folder=date,
             run_id=run_id,
             from_ts=None,
             to_ts=None,
             ticks_only=ticks_only,
         )
-        return {"items": items}
+        return {"by_camera": by_camera, "items": [item for items in by_camera.values() for item in items]}
 
     fresh = _recall(scan_key, require_fresh=True)
     if fresh is not None:
-        sliced = _slice_detections_payload(fresh, from_ts=from_ts, to_ts=to_ts, ticks_only=ticks_only)
+        sliced = _slice_detections_payload(
+            fresh, from_ts=from_ts, to_ts=to_ts, ticks_only=ticks_only, cameras=cam_list
+        )
         return _json_with_cache(sliced, "hit")
     result = await _coalesced_detections_load(
         scan_key,
@@ -845,6 +887,7 @@ async def playback_detections(
         from_ts=from_ts,
         to_ts=to_ts,
         ticks_only=ticks_only,
+        cameras=cam_list,
         log_ctx={"date": date, "n_cameras": 1, "route": "detections"},
     )
     return _json_with_cache(result, "miss")

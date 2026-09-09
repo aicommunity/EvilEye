@@ -111,3 +111,5 @@ Target: EvilEye tree PSS **&lt; ~20 GB**, host swap used **&lt; ~5 GB** in stead
 | `EVILEYE_MP_PENDING_CAP` | Detector pending job depth | `max(roi_count, 1)` |
 | `EVILEYE_MP_PENDING_CAP_TRACKER` | Tracker pending job depth | `2` |
 | `EVILEYE_EVENT_BUFFER_FPS_MAX` | EventBuffer fps when config fps is null | `5` |
+| `EVILEYE_DATA_DIR` / `EVILEYE_DATA_ROOT` | Data root for Streams/Detections liveness | config `image_dir` / `out_dir` |
+| `DETECTION_STALE_SEC` | Restart if Streams fresh but `objects_found.json` older than N sec | `600` |

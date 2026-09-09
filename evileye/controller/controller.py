@@ -283,6 +283,13 @@ class Controller(ControllerProcessingMixin):
         except Exception:
             self._resource_stats_every_sec = 60.0
         self._resource_stats_last_ts = 0.0
+        try:
+            self._journal_heartbeat_every_sec = float(
+                os.getenv("EVILEYE_JOURNAL_HEARTBEAT_EVERY_SEC", "300") or "300"
+            )
+        except Exception:
+            self._journal_heartbeat_every_sec = 300.0
+        self._journal_heartbeat_last_ts = 0.0
 
         try:
             self._runtime_snapshot_every_sec = float(
@@ -515,6 +522,12 @@ class Controller(ControllerProcessingMixin):
                     ):
                         self._resource_stats_last_ts = now_ts
                         self._log_resource_stats(context="periodic")
+                    j_every = float(self._journal_heartbeat_every_sec or 0.0)
+                    if ProcessingService.should_log_resource_stats(
+                            self._journal_heartbeat_last_ts, j_every, now_ts=now_ts
+                    ):
+                        self._journal_heartbeat_last_ts = now_ts
+                        self._log_journal_heartbeat()
                 except Exception:
                     pass
 
@@ -738,6 +751,42 @@ class Controller(ControllerProcessingMixin):
         if self.system_events_detector:
             self.system_events_detector.emit_stopped()
             time.sleep(0.2)
+
+    def _log_journal_heartbeat(self) -> None:
+        """INFO heartbeat: detection journal buffers / save thread / queue liveness."""
+        try:
+            parts: list[str] = []
+            handler = getattr(self, "obj_handler", None)
+            if handler is not None:
+                try:
+                    qsz = handler.objs_queue.qsize() if getattr(handler, "objs_queue", None) else None
+                    parts.append(f"handler_q={qsz}")
+                except Exception:
+                    parts.append("handler_q=?")
+                lm = getattr(handler, "labeling_manager", None)
+                if lm is not None and hasattr(lm, "get_statistics"):
+                    try:
+                        st = lm.get_statistics()
+                        parts.append(
+                            "found_buf={found_buffered} lost_buf={lost_buffered} "
+                            "save_alive={save_thread_alive} found_mtime_age={objects_found_mtime_age_sec}".format(
+                                **{
+                                    "found_buffered": st.get("found_buffered"),
+                                    "lost_buffered": st.get("lost_buffered"),
+                                    "save_thread_alive": st.get("save_thread_alive"),
+                                    "objects_found_mtime_age_sec": (
+                                        None
+                                        if st.get("objects_found_mtime_age_sec") is None
+                                        else round(float(st.get("objects_found_mtime_age_sec")), 1)
+                                    ),
+                                }
+                            )
+                        )
+                    except Exception:
+                        parts.append("labeling=?")
+            self.logger.info("journal_heartbeat %s", " ".join(parts) if parts else "n/a")
+        except Exception:
+            pass
 
     def _log_resource_stats(self, context: str) -> None:
         """Log lightweight RSS/threads/FD metrics for the current process."""

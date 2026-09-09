@@ -203,12 +203,28 @@ async def run_metadata_ws(websocket: WebSocket, rid: int, source_id: Optional[in
         await websocket.close(code=4001)
         return
 
-    from evileye.api.core.camera_access import assert_source_id_allowed
+    from evileye.api.core.camera_access import assert_source_id_allowed, allowed_source_ids_for_run
 
     access = _camera_access_from_websocket(websocket)
-    try:
-        assert_source_id_allowed(access, int(run_info["id"]), source_id)
-    except Exception:
+    allowed_ids: set[int] | None = None
+    if not access.unrestricted:
+        allowed_ids = allowed_source_ids_for_run(access, int(run_info["id"]))
+
+    if source_id is not None:
+        try:
+            assert_source_id_allowed(access, int(run_info["id"]), source_id)
+        except Exception:
+            logger.warning(
+                "ws rejected code=4403 reason=camera_acl bucket=ws_metadata ip=%s source_id=%s",
+                ip,
+                source_id,
+            )
+            guard.note_ws_reject("camera_acl")
+            await websocket.close(code=4403)
+            return
+    elif allowed_ids is not None and len(allowed_ids) == 0:
+        logger.warning("ws rejected code=4403 reason=camera_acl_empty bucket=ws_metadata ip=%s", ip)
+        guard.note_ws_reject("camera_acl")
         await websocket.close(code=4403)
         return
 
@@ -237,6 +253,15 @@ async def run_metadata_ws(websocket: WebSocket, rid: int, source_id: Optional[in
                 payload.setdefault("source_id", source_id)
                 payload.setdefault("objects", payload.get("objects") or [])
                 payload.setdefault("zones", payload.get("zones") or [])
+                sid_raw = payload.get("source_id")
+                if allowed_ids is not None and sid_raw is not None:
+                    try:
+                        if int(sid_raw) not in allowed_ids:
+                            await asyncio.sleep(0.1)
+                            continue
+                    except (TypeError, ValueError):
+                        await asyncio.sleep(0.1)
+                        continue
                 fp = _payload_fingerprint(payload)
                 if fp != last_fp or (now - last_sent) >= _WS_MIN_INTERVAL_SEC:
                     await websocket.send_json(payload)

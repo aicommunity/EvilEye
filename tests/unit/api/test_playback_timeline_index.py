@@ -226,3 +226,21 @@ def test_build_timeline_singleflight(monkeypatch):
         outs = list(pool.map(lambda _: call(), range(3)))
     assert builds["n"] == 1
     assert all(o["by_camera"]["Cam1"]["detection_ticks"][0]["ts"] == 1.5 for o in outs)
+    # Tick at 1.5 ±30s covers [1,2] segment → no inference gap.
+    assert outs[0]["by_camera"]["Cam1"]["bands"] == []
+
+
+def test_inference_gap_bands_full_segment_without_ticks():
+    segs = [{"start_ts": 100.0, "end_ts": 200.0}]
+    bands = idx.inference_gap_bands(segs, [])
+    assert bands == [{"from": 100.0, "to": 200.0, "kind": "inference_gap"}]
+
+
+def test_inference_gap_bands_edges_around_tick_window():
+    segs = [{"start_ts": 0.0, "end_ts": 200.0}]
+    ticks = [{"ts": 100.0}]
+    bands = idx.inference_gap_bands(segs, ticks, half_window_sec=30.0)
+    assert bands == [
+        {"from": 0.0, "to": 70.0, "kind": "inference_gap"},
+        {"from": 130.0, "to": 200.0, "kind": "inference_gap"},
+    ]

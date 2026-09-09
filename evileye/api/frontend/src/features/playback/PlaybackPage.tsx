@@ -8,6 +8,7 @@ import {
   type PlaybackEventInterval,
   type PlaybackEventMarker,
   type PlaybackSegment,
+  type PlaybackTimelineBand,
   cacheGet,
   cacheSet,
   formatApiError,
@@ -164,6 +165,7 @@ export function PlaybackPage() {
   const [segmentsByCam, setSegmentsByCam] = useState<Record<string, PlaybackSegment[]>>({});
   const [markers, setMarkers] = useState<PlaybackEventMarker[]>([]);
   const [eventIntervals, setEventIntervals] = useState<PlaybackEventInterval[]>([]);
+  const [inferenceGaps, setInferenceGaps] = useState<PlaybackTimelineBand[]>([]);
   const [segmentsLoaded, setSegmentsLoaded] = useState(false);
   const [segmentsLoading, setSegmentsLoading] = useState(false);
   const [segmentsError, setSegmentsError] = useState<string | null>(null);
@@ -398,6 +400,7 @@ export function PlaybackPage() {
           setSegmentsByCam({});
           setMarkers([]);
           setEventIntervals([]);
+          setInferenceGaps([]);
           setSegmentsLoaded(true);
           if (!opts?.merge) {
             viewport.resetToData(null, null, opts?.date ?? date);
@@ -492,11 +495,17 @@ export function PlaybackPage() {
         let evItems: PlaybackEventInterval[] = [];
         let evLegacy: PlaybackEventMarker[] = [];
         let timelineTicks: Record<string, PlaybackDetectionItem[]> | null = null;
+        const gapBands: PlaybackTimelineBand[] = [];
 
         const applyTimelineEnrichment = (timeline: {
           by_camera?: Record<
             string,
-            { segments?: PlaybackSegment[]; detection_ticks?: PlaybackDetectionItem[]; events?: PlaybackEventInterval[] }
+            {
+              segments?: PlaybackSegment[];
+              detection_ticks?: PlaybackDetectionItem[];
+              events?: PlaybackEventInterval[];
+              bands?: PlaybackTimelineBand[];
+            }
           >;
         }) => {
           for (const id of nextSelected) {
@@ -506,6 +515,13 @@ export function PlaybackPage() {
               timelineTicks[id] = row.detection_ticks;
             }
             if (row?.events?.length) evItems.push(...row.events);
+            if (row?.bands?.length) {
+              for (const band of row.bands) {
+                if (band?.kind === 'inference_gap' && Number.isFinite(band.from) && Number.isFinite(band.to)) {
+                  gapBands.push(band);
+                }
+              }
+            }
           }
           if (timelineTicks) seedTicksRef.current(timelineTicks);
         };
@@ -534,6 +550,13 @@ export function PlaybackPage() {
             for (const it of prev) byKey.set(`${it.start_ts}:${it.end_ts}:${it.camera}:${it.event_type}:${it.label}`, it);
             for (const it of evItems) byKey.set(`${it.start_ts}:${it.end_ts}:${it.camera}:${it.event_type}:${it.label}`, it);
             return Array.from(byKey.values()).sort((a, b) => a.start_ts - b.start_ts);
+          });
+          setInferenceGaps((prev) => {
+            if (!opts?.merge) return gapBands;
+            const byKey = new Map<string, PlaybackTimelineBand>();
+            for (const it of prev) byKey.set(`${it.kind}:${it.from}:${it.to}`, it);
+            for (const it of gapBands) byKey.set(`${it.kind}:${it.from}:${it.to}`, it);
+            return Array.from(byKey.values()).sort((a, b) => a.from - b.from);
           });
         };
 
@@ -647,6 +670,13 @@ export function PlaybackPage() {
           for (const it of prev) byKey.set(`${it.start_ts}:${it.end_ts}:${it.camera}:${it.event_type}:${it.label}`, it);
           for (const it of evItems) byKey.set(`${it.start_ts}:${it.end_ts}:${it.camera}:${it.event_type}:${it.label}`, it);
           return Array.from(byKey.values()).sort((a, b) => a.start_ts - b.start_ts);
+        });
+        setInferenceGaps((prev) => {
+          if (!opts?.merge) return gapBands;
+          const byKey = new Map<string, PlaybackTimelineBand>();
+          for (const it of prev) byKey.set(`${it.kind}:${it.from}:${it.to}`, it);
+          for (const it of gapBands) byKey.set(`${it.kind}:${it.from}:${it.to}`, it);
+          return Array.from(byKey.values()).sort((a, b) => a.from - b.from);
         });
         setSegmentsLoaded(true);
         applyPostLoadSnapIfNeeded(incoming, {
@@ -901,7 +931,14 @@ export function PlaybackPage() {
   if (!runResolved || camerasLoading) gridEmpty = t('playback.loadingCamerasGrid');
   else if (!cameras.length) gridEmpty = t('playback.noCamerasForDate');
   else if (!selectedIds.length) gridEmpty = t('playback.selectCameras');
-  else if (archivePreparing) gridEmpty = t('playback.preparingArchive');
+  else if (
+    segmentsLoaded &&
+    !Object.values(segmentsByCam).some((s) => s.length) &&
+    cameras.some((c) => c.has_detection_ticks || c.has_events) &&
+    !cameras.some((c) => c.has_stream_segments || (c.segment_count ?? 0) > 0)
+  ) {
+    gridEmpty = t('playback.noStreamSegmentsRetention');
+  } else if (archivePreparing) gridEmpty = t('playback.preparingArchive');
   else if (segmentsLoading || (!segmentsLoaded && cameras.length > 0)) gridEmpty = t('playback.loadingSegment');
   else if (segmentsError && !Object.values(segmentsByCam).some((s) => s.length)) gridEmpty = segmentsError;
 
@@ -1106,6 +1143,7 @@ export function PlaybackPage() {
             detectionTs={detectionIndex.globalTs}
             eventStartTs={globalEventStartTsList}
             eventIntervals={timelineEventIntervals}
+            inferenceGaps={inferenceGaps}
             onSeek={seek}
             onViewChange={onViewChange}
             onPanningChange={setTimelinePanning}

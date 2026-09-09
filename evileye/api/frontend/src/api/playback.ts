@@ -6,6 +6,7 @@ import type {
   PlaybackEventMarker,
   PlaybackEventsResponse,
   PlaybackSegment,
+  PlaybackTimelineBand,
 } from './types';
 
 export type FrameSize = { w: number; h: number };
@@ -72,6 +73,7 @@ export const playbackApi = {
         segments: PlaybackSegment[];
         detection_ticks: PlaybackDetectionItem[];
         events: PlaybackEventInterval[];
+        bands?: PlaybackTimelineBand[];
       }
     >;
   }> {

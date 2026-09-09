@@ -48,12 +48,18 @@ class GstContinuousRecorder(VideoRecorderBase):
         self._check_thread: Optional[threading.Thread] = None
         self._check_stop = threading.Event()
         self._recording_out_dir: Optional[Path] = None
+        self._recording_out_dirs: set[Path] = set()
         self._recording_checked_files: set[Path] = set()
         self._recording_min_file_size_kb: int = 0
         self._recording_container: str = "mp4"
         self._lock = threading.RLock()
         self._segments_attached: int = 0
         self._last_stats_ts: float = 0.0
+        self._session_date_str: Optional[str] = None
+        self._session_stem: Optional[Path] = None
+        self._camera_folder: str = "source"
+        self._source_name: str = "source"
+        self._streams_base: Optional[Path] = None
         try:
             GstContinuousRecorder._instances.add(self)
         except Exception:
@@ -135,29 +141,27 @@ class GstContinuousRecorder(VideoRecorderBase):
             splitmuxsink.set_property("async-finalize", True)
 
             # Build output path: base/Streams/YYYY-MM-DD/CameraName/
+            # format-location recreates the path per fragment so midnight rotates the day folder.
             camera_folder = (
                 "-".join(self.source.source_names)
                 if self.source and self.source.source_names
                 else (self.source.source_name if self.source else "source")
             )
             base_dir = Path(self.params.out_dir) if self.params.out_dir else Path("EvilEyeData")
-            date_dir = _dt.datetime.now().strftime("%Y-%m-%d")
-            out_dir = base_dir / "Streams" / date_dir / camera_folder
-            out_dir.mkdir(parents=True, exist_ok=True)
-
-            ts = _dt.datetime.now().strftime("%Y%m%d_%H%M%S")
-            source_name = self.source.source_name if self.source else camera_folder
-            name = self.params.filename_tmpl.format(
-                source_name=source_name,
-                start_time=ts,
-                seq=0,
-                ext=self.params.container,
-            )
-            stem = (out_dir / name).with_suffix("")
-            location = str(stem) + "_%05d." + self.params.container
+            self._camera_folder = camera_folder
+            self._source_name = self.source.source_name if self.source else camera_folder
+            self._streams_base = base_dir / "Streams"
+            self._session_date_str = None
+            self._session_stem = None
+            # Prime session stem/out_dir; property keeps printf pattern as fallback.
+            self.fragment_location_for_id(0)
+            location = str(self._session_stem) + "_%05d." + self.params.container
             splitmuxsink.set_property("location", location)
+            try:
+                splitmuxsink.connect("format-location", self._on_format_location)
+            except Exception:
+                self.logger.exception("Failed to connect splitmux format-location; day folder stays session-sticky")
 
-            self._recording_out_dir = out_dir
             self._recording_min_file_size_kb = self.params.min_file_size_kb
             self._recording_container = self.params.container
             self._recording_checked_files = set()
@@ -213,6 +217,55 @@ class GstContinuousRecorder(VideoRecorderBase):
             self._segments_attached += 1
             self._last_stats_ts = time.time()
             self.logger.info("GstContinuousRecorder branch attached: location=%s", location)
+
+    def fragment_location_for_id(
+        self,
+        fragment_id: int,
+        *,
+        now: _dt.datetime | None = None,
+    ) -> str:
+        """Return splitmux path for fragment; rotates Streams day folder at midnight."""
+        now = now or _dt.datetime.now()
+        date_str = now.strftime("%Y-%m-%d")
+        base = self._streams_base or Path("EvilEyeData") / "Streams"
+        out_dir = base / date_str / self._camera_folder
+        out_dir.mkdir(parents=True, exist_ok=True)
+        self._recording_out_dir = out_dir
+        self._recording_out_dirs.add(out_dir)
+
+        day_changed = self._session_date_str != date_str
+        if day_changed or self._session_stem is None:
+            ts = now.strftime("%Y%m%d_%H%M%S")
+            name = self.params.filename_tmpl.format(
+                source_name=self._source_name,
+                start_time=ts,
+                seq=0,
+                ext=self.params.container,
+            )
+            self._session_stem = (out_dir / name).with_suffix("")
+            self._session_date_str = date_str
+            if day_changed and fragment_id > 0:
+                try:
+                    location_pattern = str(self._session_stem) + "_%05d." + self.params.container
+                    write_session_sidecar(sidecar_path_from_splitmux_location(location_pattern), time.time(), None)
+                    self.logger.info(
+                        "Rotated recording day folder to %s (fragment=%s)",
+                        out_dir,
+                        fragment_id,
+                    )
+                except Exception:
+                    self.logger.exception("Failed to write day-rotate session sidecar")
+
+        return f"{self._session_stem}_{int(fragment_id):05d}.{self.params.container}"
+
+    def _on_format_location(self, _splitmux, fragment_id) -> str:
+        try:
+            return self.fragment_location_for_id(int(fragment_id))
+        except Exception:
+            self.logger.exception("format-location failed for fragment=%s", fragment_id)
+            if self._session_stem is not None:
+                return f"{self._session_stem}_{int(fragment_id):05d}.{self.params.container}"
+            return f"recording_{int(fragment_id):05d}.{self.params.container}"
 
     def _attach_first_mux_probe(self, Gst, *, recording_queue_elem, queue_before_mux, location: str) -> None:
         sidecar = sidecar_path_from_splitmux_location(location)
@@ -283,8 +336,10 @@ class GstContinuousRecorder(VideoRecorderBase):
                     except Exception:
                         pass
 
-                    out_dir = self._recording_out_dir
-                    if not out_dir or not out_dir.exists():
+                    dirs = list(self._recording_out_dirs) if self._recording_out_dirs else []
+                    if self._recording_out_dir and self._recording_out_dir not in dirs:
+                        dirs.append(self._recording_out_dir)
+                    if not dirs:
                         if self._check_stop.wait(timeout=5.0):
                             break
                         continue
@@ -293,21 +348,24 @@ class GstContinuousRecorder(VideoRecorderBase):
                     validate_integrity = getattr(self.params, "validate_video_integrity", True)
                     validation_timeout = getattr(self.params, "video_validation_timeout", 2.0)
 
-                    for fp in out_dir.glob(f"*.{self._recording_container}"):
-                        if fp in self._recording_checked_files:
+                    for out_dir in dirs:
+                        if not out_dir or not out_dir.exists():
                             continue
-                        check_and_delete_small_files(
-                            fp,
-                            self._recording_min_file_size_kb,
-                            validate_integrity=validate_integrity,
-                            validation_timeout=validation_timeout,
-                        )
-                        try:
-                            stat = fp.stat()
-                            if (time.time() - stat.st_mtime) >= 60.0:
-                                self._recording_checked_files.add(fp)
-                        except Exception:
-                            pass
+                        for fp in out_dir.glob(f"*.{self._recording_container}"):
+                            if fp in self._recording_checked_files:
+                                continue
+                            check_and_delete_small_files(
+                                fp,
+                                self._recording_min_file_size_kb,
+                                validate_integrity=validate_integrity,
+                                validation_timeout=validation_timeout,
+                            )
+                            try:
+                                stat = fp.stat()
+                                if (time.time() - stat.st_mtime) >= 60.0:
+                                    self._recording_checked_files.add(fp)
+                            except Exception:
+                                pass
                 except Exception:
                     pass
                 if self._check_stop.wait(timeout=5.0):
@@ -333,6 +391,9 @@ class GstContinuousRecorder(VideoRecorderBase):
             refs = self._refs
             self._refs = None
             self._recording_out_dir = None
+            self._recording_out_dirs = set()
+            self._session_date_str = None
+            self._session_stem = None
             self._recording_checked_files = set()
 
         if t and t.is_alive():

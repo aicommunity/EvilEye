@@ -187,11 +187,16 @@ export interface PlaybackCamera {
   source_id?: number | null;
   storage_folder?: string;
   parent_folder?: string | null;
+  /** Primary logical cam whose mp4 files are shared (split sources). */
+  shares_media_with?: string | null;
   split?: boolean;
   src_coords?: [number, number, number, number] | null;
   logical_frame_size?: { w: number; h: number };
   segment_count?: number;
   available?: boolean;
+  has_stream_segments?: boolean;
+  has_detection_ticks?: boolean;
+  has_events?: boolean;
 }
 
 export interface PlaybackSegment {
@@ -226,6 +231,13 @@ export interface PlaybackEventInterval {
   raw_id?: string | number | null;
   preview_path?: string | null;
   preview_mode?: 'found' | 'lost';
+}
+
+/** Timeline overlay band (e.g. video without detection journal). */
+export interface PlaybackTimelineBand {
+  from: number;
+  to: number;
+  kind: 'inference_gap';
 }
 
 export interface PlaybackEventsResponse {

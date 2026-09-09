@@ -552,13 +552,39 @@ def _date_dirs(base: Path, date: Optional[str]) -> list[Path]:
     if date:
         # Accept YYYY-MM-DD, YYYYMMDD, or UI DD-MM-YYYY
         candidates = [base / date]
+        iso_date: str | None = None
         if re.fullmatch(r"\d{8}", date):
-            candidates.append(base / f"{date[:4]}-{date[4:6]}-{date[6:8]}")
+            iso_date = f"{date[:4]}-{date[4:6]}-{date[6:8]}"
+            candidates.append(base / iso_date)
         m = re.fullmatch(r"(\d{2})-(\d{2})-(\d{4})", date)
         if m:
             day, month, year = m.groups()
-            candidates.append(base / f"{year}-{month}-{day}")
-        return [p for p in candidates if p.exists()]
+            iso_date = f"{year}-{month}-{day}"
+            candidates.append(base / iso_date)
+        if re.fullmatch(r"\d{4}-\d{2}-\d{2}", date):
+            iso_date = date
+        found: list[Path] = []
+        seen: set[str] = set()
+        for p in candidates:
+            if p.exists() and p.name not in seen:
+                found.append(p)
+                seen.add(p.name)
+        # GST continuous recording keeps writing into the session-start day folder
+        # across midnight. When the UI asks for calendar "today", also scan yesterday.
+        if iso_date:
+            try:
+                today = datetime.now().astimezone().strftime("%Y-%m-%d")
+                if iso_date == today:
+                    yday = (datetime.now().astimezone().date().fromordinal(
+                        datetime.now().astimezone().date().toordinal() - 1
+                    )).isoformat()
+                    yp = base / yday
+                    if yp.exists() and yp.name not in seen:
+                        found.append(yp)
+                        seen.add(yp.name)
+            except Exception:
+                pass
+        return found
     if not base.exists():
         return []
     return sorted([p for p in base.iterdir() if p.is_dir()], reverse=True)[:14]
@@ -585,6 +611,8 @@ def _date_dirs_covering(
             start, end = end, start
         day = datetime.fromtimestamp(start).date()
         end_day = datetime.fromtimestamp(end).date()
+        # Include previous calendar day: GST overnight sessions stay in start-day folder.
+        _add(base / day.fromordinal(day.toordinal() - 1).isoformat())
         while day <= end_day:
             _add(base / day.isoformat())
             day = day.fromordinal(day.toordinal() + 1)
@@ -707,6 +735,7 @@ def list_logical_cameras(run_id: int | None = None, date: Optional[str] = None) 
 
     base = data_dir() / "Streams"
     date_dirs = _date_dirs(base, date)
+    day_flags = _day_archive_flags(date) if date else {"has_detection_ticks": False, "has_events": False}
     cameras: list[dict[str, Any]] = []
 
     for item in summary.source_items:
@@ -739,6 +768,13 @@ def list_logical_cameras(run_id: int | None = None, date: Optional[str] = None) 
             except Exception:
                 logical_frame_size = None
 
+        shares_media_with = None
+        if parent_folder and "-" in str(parent_folder):
+            parts = [p for p in str(parent_folder).split("-") if p]
+            if logical_id in parts and parts and parts[0] != logical_id:
+                shares_media_with = parts[0]
+
+        has_stream = folder_exists or segment_count > 0
         cameras.append(
             {
                 "id": logical_id,
@@ -746,16 +782,66 @@ def list_logical_cameras(run_id: int | None = None, date: Optional[str] = None) 
                 "source_id": item.get("source_id"),
                 "storage_folder": storage_folder,
                 "parent_folder": parent_folder,
+                "shares_media_with": shares_media_with,
                 "split": split,
                 "src_coords": src_coords,
                 "logical_frame_size": logical_frame_size,
                 "folder": storage_folder,
                 "segment_count": segment_count,
-                "available": folder_exists or segment_count > 0,
+                "available": has_stream,
+                "has_stream_segments": has_stream,
+                "has_detection_ticks": bool(day_flags.get("has_detection_ticks")),
+                "has_events": bool(day_flags.get("has_events")),
             }
         )
 
     return cameras
+
+
+def _day_archive_flags(date: Optional[str]) -> dict[str, bool]:
+    """Cheap signals for empty-day UX (streams purged vs journal/events remain)."""
+    flags = {"has_detection_ticks": False, "has_events": False}
+    if not date:
+        return flags
+    iso = date
+    if re.fullmatch(r"\d{8}", date):
+        iso = f"{date[:4]}-{date[4:6]}-{date[6:8]}"
+    m = re.fullmatch(r"(\d{2})-(\d{2})-(\d{4})", date)
+    if m:
+        day, month, year = m.groups()
+        iso = f"{year}-{month}-{day}"
+    root = data_dir()
+    ticks = root / "Detections" / iso / "Metadata" / "detection_ticks.json"
+    if ticks.is_file():
+        try:
+            if ticks.stat().st_size > 256:
+                flags["has_detection_ticks"] = True
+            else:
+                import json as _json
+
+                data = _json.loads(ticks.read_text(encoding="utf-8"))
+                by_cam = data.get("by_camera") if isinstance(data, dict) else None
+                if isinstance(by_cam, dict) and any(by_cam.values()):
+                    flags["has_detection_ticks"] = True
+        except Exception:
+            pass
+    events_meta = root / "Events" / iso / "Metadata" / "event_intervals.json"
+    if events_meta.is_file():
+        try:
+            if events_meta.stat().st_size > 256:
+                flags["has_events"] = True
+        except Exception:
+            pass
+    if not flags["has_events"]:
+        ev_videos = root / "Events" / iso / "Videos"
+        if ev_videos.is_dir():
+            try:
+                for _ in ev_videos.rglob("*.mp4"):
+                    flags["has_events"] = True
+                    break
+            except OSError:
+                pass
+    return flags
 
 
 def _nominal_slot_bounds(

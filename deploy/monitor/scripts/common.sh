@@ -14,6 +14,7 @@ DEPLOY_DIR="${DEPLOY_DIR:-$(cd "$MONITOR_DIR/.." && pwd)}"
 CONFIG_NAME="${CONFIG_NAME:-poly-cameras-gst.json}"
 CONFIG_STEM="${CONFIG_NAME%.json}"
 LOG_STALE_SEC="${LOG_STALE_SEC:-600}"
+DETECTION_STALE_SEC="${DETECTION_STALE_SEC:-600}"
 MANUAL_STOP_COOLDOWN_SEC="${MANUAL_STOP_COOLDOWN_SEC:-3600}"
 SCHEDULED_RESTART_HOUR="${SCHEDULED_RESTART_HOUR:-01}"
 SCHEDULED_RESTART_MINUTE="${SCHEDULED_RESTART_MINUTE:-00}"
@@ -130,6 +131,106 @@ PY
 
 pipeline_child_healthy() {
     [[ -n "$(find_child_pid)" ]]
+}
+
+resolve_data_root() {
+    if [[ -n "${EVILEYE_DATA_DIR:-}" ]]; then
+        echo "$EVILEYE_DATA_DIR"
+        return
+    fi
+    if [[ -n "${EVILEYE_DATA_ROOT:-}" ]]; then
+        echo "$EVILEYE_DATA_ROOT"
+        return
+    fi
+    local cfg="$DEPLOY_DIR/configs/$CONFIG_NAME"
+    if [[ -f "$cfg" ]]; then
+        python3 - "$cfg" <<'PY' 2>/dev/null || true
+import json, sys
+from pathlib import Path
+data = json.loads(Path(sys.argv[1]).read_text(encoding="utf-8"))
+for key_path in (("database", "image_dir"), ("record", "out_dir"), ("journal", "image_dir")):
+    cur = data
+    ok = True
+    for key in key_path:
+        if not isinstance(cur, dict) or key not in cur:
+            ok = False
+            break
+        cur = cur[key]
+    if ok and cur:
+        print(cur)
+        raise SystemExit(0)
+PY
+    fi
+}
+
+newest_mtime_under() {
+    local dir="$1"
+    if [[ ! -d "$dir" ]]; then
+        echo 0
+        return
+    fi
+    python3 - "$dir" <<'PY' 2>/dev/null || echo 0
+import os, sys
+root = sys.argv[1]
+newest = 0.0
+for dirpath, _dirnames, filenames in os.walk(root):
+    for name in filenames:
+        path = os.path.join(dirpath, name)
+        try:
+            newest = max(newest, os.path.getmtime(path))
+        except OSError:
+            continue
+print(int(newest))
+PY
+}
+
+# Echo detection_stale_<age>s when Streams are fresh but objects_found is stale/missing.
+# Exit 0 when stale incident should fire; 1 otherwise.
+# Checks today and yesterday Streams/Detections (GST may keep writing into session-start day).
+check_detection_journal_stale() {
+    local data_root age_limit today yesterday streams_mtime found_mtime now age day found_file
+    data_root="$(resolve_data_root | head -1 | tr -d '\r')"
+    [[ -n "$data_root" && -d "$data_root" ]] || return 1
+    age_limit="${DETECTION_STALE_SEC:-600}"
+    today="$(date +%F)"
+    yesterday="$(date -d 'yesterday' +%F 2>/dev/null || date -v-1d +%F 2>/dev/null || true)"
+    now="$(date +%s)"
+    streams_mtime=0
+    for day in "$today" "$yesterday"; do
+        [[ -n "$day" ]] || continue
+        local mt
+        mt="$(newest_mtime_under "$data_root/Streams/$day")"
+        if (( mt > streams_mtime )); then
+            streams_mtime=$mt
+        fi
+    done
+    if (( streams_mtime <= 0 || now - streams_mtime > age_limit )); then
+        return 1
+    fi
+    found_mtime=0
+    local found_any=0
+    for day in "$today" "$yesterday"; do
+        [[ -n "$day" ]] || continue
+        found_file="$data_root/Detections/$day/Metadata/objects_found.json"
+        if [[ -f "$found_file" ]]; then
+            found_any=1
+            local mt
+            mt="$(stat -c %Y "$found_file" 2>/dev/null || echo 0)"
+            if (( mt > found_mtime )); then
+                found_mtime=$mt
+            fi
+        fi
+    done
+    if (( found_any == 0 )); then
+        echo "detection_stale_missing"
+        return 0
+    fi
+    age=$(( now - found_mtime ))
+    if (( age > age_limit )); then
+        echo "detection_stale_${age}s"
+        return 0
+    fi
+    return 1
 }
 
 find_cli_pid() {

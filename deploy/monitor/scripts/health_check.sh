@@ -159,6 +159,16 @@ if pipeline_child_healthy && [[ -n "$CHILD_PID" ]] && (( LOG_AGE <= LOG_STALE_SE
     fi
 fi
 
+# After child-healthy override: recording can stay up while detection journal freezes.
+DETECTION_STALE_REASON=""
+if DETECTION_STALE_REASON="$(check_detection_journal_stale)"; then
+    INCIDENT=true
+    DO_RESTART=true
+    STATUS="incident"
+    REASONS=("$DETECTION_STALE_REASON")
+    log_msg "Detection journal stale while Streams fresh: $DETECTION_STALE_REASON"
+fi
+
 REASON_STR="$(IFS=';'; echo "${REASONS[*]}")"
 
 ENTRY="$(append_journal "$STATUS" "$REASON_STR" "$CLI_PID" "$CHILD_PID" "$MAIN_LOG" "$LOG_AGE")"

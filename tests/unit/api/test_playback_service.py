@@ -102,6 +102,7 @@ def test_path_traversal_rejected(tmp_path, monkeypatch):
 
 def test_date_dirs_covering_range(tmp_path):
     base = tmp_path / "Streams"
+    (base / "2026-08-03").mkdir(parents=True)
     (base / "2026-08-04").mkdir(parents=True)
     (base / "2026-08-05").mkdir(parents=True)
     (base / "2026-08-06").mkdir(parents=True)
@@ -109,9 +110,25 @@ def test_date_dirs_covering_range(tmp_path):
     end = __import__("datetime").datetime(2026, 8, 5, 18, 0, 0).timestamp()
     dirs = svc._date_dirs_covering(base, from_ts=start, to_ts=end)
     names = {p.name for p in dirs}
+    # Previous day included for GST overnight sessions.
+    assert "2026-08-03" in names
     assert "2026-08-04" in names
     assert "2026-08-05" in names
     assert "2026-08-06" not in names
+
+
+def test_date_dirs_today_includes_yesterday(tmp_path, monkeypatch):
+    base = tmp_path / "Streams"
+    today = __import__("datetime").datetime.now().astimezone().strftime("%Y-%m-%d")
+    from datetime import datetime, timedelta
+
+    yday = (datetime.now().astimezone().date() - timedelta(days=1)).isoformat()
+    (base / today).mkdir(parents=True)
+    (base / yday).mkdir(parents=True)
+    dirs = svc._date_dirs(base, today)
+    names = {p.name for p in dirs}
+    assert today in names
+    assert yday in names
 
 
 def test_load_segments_multi_day_from_to(tmp_path, monkeypatch):
