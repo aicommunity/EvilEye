@@ -74,6 +74,7 @@ export function SplitPlaybackCell({
   getPositionRef.current = getPosition;
   const [videoReady, setVideoReady] = useState(0);
   const [seeking, setSeeking] = useState(false);
+  const [mediaReadyState, setMediaReadyState] = useState<number | null>(null);
   const [videoGlobalSec, setVideoGlobalSec] = useState<number | null>(null);
   const [localFrameSize, setLocalFrameSize] = useState<FrameSize | null>(null);
   const [localEpoch, setLocalEpoch] = useState(0);
@@ -297,9 +298,14 @@ export function SplitPlaybackCell({
   useEffect(() => {
     const video = videoRef.current;
     if (!video) return;
-    const onSeeking = () => setSeeking(true);
+    const syncReady = () => setMediaReadyState(video.readyState);
+    const onSeeking = () => {
+      setSeeking(true);
+      syncReady();
+    };
     const onSeeked = () => {
       setSeeking(false);
+      syncReady();
       const st = startTsRef.current;
       setVideoGlobalSec(st + video.currentTime);
       // Pin after load even while scrubbing (new segment src starts at t=0 otherwise).
@@ -322,6 +328,7 @@ export function SplitPlaybackCell({
     const onTime = () => {
       const st = startTsRef.current;
       if (video.readyState >= 2) setVideoGlobalSec(st + video.currentTime);
+      syncReady();
       if (video.seeking || scrubbingRef.current) return;
       if (userSeekingRef.current) return;
       if (playingRef.current && shouldEmitPlaybackClock(cameraId, video)) {
@@ -330,6 +337,7 @@ export function SplitPlaybackCell({
     };
     const onError = () => {
       setSeeking(false);
+      syncReady();
       playbackDebugInc('playRejects');
       const el = video;
       window.setTimeout(() => {
@@ -353,13 +361,18 @@ export function SplitPlaybackCell({
     video.addEventListener('seeked', onSeeked);
     video.addEventListener('timeupdate', onTime);
     video.addEventListener('loadeddata', onSeeked);
+    video.addEventListener('canplay', syncReady);
+    video.addEventListener('waiting', syncReady);
     video.addEventListener('error', onError);
     setSeeking(video.seeking);
+    setMediaReadyState(video.readyState);
     return () => {
       video.removeEventListener('seeking', onSeeking);
       video.removeEventListener('seeked', onSeeked);
       video.removeEventListener('timeupdate', onTime);
       video.removeEventListener('loadeddata', onSeeked);
+      video.removeEventListener('canplay', syncReady);
+      video.removeEventListener('waiting', syncReady);
       video.removeEventListener('error', onError);
     };
   }, [videoUrl, cameraId, mediaEpoch]);
@@ -449,6 +462,7 @@ export function SplitPlaybackCell({
         seeking={seeking}
         loading={metaLoading}
         hasObjects={(displayMeta?.objects?.length ?? 0) > 0}
+        mediaReadyState={mediaReadyState}
       />
       {onExpand ? (
         <div className="camera-card-overlay-actions">

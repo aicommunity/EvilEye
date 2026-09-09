@@ -5,6 +5,8 @@ const REST_FALLBACK_MS = 1500;
 export const METADATA_TTL_MS = 4000;
 /** No new metadata sequence for this long → wipe objects (pipeline likely dead). */
 export const METADATA_HARD_CLEAR_MS = 30000;
+/** Keep last non-empty objects across briefly empty publish sequences. */
+export const EMPTY_OBJECTS_HOLD_MS = 1500;
 
 function metadataFingerprint(payload: StreamMetadata): string {
   try {
@@ -77,6 +79,9 @@ export class RunMetadataStore {
   private seqKeyBySource: Map<SourceKey, string> = new Map();
   private wasFreshBySource: Map<SourceKey, boolean> = new Map();
   private freshnessTimer: number | null = null;
+  private emptyHoldTimerBySource: Map<SourceKey, number> = new Map();
+  private heldObjectsBySource: Map<SourceKey, NonNullable<StreamMetadata['objects']>> = new Map();
+  private pendingEmptyBySource: Map<SourceKey, StreamMetadata> = new Map();
 
   constructor(rid: number) {
     this.rid = rid;
@@ -173,6 +178,15 @@ export class RunMetadataStore {
     }
   }
 
+  private _cancelEmptyHold(key: SourceKey) {
+    const timer = this.emptyHoldTimerBySource.get(key);
+    if (timer != null) {
+      window.clearTimeout(timer);
+      this.emptyHoldTimerBySource.delete(key);
+    }
+    this.pendingEmptyBySource.delete(key);
+  }
+
   private pushPayload(payload: StreamMetadata) {
     if (this.cancelled) return;
     const key: SourceKey = payload.source_id ?? null;
@@ -186,8 +200,42 @@ export class RunMetadataStore {
 
     this.seqKeyBySource.set(key, seqKey);
     this.latestAtBySource.set(key, Date.now());
-    this.latestBySource.set(key, payload);
     this.wasFreshBySource.set(key, true);
+
+    const objects = payload.objects ?? [];
+    if (objects.length > 0) {
+      this._cancelEmptyHold(key);
+      this.heldObjectsBySource.set(key, objects);
+      this.latestBySource.set(key, payload);
+      this._notifySubscribers(key, payload);
+      this._notifyFreshness();
+      return;
+    }
+
+    const held = this.heldObjectsBySource.get(key);
+    if (held && held.length > 0) {
+      this._cancelEmptyHold(key);
+      this.pendingEmptyBySource.set(key, payload);
+      const display: StreamMetadata = { ...payload, objects: held };
+      this.latestBySource.set(key, display);
+      this._notifySubscribers(key, display);
+      const timer = window.setTimeout(() => {
+        this.emptyHoldTimerBySource.delete(key);
+        const pending = this.pendingEmptyBySource.get(key);
+        this.pendingEmptyBySource.delete(key);
+        this.heldObjectsBySource.delete(key);
+        if (!pending || this.cancelled) return;
+        const cleared = clearedOverlayPayload(pending);
+        this.latestBySource.set(key, cleared);
+        this._notifySubscribers(key, cleared);
+        this._notifyFreshness();
+      }, EMPTY_OBJECTS_HOLD_MS);
+      this.emptyHoldTimerBySource.set(key, timer);
+      this._notifyFreshness();
+      return;
+    }
+
+    this.latestBySource.set(key, payload);
     this._notifySubscribers(key, payload);
     this._notifyFreshness();
   }
@@ -281,6 +329,11 @@ export class RunMetadataStore {
   private close() {
     this.cancelled = true;
     this._stopFreshnessTimer();
+    for (const timer of this.emptyHoldTimerBySource.values()) {
+      window.clearTimeout(timer);
+    }
+    this.emptyHoldTimerBySource.clear();
+    this.pendingEmptyBySource.clear();
     if (this.retryTimer != null) window.clearTimeout(this.retryTimer);
     if (this.restTimer != null) window.clearInterval(this.restTimer);
     this.retryTimer = null;

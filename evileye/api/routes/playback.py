@@ -22,6 +22,7 @@ from evileye.api.core.camera_access import (
 )
 from evileye.api.core.playback_metadata_service import DEFAULT_MATCH_SEC
 from evileye.api.core.route_timeouts import playback_detections_timeout_sec, playback_route_timeout_sec
+from evileye.api.core.singleflight import singleflight
 
 logger = logging.getLogger("evileye.api.playback")
 
@@ -32,8 +33,11 @@ _memory_lock = threading.Lock()
 _memory_cache: dict[str, tuple[float | None, Any]] = {}
 _TIMELINE_HAPPY_TTL_SEC = 45.0
 _TIMELINE_SLOT_WAIT_SEC = 15.0
+_METADATA_HAPPY_TTL_SEC = 10.0
 # Keep light endpoints off the default pool so timeline rebuilds cannot starve /cameras.
 _light_pool = ThreadPoolExecutor(max_workers=4, thread_name_prefix="playback-light")
+# Metadata builds can be cold-heavy; keep them off the media/cameras light pool.
+_metadata_pool = ThreadPoolExecutor(max_workers=4, thread_name_prefix="playback-meta")
 # Heavy journal scans — tiny pool + semaphore so wheel/seek storms cannot open unbounded work.
 _detections_pool = ThreadPoolExecutor(max_workers=2, thread_name_prefix="playback-det")
 _timeline_slots = asyncio.Semaphore(2)
@@ -153,7 +157,11 @@ async def _to_thread_with_timeout_or_cached(
             "playback route timeout detail=%s timeout_sec=%s executor=%s %s",
             err_detail,
             timeout,
-            "light" if executor is _light_pool else ("detections" if executor is _detections_pool else "default"),
+            "light" if executor is _light_pool else (
+                "metadata" if executor is _metadata_pool else (
+                    "detections" if executor is _detections_pool else "default"
+                )
+            ),
             " ".join(f"{k}={v}" for k, v in (log_ctx or {}).items()),
         )
         if on_timeout is not None:
@@ -500,13 +508,21 @@ async def playback_metadata(
     static_only: bool = Query(False, description="Return config-only layers (zones, ROI)"),
     frame_w: Optional[int] = Query(None, ge=1, description="Actual video frame width from client"),
     frame_h: Optional[int] = Query(None, ge=1, description="Actual video frame height from client"),
-) -> dict:
+) -> JSONResponse:
     access = resolve_camera_access(request)
     effective_ts = float(ts if ts is not None else 0.0)
     if not static_only and ts is None:
         raise HTTPException(status_code=400, detail="ts query required unless static_only=true")
     if cameras:
         cam_list = _require_cameras(access, [c.strip() for c in cameras.split(",") if c.strip()], single=False)
+        cams_key = ",".join(cam_list)
+        mem_key = (
+            f"playback:metadata:{int(static_only)}:{date}:{run_id}:{window}:"
+            f"{frame_w}x{frame_h}:{int(effective_ts)}:{cams_key}"
+        )
+        fresh = _recall(mem_key, require_fresh=True)
+        if fresh is not None:
+            return _json_with_cache(fresh, "hit")
 
         def _batch():
             return {
@@ -522,15 +538,28 @@ async def playback_metadata(
                 )
             }
 
-        return await _to_thread_with_timeout_or_cached(
-            _batch,
-            lambda: None,
+        def _load():
+            return singleflight(mem_key, _batch)
+
+        payload = await _to_thread_with_timeout_or_cached(
+            _load,
+            lambda: _recall(mem_key),
             err_detail="playback_metadata timeout",
+            executor=_metadata_pool,
             log_ctx={"date": date, "n_cameras": len(cam_list), "route": "metadata"},
         )
+        _remember(mem_key, payload, ttl_sec=_METADATA_HAPPY_TTL_SEC)
+        return _json_with_cache(payload, "miss")
     if not camera:
         raise HTTPException(status_code=400, detail="camera or cameras query required")
     _require_cameras(access, [camera], single=True)
+    mem_key = (
+        f"playback:metadata:{int(static_only)}:{date}:{run_id}:{window}:"
+        f"{frame_w}x{frame_h}:{int(effective_ts)}:{camera}:{source_id}"
+    )
+    fresh = _recall(mem_key, require_fresh=True)
+    if fresh is not None:
+        return _json_with_cache(fresh, "hit")
 
     def _one():
         if static_only:
@@ -554,12 +583,18 @@ async def playback_metadata(
             )
         return {"metadata": payload}
 
-    return await _to_thread_with_timeout_or_cached(
-        _one,
-        lambda: None,
+    def _load_one():
+        return singleflight(mem_key, _one)
+
+    payload = await _to_thread_with_timeout_or_cached(
+        _load_one,
+        lambda: _recall(mem_key),
         err_detail="playback_metadata timeout",
+        executor=_metadata_pool,
         log_ctx={"date": date, "n_cameras": 1, "route": "metadata"},
     )
+    _remember(mem_key, payload, ttl_sec=_METADATA_HAPPY_TTL_SEC)
+    return _json_with_cache(payload, "miss")
 
 
 def _slice_detections_payload(
@@ -952,11 +987,20 @@ async def playback_media(request: Request, path: str = Query(...)):
 
     try:
         try:
-            resolved = await asyncio.to_thread(svc.resolve_media_path, path)
+            loop = asyncio.get_running_loop()
+
+            def _resolve_and_stat():
+                resolved = svc.resolve_media_path(path)
+                if not resolved.is_file():
+                    return None
+                return resolved, resolved.stat()
+
+            pair = await loop.run_in_executor(_light_pool, _resolve_and_stat)
         except PermissionError as exc:
             raise HTTPException(status_code=403, detail=str(exc)) from exc
-        if not resolved.exists() or not resolved.is_file():
+        if pair is None:
             raise HTTPException(status_code=404, detail="Media not found")
+        resolved, st = pair
         media_type = mimetypes.guess_type(str(resolved))[0] or "application/octet-stream"
 
         class _TrackedFileResponse(FileResponse):
@@ -969,6 +1013,7 @@ async def playback_media(request: Request, path: str = Query(...)):
         return _TrackedFileResponse(
             str(resolved),
             media_type=media_type,
+            stat_result=st,
             headers={"Accept-Ranges": "bytes", "Cache-Control": "public, max-age=3600"},
         )
     except Exception:

@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { StreamMetadata } from '../../api';
 import {
   contentSequenceKey,
+  EMPTY_OBJECTS_HOLD_MS,
   METADATA_HARD_CLEAR_MS,
   METADATA_TTL_MS,
   RunMetadataStore,
@@ -111,13 +112,44 @@ describe('RunMetadataStore freshness', () => {
     expect(updates[updates.length - 1]?.objects).toEqual([]);
   });
 
-  it('clears objects immediately on new empty scene sequence', () => {
+  it('holds objects across empty sequence until EMPTY_OBJECTS_HOLD_MS', () => {
+    const store = new RunMetadataStore(7);
+    const updates: StreamMetadata[] = [];
+    store.subscribe(0, (p) => updates.push(p));
+
+    const heldObj = { object_id: 1, bbox: [0.1, 0.1, 0.2, 0.2] as [number, number, number, number] };
+    store.pushPayloadForTest(payload({ source_id: 0, frame_id: 50, objects: [heldObj] }));
+    store.pushPayloadForTest(
+      payload({
+        source_id: 0,
+        frame_id: 51,
+        objects: [],
+        zones: [{ zone_id: 9 } as never],
+      }),
+    );
+    const duringHold = updates[updates.length - 1];
+    expect(duringHold?.objects).toEqual([heldObj]);
+    expect(duringHold?.zones).toEqual([{ zone_id: 9 }]);
+
+    vi.advanceTimersByTime(EMPTY_OBJECTS_HOLD_MS);
+    expect(updates[updates.length - 1]?.objects).toEqual([]);
+    expect(updates[updates.length - 1]?.zones).toEqual([{ zone_id: 9 }]);
+  });
+
+  it('cancels empty hold when a non-empty sequence arrives', () => {
     const store = new RunMetadataStore(7);
     const updates: StreamMetadata[] = [];
     store.subscribe(0, (p) => updates.push(p));
 
     store.pushPayloadForTest(payload({ source_id: 0, frame_id: 50 }));
     store.pushPayloadForTest(payload({ source_id: 0, frame_id: 51, objects: [] }));
-    expect(updates[updates.length - 1]?.objects).toEqual([]);
+    expect(updates[updates.length - 1]?.objects?.length).toBeGreaterThan(0);
+
+    const next = { object_id: 2, bbox: [0.3, 0.3, 0.4, 0.4] as [number, number, number, number] };
+    store.pushPayloadForTest(payload({ source_id: 0, frame_id: 52, objects: [next] }));
+    expect(updates[updates.length - 1]?.objects).toEqual([next]);
+
+    vi.advanceTimersByTime(EMPTY_OBJECTS_HOLD_MS + 100);
+    expect(updates[updates.length - 1]?.objects).toEqual([next]);
   });
 });

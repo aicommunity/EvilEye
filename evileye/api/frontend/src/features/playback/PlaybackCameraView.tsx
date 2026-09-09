@@ -645,6 +645,7 @@ export function PlaybackVideoSurface({
 }) {
   const { t } = useI18n();
   const [seeking, setSeeking] = useState(false);
+  const [mediaReadyState, setMediaReadyState] = useState<number | null>(null);
   const lastSlotUrlRef = useRef<string | null>(null);
   if (slot?.url) lastSlotUrlRef.current = slot.url;
   const videoSrc = slot?.url ?? (seeking ? lastSlotUrlRef.current : null);
@@ -662,14 +663,28 @@ export function PlaybackVideoSurface({
   useEffect(() => {
     const v = videoRef.current;
     if (!v) return;
-    const onSeeking = () => setSeeking(true);
-    const onSeeked = () => setSeeking(false);
+    const syncReady = () => setMediaReadyState(v.readyState);
+    const onSeeking = () => {
+      setSeeking(true);
+      syncReady();
+    };
+    const onSeeked = () => {
+      setSeeking(false);
+      syncReady();
+    };
     v.addEventListener('seeking', onSeeking);
     v.addEventListener('seeked', onSeeked);
+    v.addEventListener('loadeddata', syncReady);
+    v.addEventListener('canplay', syncReady);
+    v.addEventListener('waiting', syncReady);
     setSeeking(v.seeking);
+    setMediaReadyState(v.readyState);
     return () => {
       v.removeEventListener('seeking', onSeeking);
       v.removeEventListener('seeked', onSeeked);
+      v.removeEventListener('loadeddata', syncReady);
+      v.removeEventListener('canplay', syncReady);
+      v.removeEventListener('waiting', syncReady);
     };
   }, [videoRef, slot?.url, mediaEpoch]);
 
@@ -730,6 +745,7 @@ export function PlaybackVideoSurface({
             seeking={seeking}
             loading={loading}
             hasObjects={(meta?.objects?.length ?? 0) > 0}
+            mediaReadyState={mediaReadyState}
           />
         </>
       ) : staticFrame?.previewPath ? (
