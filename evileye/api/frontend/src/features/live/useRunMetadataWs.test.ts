@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { StreamMetadata } from '../../api';
 import {
   contentSequenceKey,
+  METADATA_HARD_CLEAR_MS,
   METADATA_TTL_MS,
   RunMetadataStore,
 } from './useRunMetadataWs';
@@ -72,10 +73,10 @@ describe('RunMetadataStore freshness', () => {
     expect(store.isFresh(0)).toBe(true);
 
     vi.advanceTimersByTime(1500);
+    store.runFreshnessCheckForTest();
     expect(store.isFresh(0)).toBe(false);
-    expect(updates.length).toBeGreaterThanOrEqual(2);
     const last = updates[updates.length - 1];
-    expect(last.objects).toEqual([]);
+    expect(last.objects?.length).toBeGreaterThan(0);
   });
 
   it('resets TTL when frame_id changes', () => {
@@ -90,7 +91,7 @@ describe('RunMetadataStore freshness', () => {
     expect(store.isFresh(0)).toBe(true);
   });
 
-  it('clears overlay objects after TTL expires', () => {
+  it('holds objects after soft TTL and clears after hard clear', () => {
     const store = new RunMetadataStore(7);
     const updates: StreamMetadata[] = [];
     store.subscribe(0, (p) => updates.push(p));
@@ -102,8 +103,21 @@ describe('RunMetadataStore freshness', () => {
     vi.advanceTimersByTime(METADATA_TTL_MS + 600);
     store.runFreshnessCheckForTest();
     store.pushPayloadForTest(payload({ source_id: 0, frame_id: 50 }));
+    expect(store.isFresh(0)).toBe(false);
+    expect(updates[updates.length - 1]?.objects?.length).toBeGreaterThan(0);
 
-    const cleared = updates.find((p) => p.objects?.length === 0);
-    expect(cleared).toBeDefined();
+    vi.advanceTimersByTime(METADATA_HARD_CLEAR_MS);
+    store.runFreshnessCheckForTest();
+    expect(updates[updates.length - 1]?.objects).toEqual([]);
+  });
+
+  it('clears objects immediately on new empty scene sequence', () => {
+    const store = new RunMetadataStore(7);
+    const updates: StreamMetadata[] = [];
+    store.subscribe(0, (p) => updates.push(p));
+
+    store.pushPayloadForTest(payload({ source_id: 0, frame_id: 50 }));
+    store.pushPayloadForTest(payload({ source_id: 0, frame_id: 51, objects: [] }));
+    expect(updates[updates.length - 1]?.objects).toEqual([]);
   });
 });

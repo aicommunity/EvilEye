@@ -3,6 +3,8 @@ import { request, streamMetadataWsUrl, type StreamMetadata } from '../../api';
 
 const REST_FALLBACK_MS = 1500;
 export const METADATA_TTL_MS = 4000;
+/** No new metadata sequence for this long → wipe objects (pipeline likely dead). */
+export const METADATA_HARD_CLEAR_MS = 30000;
 
 function metadataFingerprint(payload: StreamMetadata): string {
   try {
@@ -151,11 +153,12 @@ export class RunMetadataStore {
     ]);
     for (const key of keys) {
       const nowFresh = this.isFresh(key);
-      const wasFresh = this.wasFreshBySource.get(key) ?? false;
-
-      if (wasFresh && !nowFresh) {
+      // Soft-stale: do NOT clear objects (hold + dim on the tile). Hard-clear only
+      // after a long gap with no new sequence key.
+      const at = this.latestAtBySource.get(key);
+      if (at != null && Date.now() - at >= METADATA_HARD_CLEAR_MS) {
         const prev = this.latestBySource.get(key);
-        if (prev) {
+        if (prev && (prev.objects?.length ?? 0) > 0) {
           const cleared = clearedOverlayPayload(prev);
           this.latestBySource.set(key, cleared);
           this._notifySubscribers(key, cleared);

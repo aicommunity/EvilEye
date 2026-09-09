@@ -12,6 +12,12 @@ export type OverlayLayoutBox = {
 export type OverlayDensity = 'compact' | 'full';
 export type OverlayRenderMode = 'live' | 'playback';
 
+function objectOverlayKey(o: StreamMetadataObject, i: number): string {
+  if (o.object_id != null) return `oid:${o.object_id}`;
+  if (o.track_id != null) return `tid:${o.track_id}`;
+  return `idx:${i}`;
+}
+
 export function OverlayCanvas({
   meta,
   layoutBox,
@@ -128,7 +134,7 @@ export function OverlayCanvas({
               const [x1, y1, x2, y2] = b;
               return (
                 <rect
-                  key={`o${i}`}
+                  key={objectOverlayKey(o, i)}
                   x={x1 * 100}
                   y={y1 * 100}
                   width={(x2 - x1) * 100}
@@ -179,7 +185,7 @@ function renderCompactObjectLabel(o: StreamMetadataObject, i: number) {
   const trackLabel = o.track_id != null ? String(o.track_id) : '?';
   return (
     <div
-      key={`lc${i}`}
+      key={`lc:${objectOverlayKey(o, i)}`}
       className="live-overlay-label live-overlay-label--compact"
       style={{
         left: `${x1 * 100}%`,
@@ -197,7 +203,7 @@ function renderObjectLabel(o: StreamMetadataObject, i: number) {
   const [x1, y1] = b;
   return (
     <div
-      key={`l${i}`}
+      key={`l:${objectOverlayKey(o, i)}`}
       className="live-overlay-label"
       style={{
         left: `${x1 * 100}%`,
@@ -215,7 +221,7 @@ function renderObjectAttributes(o: StreamMetadataObject, i: number) {
   const [x1, , , y2] = b;
   return (
     <div
-      key={`a${i}`}
+      key={`a:${objectOverlayKey(o, i)}`}
       className="live-overlay-attrs"
       style={{
         left: `${x1 * 100}%`,

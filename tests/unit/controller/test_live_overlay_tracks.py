@@ -1,5 +1,3 @@
-from types import SimpleNamespace
-
 from evileye.controller.controller_processing_mixin import ControllerProcessingMixin
 from evileye.core.frame import Frame
 from evileye.objects_handler.object_result import ObjectResult, ObjectResultList
@@ -34,30 +32,19 @@ def _make_obj(source_id=0, frame_id=100):
     return obj, obj_list
 
 
-def test_preview_matches_objects_within_track_frame_match_window():
-    host = _PreviewHost(vis_cfg={"track_frame_match_window": 10})
-    frame = Frame()
-    frame.source_id = 0
-    frame.frame_id = 105
-
-    obj, obj_list = _make_obj(frame_id=100)
-    ctx = host._build_preview_render_context(frame, {0: obj_list})
-    assert ctx.track_info == [obj]
-
-
-def test_preview_returns_empty_when_frame_id_far_without_env():
-    host = _PreviewHost(vis_cfg={"track_frame_match_window": 1})
+def test_live_overlay_includes_active_when_frame_id_far():
+    host = _PreviewHost()
     frame = Frame()
     frame.source_id = 0
     frame.frame_id = 200
 
     obj, obj_list = _make_obj(frame_id=100)
     ctx = host._build_preview_render_context(frame, {0: obj_list})
-    assert ctx.track_info == []
+    assert ctx.track_info == [obj]
 
 
-def test_preview_skips_lost_countdown_objects_when_frame_id_far():
-    host = _PreviewHost(vis_cfg={"track_frame_match_window": 1})
+def test_live_overlay_excludes_lost_countdown():
+    host = _PreviewHost()
     frame = Frame()
     frame.source_id = 0
     frame.frame_id = 200
@@ -68,21 +55,27 @@ def test_preview_skips_lost_countdown_objects_when_frame_id_far():
     assert ctx.track_info == []
 
 
-def test_preview_fallback_active_objects_when_frame_id_far_with_env(monkeypatch):
-    monkeypatch.setenv("EVILEYE_PREVIEW_FALLBACK_ALL", "1")
-    host = _PreviewHost(vis_cfg={"track_frame_match_window": 1})
+def test_live_overlay_filters_other_source():
+    host = _PreviewHost()
     frame = Frame()
     frame.source_id = 0
-    frame.frame_id = 200
+    frame.frame_id = 50
 
-    obj, obj_list = _make_obj(frame_id=100)
-    ctx = host._build_preview_render_context(frame, {0: obj_list})
-    assert ctx.track_info == [obj]
+    other, other_list = _make_obj(source_id=1, frame_id=50)
+    ctx = host._build_preview_render_context(frame, {0: other_list})
+    assert ctx.track_info == []
+    assert other not in ctx.track_info
+
+
+def test_live_overlay_empty_without_objects():
+    host = _PreviewHost()
+    assert host._resolve_live_overlay_tracks(ObjectResultList(), 0) == []
+    assert host._resolve_live_overlay_tracks(None, 0) == []
 
 
 def test_pick_preview_frame_prefers_nearest_object_frame_id():
     host = _PreviewHost()
-    obj, obj_list = _make_obj(frame_id=100)
+    _obj, obj_list = _make_obj(frame_id=100)
 
     near = Frame()
     near.source_id = 0
@@ -96,8 +89,3 @@ def test_pick_preview_frame_prefers_nearest_object_frame_id():
 
     picked = host._pick_preview_frame_for_source([far, near], 0, obj_list)
     assert picked is near
-
-
-def test_resolve_preview_track_info_empty_without_objects():
-    host = _PreviewHost()
-    assert host._resolve_preview_track_info(ObjectResultList(), 10) == []

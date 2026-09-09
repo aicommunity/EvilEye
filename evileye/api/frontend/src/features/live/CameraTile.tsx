@@ -94,10 +94,10 @@ export function CameraTile({
   const wantMetaSub = running && active && mode !== 'offline';
   const showOverlay =
     wantMetaSub && mode !== 'error' && camera.reconnecting !== true && (mode === 'live' || mode === 'stale');
-  const overlayDimmed = mode === 'stale';
   const meta = useRunMetadataWs(wantMetaSub ? camera.run_id : null, camera.source_id ?? null);
   const metaFresh = useMetadataFreshness(wantMetaSub ? camera.run_id : null, camera.source_id ?? null);
-  const overlayMeta = meta && metaFresh ? meta : null;
+  const overlayDimmed = mode === 'stale' || !metaFresh;
+  const overlayMeta = meta;
   // Keep snapshot polling until the first WS blob arrives — otherwise onopen
   // (connected=true) blanks the tile after Live remount from Playback.
   const hasWsFrame = Boolean(previewBlobUrl);

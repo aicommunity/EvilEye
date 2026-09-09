@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import datetime
-import os
 import pprint
 import time
 
@@ -15,43 +14,22 @@ from evileye.visualization_modules.preview_render import PreviewRenderContext
 
 
 class ControllerProcessingMixin:
-    def _get_preview_track_match_window(self) -> int:
-        vis_cfg = self._get_preview_visualizer_cfg()
-        try:
-            raw = vis_cfg.get("track_frame_match_window", 10)
-            return max(0, int(raw if raw is not None else 10))
-        except Exception:
-            return 10
-
-    def _resolve_preview_track_info(self, object_list: ObjectResultList | None, frame_id) -> list:
-        if not object_list:
+    def _resolve_live_overlay_tracks(
+            self,
+            object_list: ObjectResultList | None,
+            source_id,
+    ) -> list:
+        """Live overlay: current active tracks for the camera (not frame_id-gated)."""
+        if not object_list or not getattr(object_list, "objects", None):
             return []
-        max_delta = self._get_preview_track_match_window()
-        track_info: list = []
-        if frame_id is not None:
-            track_info = object_list.find_objects_by_frame_id(frame_id, use_history=False)
-            if not track_info and max_delta > 0:
-                try:
-                    track_info = object_list.find_objects_near_frame_id(
-                        frame_id,
-                        max_delta=max_delta,
-                        use_history=True,
-                    )
-                except Exception:
-                    track_info = []
-        if track_info:
-            track_info = [
-                obj for obj in track_info
-                if getattr(obj, "lost_frames", 0) == 0
-            ]
-        if (
-            not track_info
-            and object_list.get_num_objects() > 0
-            and os.getenv("EVILEYE_PREVIEW_FALLBACK_ALL", "").strip().lower()
-            in {"1", "true", "yes", "on"}
-        ):
-            track_info = list(object_list.objects)
-        return track_info
+        tracks = []
+        for obj in object_list.objects:
+            if getattr(obj, "lost_frames", 0) != 0:
+                continue
+            if source_id is not None and getattr(obj, "source_id", None) != source_id:
+                continue
+            tracks.append(obj)
+        return tracks
 
     def _pick_preview_frame_for_source(
             self,
@@ -93,15 +71,8 @@ class ControllerProcessingMixin:
     def _build_preview_render_context(self, frame,
                                       objects_by_source: dict[int, ObjectResultList]) -> PreviewRenderContext:
         source_id = getattr(frame, "source_id", None)
-        frame_id = getattr(frame, "frame_id", None)
         object_list = objects_by_source.get(source_id, ObjectResultList())
-        track_info = self._resolve_preview_track_info(object_list, frame_id)
-        if source_id is not None:
-            track_info = [
-                obj for obj in track_info
-                if getattr(obj, "lost_frames", 0) == 0
-                and getattr(obj, "source_id", None) == source_id
-            ]
+        track_info = self._resolve_live_overlay_tracks(object_list, source_id)
         event_entries = self._get_preview_event_entries(source_id)
         event_cfg = self._get_preview_event_cfg()
         vis_cfg = self._get_preview_visualizer_cfg()
