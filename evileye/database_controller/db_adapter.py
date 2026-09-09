@@ -49,11 +49,15 @@ class DatabaseAdapterBase(EvilEyeBase, ABC):
 
     def start(self) -> None:
         self.run_flag = True
+        thread = self.query_thread
+        if thread is None or thread.ident is not None:
+            # Recreate after a previous start/stop (Thread can only be started once).
+            self.query_thread = Thread(target=self._execute_query)
         self.query_thread.start()
 
     def stop(self) -> None:
         self.run_flag = False
-        if self.query_thread.is_alive():
+        if self.query_thread is not None and self.query_thread.is_alive():
             self.query_thread.join()
 
     def default(self) -> None:

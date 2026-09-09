@@ -76,3 +76,4 @@ def test_new_object_added_when_db_insert_raises():
     handler._handle_active(tracking, image)
     assert len(handler.active_objs.objects) == 1
     assert handler.active_objs.objects[0].track.track_id == 3
+    assert handler.active_objs.objects[0].last_image is image

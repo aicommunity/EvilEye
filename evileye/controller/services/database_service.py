@@ -134,7 +134,12 @@ class DatabaseService:
 
     def start_adapters(self) -> None:
         """Запустить все адаптеры."""
+        seen: set[int] = set()
         for name, adapter in self._adapters.items():
+            adapter_id = id(adapter)
+            if adapter_id in seen:
+                continue
+            seen.add(adapter_id)
             try:
                 adapter.start()
                 self.logger.debug(f"Started adapter: {name}")
@@ -143,7 +148,12 @@ class DatabaseService:
 
     def stop_adapters(self) -> None:
         """Остановить все адаптеры."""
+        seen: set[int] = set()
         for name, adapter in self._adapters.items():
+            adapter_id = id(adapter)
+            if adapter_id in seen:
+                continue
+            seen.add(adapter_id)
             try:
                 adapter.stop()
                 self.logger.debug(f"Stopped adapter: {name}")

@@ -98,7 +98,11 @@ class DatabaseAdapterObjects(DatabaseAdapterBase):
             )
             return
 
-        self._save_image(preview_path, frame_path, image, box)
+        if image is None or getattr(image, "image", None) is None:
+            # Metadata row already written; skip image IO without AttributeError/spam.
+            pass
+        else:
+            self._save_image(preview_path, frame_path, image, box)
         if query_type == QueryType.INSERT:
             threading_events.notify(EventType.HANDLER_NEW_OBJECT)
         elif query_type == QueryType.UPDATE:

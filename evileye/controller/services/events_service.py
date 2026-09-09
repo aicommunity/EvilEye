@@ -304,7 +304,12 @@ class EventsService:
         return self._events_processor
 
     def start_detectors(self) -> None:
+        seen: set[int] = set()
         for name, detector in self._detectors.items():
+            det_id = id(detector)
+            if det_id in seen:
+                continue
+            seen.add(det_id)
             try:
                 detector.start()
                 self.logger.debug(f"Started detector: {name}")
@@ -312,7 +317,12 @@ class EventsService:
                 self.logger.error(f"Failed to start detector {name}: {e}")
 
     def stop_detectors(self) -> None:
+        seen: set[int] = set()
         for name, detector in self._detectors.items():
+            det_id = id(detector)
+            if det_id in seen:
+                continue
+            seen.add(det_id)
             try:
                 detector.stop()
                 self.logger.debug(f"Stopped detector: {name}")

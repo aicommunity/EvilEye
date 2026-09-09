@@ -809,8 +809,8 @@ class ObjectsHandler(EvilEyeBase):
                 # Convert timestamp to datetime if needed
                 track_object.time_stamp = self._timestamp_to_datetime(tracking_results.time_stamp)
                 self._copy_frame_clock(track_object, image)
-                # Store reference to image instead of copying to save memory
-                # The image will be used for saving, then cleared when object is lost
+                # One shared Frame ref per active object (I1/I2); replace each frame, never copy-every-frame.
+                # Cleared only on lost / pool release (I5). History stays metadata-only (I3).
                 track_object.last_image = image
                 track_object.cur_video_pos = image.current_video_position
                 hist_elem = track_object.get_current_history_element(
@@ -825,7 +825,6 @@ class ObjectsHandler(EvilEyeBase):
                         self._object_history_pool.release(old_hist)
                 track_object.last_update = True
                 track_object.lost_frames = 0
-                track_object.last_image = None
             else:
                 # Используем пул объектов для оптимизации памяти
                 if self._use_object_pool and self._object_result_pool:
@@ -841,8 +840,7 @@ class ObjectsHandler(EvilEyeBase):
                 obj.frame_id = tracking_results.frame_id
                 obj.object_id = self.object_id_counter
                 obj.global_id = track.tracking_data.get('global_id', None)
-                # Store reference to image instead of copying to save memory
-                # The image will be used for saving, then cleared when object is lost
+                # One shared Frame ref; keep until lost so zone notify / DB lost path still see pixels.
                 obj.last_image = image
                 obj.cur_video_pos = image.current_video_position
                 self.object_id_counter += 1
@@ -900,7 +898,6 @@ class ObjectsHandler(EvilEyeBase):
                     except Exception as e:
                         self.logger.error(f"Labeling data saving error for found object: {e}")
 
-                obj.last_image = None
                 self.active_objs.objects.append(obj)
             # print(f"active_objs len={len(self.active_objs.objects)} size={asizeof.asizeof(self.active_objs.objects)/(1024.0*1024.0)}")
             # print(f"lost_objs len={len(self.lost_objs.objects)} size={asizeof.asizeof(self.lost_objs.objects)/(1024.0*1024.0)}")
