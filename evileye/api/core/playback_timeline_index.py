@@ -17,8 +17,9 @@ logger = logging.getLogger(__name__)
 INDEX_VERSION = 2
 # Soft TTL for "today" when source mtime keeps drifting under live capture.
 TODAY_REBUILD_SEC = 300.0
-# Half-window around each detection tick used to build journal coverage bands.
-INFERENCE_TICK_HALF_WINDOW_SEC = 30.0
+# Video continuing this long after the last detection tick ⇒ journal likely stalled.
+# Short/medium quiet (empty scene) is normal and must not be painted as a fault.
+INFERENCE_STALL_AFTER_LAST_TICK_SEC = 3 * 3600.0
 
 
 def _merge_intervals(intervals: list[tuple[float, float]]) -> list[tuple[float, float]]:
@@ -37,37 +38,19 @@ def _merge_intervals(intervals: list[tuple[float, float]]) -> list[tuple[float, 
     return merged
 
 
-def _subtract_intervals(
-    universe: list[tuple[float, float]],
-    cover: list[tuple[float, float]],
-) -> list[tuple[float, float]]:
-    """Return universe − cover as disjoint intervals."""
-    gaps: list[tuple[float, float]] = []
-    cover_m = _merge_intervals(cover)
-    for u_start, u_end in _merge_intervals(universe):
-        cursor = u_start
-        for c_start, c_end in cover_m:
-            if c_end <= cursor:
-                continue
-            if c_start >= u_end:
-                break
-            if c_start > cursor:
-                gaps.append((cursor, min(c_start, u_end)))
-            cursor = max(cursor, c_end)
-            if cursor >= u_end:
-                break
-        if cursor < u_end:
-            gaps.append((cursor, u_end))
-    return [(a, b) for a, b in gaps if b > a]
-
-
 def inference_gap_bands(
     segments: list[dict[str, Any]],
     ticks: list[dict[str, Any]],
     *,
-    half_window_sec: float = INFERENCE_TICK_HALF_WINDOW_SEC,
+    stall_after_last_tick_sec: float = INFERENCE_STALL_AFTER_LAST_TICK_SEC,
 ) -> list[dict[str, Any]]:
-    """Playable segment ranges not covered by detection-tick windows."""
+    """Mark only 'journal stalled while video continued' — not quiet no-detection periods.
+
+    For each merged playable continuum that has at least one tick, if recording
+    continues more than ``stall_after_last_tick_sec`` past the last tick, emit
+    ``[last_tick, continuum_end]``. Mid-session quiet gaps and segments with
+    zero ticks are left unmarked (normal empty scene / no objects).
+    """
     universe: list[tuple[float, float]] = []
     for seg in segments or []:
         try:
@@ -79,16 +62,28 @@ def inference_gap_bands(
             universe.append((start, end))
     if not universe:
         return []
-    cover: list[tuple[float, float]] = []
-    hw = max(0.0, float(half_window_sec))
+
+    tick_ts: list[float] = []
     for tick in ticks or []:
         try:
-            ts = float(tick["ts"] if isinstance(tick, dict) else tick[0])
+            tick_ts.append(float(tick["ts"] if isinstance(tick, dict) else tick[0]))
         except (TypeError, ValueError, KeyError, IndexError):
             continue
-        cover.append((ts - hw, ts + hw))
-    gaps = _subtract_intervals(universe, cover)
-    return [{"from": a, "to": b, "kind": "inference_gap"} for a, b in gaps]
+    tick_ts.sort()
+    if not tick_ts:
+        return []
+
+    stall_need = max(0.0, float(stall_after_last_tick_sec))
+    bands: list[dict[str, Any]] = []
+    for u_start, u_end in _merge_intervals(universe):
+        in_block = [ts for ts in tick_ts if u_start <= ts <= u_end]
+        if not in_block:
+            continue
+        last = in_block[-1]
+        if u_end - last < stall_need:
+            continue
+        bands.append({"from": last, "to": u_end, "kind": "inference_gap"})
+    return bands
 
 
 def _atomic_write_json(path: Path, payload: dict[str, Any]) -> None:

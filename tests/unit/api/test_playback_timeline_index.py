@@ -226,21 +226,26 @@ def test_build_timeline_singleflight(monkeypatch):
         outs = list(pool.map(lambda _: call(), range(3)))
     assert builds["n"] == 1
     assert all(o["by_camera"]["Cam1"]["detection_ticks"][0]["ts"] == 1.5 for o in outs)
-    # Tick at 1.5 ±30s covers [1,2] segment → no inference gap.
+    # Tick inside short segment — no long stall after last tick.
     assert outs[0]["by_camera"]["Cam1"]["bands"] == []
 
 
-def test_inference_gap_bands_full_segment_without_ticks():
-    segs = [{"start_ts": 100.0, "end_ts": 200.0}]
-    bands = idx.inference_gap_bands(segs, [])
-    assert bands == [{"from": 100.0, "to": 200.0, "kind": "inference_gap"}]
+def test_inference_gap_bands_skips_empty_and_short_quiet():
+    """No ticks / brief quiet between ticks is normal — do not paint red."""
+    segs = [{"start_ts": 100.0, "end_ts": 500.0}]
+    assert idx.inference_gap_bands(segs, []) == []
+    ticks = [{"ts": 120.0}, {"ts": 200.0}]  # 80s quiet mid-block, then more video < stall
+    assert idx.inference_gap_bands(segs, ticks, stall_after_last_tick_sec=600.0) == []
 
 
-def test_inference_gap_bands_edges_around_tick_window():
-    segs = [{"start_ts": 0.0, "end_ts": 200.0}]
-    ticks = [{"ts": 100.0}]
-    bands = idx.inference_gap_bands(segs, ticks, half_window_sec=30.0)
-    assert bands == [
-        {"from": 0.0, "to": 70.0, "kind": "inference_gap"},
-        {"from": 130.0, "to": 200.0, "kind": "inference_gap"},
-    ]
+def test_inference_gap_bands_marks_stall_after_last_tick():
+    segs = [{"start_ts": 0.0, "end_ts": 20_000.0}]
+    ticks = [{"ts": 100.0}, {"ts": 500.0}]
+    bands = idx.inference_gap_bands(segs, ticks, stall_after_last_tick_sec=3 * 3600.0)
+    assert bands == [{"from": 500.0, "to": 20_000.0, "kind": "inference_gap"}]
+
+
+def test_inference_gap_bands_ignores_sub_threshold_terminal_quiet():
+    segs = [{"start_ts": 0.0, "end_ts": 5_000.0}]
+    ticks = [{"ts": 100.0}, {"ts": 4_000.0}]  # ~16 min of video after last tick
+    assert idx.inference_gap_bands(segs, ticks, stall_after_last_tick_sec=3 * 3600.0) == []
