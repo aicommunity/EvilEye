@@ -931,16 +931,16 @@ export function PlaybackPage() {
   if (!runResolved || camerasLoading) gridEmpty = t('playback.loadingCamerasGrid');
   else if (!cameras.length) gridEmpty = t('playback.noCamerasForDate');
   else if (!selectedIds.length) gridEmpty = t('playback.selectCameras');
-  else if (
-    segmentsLoaded &&
-    !Object.values(segmentsByCam).some((s) => s.length) &&
-    cameras.some((c) => c.has_detection_ticks || c.has_events) &&
-    !cameras.some((c) => c.has_stream_segments || (c.segment_count ?? 0) > 0)
-  ) {
-    gridEmpty = t('playback.noStreamSegmentsRetention');
-  } else if (archivePreparing) gridEmpty = t('playback.preparingArchive');
+  else if (archivePreparing) gridEmpty = t('playback.preparingArchive');
   else if (segmentsLoading || (!segmentsLoaded && cameras.length > 0)) gridEmpty = t('playback.loadingSegment');
   else if (segmentsError && !Object.values(segmentsByCam).some((s) => s.length)) gridEmpty = segmentsError;
+
+  const journalOnlyDay =
+    segmentsLoaded &&
+    selectedIds.length > 0 &&
+    !Object.values(segmentsByCam).some((s) => s.length) &&
+    cameras.some((c) => c.has_detection_ticks || c.has_events) &&
+    !cameras.some((c) => c.has_stream_segments || (c.segment_count ?? 0) > 0);
 
   return (
     <section className={`panel active playback-page${mode === 'fit' ? ' playback-page--fit' : ''}`}>
@@ -1043,6 +1043,9 @@ export function PlaybackPage() {
         </div>
         {!flags.loading && flags.recordingEnabled === false ? (
           <p className="setup-banner playback-setup-banner">{t('playback.recordingDisabled')}</p>
+        ) : null}
+        {journalOnlyDay ? (
+          <p className="setup-banner playback-setup-banner">{t('playback.noStreamSegmentsRetention')}</p>
         ) : null}
         <div className="playback-camera-picker">
           {(!runResolved || camerasLoading) ? <span className="hint">{t('playback.loadingCameras')}</span> : null}

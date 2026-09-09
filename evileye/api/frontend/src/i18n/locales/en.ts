@@ -271,7 +271,7 @@ const en: Dict = {
     loadingCamerasGrid: 'Loading cameras…',
     noCamerasForDate: 'No cameras for the selected date.',
     noStreamSegmentsRetention:
-      'No continuous recordings for this day (video may have been cleaned by retention). Events or detection marks may still be available.',
+      'No continuous recordings for this day (video may have been cleaned by retention). Frames are available via detection and event marks on the timeline.',
     overnightSessionHint:
       'Live recording may still be stored under the previous calendar day until the session restarts.',
     selectCameras: 'Select cameras.',
