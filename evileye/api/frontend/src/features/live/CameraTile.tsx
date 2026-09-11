@@ -120,23 +120,31 @@ export function CameraTile({
 
   useEffect(() => {
     if (prevModeRef.current != null && prevModeRef.current !== mode) {
-      clientTelemetryLog(
-        'mode_change',
-        {
-          source_id: camera.source_id,
-          camera: camera.source_name,
-          from: prevModeRef.current,
-          to: mode,
-          frameAge: previewFrameAgeSec ?? null,
-          reconnecting: camera.reconnecting === true,
-          is_working: camera.is_working,
-          preview_available: camera.preview_available,
-          imgSrcKind,
-          previewWsActive,
-          hasWsFrame,
-        },
-        'live',
-      );
+      const frameAge = previewFrameAgeSec ?? null;
+      const blankNoise =
+        !hasWsFrame &&
+        (frameAge == null || frameAge === 0) &&
+        camera.reconnecting !== true;
+      // Cursor/blank-WS flaps produce huge live↔stale noise with frameAge=0.
+      if (!blankNoise) {
+        clientTelemetryLog(
+          'mode_change',
+          {
+            source_id: camera.source_id,
+            camera: camera.source_name,
+            from: prevModeRef.current,
+            to: mode,
+            frameAge,
+            reconnecting: camera.reconnecting === true,
+            is_working: camera.is_working,
+            preview_available: camera.preview_available,
+            imgSrcKind,
+            previewWsActive,
+            hasWsFrame,
+          },
+          'live',
+        );
+      }
     }
     prevModeRef.current = mode;
   }, [

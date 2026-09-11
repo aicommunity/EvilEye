@@ -18,6 +18,7 @@ export const CLOCK_GRACE_MS = 400;
 let playbackClockOwner: string | null = null;
 let ownerBlockSince: number | null = null;
 const seekingSince = new WeakMap<HTMLVideoElement, number>();
+const lowReadySince = new WeakMap<HTMLVideoElement, number>();
 
 /** Injectable clock for unit tests. */
 let nowMs: () => number = () =>
@@ -45,6 +46,20 @@ export function seekingAgeMs(video: HTMLVideoElement): number {
   const started = seekingSince.get(video);
   if (started == null) {
     seekingSince.set(video, nowMs());
+    return 0;
+  }
+  return nowMs() - started;
+}
+
+/** How long `readyState < 2` (HAVE_NOTHING/HAVE_METADATA) has lasted — onmatsko-class hang. */
+export function lowReadyStateAgeMs(video: HTMLVideoElement): number {
+  if (video.readyState >= 2) {
+    lowReadySince.delete(video);
+    return 0;
+  }
+  const started = lowReadySince.get(video);
+  if (started == null) {
+    lowReadySince.set(video, nowMs());
     return 0;
   }
   return nowMs() - started;

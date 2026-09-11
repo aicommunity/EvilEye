@@ -10,7 +10,7 @@ Env:
   EVILEYE_SKIP_VITEST=1 to skip L1u (not recommended)
   EVILEYE_SKIP_LIVE=1 to skip L1 soft API poll
 
-Exit 0 only when required gates L1u + P1 + P2 pass.
+Exit 0 only when required gates L1u + P0t + P1 + P2 pass.
 """
 from __future__ import annotations
 
@@ -363,6 +363,111 @@ def gate_p2(session: Session, media_path: str | None) -> GateResult:
     )
 
 
+def gate_p0t(session: Session) -> GateResult:
+    """Timeline cold/warm: must not 503; p95 after warmup < 5s."""
+    cams = ",".join(CAMERAS)
+    fr = str(time.mktime(time.strptime(DATE + " 00:00:00", "%Y-%m-%d %H:%M:%S")))
+    to = str(float(fr) + 86400)
+    q = {"date": DATE, "cameras": cams, "from": fr, "to": to}
+    # warmup (may be cold rebuild)
+    session.get("/api/v1/playback/timeline", q, timeout=90)
+    durations: list[float] = []
+    statuses: list[int] = []
+    caches: list[str | None] = []
+    for _ in range(10):
+        code, dt, headers, _raw = session.get("/api/v1/playback/timeline", q, timeout=30)
+        statuses.append(code)
+        durations.append(dt * 1000.0)
+        caches.append(headers.get("x-playback-cache"))
+        time.sleep(0.05)
+    n503 = sum(1 for s in statuses if s == 503)
+    p95 = _p95(durations)
+    ok = n503 == 0 and all(s == 200 for s in statuses) and p95 < 5000.0
+    return GateResult(
+        "P0t",
+        True,
+        ok,
+        detail={
+            "n503": n503,
+            "statuses": statuses,
+            "caches": caches,
+            "p95_ms": round(p95, 1),
+            "mean_ms": round(statistics.mean(durations), 1) if durations else None,
+            "cameras": cams,
+        },
+        error=None if ok else f"n503={n503} p95_ms={p95:.1f}",
+    )
+
+
+def gate_p2m(session: Session, media_paths: list[str]) -> GateResult:
+    """Parallel Range waves across cameras; 503 busy ok ≤20%, no hangs."""
+    paths = [p for p in media_paths if p][:5]
+    if not paths:
+        return GateResult("P2m", False, True, detail={"skipped": True, "reason": "no_paths"})
+    statuses: list[int] = []
+    durations: list[float] = []
+    for _wave in range(4):
+        # sequential burst approximates browser parallel without threads
+        for path in paths:
+            code, dt, _, _raw = session.get(
+                "/api/v1/playback/media",
+                {"path": path},
+                headers={"Range": "bytes=0-65535"},
+                timeout=15,
+            )
+            statuses.append(code)
+            durations.append(dt * 1000.0)
+    n503 = sum(1 for s in statuses if s == 503)
+    n_ok = sum(1 for s in statuses if s in (200, 206))
+    n_other = len(statuses) - n503 - n_ok
+    frac503 = n503 / max(1, len(statuses))
+    hung = any(d > 10000 for d in durations)
+    ok = n_other == 0 and not hung and frac503 <= 0.20 and n_ok > 0
+    return GateResult(
+        "P2m",
+        False,
+        ok,
+        detail={
+            "n": len(statuses),
+            "n503": n503,
+            "frac503": round(frac503, 3),
+            "p95_ms": round(_p95(durations), 1),
+            "paths": len(paths),
+        },
+        error=None if ok else f"frac503={frac503:.2f} other={n_other} hung={hung}",
+    )
+
+
+def _paths_by_camera(session: Session) -> list[str]:
+    """Collect one media path per camera from timeline."""
+    fr = str(time.mktime(time.strptime(DATE + " 00:00:00", "%Y-%m-%d %H:%M:%S")))
+    to = str(float(fr) + 86400)
+    code, _, _, raw = session.get(
+        "/api/v1/playback/timeline",
+        {"date": DATE, "cameras": ",".join(CAMERAS), "from": fr, "to": to, "segments_only": "true"},
+        timeout=90,
+    )
+    if code != 200:
+        return []
+    try:
+        payload = json.loads(raw.decode("utf-8"))
+    except json.JSONDecodeError:
+        return []
+    by_cam = payload.get("by_camera") or {}
+    paths: list[str] = []
+    for cam in CAMERAS:
+        cam_payload = by_cam.get(cam) if isinstance(by_cam, dict) else None
+        segs = []
+        if isinstance(cam_payload, dict):
+            segs = cam_payload.get("segments") or []
+        elif isinstance(cam_payload, list):
+            segs = cam_payload
+        playable = [s for s in segs if isinstance(s, dict) and s.get("playable", True) and s.get("path")]
+        if playable:
+            paths.append(str(playable[len(playable) // 2]["path"]))
+    return paths
+
+
 def gate_p3() -> GateResult:
     if not CLIENT_DIAG.is_file():
         return GateResult("P3", False, False, detail={"skipped": False}, error="client_diag missing")
@@ -434,6 +539,9 @@ def main() -> int:
     gates.append(gate_l1(session))
     print(f"L1: {'PASS' if gates[-1].passed else 'FAIL'} {gates[-1].error or gates[-1].detail}")
 
+    gates.append(gate_p0t(session))
+    print(f"P0t: {'PASS' if gates[-1].passed else 'FAIL'} {gates[-1].error or gates[-1].detail}")
+
     mid_ts, media_path, seg_info = _mid_segment(session)
     print(f"segment: {seg_info}")
     seg_date = DATE
@@ -450,6 +558,12 @@ def main() -> int:
 
     gates.append(gate_p2(session, media_path))
     print(f"P2: {'PASS' if gates[-1].passed else 'FAIL'} {gates[-1].error or gates[-1].detail}")
+
+    multi_paths = _paths_by_camera(session)
+    if media_path and media_path not in multi_paths:
+        multi_paths = [media_path] + multi_paths
+    gates.append(gate_p2m(session, multi_paths))
+    print(f"P2m: {'PASS' if gates[-1].passed else 'FAIL'} {gates[-1].error or gates[-1].detail}")
 
     gates.append(gate_p3())
     print(f"P3: {'PASS' if gates[-1].passed else 'FAIL'} {gates[-1].error or gates[-1].detail}")

@@ -61,3 +61,18 @@ def test_add_object_lost_flush_at_buffer_size_does_not_deadlock(tmp_path):
         assert len(data.get("objects") or []) >= manager.buffer_size
     finally:
         manager.stop()
+
+
+def test_touch_writer_alive_creates_sidecar(tmp_path):
+    manager = LabelingManager(base_dir=str(tmp_path), preload_data=False)
+    try:
+        manager._touch_writer_alive()
+        alive = Path(tmp_path) / "Detections" / time.strftime("%Y-%m-%d") / "Metadata" / ".journal_writer_alive"
+        assert alive.is_file()
+        m1 = alive.stat().st_mtime
+        time.sleep(0.05)
+        manager._touch_writer_alive()
+        m2 = alive.stat().st_mtime
+        assert m2 >= m1
+    finally:
+        manager.stop()

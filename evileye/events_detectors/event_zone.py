@@ -26,6 +26,10 @@ def _resolve_event_image(obj, hist_obj=None):
         hist_image = getattr(hist, "last_image", None)
         if hist_image is not None and getattr(hist_image, "image", None) is not None:
             return _copy_frame_image(hist_image)
+    # Last resort: unfinished event may still hold enter snapshot on paired object attrs.
+    sticky = getattr(obj, "_zone_event_sticky_image", None)
+    if sticky is not None and getattr(sticky, "image", None) is not None:
+        return _copy_frame_image(sticky)
     return None
 
 
@@ -45,6 +49,12 @@ class ZoneEvent(Event):
             self.time_left = None
             self.video_path_entered = None
             self.video_path_left = None
+            # Sticky copy for later exit if last_image is cleared before UPDATE.
+            if self.img_entered is not None:
+                try:
+                    obj._zone_event_sticky_image = self.img_entered
+                except Exception:
+                    pass
         else:
             self.img_entered = None
             self.img_left = _resolve_event_image(obj, hist_obj=hist_obj)
@@ -54,6 +64,10 @@ class ZoneEvent(Event):
             self.time_left = ts or obj.time_stamp
             self.video_path_entered = None
             self.video_path_left = None
+            if self.img_left is None:
+                sticky = getattr(obj, "_zone_event_sticky_image", None)
+                if sticky is not None and getattr(sticky, "image", None) is not None:
+                    self.img_left = _copy_frame_image(sticky)
 
         self.long_term = True
 

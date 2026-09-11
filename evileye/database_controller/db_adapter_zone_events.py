@@ -146,11 +146,14 @@ class DatabaseAdapterZoneEvents(DatabaseAdapterBase):
             )
             return
 
-        if image is None:
+        if image is None or getattr(image, "image", None) is None:
             now = time.time()
             if (now - DatabaseAdapterZoneEvents._image_none_warn_ts) >= 60.0:
                 DatabaseAdapterZoneEvents._image_none_warn_ts = now
-                self.logger.warning('DB: Image is None in RETURNING; skipping image save')
+                self.logger.warning(
+                    "DB: ZoneEvents image missing (frame=%s); skipping image save",
+                    None if image is None else type(image).__name__,
+                )
             return
 
         self._save_image(preview_path, frame_path, image, box, zone_coords)

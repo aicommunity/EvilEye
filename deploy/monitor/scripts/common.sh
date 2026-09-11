@@ -184,11 +184,12 @@ print(int(newest))
 PY
 }
 
-# Echo detection_stale_<age>s when Streams are fresh but objects_found is stale/missing.
+# Echo detection_stale_<age>s when Streams are fresh but objects_found is stale/missing
+# AND the journal writer alive sidecar is also stale (quiet scenes keep .journal_writer_alive fresh).
 # Exit 0 when stale incident should fire; 1 otherwise.
 # Checks today and yesterday Streams/Detections (GST may keep writing into session-start day).
 check_detection_journal_stale() {
-    local data_root age_limit today yesterday streams_mtime found_mtime now age day found_file
+    local data_root age_limit today yesterday streams_mtime found_mtime alive_mtime now age day found_file alive_file
     data_root="$(resolve_data_root | head -1 | tr -d '\r')"
     [[ -n "$data_root" && -d "$data_root" ]] || return 1
     age_limit="${DETECTION_STALE_SEC:-600}"
@@ -208,10 +209,12 @@ check_detection_journal_stale() {
         return 1
     fi
     found_mtime=0
+    alive_mtime=0
     local found_any=0
     for day in "$today" "$yesterday"; do
         [[ -n "$day" ]] || continue
         found_file="$data_root/Detections/$day/Metadata/objects_found.json"
+        alive_file="$data_root/Detections/$day/Metadata/.journal_writer_alive"
         if [[ -f "$found_file" ]]; then
             found_any=1
             local mt
@@ -220,13 +223,28 @@ check_detection_journal_stale() {
                 found_mtime=$mt
             fi
         fi
+        if [[ -f "$alive_file" ]]; then
+            local amt
+            amt="$(stat -c %Y "$alive_file" 2>/dev/null || echo 0)"
+            if (( amt > alive_mtime )); then
+                alive_mtime=$amt
+            fi
+        fi
     done
     if (( found_any == 0 )); then
+        # No journal file yet — still OK if writer heartbeat is fresh.
+        if (( alive_mtime > 0 && now - alive_mtime <= age_limit )); then
+            return 1
+        fi
         echo "detection_stale_missing"
         return 0
     fi
     age=$(( now - found_mtime ))
     if (( age > age_limit )); then
+        # Quiet scene: writer alive sidecar still touches every ~30s.
+        if (( alive_mtime > 0 && now - alive_mtime <= age_limit )); then
+            return 1
+        fi
         echo "detection_stale_${age}s"
         return 0
     fi

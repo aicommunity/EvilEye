@@ -38,6 +38,10 @@ _METADATA_HAPPY_TTL_SEC = 10.0
 _light_pool = ThreadPoolExecutor(max_workers=4, thread_name_prefix="playback-light")
 # Metadata builds can be cold-heavy; keep them off the media/cameras light pool.
 _metadata_pool = ThreadPoolExecutor(max_workers=4, thread_name_prefix="playback-meta")
+# Timeline rebuilds must not share the default/asyncio pool with Range/FileResponse.
+_timeline_pool = ThreadPoolExecutor(max_workers=2, thread_name_prefix="playback-tl")
+# Media path resolve+stat isolated from cameras/timeline light work.
+_media_pool = ThreadPoolExecutor(max_workers=8, thread_name_prefix="playback-media")
 # Heavy journal scans — tiny pool + semaphore so wheel/seek storms cannot open unbounded work.
 _detections_pool = ThreadPoolExecutor(max_workers=2, thread_name_prefix="playback-det")
 _timeline_slots = asyncio.Semaphore(2)
@@ -157,10 +161,18 @@ async def _to_thread_with_timeout_or_cached(
             "playback route timeout detail=%s timeout_sec=%s executor=%s %s",
             err_detail,
             timeout,
-            "light" if executor is _light_pool else (
-                "metadata" if executor is _metadata_pool else (
-                    "detections" if executor is _detections_pool else "default"
-                )
+            (
+                "light"
+                if executor is _light_pool
+                else "metadata"
+                if executor is _metadata_pool
+                else "timeline"
+                if executor is _timeline_pool
+                else "media"
+                if executor is _media_pool
+                else "detections"
+                if executor is _detections_pool
+                else "default"
             ),
             " ".join(f"{k}={v}" for k, v in (log_ctx or {}).items()),
         )
@@ -438,6 +450,7 @@ async def playback_timeline(
             _cached,
             err_detail="playback_timeline timeout",
             on_timeout=_on_timeout,
+            executor=_timeline_pool,
             log_ctx={"date": date, "n_cameras": len(cam_list), "route": "timeline"},
         )
     finally:
@@ -957,11 +970,33 @@ async def playback_media(request: Request, path: str = Query(...)):
             assert_name_allowed(access, cam_name)
 
     global _media_inflight, _media_inflight_last_warn_at
-    with _media_inflight_lock:
-        _media_inflight += 1
-        inflight_now = _media_inflight
     warn_at = _media_inflight_warn_at()
-    if inflight_now >= warn_at:
+    with _media_inflight_lock:
+        # Soft shed above warn_at so Range storms cannot unbounded-grow inflight.
+        if _media_inflight >= warn_at:
+            inflight_now = _media_inflight
+            shed = True
+        else:
+            _media_inflight += 1
+            inflight_now = _media_inflight
+            shed = False
+    if shed:
+        now = time.time()
+        with _media_inflight_warn_lock:
+            if now - _media_inflight_last_warn_at >= 5.0:
+                _media_inflight_last_warn_at = now
+                logger.warning(
+                    "playback media shed inflight=%s warn_at=%s path=%s",
+                    inflight_now,
+                    warn_at,
+                    path,
+                )
+        raise HTTPException(
+            status_code=503,
+            detail="playback_media busy",
+            headers={"Retry-After": "1"},
+        )
+    if inflight_now >= max(1, warn_at - 8):
         now = time.time()
         with _media_inflight_warn_lock:
             if now - _media_inflight_last_warn_at >= 5.0:
@@ -995,7 +1030,7 @@ async def playback_media(request: Request, path: str = Query(...)):
                     return None
                 return resolved, resolved.stat()
 
-            pair = await loop.run_in_executor(_light_pool, _resolve_and_stat)
+            pair = await loop.run_in_executor(_media_pool, _resolve_and_stat)
         except PermissionError as exc:
             raise HTTPException(status_code=403, detail=str(exc)) from exc
         if pair is None:

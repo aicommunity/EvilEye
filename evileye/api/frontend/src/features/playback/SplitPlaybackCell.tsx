@@ -8,7 +8,7 @@ import { useI18n } from '../../i18n';
 import { PlaybackBusyHint } from './PlaybackBusyHint';
 import { usePlaybackCameraMetadata } from './PlaybackCameraView';
 import { playbackDebugInc } from './playbackDebug';
-import { seekPlaybackVideo, seekingAgeMs, SEEKING_STUCK_MS, shouldEmitPlaybackClock } from './playbackVideoSync';
+import { seekPlaybackVideo, seekingAgeMs, lowReadyStateAgeMs, SEEKING_STUCK_MS, shouldEmitPlaybackClock } from './playbackVideoSync';
 import { drainVideoElement, reloadVideoMedia } from './drainVideo';
 
 export function SplitPlaybackCell({
@@ -280,6 +280,23 @@ export function SplitPlaybackCell({
         }
         return;
       }
+      if (lowReadyStateAgeMs(video) >= SEEKING_STUCK_MS) {
+        playbackDebugInc('seekingStuckRecoveries');
+        stuckAttempts += 1;
+        seekPlaybackVideo(video, getPositionRef.current(), startTs, {
+          playing: playingRef.current,
+          force: true,
+          scrubbing: true,
+          thresholdSec: 0,
+          segmentEndTs:
+            Number.isFinite(video.duration) && video.duration > 0 ? startTs + video.duration : undefined,
+        });
+        drawFrame();
+        if (stuckAttempts >= 2) {
+          reloadVideoMedia(video);
+        }
+        return;
+      }
       if (!playingRef.current && video.readyState < 2) {
         stuckAttempts += 1;
         if (stuckAttempts >= 3) {
@@ -287,7 +304,7 @@ export function SplitPlaybackCell({
           reloadVideoMedia(video);
           drawFrame();
         }
-      } else if (!video.seeking) {
+      } else if (!video.seeking && video.readyState >= 2) {
         stuckAttempts = 0;
       }
     }, 700);

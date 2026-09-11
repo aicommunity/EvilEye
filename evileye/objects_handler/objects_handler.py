@@ -684,7 +684,8 @@ class ObjectsHandler(EvilEyeBase):
                 self.logger.error(f"Labeling data saving error for lost object: {e}")
 
         self._remove_track_attributes(active_obj)
-        active_obj.last_image = None
+        # Keep last_image until pool release / lost-list drop so zone exit events
+        # and DB adapters can still snapshot pixels (Image is None regress).
         self.lost_objs.objects.append(active_obj)
 
     def _expire_stale_source_objects(self, now: float, *, exclude_source_id: int | None = None) -> None:

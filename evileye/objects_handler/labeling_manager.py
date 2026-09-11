@@ -718,14 +718,53 @@ class LabelingManager:
         return training_file
 
     def _save_worker(self):
-        """Background worker for periodic saving."""
+        """Background worker for periodic saving + writer-alive heartbeat."""
         while self.running:
             time.sleep(1)  # Check every second
 
             current_time = time.time()
             if current_time - self.last_save_time > self.save_interval:
-                self._save_all_buffers()
+                try:
+                    self._save_all_buffers()
+                except Exception as exc:
+                    self.logger.error("periodic journal flush failed: %s", exc, exc_info=True)
+                try:
+                    self._touch_writer_alive()
+                except Exception as exc:
+                    self.logger.warning("journal writer alive touch failed: %s", exc)
                 self.last_save_time = current_time
+
+    def _writer_alive_path(self, date_str: str | None = None) -> str:
+        day = date_str or self.date_str
+        meta = os.path.join(self.detections_dir, day, "Metadata")
+        os.makedirs(meta, exist_ok=True)
+        return os.path.join(meta, ".journal_writer_alive")
+
+    def _touch_writer_alive(self) -> None:
+        """Touch sidecar so monitors can tell quiet scene vs dead journal writer.
+
+        objects_found.json mtime only moves when detections arrive; Streams keep
+        writing overnight → false detection_stale. Alive sidecar updates every
+        save_interval while LabelingManager.save_thread runs.
+        """
+        # Refresh current calendar day dir in case process crossed midnight.
+        today = datetime.date.today().strftime("%Y-%m-%d")
+        if today != self.date_str:
+            self.current_date = datetime.date.today()
+            self.date_str = today
+            self.current_day_dir = os.path.join(self.detections_dir, self.date_str)
+            metadata_dir = os.path.join(self.current_day_dir, "Metadata")
+            os.makedirs(metadata_dir, exist_ok=True)
+            self.found_labels_file = os.path.join(metadata_dir, "objects_found.json")
+            self.lost_labels_file = os.path.join(metadata_dir, "objects_lost.json")
+        path = self._writer_alive_path()
+        now = time.time()
+        try:
+            os.utime(path, (now, now))
+        except FileNotFoundError:
+            with open(path, "a", encoding="utf-8"):
+                pass
+            os.utime(path, (now, now))
 
     def _save_all_buffers(self):
         """Save all buffers (found and lost objects)."""
@@ -735,6 +774,10 @@ class LabelingManager:
     def flush_buffers(self):
         """Force save all buffered data."""
         self._save_all_buffers()
+        try:
+            self._touch_writer_alive()
+        except Exception:
+            pass
 
     def stop(self):
         """Stop the labeling manager and save any remaining data."""

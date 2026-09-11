@@ -21,7 +21,7 @@ import { mergePlaybackMetadata } from './mergePlaybackMetadata';
 import { playbackDebugInc } from './playbackDebug';
 import { clientTelemetryLog } from '../../diagnostics/clientTelemetry';
 import { drainVideoElement, reloadVideoMedia } from './drainVideo';
-import { seekPlaybackVideo, shouldEmitPlaybackClock, isPastDecodedEof, seekingAgeMs, SEEKING_STUCK_MS, resetPlaybackClockOwner } from './playbackVideoSync';
+import { seekPlaybackVideo, shouldEmitPlaybackClock, isPastDecodedEof, seekingAgeMs, lowReadyStateAgeMs, SEEKING_STUCK_MS, resetPlaybackClockOwner } from './playbackVideoSync';
 import { usePlaybackMetadata } from './usePlaybackMetadata';
 import { usePlaybackStaticMetadata } from './usePlaybackStaticMetadata';
 import { PlaybackStaticFrame } from './PlaybackStaticFrame';
@@ -401,6 +401,24 @@ export function usePlaybackCameraSlot(
           segmentEndTs: current.endTs,
         });
         if (stuckSeekAttempts === 2 || stuckSeekAttempts >= 4) {
+          reloadVideoMedia(v);
+          kick();
+        }
+        return;
+      }
+
+      // readyState stuck at 0/1 (HAVE_METADATA) without seeking — same recovery as hung seek.
+      if (lowReadyStateAgeMs(v) >= SEEKING_STUCK_MS && current) {
+        playbackDebugInc('seekingStuckRecoveries');
+        stuckSeekAttempts += 1;
+        seekPlaybackVideo(v, getPositionRef.current(), current.startTs, {
+          playing: playingRef.current,
+          force: true,
+          scrubbing: true,
+          thresholdSec: 0,
+          segmentEndTs: current.endTs,
+        });
+        if (stuckSeekAttempts >= 2) {
           reloadVideoMedia(v);
           kick();
         }
