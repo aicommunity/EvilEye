@@ -174,6 +174,7 @@ export function PlaybackPage() {
   const [, setTimelinePanning] = useState(false);
   const [expandedCameraId, setExpandedCameraId] = useState<string | null>(null);
   const segmentsByCamRef = useRef<Record<string, PlaybackSegment[]>>({});
+  const [viewCursorSec, setViewCursorSec] = useState<number | null>(null);
   const ctrl = usePlaybackController(initialT ?? sessionSnap?.positionSec ?? null, segmentsByCamRef);
   const viewport = useTimelineViewport();
   const sessionViewRestoredRef = useRef(false);
@@ -962,6 +963,17 @@ export function PlaybackPage() {
     cameras.some((c) => c.has_detection_ticks || c.has_events) &&
     !cameras.some((c) => c.has_stream_segments || (c.segment_count ?? 0) > 0);
 
+  const seekToViewCursor = useCallback(() => {
+    const target =
+      viewCursorSec != null
+        ? viewCursorSec
+        : viewport.viewFrom != null && viewport.viewTo != null
+          ? (viewport.viewFrom + viewport.viewTo) / 2
+          : null;
+    if (target == null) return;
+    seek(target, { mode: 'playable', pauseIfNoVideo: false });
+  }, [viewCursorSec, viewport.viewFrom, viewport.viewTo, seek]);
+
   return (
     <section className={`panel active playback-page${mode === 'fit' ? ' playback-page--fit' : ''}`}>
       <div className="card playback-card">
@@ -1006,6 +1018,14 @@ export function PlaybackPage() {
                 : null}
               <Button size="sm" variant={ctrl.playing ? 'danger' : 'success'} onClick={togglePlay}>
                 {ctrl.playing ? t('playback.pause') : t('playback.play')}
+              </Button>
+              <Button
+                size="sm"
+                variant="outline"
+                title={t('playback.seekToCursorTitle')}
+                onClick={seekToViewCursor}
+              >
+                {t('playback.seekToCursor')}
               </Button>
               {[0.5, 1, 2, 4].map((s) => (
                 <Button key={s} size="sm" variant={ctrl.speed === s ? 'primary' : 'outline'} onClick={() => ctrl.setSpeed(s)}>
@@ -1172,6 +1192,7 @@ export function PlaybackPage() {
             onSeek={seek}
             onViewChange={onViewChange}
             onPanningChange={setTimelinePanning}
+            onCursorChange={setViewCursorSec}
           />
         </div>
       </div>

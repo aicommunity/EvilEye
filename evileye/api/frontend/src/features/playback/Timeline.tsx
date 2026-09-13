@@ -44,6 +44,7 @@ export function Timeline({
   onSeek,
   onViewChange,
   onPanningChange,
+  onCursorChange,
 }: {
   date: string;
   viewFrom: number | null;
@@ -60,6 +61,8 @@ export function Timeline({
   onSeek: (sec: number) => void;
   onViewChange: (viewFrom: number, viewTo: number) => void;
   onPanningChange?: (panning: boolean) => void;
+  /** Hover/view cursor (unix sec); null when pointer leaves. */
+  onCursorChange?: (sec: number | null) => void;
 }) {
   const { t, formatDateTimeNoYear, formatDate, formatTime } = useI18n();
   const rootRef = useRef<HTMLDivElement>(null);
@@ -200,7 +203,9 @@ export function Timeline({
     const el = rootRef.current;
     if (!el) return;
     const rect = el.getBoundingClientRect();
-    setHoverSec(unixAtClientX(clientX, rect, displayFrom, displayTo));
+    const sec = unixAtClientX(clientX, rect, displayFrom, displayTo);
+    setHoverSec(sec);
+    onCursorChange?.(sec);
   };
 
   const endPan = (wasPan: boolean) => {
@@ -329,7 +334,22 @@ export function Timeline({
             }
           : undefined
       }
-      onPointerLeave={hasView ? () => setHoverSec(null) : undefined}
+      onPointerLeave={
+        hasView
+          ? () => {
+              setHoverSec(null);
+              onCursorChange?.(null);
+            }
+          : undefined
+      }
+      onDoubleClick={
+        hasView
+          ? (e) => {
+              // Double-click seeks playhead to the view cursor (distinct from pan).
+              seekAtClientX(e.clientX);
+            }
+          : undefined
+      }
     >
       {!hasView ? (
         <div className="playback-timeline-empty-banner">{t('playback.timelineEmpty')}</div>

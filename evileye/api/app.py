@@ -392,6 +392,14 @@ def create_app() -> FastAPI:
             payload["playback_media_inflight"] = media_inflight_count()
             payload["playback_memory_cache"] = memory_cache_stats()
             try:
+                from evileye.api.routes.streaming import mjpeg_clients_count
+
+                payload["mjpeg_clients"] = mjpeg_clients_count()
+            except Exception:
+                payload["mjpeg_clients"] = None
+            # Web-side proxy for relay lag: age of newest broker frame.
+            payload["relay_last_ok_age_sec"] = max_age
+            try:
                 from evileye.api.core.rate_guard import get_rate_guard
 
                 payload["ws_reject_counts"] = get_rate_guard().ws_reject_counts()

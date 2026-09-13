@@ -42,6 +42,11 @@ def _release_mjpeg_slot() -> None:
         _mjpeg_clients = max(0, _mjpeg_clients - 1)
 
 
+def mjpeg_clients_count() -> int:
+    with _mjpeg_clients_lock:
+        return int(_mjpeg_clients)
+
+
 def _touch_preview_demand(
     request: Request | None,
     rid: int,
@@ -64,7 +69,8 @@ def _touch_preview_demand(
         key = f"{rid}:{source_id}" if source_id is not None else str(rid)
         queue.put_nowait((key, touched_at, normalized_level, force))
         if source_id is not None:
-            queue.put_nowait((str(rid), touched_at, normalized_level, force))
+            # Soft-touch root rid without force so other stream consumers stay promoted.
+            queue.put_nowait((str(rid), touched_at, normalized_level, False))
     except Exception:
         return
 
