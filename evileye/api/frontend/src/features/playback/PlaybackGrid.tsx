@@ -37,6 +37,7 @@ export function PlaybackGrid({
   globalDetectionTs = [],
   eventIntervalsByCamera = {},
   onVideoClock,
+  onPlaybackExhausted,
   onExpand,
   segmentsLoading = false,
   detectionsReady = true,
@@ -62,6 +63,7 @@ export function PlaybackGrid({
   globalDetectionTs?: number[];
   eventIntervalsByCamera?: Record<string, PlaybackEventInterval[]>;
   onVideoClock?: (globalSec: number) => void;
+  onPlaybackExhausted?: () => void;
   onExpand: (cameraId: string) => void;
   segmentsLoading?: boolean;
   detectionsReady?: boolean;
@@ -96,6 +98,7 @@ export function PlaybackGrid({
           globalDetectionTs={globalDetectionTs}
           eventIntervals={eventIntervalsByCamera[id] ?? []}
           onVideoClock={onVideoClock}
+          onPlaybackExhausted={onPlaybackExhausted}
           onExpand={() => onExpand(id)}
           segmentsLoading={segmentsLoading && !(segmentsByCam[id]?.length)}
           detectionsReady={detectionsReady}
@@ -125,6 +128,7 @@ function PlaybackCell({
   globalDetectionTs,
   eventIntervals,
   onVideoClock,
+  onPlaybackExhausted,
   onExpand,
   segmentsLoading = false,
   detectionsReady = true,
@@ -148,6 +152,7 @@ function PlaybackCell({
   globalDetectionTs: number[];
   eventIntervals: PlaybackEventInterval[];
   onVideoClock?: (globalSec: number) => void;
+  onPlaybackExhausted?: () => void;
   onExpand: () => void;
   segmentsLoading?: boolean;
   detectionsReady?: boolean;
@@ -158,7 +163,18 @@ function PlaybackCell({
   const [videoReady, setVideoReady] = useState(0);
   const [frameSize, setFrameSize] = useState<FrameSize | null>(null);
   const { ref, preloadRef, slot, applySync, videoGlobalSec, videoSeeking, recordingInProgress, inPlayableGap, mediaEpoch } =
-    usePlaybackCameraSlot(segments, getPosition, positionSec, playing, playMode, scrubbing, userSeeking, onVideoClock, id);
+    usePlaybackCameraSlot(
+      segments,
+      getPosition,
+      positionSec,
+      playing,
+      playMode,
+      scrubbing,
+      userSeeking,
+      onVideoClock,
+      id,
+      onPlaybackExhausted,
+    );
   const split = Boolean(camera?.split && camera?.src_coords && camera.src_coords.length === 4);
 
   useEffect(() => {
@@ -175,11 +191,13 @@ function PlaybackCell({
         cameraId={id}
         camera={camera}
         sourceId={camera.source_id}
+        segments={segments}
         getPosition={getPosition}
         positionSec={positionSec}
         playing={playing}
         speed={speed}
         startTs={slot.startTs}
+        endTs={slot.endTs}
         runId={runId}
         showMetadata={showMetadata}
         playMode={playMode}
@@ -189,6 +207,7 @@ function PlaybackCell({
         globalDetectionTs={globalDetectionTs}
         eventIntervals={eventIntervals}
         onVideoClock={onVideoClock}
+        onPlaybackExhausted={onPlaybackExhausted}
         onExpand={onExpand}
         frameSize={frameSize}
         onFrameSize={setFrameSize}

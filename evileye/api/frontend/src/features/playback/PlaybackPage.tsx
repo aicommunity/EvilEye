@@ -236,9 +236,11 @@ export function PlaybackPage() {
   const camerasLoadedDateRef = useRef<string | null>(null);
   const selectedIdsRef = useRef(selectedIds);
   selectedIdsRef.current = selectedIds;
+  const prevSelectedIdsRef = useRef<string[]>(selectedIds);
+  const prevDateForSegmentsRef = useRef(date);
   const camerasAbortRef = useRef<AbortController | null>(null);
   const segmentsAbortRef = useRef<AbortController | null>(null);
-  const ensureAdjacentLoadRef = useRef<(vf: number, vt: number) => void>(() => {});
+  const ensureAdjacentLoadRef = useRef<(vf: number, vt: number, opts?: { immediate?: boolean }) => void>(() => {});
   const allSegmentsRef = useRef<PlaybackSegment[]>([]);
   const userSeekGuardRef = useRef<UserSeekGuard>(createUserSeekGuard());
 
@@ -725,31 +727,49 @@ export function PlaybackPage() {
     if (!selectedIds.length || camerasLoading) return;
     if (skipHardSegmentReloadRef.current) {
       skipHardSegmentReloadRef.current = false;
+      prevSelectedIdsRef.current = selectedIds;
+      prevDateForSegmentsRef.current = date;
       return;
     }
     const deepLinkForDate = initialT != null && dateFromUnixSec(initialT) === date ? initialT : null;
-    void loadSegments(
-      selectedIds,
-      hardLoadSegmentWindow(date, deepLinkForDate, viewport.viewFrom, viewport.viewTo),
-    );
+    const dateUnchanged = prevDateForSegmentsRef.current === date;
+    const hadSelection = prevSelectedIdsRef.current.length > 0;
+    const selectionChanged =
+      prevSelectedIdsRef.current.length !== selectedIds.length ||
+      prevSelectedIdsRef.current.some((id, i) => id !== selectedIds[i]) ||
+      selectedIds.some((id) => !prevSelectedIdsRef.current.includes(id));
+    // Camera toggle on the same day: soft-merge so other cams keep their segments.
+    const softMerge = dateUnchanged && hadSelection && selectionChanged;
+    prevSelectedIdsRef.current = selectedIds;
+    prevDateForSegmentsRef.current = date;
+    void loadSegments(selectedIds, {
+      ...hardLoadSegmentWindow(date, deepLinkForDate, viewport.viewFrom, viewport.viewTo),
+      merge: softMerge,
+    });
     // eslint-disable-next-line react-hooks/exhaustive-deps -- reload on date/selection only
   }, [date, selectedIds, camerasLoading]);
 
   const ensureAdjacentLoad = useCallback(
-    (vf: number, vt: number) => {
+    (vf: number, vt: number, opts?: { immediate?: boolean }) => {
       const { needFrom, needTo, needed, gaps } = viewport.needsLoad(vf, vt, date);
       if (!needed || !gaps.length) return;
       if (loadTimerRef.current) window.clearTimeout(loadTimerRef.current);
-      // Request the uncovered span only (bounding box of gaps). expandLoaded will
-      // mark that window without falsely filling older disjoint coverage.
-      loadTimerRef.current = window.setTimeout(() => {
+      const run = () => {
         void loadSegments(selectedIdsRef.current, {
           from: needFrom,
           to: needTo,
           merge: true,
           date,
         });
-      }, 1500);
+      };
+      // Deep pan / seek outside loaded range: load immediately (no 1.5s debounce).
+      if (opts?.immediate) {
+        run();
+        return;
+      }
+      // Request the uncovered span only (bounding box of gaps). expandLoaded will
+      // mark that window without falsely filling older disjoint coverage.
+      loadTimerRef.current = window.setTimeout(run, 1500);
     },
     [loadSegments, viewport, date],
   );
@@ -1079,6 +1099,7 @@ export function PlaybackPage() {
               globalDetectionTs={detectionIndex.globalTs}
               eventIntervals={eventIntervalsByCamera[expandedCamera.id] ?? []}
               onVideoClock={ctrl.syncPositionFromVideo}
+              onPlaybackExhausted={() => ctrl.setPlaying(false)}
               onClose={() => setExpandedCameraId(null)}
               detectionsReady={detectionsReady}
               anyCameraPlayableAtPosition={anyCameraPlayableAtPosition}
@@ -1125,6 +1146,7 @@ export function PlaybackPage() {
               globalDetectionTs={detectionIndex.globalTs}
               eventIntervalsByCamera={eventIntervalsByCamera}
               onVideoClock={ctrl.syncPositionFromVideo}
+              onPlaybackExhausted={() => ctrl.setPlaying(false)}
               onExpand={setExpandedCameraId}
               segmentsLoading={segmentsLoading}
               detectionsReady={detectionsReady}

@@ -22,16 +22,18 @@ import { playbackDebugInc } from './playbackDebug';
 import { clientTelemetryLog } from '../../diagnostics/clientTelemetry';
 import {
   drainVideoElement,
+  noteSameSrcMediaError,
   reloadVideoMedia,
   resetErrorMediaBackoff,
   scheduleErrorMediaReload,
 } from './drainVideo';
+import { advanceOrStopAtEof } from './playbackEof';
 import { seekPlaybackVideo, shouldEmitPlaybackClock, isPastDecodedEof, seekingAgeMs, lowReadyStateAgeMs, SEEKING_STUCK_MS, resetPlaybackClockOwner } from './playbackVideoSync';
 import { usePlaybackMetadata } from './usePlaybackMetadata';
 import { usePlaybackStaticMetadata } from './usePlaybackStaticMetadata';
 import { PlaybackStaticFrame } from './PlaybackStaticFrame';
 import type { StaticFrameSource } from './markerNavigation';
-import { isPositionInRecordingSegment, pickContainingPlayableSegment, isPlayableSegment, isPositionInPlayableGap } from './timelineMath';
+import { isPositionInRecordingSegment, pickContainingPlayableSegment, isPositionInPlayableGap } from './timelineMath';
 
 const PLAYBACK_EVENT_ZONE_PAD_SEC = 1.5;
 
@@ -40,16 +42,6 @@ export type PlaybackMediaSlot = {
   startTs: number;
   endTs: number;
 };
-
-function nextSegment(segs: PlaybackSegment[], current: PlaybackSegment | null): PlaybackSegment | null {
-  if (!current || !segs.length) return null;
-  const idx = segs.findIndex((s) => s.path === current.path);
-  if (idx < 0) return null;
-  for (let i = idx + 1; i < segs.length; i++) {
-    if (isPlayableSegment(segs[i])) return segs[i];
-  }
-  return null;
-}
 
 export function usePlaybackCameraSlot(
   segments: PlaybackSegment[],
@@ -61,6 +53,7 @@ export function usePlaybackCameraSlot(
   userSeeking = false,
   onVideoClock?: (globalSec: number) => void,
   clockId?: string,
+  onPlaybackExhausted?: () => void,
 ) {
   const ref = useRef<HTMLVideoElement>(null);
   const preloadRef = useRef<HTMLVideoElement>(null);
@@ -80,12 +73,14 @@ export function usePlaybackCameraSlot(
   playingRef.current = playing;
   const onVideoClockRef = useRef(onVideoClock);
   onVideoClockRef.current = onVideoClock;
+  const onPlaybackExhaustedRef = useRef(onPlaybackExhausted);
+  onPlaybackExhaustedRef.current = onPlaybackExhausted;
   const [videoGlobalSec, setVideoGlobalSec] = useState<number | null>(null);
   const [videoSeeking, setVideoSeeking] = useState(false);
   const [recordingInProgress, setRecordingInProgress] = useState(false);
   const [inPlayableGap, setInPlayableGap] = useState(false);
-  /** Bump to force <video> remount when decoder is a zombie. */
-  const [mediaEpoch, setMediaEpoch] = useState(0);
+  /** Reserved for explicit recovery only — do not remount <video> by default. */
+  const [mediaEpoch] = useState(0);
 
   const publishVideoGlobal = () => {
     const v = ref.current;
@@ -157,20 +152,31 @@ export function usePlaybackCameraSlot(
     // Index end_ts can overrun the real mp4 duration; seeking past EOF freezes decode.
     if (isPastDecodedEof(v, position, current.startTs)) {
       const eofGlobal = current.startTs + Math.max(0, v.duration - 0.05);
-      const nxt = nextSegment(segs, seg);
-      const gapToNext = nxt ? nxt.start_ts - (current.startTs + v.duration) : Infinity;
-      if (nxt && gapToNext < 2 && allowVideoClock && !scrubbingRef.current) {
-        onVideoClockRef.current?.(nxt.start_ts);
+      const currentSeg =
+        seg ??
+        pickContainingPlayableSegment(segs, current.startTs) ??
+        ({
+          path: pathRef.current ?? '',
+          start_ts: current.startTs,
+          end_ts: current.endTs,
+          duration_ms: Math.max(0, (current.endTs - current.startTs) * 1000),
+        } as PlaybackSegment);
+      const decision = advanceOrStopAtEof(segs, currentSeg, {
+        decodedDurationSec: Number.isFinite(v.duration) ? v.duration : undefined,
+      });
+      if (decision.action === 'advanced' && allowVideoClock && !scrubbingRef.current) {
+        onVideoClockRef.current?.(decision.next.start_ts);
         return;
       }
+      // Stop pin: park at EOF visually but do not keep emitting clock / reloading.
       seekPlaybackVideo(v, eofGlobal, current.startTs, {
-        playing,
+        playing: false,
         scrubbing: scrubbingRef.current,
         force: userSeekingRef.current,
         segmentEndTs: current.endTs,
       });
-      if (allowVideoClock && Math.abs(position - eofGlobal) > 0.2) {
-        onVideoClockRef.current?.(eofGlobal);
+      if (allowVideoClock && !scrubbingRef.current) {
+        onPlaybackExhaustedRef.current?.();
       }
       return;
     }
@@ -256,12 +262,20 @@ export function usePlaybackCameraSlot(
     const onEnded = () => {
       const current = slotRef.current;
       if (!current) return;
-      const nxt = nextSegment(
-        segmentsRef.current,
-        pickContainingPlayableSegment(segmentsRef.current, current.startTs),
-      );
-      if (nxt && playingRef.current && !scrubbingRef.current) {
-        onVideoClockRef.current?.(nxt.start_ts);
+      const currentSeg =
+        pickContainingPlayableSegment(segmentsRef.current, current.startTs) ??
+        ({
+          path: pathRef.current ?? '',
+          start_ts: current.startTs,
+          end_ts: current.endTs,
+          duration_ms: Math.max(0, (current.endTs - current.startTs) * 1000),
+        } as PlaybackSegment);
+      const decision = advanceOrStopAtEof(segmentsRef.current, currentSeg, {
+        decodedDurationSec:
+          ref.current && Number.isFinite(ref.current.duration) ? ref.current.duration : undefined,
+      });
+      if (decision.action === 'advanced' && playingRef.current && !scrubbingRef.current) {
+        onVideoClockRef.current?.(decision.next.start_ts);
         return;
       }
       seekPlaybackVideo(ref.current, current.endTs, current.startTs, {
@@ -269,31 +283,62 @@ export function usePlaybackCameraSlot(
         scrubbing: scrubbingRef.current,
         segmentEndTs: current.endTs,
       });
+      if (playingRef.current && !scrubbingRef.current) {
+        onPlaybackExhaustedRef.current?.();
+      }
     };
     const errorReloadTimers: number[] = [];
     const onError = () => {
       setVideoSeeking(false);
       playbackDebugInc('playRejects');
+      const src = slotRef.current?.url ?? null;
+      const code = ref.current?.error?.code ?? null;
       clientTelemetryLog(
         'video_error',
         {
           camera: clockId ?? null,
-          code: ref.current?.error?.code ?? null,
+          code,
           networkState: ref.current?.networkState ?? null,
           readyState: ref.current?.readyState ?? null,
-          src: slotRef.current?.url ?? null,
+          src,
         },
         'playback',
       );
-      // 503 / aborted Range → backoff reload (not fixed 400ms) to avoid shed storms.
       const el = ref.current;
-      if (el && slotRef.current) {
-        const timer = scheduleErrorMediaReload(el, () => {
-          if (ref.current !== el || !slotRef.current) return;
-          applySync();
-        });
-        if (timer != null) errorReloadTimers.push(timer);
+      if (!el || !slotRef.current) return;
+      const { giveUp } = noteSameSrcMediaError(el, src, code);
+      if (giveUp) {
+        clientTelemetryLog(
+          'video_error_give_up',
+          { camera: clockId ?? null, code, src },
+          'playback',
+        );
+        const current = slotRef.current;
+        const currentSeg =
+          pickContainingPlayableSegment(segmentsRef.current, current.startTs) ??
+          ({
+            path: pathRef.current ?? '',
+            start_ts: current.startTs,
+            end_ts: current.endTs,
+            duration_ms: Math.max(0, (current.endTs - current.startTs) * 1000),
+          } as PlaybackSegment);
+        const decision = advanceOrStopAtEof(segmentsRef.current, currentSeg);
+        resetErrorMediaBackoff(el);
+        if (decision.action === 'advanced' && playingRef.current && !scrubbingRef.current) {
+          onVideoClockRef.current?.(decision.next.start_ts);
+          return;
+        }
+        if (playingRef.current && !scrubbingRef.current) {
+          onPlaybackExhaustedRef.current?.();
+        }
+        return;
       }
+      // 503 / aborted Range → backoff reload (not fixed 400ms) to avoid shed storms.
+      const timer = scheduleErrorMediaReload(el, () => {
+        if (ref.current !== el || !slotRef.current) return;
+        applySync();
+      });
+      if (timer != null) errorReloadTimers.push(timer);
     };
     const v = ref.current;
     if (!v) return;
@@ -737,7 +782,6 @@ export function PlaybackVideoSurface({
       {videoSrc ? (
         <>
           <video
-            key={`playback-media-${mediaEpoch}`}
             ref={videoRef as RefObject<HTMLVideoElement>}
             src={videoSrc}
             playsInline

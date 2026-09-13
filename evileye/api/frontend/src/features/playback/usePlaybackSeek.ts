@@ -37,7 +37,7 @@ export function usePlaybackSeek(opts: {
   dateChangeSourceRef: MutableRefObject<'user' | 'viewport' | 'seek'>;
   pendingViewportLoadRef: MutableRefObject<{ date: string; from: number; to: number } | null>;
   loadTimerRef: MutableRefObject<number | null>;
-  ensureAdjacentLoad: (from: number, to: number) => void;
+  ensureAdjacentLoad: (from: number, to: number, opts?: { immediate?: boolean }) => void;
   userSeekGuardRef: MutableRefObject<UserSeekGuard>;
   segmentsByCamRef: MutableRefObject<Record<string, PlaybackSegment[]>>;
 }) {
@@ -124,7 +124,7 @@ export function usePlaybackSeek(opts: {
       window.setTimeout(() => setUserSeeking(false), 2000);
       if (loadTimerRef.current) window.clearTimeout(loadTimerRef.current);
       loadTimerRef.current = window.setTimeout(() => {
-        ensureAdjacentLoad(target - SEEK_LOAD_HALF_SEC, target + SEEK_LOAD_HALF_SEC);
+        ensureAdjacentLoad(target - SEEK_LOAD_HALF_SEC, target + SEEK_LOAD_HALF_SEC, { immediate: true });
       }, SEEK_SETTLE_HOLD_MS + 100);
     },
     [
