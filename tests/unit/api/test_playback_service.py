@@ -131,6 +131,17 @@ def test_date_dirs_today_includes_yesterday(tmp_path, monkeypatch):
     assert yday in names
 
 
+def test_date_dirs_past_day_includes_previous(tmp_path):
+    """Historical days also need D-1 for GST overnight parts left in the prior folder."""
+    base = tmp_path / "Streams"
+    (base / "2026-09-11").mkdir(parents=True)
+    (base / "2026-09-12").mkdir(parents=True)
+    dirs = svc._date_dirs(base, "2026-09-12")
+    names = {p.name for p in dirs}
+    assert "2026-09-12" in names
+    assert "2026-09-11" in names
+
+
 def test_load_segments_multi_day_from_to(tmp_path, monkeypatch):
     root = tmp_path / "EvilEyeData"
     for day, hh in [("2026-08-04", "120000"), ("2026-08-05", "130000")]:
@@ -339,3 +350,50 @@ def test_segment_playable_flag(tmp_path, monkeypatch):
     segs = {Path(s["path"]).name: s for s in svc.load_segments("Cam1", date="2026-08-20")}
     assert segs["Cam1_20260820_010000_0_00000.mp4"]["playable"] is True
     assert segs["Cam1_20260820_013000_0_00001.mp4"]["playable"] is False
+
+
+def test_load_segments_repairs_midnight_sidecar_with_continued_index(tmp_path, monkeypatch):
+    """Day-rotate sidecar start_ts=midnight + continued idx must use mtime wall clock."""
+    from datetime import datetime
+
+    from evileye.video_recorder.session_sidecar import sidecar_path_for_segment, write_session_sidecar
+
+    root = tmp_path / "EvilEyeData"
+    cam = root / "Streams" / "2026-09-13" / "Cam1"
+    cam.mkdir(parents=True)
+    # Sidecar claims session started at midnight, but indices continue from 77.
+    midnight = datetime(2026, 9, 13, 0, 7, 41).timestamp()
+    part_len = 1790.0
+    files = []
+    for i, idx in enumerate(range(77, 81)):
+        path = cam / f"Cam1_20260913_000741_0_{idx:05d}.mp4"
+        path.write_bytes(_minimal_mp4(part_len))
+        close = midnight + (i + 1) * part_len
+        os.utime(path, (close, close))
+        files.append(path)
+    write_session_sidecar(sidecar_path_for_segment(files[0]), midnight, first_pts_ns=0)
+
+    monkeypatch.setenv("EVILEYE_DATA_DIR", str(root))
+    monkeypatch.setattr(svc, "_configured_segment_length_sec", lambda: 1800.0)
+    svc._MP4_DURATION_CACHE.clear()
+
+    day_start = datetime(2026, 9, 13, 0, 0, 0).timestamp()
+    day_end = day_start + 86400
+    segs = svc.load_segments("Cam1", date="2026-09-13", from_ts=day_start, to_ts=day_end)
+    assert len(segs) == 4
+    for s in segs:
+        assert day_start <= s["start_ts"] < day_end
+        assert "2026-09-13" in s["path"]
+    # Nominal idx*1800 from midnight would land on Sep 14 afternoon.
+    assert segs[0]["start_ts"] < midnight + 3600
+    assert abs(segs[0]["start_ts"] - midnight) < 5.0
+
+    last_close = midnight + 4 * part_len
+    window_segs = svc.load_segments(
+        "Cam1",
+        date="2026-09-13",
+        from_ts=last_close - 7200,
+        to_ts=last_close + 60,
+    )
+    assert len(window_segs) >= 1
+    assert any("00080" in Path(s["path"]).name for s in window_segs)

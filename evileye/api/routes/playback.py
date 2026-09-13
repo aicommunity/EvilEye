@@ -329,6 +329,8 @@ async def playback_segments(
             _cached,
             err_detail="playback_segments timeout",
             on_timeout=_on_timeout,
+            executor=_light_pool,
+            log_ctx={"route": "segments", "n_cameras": len(cam_list), "date": date},
         )
         _remember(mem_key, by_camera)
         return {"by_camera": by_camera, "items": [item for items in by_camera.values() for item in items]}
@@ -360,6 +362,8 @@ async def playback_segments(
         _cached_one,
         err_detail="playback_segments timeout",
         on_timeout=_on_timeout_one,
+        executor=_light_pool,
+        log_ctx={"route": "segments", "n_cameras": 1, "date": date},
     )
     _remember(mem_key, items)
     return {"items": items}
@@ -1009,6 +1013,11 @@ async def playback_media(request: Request, path: str = Query(...)):
                 )
     released = False
     release_lock = threading.Lock()
+    # Slot covers resolve+stat only. Holding through the whole FileResponse body
+    # saturated warn_at=96 under normal multi-cam Range traffic and caused
+    # permanent 503 black tiles. CancelledError during await must still release
+    # (BaseException on 3.9+).
+    handed_off = False
 
     def _release_media_inflight() -> None:
         nonlocal released
@@ -1037,22 +1046,18 @@ async def playback_media(request: Request, path: str = Query(...)):
             raise HTTPException(status_code=404, detail="Media not found")
         resolved, st = pair
         media_type = mimetypes.guess_type(str(resolved))[0] or "application/octet-stream"
-
-        class _TrackedFileResponse(FileResponse):
-            async def __call__(self, scope, receive, send):  # type: ignore[no-untyped-def]
-                try:
-                    await super().__call__(scope, receive, send)
-                finally:
-                    _release_media_inflight()
-
-        return _TrackedFileResponse(
+        # Drop the slot before returning the body stream.
+        _release_media_inflight()
+        handed_off = True
+        return FileResponse(
             str(resolved),
             media_type=media_type,
             stat_result=st,
             headers={"Accept-Ranges": "bytes", "Cache-Control": "public, max-age=3600"},
         )
-    except Exception:
-        _release_media_inflight()
+    except BaseException:
+        if not handed_off:
+            _release_media_inflight()
         raise
 
 

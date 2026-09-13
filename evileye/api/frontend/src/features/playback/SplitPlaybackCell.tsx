@@ -9,7 +9,7 @@ import { PlaybackBusyHint } from './PlaybackBusyHint';
 import { usePlaybackCameraMetadata } from './PlaybackCameraView';
 import { playbackDebugInc } from './playbackDebug';
 import { seekPlaybackVideo, seekingAgeMs, lowReadyStateAgeMs, SEEKING_STUCK_MS, shouldEmitPlaybackClock } from './playbackVideoSync';
-import { drainVideoElement, reloadVideoMedia } from './drainVideo';
+import { drainVideoElement, reloadVideoMedia, resetErrorMediaBackoff, scheduleErrorMediaReload } from './drainVideo';
 
 export function SplitPlaybackCell({
   videoUrl,
@@ -352,54 +352,59 @@ export function SplitPlaybackCell({
         onVideoClockRef.current?.(st + video.currentTime);
       }
     };
+    const errorReloadTimers: number[] = [];
     const onError = () => {
       setSeeking(false);
       syncReady();
       playbackDebugInc('playRejects');
       const el = video;
-      window.setTimeout(() => {
+      const timer = scheduleErrorMediaReload(el, () => {
         if (videoRef.current !== el || !videoUrl) return;
-        if (reloadVideoMedia(el)) {
-          seekPlaybackVideo(el, getPositionRef.current(), startTsRef.current, {
-            playing: playingRef.current,
-            scrubbing: scrubbingRef.current,
-            force: true,
-            thresholdSec: 0,
-            segmentEndTs:
-              Number.isFinite(el.duration) && el.duration > 0
-                ? startTsRef.current + el.duration
-                : undefined,
-          });
-          drawFrame();
-        }
-      }, 400);
+        seekPlaybackVideo(el, getPositionRef.current(), startTsRef.current, {
+          playing: playingRef.current,
+          scrubbing: scrubbingRef.current,
+          force: true,
+          thresholdSec: 0,
+          segmentEndTs:
+            Number.isFinite(el.duration) && el.duration > 0
+              ? startTsRef.current + el.duration
+              : undefined,
+        });
+        drawFrame();
+      });
+      if (timer != null) errorReloadTimers.push(timer);
+    };
+    const syncReadyReset = () => {
+      resetErrorMediaBackoff(video);
+      syncReady();
     };
     video.addEventListener('seeking', onSeeking);
     video.addEventListener('seeked', onSeeked);
     video.addEventListener('timeupdate', onTime);
     video.addEventListener('loadeddata', onSeeked);
-    video.addEventListener('canplay', syncReady);
+    video.addEventListener('canplay', syncReadyReset);
     video.addEventListener('waiting', syncReady);
     video.addEventListener('error', onError);
     setSeeking(video.seeking);
     setMediaReadyState(video.readyState);
     return () => {
+      for (const t of errorReloadTimers) window.clearTimeout(t);
       video.removeEventListener('seeking', onSeeking);
       video.removeEventListener('seeked', onSeeked);
       video.removeEventListener('timeupdate', onTime);
       video.removeEventListener('loadeddata', onSeeked);
-      video.removeEventListener('canplay', syncReady);
+      video.removeEventListener('canplay', syncReadyReset);
       video.removeEventListener('waiting', syncReady);
       video.removeEventListener('error', onError);
     };
   }, [videoUrl, cameraId, mediaEpoch]);
 
   useEffect(() => {
-    const el = videoRef;
     return () => {
-      drainVideoElement(el.current);
+      drainVideoElement(videoRef.current);
+      resetErrorMediaBackoff(videoRef.current);
     };
-  }, []);
+  }, [videoUrl, mediaEpoch]);
 
   useEffect(() => {
     const video = videoRef.current;

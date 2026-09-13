@@ -17,6 +17,9 @@ from evileye.video_recorder.session_sidecar import (
 
 _data_dir_cache: tuple[tuple[Any, ...], str] | None = None
 
+# Bad midnight sidecars keep fragment_id but reset start_ts; nominal then drifts by hours.
+SESSION_MTIME_DRIFT_SEC = 30 * 60
+
 
 def _config_mtime(config_path: str | None) -> float:
     if not config_path:
@@ -405,6 +408,31 @@ def _plausible_media_duration(duration: float | None, configured_length: float) 
     return duration
 
 
+def _mtime_based_start(path: str, configured_length: float) -> float | None:
+    """Estimate segment start from file mtime minus media/configured duration."""
+    mtime = _file_mtime(path)
+    if mtime is None:
+        return None
+    media_dur = _plausible_media_duration(_mp4_duration_sec(path), configured_length)
+    if media_dur is None:
+        media_dur = configured_length
+    return mtime - media_dur
+
+
+def _window_overlaps(
+    start: float,
+    end: float,
+    from_ts: float | None,
+    to_ts: float | None,
+    slack: float,
+) -> bool:
+    if from_ts is not None and end < from_ts - slack:
+        return False
+    if to_ts is not None and start > to_ts + slack:
+        return False
+    return True
+
+
 def _resolve_segment_starts(
     parsed: list[tuple[str, float, int | None]],
     *,
@@ -420,6 +448,9 @@ def _resolve_segment_starts(
     Closed parts: accumulate ``mvhd`` duration from the session start. Fallback
     to mtime only when duration is missing and the stamp is close to the
     nominal slot (not for the first part).
+
+    When a midnight day-rotate rewrote ``start_ts`` while fragment indices continued,
+    nominal slots land hours in the future — prefer mtime-based starts in that case.
     """
     if not parsed:
         return []
@@ -429,6 +460,7 @@ def _resolve_segment_starts(
 
     out: list[tuple[str, float]] = []
     slack = max(60.0, configured_length * 0.5)
+    drift = SESSION_MTIME_DRIFT_SEC
     for session_start, items in by_session.items():
         indices = [idx for _, idx in items if idx is not None]
         use_index = (
@@ -437,8 +469,15 @@ def _resolve_segment_starts(
             and len(set(indices)) == len(items)
         )
         if not use_index:
-            for path, _idx in items:
-                out.append((path, session_start))
+            for path, idx in items:
+                nominal = session_start + float(idx or 0) * configured_length
+                mtime_start = _mtime_based_start(path, configured_length)
+                # Only repair future-dated nominals (bad midnight sidecar + continued idx).
+                # Fresh test files have mtime≈now while nominal is historical — do not flip those.
+                if mtime_start is not None and (nominal - mtime_start) > drift:
+                    out.append((path, mtime_start))
+                else:
+                    out.append((path, session_start))
             continue
         ordered = sorted(items, key=lambda item: (item[1] if item[1] is not None else 0, item[0]))
         start = session_start
@@ -447,6 +486,11 @@ def _resolve_segment_starts(
             chosen = start
             if abs(chosen - nominal) > slack:
                 chosen = nominal
+            mtime_start = _mtime_based_start(path, configured_length)
+            if mtime_start is not None and (
+                (nominal - mtime_start) > drift or (chosen - mtime_start) > drift
+            ):
+                chosen = mtime_start
             out.append((path, chosen))
             media_dur = _plausible_media_duration(_mp4_duration_sec(path), configured_length)
             if media_dur is not None:
@@ -569,19 +613,17 @@ def _date_dirs(base: Path, date: Optional[str]) -> list[Path]:
             if p.exists() and p.name not in seen:
                 found.append(p)
                 seen.add(p.name)
-        # GST continuous recording keeps writing into the session-start day folder
-        # across midnight. When the UI asks for calendar "today", also scan yesterday.
+        # GST continuous recording may keep writing into the previous calendar
+        # day folder across midnight (or leave overnight parts there). Always
+        # scan D-1 for any requested day, not only when D is today.
         if iso_date:
             try:
-                today = datetime.now().astimezone().strftime("%Y-%m-%d")
-                if iso_date == today:
-                    yday = (datetime.now().astimezone().date().fromordinal(
-                        datetime.now().astimezone().date().toordinal() - 1
-                    )).isoformat()
-                    yp = base / yday
-                    if yp.exists() and yp.name not in seen:
-                        found.append(yp)
-                        seen.add(yp.name)
+                day = datetime.strptime(iso_date, "%Y-%m-%d").date()
+                yday = day.fromordinal(day.toordinal() - 1).isoformat()
+                yp = base / yday
+                if yp.exists() and yp.name not in seen:
+                    found.append(yp)
+                    seen.add(yp.name)
             except Exception:
                 pass
         return found
@@ -861,15 +903,23 @@ def _slot_might_overlap_window(
     from_ts: float | None,
     to_ts: float | None,
     slack: float,
+    path: str | None = None,
 ) -> bool:
     if from_ts is None and to_ts is None:
         return True
     start, end = _nominal_slot_bounds(session_start, index, configured_length)
-    if from_ts is not None and end < from_ts - slack:
-        return False
-    if to_ts is not None and start > to_ts + slack:
-        return False
-    return True
+    if _window_overlaps(start, end, from_ts, to_ts, slack):
+        return True
+    # Bad midnight sidecars push nominal hours into the future; still keep the
+    # file if wall-clock mtime overlaps the requested window. Use configured
+    # length only here — do not open MP4s during the cheap prefilter.
+    if path:
+        mtime = _file_mtime(path)
+        if mtime is not None and _window_overlaps(
+            mtime - configured_length, mtime, from_ts, to_ts, slack
+        ):
+            return True
+    return False
 
 
 def load_segments_uncached(
@@ -902,7 +952,7 @@ def load_segments_uncached(
             session_start, index = parsed
             session_start = _session_start_with_sidecar(path, session_start)
             if not _slot_might_overlap_window(
-                session_start, index, configured_length, from_ts, to_ts, slack
+                session_start, index, configured_length, from_ts, to_ts, slack, path=path
             ):
                 continue
             parsed_named.append((path, session_start, index))

@@ -57,6 +57,9 @@ class GstContinuousRecorder(VideoRecorderBase):
         self._last_stats_ts: float = 0.0
         self._session_date_str: Optional[str] = None
         self._session_stem: Optional[Path] = None
+        # Wall-clock of first muxed frame for this splitmux session; kept across
+        # midnight day-folder rotates so sidecar start_ts matches continuing fragment_id.
+        self._session_start_ts: Optional[float] = None
         self._camera_folder: str = "source"
         self._source_name: str = "source"
         self._streams_base: Optional[Path] = None
@@ -153,6 +156,7 @@ class GstContinuousRecorder(VideoRecorderBase):
             self._streams_base = base_dir / "Streams"
             self._session_date_str = None
             self._session_stem = None
+            self._session_start_ts = None
             # Prime session stem/out_dir; property keeps printf pattern as fallback.
             self.fragment_location_for_id(0)
             location = str(self._session_stem) + "_%05d." + self.params.container
@@ -247,11 +251,18 @@ class GstContinuousRecorder(VideoRecorderBase):
             if day_changed and fragment_id > 0:
                 try:
                     location_pattern = str(self._session_stem) + "_%05d." + self.params.container
-                    write_session_sidecar(sidecar_path_from_splitmux_location(location_pattern), time.time(), None)
+                    # Keep original session anchor: fragment_id continues across midnight.
+                    anchor = self._session_start_ts if self._session_start_ts is not None else time.time()
+                    write_session_sidecar(
+                        sidecar_path_from_splitmux_location(location_pattern),
+                        anchor,
+                        None,
+                    )
                     self.logger.info(
-                        "Rotated recording day folder to %s (fragment=%s)",
+                        "Rotated recording day folder to %s (fragment=%s, session_start_ts=%s)",
                         out_dir,
                         fragment_id,
+                        anchor,
                     )
                 except Exception:
                     self.logger.exception("Failed to write day-rotate session sidecar")
@@ -286,7 +297,10 @@ class GstContinuousRecorder(VideoRecorderBase):
             except Exception:
                 first_pts = None
             try:
-                write_session_sidecar(sidecar, time.time(), first_pts)
+                wall = time.time()
+                write_session_sidecar(sidecar, wall, first_pts)
+                if self._session_start_ts is None:
+                    self._session_start_ts = wall
                 self.logger.info("Wrote recording session sidecar %s", sidecar)
             except Exception:
                 self.logger.exception("Failed to write session sidecar %s", sidecar)
@@ -394,6 +408,7 @@ class GstContinuousRecorder(VideoRecorderBase):
             self._recording_out_dirs = set()
             self._session_date_str = None
             self._session_stem = None
+            self._session_start_ts = None
             self._recording_checked_files = set()
 
         if t and t.is_alive():

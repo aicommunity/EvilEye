@@ -20,7 +20,12 @@ import { PlaybackMediaWithOverlay } from './PlaybackMediaWithOverlay';
 import { mergePlaybackMetadata } from './mergePlaybackMetadata';
 import { playbackDebugInc } from './playbackDebug';
 import { clientTelemetryLog } from '../../diagnostics/clientTelemetry';
-import { drainVideoElement, reloadVideoMedia } from './drainVideo';
+import {
+  drainVideoElement,
+  reloadVideoMedia,
+  resetErrorMediaBackoff,
+  scheduleErrorMediaReload,
+} from './drainVideo';
 import { seekPlaybackVideo, shouldEmitPlaybackClock, isPastDecodedEof, seekingAgeMs, lowReadyStateAgeMs, SEEKING_STUCK_MS, resetPlaybackClockOwner } from './playbackVideoSync';
 import { usePlaybackMetadata } from './usePlaybackMetadata';
 import { usePlaybackStaticMetadata } from './usePlaybackStaticMetadata';
@@ -265,6 +270,7 @@ export function usePlaybackCameraSlot(
         segmentEndTs: current.endTs,
       });
     };
+    const errorReloadTimers: number[] = [];
     const onError = () => {
       setVideoSeeking(false);
       playbackDebugInc('playRejects');
@@ -279,41 +285,45 @@ export function usePlaybackCameraSlot(
         },
         'playback',
       );
-      // 503 / aborted Range → black tile until src is re-requested.
+      // 503 / aborted Range → backoff reload (not fixed 400ms) to avoid shed storms.
       const el = ref.current;
       if (el && slotRef.current) {
-        window.setTimeout(() => {
+        const timer = scheduleErrorMediaReload(el, () => {
           if (ref.current !== el || !slotRef.current) return;
-          if (reloadVideoMedia(el)) {
-            applySync();
-          }
-        }, 400);
+          applySync();
+        });
+        if (timer != null) errorReloadTimers.push(timer);
       }
     };
     const v = ref.current;
     if (!v) return;
     const onSeeking = () => setVideoSeeking(true);
+    const onCanPlayReset = () => {
+      resetErrorMediaBackoff(v);
+      onCanPlay();
+    };
     v.addEventListener('seeking', onSeeking);
     v.addEventListener('seeked', onSeeked);
     v.addEventListener('error', onError);
     setVideoSeeking(v.seeking);
     v.addEventListener('timeupdate', onTimeUpdate);
     v.addEventListener('loadeddata', onSeeked);
-    v.addEventListener('loadedmetadata', onCanPlay);
-    v.addEventListener('canplay', onCanPlay);
+    v.addEventListener('loadedmetadata', onCanPlayReset);
+    v.addEventListener('canplay', onCanPlayReset);
     v.addEventListener('ended', onEnded);
     applySync();
     publishVideoGlobal();
     resumeIfNeeded();
 
     return () => {
+      for (const t of errorReloadTimers) window.clearTimeout(t);
       v.removeEventListener('seeking', onSeeking);
       v.removeEventListener('seeked', onSeeked);
       v.removeEventListener('error', onError);
       v.removeEventListener('timeupdate', onTimeUpdate);
       v.removeEventListener('loadeddata', onSeeked);
-      v.removeEventListener('loadedmetadata', onCanPlay);
-      v.removeEventListener('canplay', onCanPlay);
+      v.removeEventListener('loadedmetadata', onCanPlayReset);
+      v.removeEventListener('canplay', onCanPlayReset);
       v.removeEventListener('ended', onEnded);
     };
     // Only rebind when the media element identity changes — NOT on scrubbing/playing
@@ -321,15 +331,14 @@ export function usePlaybackCameraSlot(
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [slot?.url, mediaEpoch]);
 
-  // Release Range GETs only when the element is actually going away.
+  // Drain previous Range GETs on src/day change — not only on full unmount.
   useEffect(() => {
-    const videoEl = ref;
-    const preloadEl = preloadRef;
     return () => {
-      drainVideoElement(videoEl.current);
-      drainVideoElement(preloadEl.current);
+      drainVideoElement(ref.current);
+      drainVideoElement(preloadRef.current);
+      resetErrorMediaBackoff(ref.current);
     };
-  }, []);
+  }, [slot?.url, mediaEpoch]);
 
   useEffect(() => {
     setVideoGlobalSec(null);

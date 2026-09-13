@@ -18,6 +18,35 @@ const lastReloadAt = new WeakMap<HTMLVideoElement, number>();
 /** Prevent reload storms that open dozens of Range GETs and freeze the timeline. */
 export const RELOAD_MEDIA_COOLDOWN_MS = 2500;
 
+/** Backoff after media error (503 shed / aborted Range) — avoid stampeding the API. */
+export const ERROR_RELOAD_BACKOFFS_MS = [1000, 2000, 5000] as const;
+const errorBackoffStep = new WeakMap<HTMLVideoElement, number>();
+
+export function resetErrorMediaBackoff(video: HTMLVideoElement | null | undefined) {
+  if (!video) return;
+  errorBackoffStep.delete(video);
+}
+
+/**
+ * Schedule a cooldown-aware media reload with increasing delay after errors.
+ * Returns the timer id (caller should clear on cleanup / successful canplay).
+ */
+export function scheduleErrorMediaReload(
+  video: HTMLVideoElement | null | undefined,
+  onReloaded?: () => void,
+): number | null {
+  if (!video || typeof window === 'undefined') return null;
+  const step = errorBackoffStep.get(video) ?? 0;
+  const delay =
+    ERROR_RELOAD_BACKOFFS_MS[Math.min(step, ERROR_RELOAD_BACKOFFS_MS.length - 1)] ?? 5000;
+  errorBackoffStep.set(video, step + 1);
+  return window.setTimeout(() => {
+    if (reloadVideoMedia(video)) {
+      onReloaded?.();
+    }
+  }, delay);
+}
+
 /**
  * Abort current media network activity and re-request the same URL.
  * Cooldown is per element so multi-cam recovery cannot stampede the API.
