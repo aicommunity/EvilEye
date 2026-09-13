@@ -128,8 +128,8 @@ def _load_latest_frame(
         return broker.latest_jpeg(f"{run_id_str}:full:{source_id}")
     broker_key = f"{run_id_str}:{source_id}" if source_id is not None else run_id_str
     data = broker.latest_jpeg(broker_key)
-    if not data and source_id is not None:
-        data = broker.latest_jpeg(run_id_str)
+    # Never fall back to run-level JPEG when a source was requested — that
+    # shows the wrong camera after a per-source miss.
     if data:
         return data
     return None
@@ -350,6 +350,7 @@ async def _mjpeg_stream_impl(
     from evileye.api.core.camera_access import assert_source_id_allowed, resolve_camera_access
 
     assert_source_id_allowed(resolve_camera_access(request), int(run_info["id"]), source_id)
+    handed_off = False
     if not _acquire_mjpeg_slot():
         raise HTTPException(
             status_code=503,
@@ -360,30 +361,43 @@ async def _mjpeg_stream_impl(
         stream_key = f"{run_id_str}:full:{source_id}"
     else:
         stream_key = f"{run_id_str}:{source_id}" if source_id is not None else run_id_str
-    stop_event = get_frame_broker().acquire_stream(stream_key)
-    idle_sec = float(os.getenv("EVILEYE_MJPEG_IDLE_SEC", "8") or 8)
-    demand_queue = getattr(request.app.state, "preview_demand_queue", None)
+    stop_event = None
+    try:
+        stop_event = get_frame_broker().acquire_stream(stream_key)
+        idle_sec = float(os.getenv("EVILEYE_MJPEG_IDLE_SEC", "8") or 8)
+        demand_queue = getattr(request.app.state, "preview_demand_queue", None)
 
-    return StreamingResponse(
-        _mjpeg_generator(
-            run_info,
-            fps,
-            stop_event,
-            source_id=source_id,
-            stream_key=stream_key,
-            idle_sec=idle_sec,
-            demand_queue=demand_queue,
-            rid=rid,
-            full=full,
-        ),
-        media_type="multipart/x-mixed-replace; boundary=frame",
-        headers={
-            "X-Accel-Buffering": "no",
-            "Cache-Control": "no-cache, no-store, must-revalidate",
-            "Pragma": "no-cache",
-            "Expires": "0",
-        },
-    )
+        response = StreamingResponse(
+            _mjpeg_generator(
+                run_info,
+                fps,
+                stop_event,
+                source_id=source_id,
+                stream_key=stream_key,
+                idle_sec=idle_sec,
+                demand_queue=demand_queue,
+                rid=rid,
+                full=full,
+            ),
+            media_type="multipart/x-mixed-replace; boundary=frame",
+            headers={
+                "X-Accel-Buffering": "no",
+                "Cache-Control": "no-cache, no-store, must-revalidate",
+                "Pragma": "no-cache",
+                "Expires": "0",
+            },
+        )
+        handed_off = True
+        return response
+    except BaseException:
+        if not handed_off:
+            _release_mjpeg_slot()
+            if stop_event is not None:
+                try:
+                    get_frame_broker().release_stream(stream_key)
+                except Exception:
+                    pass
+        raise
 
 
 @router.get("/runs/{rid}/stream.mjpg")
