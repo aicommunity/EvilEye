@@ -261,6 +261,16 @@ export function SplitPlaybackCell({
     if (!video) return;
     let stuckAttempts = 0;
     let pausedZombieTicks = 0;
+    let softReloadCount = 0;
+    const softReload = () => {
+      softReloadCount += 1;
+      reloadVideoMedia(video);
+      if (softReloadCount >= 3 && video.readyState < 2) {
+        softReloadCount = 0;
+        stuckAttempts = 0;
+        setLocalEpoch((n) => n + 1);
+      }
+    };
     const timer = window.setInterval(() => {
       if (playingRef.current && !scrubbingRef.current && video.paused) {
         pausedZombieTicks += 1;
@@ -278,7 +288,7 @@ export function SplitPlaybackCell({
           drawFrame();
         }
         if (pausedZombieTicks >= 6 && video.readyState < 2) {
-          reloadVideoMedia(video);
+          softReload();
         }
         return;
       }
@@ -297,24 +307,26 @@ export function SplitPlaybackCell({
         });
         drawFrame();
         if (stuckAttempts === 2 || stuckAttempts >= 4) {
-          reloadVideoMedia(video);
+          softReload();
         }
         return;
       }
       if (lowReadyStateAgeMs(video) >= SEEKING_STUCK_MS) {
         playbackDebugInc('seekingStuckRecoveries');
         stuckAttempts += 1;
-        seekPlaybackVideo(video, getPositionRef.current(), startTs, {
-          playing: playingRef.current,
-          force: true,
-          scrubbing: true,
-          thresholdSec: 0,
-          segmentEndTs:
-            Number.isFinite(video.duration) && video.duration > 0 ? startTs + video.duration : undefined,
-        });
-        drawFrame();
+        setSeeking(false);
         if (stuckAttempts >= 2) {
-          reloadVideoMedia(video);
+          softReload();
+        } else if (video.readyState >= 1) {
+          seekPlaybackVideo(video, getPositionRef.current(), startTs, {
+            playing: playingRef.current,
+            force: true,
+            scrubbing: true,
+            thresholdSec: 0,
+            segmentEndTs:
+              Number.isFinite(video.duration) && video.duration > 0 ? startTs + video.duration : undefined,
+          });
+          drawFrame();
         }
         return;
       }
@@ -322,11 +334,12 @@ export function SplitPlaybackCell({
         stuckAttempts += 1;
         if (stuckAttempts >= 3) {
           stuckAttempts = 0;
-          reloadVideoMedia(video);
+          softReload();
           drawFrame();
         }
       } else if (!video.seeking && video.readyState >= 2) {
         stuckAttempts = 0;
+        softReloadCount = 0;
       }
     }, 700);
     return () => window.clearInterval(timer);
@@ -511,6 +524,10 @@ export function SplitPlaybackCell({
       drawFrame();
       return;
     }
+    if (video.readyState < 2 && !userSeeking && !scrubbing) {
+      if (playing && video.paused) void video.play().catch(() => null);
+      return;
+    }
     seekPlaybackVideo(video, position, startTs, {
       playing,
       scrubbing,
@@ -537,6 +554,7 @@ export function SplitPlaybackCell({
   const inner = (
     <div ref={mediaRef} className="split-playback-container" style={{ position: 'relative' }}>
       <video
+        key={`split-media-${mediaEpoch}`}
         ref={videoRef}
         src={videoUrl}
         preload="auto"

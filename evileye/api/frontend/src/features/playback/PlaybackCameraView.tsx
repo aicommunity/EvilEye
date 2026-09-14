@@ -79,8 +79,11 @@ export function usePlaybackCameraSlot(
   const [videoSeeking, setVideoSeeking] = useState(false);
   const [recordingInProgress, setRecordingInProgress] = useState(false);
   const [inPlayableGap, setInPlayableGap] = useState(false);
-  /** Reserved for explicit recovery only — do not remount <video> by default. */
-  const [mediaEpoch] = useState(0);
+  /**
+   * Remount only as last-resort zombie recovery (not on every glitch).
+   * Seek-storms on readyState 0 must not bump this.
+   */
+  const [mediaEpoch, setMediaEpoch] = useState(0);
 
   const publishVideoGlobal = () => {
     const v = ref.current;
@@ -178,6 +181,18 @@ export function usePlaybackCameraSlot(
       if (allowVideoClock && !scrubbingRef.current) {
         onPlaybackExhaustedRef.current?.();
       }
+      return;
+    }
+
+    // No decoded frames yet: do not chase the shared playhead with seekPlaybackVideo.
+    // Other cams advance the clock; hammering this element keeps Firefox at readyState 0
+    // and sticky "Ищем кадр…". Watchdog reload / remount recovers.
+    if (
+      v.readyState < 2 &&
+      !userSeekingRef.current &&
+      !scrubbingRef.current
+    ) {
+      if (playing && v.paused) void v.play().catch(() => null);
       return;
     }
 
@@ -397,13 +412,14 @@ export function usePlaybackCameraSlot(
   }, [positionSec, playMode, scrubbing, userSeeking]);
 
   // Recover stuck seeking even while paused (archive scrub). Prefer force-seek /
-  // load() — remount opens a new /media Range while the old one may still hold a slot.
+  // load() — remount only after several failed soft recoveries.
   useEffect(() => {
     if (scrubbing) return;
     const v = ref.current;
     if (!v) return;
     let stuckSeekAttempts = 0;
     let pausedZombieTicks = 0;
+    let softReloadCount = 0;
     const kick = () => {
       playbackDebugInc('watchdogKick');
       applySync();
@@ -412,6 +428,24 @@ export function usePlaybackCameraSlot(
         void v.play().catch(() => {
           playbackDebugInc('playRejects');
         });
+      }
+    };
+    const softReload = () => {
+      softReloadCount += 1;
+      if (reloadVideoMedia(v)) {
+        kick();
+      }
+      // Last resort: remount <video> after repeated soft reloads still leave readyState < 2.
+      if (softReloadCount >= 3 && v.readyState < 2) {
+        softReloadCount = 0;
+        stuckSeekAttempts = 0;
+        pausedZombieTicks = 0;
+        setMediaEpoch((n) => n + 1);
+        clientTelemetryLog(
+          'video_remount',
+          { camera: clockId ?? null, src: slotRef.current?.url ?? null },
+          'playback',
+        );
       }
     };
     if (playing) {
@@ -436,8 +470,7 @@ export function usePlaybackCameraSlot(
           });
         }
         if (pausedZombieTicks >= 6 && v.readyState < 2) {
-          reloadVideoMedia(v);
-          kick();
+          softReload();
         }
         return;
       }
@@ -455,8 +488,7 @@ export function usePlaybackCameraSlot(
           segmentEndTs: current.endTs,
         });
         if (stuckSeekAttempts === 2 || stuckSeekAttempts >= 4) {
-          reloadVideoMedia(v);
-          kick();
+          softReload();
         }
         return;
       }
@@ -465,16 +497,18 @@ export function usePlaybackCameraSlot(
       if (lowReadyStateAgeMs(v) >= SEEKING_STUCK_MS && current) {
         playbackDebugInc('seekingStuckRecoveries');
         stuckSeekAttempts += 1;
-        seekPlaybackVideo(v, getPositionRef.current(), current.startTs, {
-          playing: playingRef.current,
-          force: true,
-          scrubbing: true,
-          thresholdSec: 0,
-          segmentEndTs: current.endTs,
-        });
+        setVideoSeeking(false);
+        // Prefer reload over another seek into a decoder with no frames.
         if (stuckSeekAttempts >= 2) {
-          reloadVideoMedia(v);
-          kick();
+          softReload();
+        } else if (v.readyState >= 1) {
+          seekPlaybackVideo(v, getPositionRef.current(), current.startTs, {
+            playing: playingRef.current,
+            force: true,
+            scrubbing: true,
+            thresholdSec: 0,
+            segmentEndTs: current.endTs,
+          });
         }
         return;
       }
@@ -485,19 +519,22 @@ export function usePlaybackCameraSlot(
           stuckSeekAttempts += 1;
           if (stuckSeekAttempts >= 3) {
             stuckSeekAttempts = 0;
-            reloadVideoMedia(v);
-            kick();
+            softReload();
           }
         } else {
           stuckSeekAttempts = 0;
+          softReloadCount = 0;
         }
         return;
       }
-      if (v.readyState >= 2) return;
+      if (v.readyState >= 2) {
+        stuckSeekAttempts = 0;
+        softReloadCount = 0;
+        return;
+      }
       if (!(v.currentTime > 2) || pullbacks >= 4) {
         if (pullbacks >= 4 && v.readyState < 2) {
-          reloadVideoMedia(v);
-          kick();
+          softReload();
         }
         return;
       }
@@ -511,8 +548,7 @@ export function usePlaybackCameraSlot(
     }, 700);
     const hardTimer = window.setTimeout(() => {
       if (!playingRef.current || v.readyState >= 2) return;
-      reloadVideoMedia(v);
-      kick();
+      softReload();
     }, 2800);
     return () => {
       v.removeEventListener('canplay', kick);
@@ -751,7 +787,19 @@ export function PlaybackVideoSurface({
     v.addEventListener('waiting', syncReady);
     setSeeking(v.seeking);
     setMediaReadyState(v.readyState);
+    // Clear sticky seeking UI when the element never fires seeked (Firefox zombie).
+    const clearStuck = window.setInterval(() => {
+      if (!v.seeking && v.readyState >= 2) {
+        setSeeking(false);
+        return;
+      }
+      if (lowReadyStateAgeMs(v) >= SEEKING_STUCK_MS) {
+        setSeeking(false);
+        setMediaReadyState(v.readyState);
+      }
+    }, 500);
     return () => {
+      window.clearInterval(clearStuck);
       v.removeEventListener('seeking', onSeeking);
       v.removeEventListener('seeked', onSeeked);
       v.removeEventListener('loadeddata', syncReady);
@@ -782,6 +830,7 @@ export function PlaybackVideoSurface({
       {videoSrc ? (
         <>
           <video
+            key={`playback-media-${mediaEpoch}`}
             ref={videoRef as RefObject<HTMLVideoElement>}
             src={videoSrc}
             playsInline
