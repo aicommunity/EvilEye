@@ -28,7 +28,7 @@ import {
   scheduleErrorMediaReload,
 } from './drainVideo';
 import { advanceOrStopAtEof } from './playbackEof';
-import { seekPlaybackVideo, shouldEmitPlaybackClock, isPastDecodedEof, seekingAgeMs, lowReadyStateAgeMs, SEEKING_STUCK_MS, LOW_READY_RELOAD_MS, resetPlaybackClockOwner } from './playbackVideoSync';
+import { seekPlaybackVideo, shouldEmitPlaybackClock, isPastDecodedEof, seekingAgeMs, lowReadyStateAgeMs, SEEKING_STUCK_MS, LOW_READY_RELOAD_MS, PLAY_CHASE_THRESHOLD_SEC, resetPlaybackClockOwner } from './playbackVideoSync';
 import { usePlaybackMetadata } from './usePlaybackMetadata';
 import { usePlaybackStaticMetadata } from './usePlaybackStaticMetadata';
 import { PlaybackStaticFrame } from './PlaybackStaticFrame';
@@ -223,10 +223,10 @@ export function usePlaybackCameraSlot(
         return;
       }
       const videoGlobal = current.startTs + v.currentTime;
-      if (Math.abs(position - videoGlobal) > 1.0) {
+      if (Math.abs(position - videoGlobal) > PLAY_CHASE_THRESHOLD_SEC) {
         seekPlaybackVideo(v, position, current.startTs, {
           playing: true,
-          thresholdSec: 1.0,
+          thresholdSec: PLAY_CHASE_THRESHOLD_SEC,
           segmentEndTs: current.endTs,
         });
         // Seek-storm / src change can leave the element paused while UI still plays.
@@ -775,9 +775,18 @@ export function PlaybackVideoSurface({
   const { t } = useI18n();
   const [seeking, setSeeking] = useState(false);
   const [mediaReadyState, setMediaReadyState] = useState<number | null>(null);
+  const [hadDecodableFrame, setHadDecodableFrame] = useState(false);
   const lastSlotUrlRef = useRef<string | null>(null);
   if (slot?.url) lastSlotUrlRef.current = slot.url;
   const videoSrc = slot?.url ?? (seeking ? lastSlotUrlRef.current : null);
+
+  useEffect(() => {
+    setHadDecodableFrame(false);
+  }, [slot?.url, mediaEpoch]);
+
+  useEffect(() => {
+    if (mediaReadyState != null && mediaReadyState >= 2) setHadDecodableFrame(true);
+  }, [mediaReadyState]);
 
   const emptyMessage = (() => {
     if (segmentsLoading) return t('playback.loadingSegment');
@@ -881,7 +890,10 @@ export function PlaybackVideoSurface({
             seeking={seeking}
             loading={
               Boolean(loading) ||
-              (Boolean(videoSrc) && mediaReadyState != null && mediaReadyState < 2)
+              (!hadDecodableFrame &&
+                Boolean(videoSrc) &&
+                mediaReadyState != null &&
+                mediaReadyState < 2)
             }
             hasObjects={(meta?.objects?.length ?? 0) > 0}
             mediaReadyState={mediaReadyState}

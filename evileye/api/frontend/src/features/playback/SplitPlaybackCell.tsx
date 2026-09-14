@@ -8,7 +8,7 @@ import { useI18n } from '../../i18n';
 import { PlaybackBusyHint } from './PlaybackBusyHint';
 import { usePlaybackCameraMetadata } from './PlaybackCameraView';
 import { playbackDebugInc } from './playbackDebug';
-import { seekPlaybackVideo, seekingAgeMs, lowReadyStateAgeMs, SEEKING_STUCK_MS, LOW_READY_RELOAD_MS, shouldEmitPlaybackClock, isPastDecodedEof } from './playbackVideoSync';
+import { seekPlaybackVideo, seekingAgeMs, lowReadyStateAgeMs, SEEKING_STUCK_MS, LOW_READY_RELOAD_MS, PLAY_CHASE_THRESHOLD_SEC, shouldEmitPlaybackClock, isPastDecodedEof } from './playbackVideoSync';
 import { advanceOrStopAtEof } from './playbackEof';
 import {
   drainVideoElement,
@@ -90,6 +90,7 @@ export function SplitPlaybackCell({
   const [videoReady, setVideoReady] = useState(0);
   const [seeking, setSeeking] = useState(false);
   const [mediaReadyState, setMediaReadyState] = useState<number | null>(null);
+  const [hadDecodableFrame, setHadDecodableFrame] = useState(false);
   const [videoGlobalSec, setVideoGlobalSec] = useState<number | null>(null);
   const [localFrameSize, setLocalFrameSize] = useState<FrameSize | null>(null);
   const [localEpoch, setLocalEpoch] = useState(0);
@@ -350,7 +351,12 @@ export function SplitPlaybackCell({
 
   useEffect(() => {
     pinnedThisMediaRef.current = false;
+    setHadDecodableFrame(false);
   }, [videoUrl, mediaEpoch]);
+
+  useEffect(() => {
+    if (mediaReadyState != null && mediaReadyState >= 2) setHadDecodableFrame(true);
+  }, [mediaReadyState]);
 
   useEffect(() => {
     remountedUrlRef.current = null;
@@ -373,7 +379,7 @@ export function SplitPlaybackCell({
       seekPlaybackVideo(video, getPositionRef.current(), st, {
         playing: playingRef.current,
         scrubbing: scrubbingRef.current,
-        thresholdSec: playingRef.current && !scrubbingRef.current ? 1.0 : undefined,
+        thresholdSec: playingRef.current && !scrubbingRef.current ? PLAY_CHASE_THRESHOLD_SEC : undefined,
         segmentEndTs:
           Number.isFinite(video.duration) && video.duration > 0 ? st + video.duration : undefined,
       });
@@ -554,7 +560,7 @@ export function SplitPlaybackCell({
       playing,
       scrubbing,
       force: userSeeking || stuck,
-      thresholdSec: playing && !scrubbing ? 1.0 : undefined,
+      thresholdSec: playing && !scrubbing ? PLAY_CHASE_THRESHOLD_SEC : undefined,
       segmentEndTs:
         Number.isFinite(video.duration) && video.duration > 0 ? startTs + video.duration : undefined,
     });
@@ -594,7 +600,7 @@ export function SplitPlaybackCell({
           seekPlaybackVideo(video, getPositionRef.current(), startTs, {
             playing,
             scrubbing,
-            thresholdSec: playing && !scrubbing ? 1.0 : undefined,
+            thresholdSec: playing && !scrubbing ? PLAY_CHASE_THRESHOLD_SEC : undefined,
             segmentEndTs:
               video && Number.isFinite(video.duration) && video.duration > 0
                 ? startTs + video.duration
@@ -622,7 +628,10 @@ export function SplitPlaybackCell({
         seeking={seeking}
         loading={
           Boolean(metaLoading) ||
-          (Boolean(videoUrl) && mediaReadyState != null && mediaReadyState < 2)
+          (!hadDecodableFrame &&
+            Boolean(videoUrl) &&
+            mediaReadyState != null &&
+            mediaReadyState < 2)
         }
         hasObjects={(displayMeta?.objects?.length ?? 0) > 0}
         mediaReadyState={mediaReadyState}

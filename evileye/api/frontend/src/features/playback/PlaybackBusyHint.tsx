@@ -21,7 +21,12 @@ export function PlaybackBusyHint({
   mediaReadyState?: number | null;
 }) {
   const { t } = useI18n();
-  const want = seeking || (loading && !hasObjects);
+  // Once frames exist, brief rs dips / playhead seeks must not flash the overlay
+  // over an already-playing (even low-FPS) picture.
+  const hasDecodableFrame = mediaReadyState != null && mediaReadyState >= 2;
+  const wantSeek = seeking && !hasDecodableFrame;
+  const wantLoad = loading && !hasObjects && !hasDecodableFrame;
+  const want = wantSeek || wantLoad;
   const [shown, setShown] = useState(false);
   const [seekExpired, setSeekExpired] = useState(false);
   const wantSinceRef = useRef<number | null>(null);
@@ -43,7 +48,7 @@ export function PlaybackBusyHint({
   }, [want]);
 
   useEffect(() => {
-    if (!seeking) {
+    if (!wantSeek) {
       setSeekExpired(false);
       return;
     }
@@ -57,10 +62,10 @@ export function PlaybackBusyHint({
     const maxMs = Math.max(SEEK_HINT_MAX_MS, SEEKING_STUCK_MS);
     const timer = window.setTimeout(() => setSeekExpired(true), maxMs);
     return () => window.clearTimeout(timer);
-  }, [seeking, mediaReadyState]);
+  }, [wantSeek, mediaReadyState]);
 
-  const showSeek = seeking && !seekExpired;
-  const showLoad = loading && !hasObjects && !showSeek;
+  const showSeek = wantSeek && !seekExpired;
+  const showLoad = wantLoad && !showSeek;
   if (!shown || (!showSeek && !showLoad)) return null;
   const label = showSeek ? t('playback.seekingFrame') : t('playback.loadingMetadata');
   const compact = showSeek && hasObjects;
