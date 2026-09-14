@@ -10,6 +10,11 @@ export const PAUSED_SEEK_THRESHOLD_SEC = 1 / 30;
 export const PLAYBACK_EOF_PAD_SEC = 0.05;
 /** After this, allow force-seek even while `video.seeking` (decoder hang recovery). */
 export const SEEKING_STUCK_MS = 1800;
+/**
+ * HAVE_METADATA (1) with no decoded frame is often still buffering a large Range —
+ * do not soft-reload / remount at the seeking-stuck cadence (that thrashes Cam1).
+ */
+export const LOW_READY_RELOAD_MS = 8000;
 /** Drop shared clock ownership if the owner cannot emit for this long. */
 export const CLOCK_OWNER_STALE_MS = 2500;
 /** Ignore stale video clock right after scrubbing clears (anti-rollback). */

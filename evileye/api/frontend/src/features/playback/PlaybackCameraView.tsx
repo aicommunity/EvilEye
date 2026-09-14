@@ -28,7 +28,7 @@ import {
   scheduleErrorMediaReload,
 } from './drainVideo';
 import { advanceOrStopAtEof } from './playbackEof';
-import { seekPlaybackVideo, shouldEmitPlaybackClock, isPastDecodedEof, seekingAgeMs, lowReadyStateAgeMs, SEEKING_STUCK_MS, resetPlaybackClockOwner } from './playbackVideoSync';
+import { seekPlaybackVideo, shouldEmitPlaybackClock, isPastDecodedEof, seekingAgeMs, lowReadyStateAgeMs, SEEKING_STUCK_MS, LOW_READY_RELOAD_MS, resetPlaybackClockOwner } from './playbackVideoSync';
 import { usePlaybackMetadata } from './usePlaybackMetadata';
 import { usePlaybackStaticMetadata } from './usePlaybackStaticMetadata';
 import { PlaybackStaticFrame } from './PlaybackStaticFrame';
@@ -84,6 +84,10 @@ export function usePlaybackCameraSlot(
    * Seek-storms on readyState 0 must not bump this.
    */
   const [mediaEpoch, setMediaEpoch] = useState(0);
+  /** One initial pin per media element; chase only after HAVE_CURRENT_DATA. */
+  const pinnedThisMediaRef = useRef(false);
+  /** At most one remount per segment URL — remount loops reset softReloadCount. */
+  const remountedUrlRef = useRef<string | null>(null);
 
   const publishVideoGlobal = () => {
     const v = ref.current;
@@ -184,13 +188,22 @@ export function usePlaybackCameraSlot(
       return;
     }
 
-    // HAVE_NOTHING: wait for metadata. Once HAVE_METADATA (1+), allow a pin seek.
-    // Blocking all seeks until readyState>=2 left Cam1 permanently black (never pinned).
+    // While buffering (rs < 2): do not chase the shared playhead — other cams advance
+    // the clock and seek-storms keep Firefox at 0↔1. Pin once when metadata exists.
     if (
-      v.readyState < 1 &&
+      v.readyState < 2 &&
       !userSeekingRef.current &&
       !scrubbingRef.current
     ) {
+      if (v.readyState >= 1 && !pinnedThisMediaRef.current) {
+        pinnedThisMediaRef.current = true;
+        seekPlaybackVideo(v, position, current.startTs, {
+          playing,
+          force: true,
+          thresholdSec: 0,
+          segmentEndTs: current.endTs,
+        });
+      }
       if (playing && v.paused) void v.play().catch(() => null);
       return;
     }
@@ -405,8 +418,13 @@ export function usePlaybackCameraSlot(
   useEffect(() => {
     setVideoGlobalSec(null);
     setVideoSeeking(false);
+    pinnedThisMediaRef.current = false;
     resetPlaybackClockOwner();
   }, [slot?.url, mediaEpoch]);
+
+  useEffect(() => {
+    remountedUrlRef.current = null;
+  }, [slot?.url]);
 
   useEffect(() => {
     applySync();
@@ -414,7 +432,7 @@ export function usePlaybackCameraSlot(
   }, [positionSec, playMode, scrubbing, userSeeking]);
 
   // Recover stuck seeking even while paused (archive scrub). Prefer force-seek /
-  // load() — remount only after several failed soft recoveries.
+  // load() — remount at most once per URL (remount resets this effect).
   useEffect(() => {
     if (scrubbing) return;
     const v = ref.current;
@@ -433,15 +451,24 @@ export function usePlaybackCameraSlot(
       }
     };
     const softReload = () => {
+      // Cap recovery: reload storms reset readyState to 0 and flash «Ищем кадр».
+      if (softReloadCount >= 2) return;
       softReloadCount += 1;
+      pinnedThisMediaRef.current = false;
       if (reloadVideoMedia(v)) {
         kick();
       }
-      // Last resort remount — at most once per watchdog instance (per url/epoch).
-      if (softReloadCount === 3 && v.readyState < 2) {
+      const url = slotRef.current?.url ?? '';
+      if (
+        softReloadCount >= 2 &&
+        v.readyState < 2 &&
+        url &&
+        remountedUrlRef.current !== url
+      ) {
+        remountedUrlRef.current = url;
         clientTelemetryLog(
           'video_remount',
-          { camera: clockId ?? null, src: slotRef.current?.url ?? null },
+          { camera: clockId ?? null, src: url },
           'playback',
         );
         setMediaEpoch((n) => n + 1);
@@ -459,7 +486,7 @@ export function usePlaybackCameraSlot(
         pausedZombieTicks += 1;
         playbackDebugInc('playCalls');
         void v.play().catch(() => playbackDebugInc('playRejects'));
-        if (pausedZombieTicks === 2 && current) {
+        if (pausedZombieTicks === 2 && current && v.readyState >= 2) {
           seekPlaybackVideo(v, getPositionRef.current(), current.startTs, {
             playing: true,
             force: true,
@@ -468,7 +495,8 @@ export function usePlaybackCameraSlot(
             segmentEndTs: current.endTs,
           });
         }
-        if (pausedZombieTicks >= 6 && v.readyState < 2) {
+        // Only reload when truly HAVE_NOTHING for a long time (not while buffering metadata).
+        if (pausedZombieTicks >= 8 && v.readyState === 0 && lowReadyStateAgeMs(v) >= LOW_READY_RELOAD_MS) {
           softReload();
         }
         return;
@@ -486,41 +514,32 @@ export function usePlaybackCameraSlot(
           thresholdSec: 0,
           segmentEndTs: current.endTs,
         });
-        if (stuckSeekAttempts === 2 || stuckSeekAttempts >= 4) {
+        if (stuckSeekAttempts >= 4 && v.readyState === 0) {
           softReload();
         }
         return;
       }
 
-      // readyState stuck at 0/1 (HAVE_METADATA) without seeking — same recovery as hung seek.
-      if (lowReadyStateAgeMs(v) >= SEEKING_STUCK_MS && current) {
+      // HAVE_NOTHING only — HAVE_METADATA is normal Range buffering for ~180MB segments.
+      if (v.readyState === 0 && lowReadyStateAgeMs(v) >= LOW_READY_RELOAD_MS && current) {
         playbackDebugInc('seekingStuckRecoveries');
         stuckSeekAttempts += 1;
         setVideoSeeking(false);
-        // Prefer reload over another seek into a decoder with no frames.
         if (stuckSeekAttempts >= 2) {
           softReload();
-        } else if (v.readyState >= 1) {
-          seekPlaybackVideo(v, getPositionRef.current(), current.startTs, {
-            playing: playingRef.current,
-            force: true,
-            scrubbing: true,
-            thresholdSec: 0,
-            segmentEndTs: current.endTs,
-          });
         }
         return;
       }
 
       // Paused archive can stay black after a failed Range (readyState 0, not seeking).
       if (!playingRef.current) {
-        if (v.readyState < 2 && current) {
+        if (v.readyState === 0 && current && lowReadyStateAgeMs(v) >= LOW_READY_RELOAD_MS) {
           stuckSeekAttempts += 1;
           if (stuckSeekAttempts >= 3) {
             stuckSeekAttempts = 0;
             softReload();
           }
-        } else {
+        } else if (v.readyState >= 2) {
           stuckSeekAttempts = 0;
           softReloadCount = 0;
         }
@@ -531,8 +550,10 @@ export function usePlaybackCameraSlot(
         softReloadCount = 0;
         return;
       }
+      // Buffering with metadata: wait — do not pullback/reload.
+      if (v.readyState >= 1) return;
       if (!(v.currentTime > 2) || pullbacks >= 4) {
-        if (pullbacks >= 4 && v.readyState < 2) {
+        if (pullbacks >= 4 && v.readyState === 0 && lowReadyStateAgeMs(v) >= LOW_READY_RELOAD_MS) {
           softReload();
         }
         return;
@@ -546,9 +567,10 @@ export function usePlaybackCameraSlot(
       void v.play().catch(() => null);
     }, 700);
     const hardTimer = window.setTimeout(() => {
-      if (!playingRef.current || v.readyState >= 2) return;
+      if (!playingRef.current || v.readyState !== 0) return;
+      if (lowReadyStateAgeMs(v) < LOW_READY_RELOAD_MS) return;
       softReload();
-    }, 2800);
+    }, LOW_READY_RELOAD_MS);
     return () => {
       v.removeEventListener('canplay', kick);
       window.clearTimeout(softTimer);
@@ -786,15 +808,11 @@ export function PlaybackVideoSurface({
     v.addEventListener('waiting', syncReady);
     setSeeking(v.seeking);
     setMediaReadyState(v.readyState);
-    // Keep a visible busy hint while the tile has a src but no decoded frame yet.
+    // Poll readyState for BusyHint loading label — do not fake `seeking` (that
+    // stuck the UI on «Ищем кадр» during normal Range buffering).
     const clearStuck = window.setInterval(() => {
       syncReady();
-      if (v.readyState >= 2) {
-        if (!v.seeking) setSeeking(false);
-        return;
-      }
-      // readyState 0/1 with a live src: treat as buffering so UI is not silent black.
-      setSeeking(true);
+      if (v.readyState >= 2 && !v.seeking) setSeeking(false);
     }, 500);
     return () => {
       window.clearInterval(clearStuck);
@@ -861,7 +879,10 @@ export function PlaybackVideoSurface({
           />
           <PlaybackBusyHint
             seeking={seeking}
-            loading={loading}
+            loading={
+              Boolean(loading) ||
+              (Boolean(videoSrc) && mediaReadyState != null && mediaReadyState < 2)
+            }
             hasObjects={(meta?.objects?.length ?? 0) > 0}
             mediaReadyState={mediaReadyState}
           />

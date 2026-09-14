@@ -8,7 +8,7 @@ import { useI18n } from '../../i18n';
 import { PlaybackBusyHint } from './PlaybackBusyHint';
 import { usePlaybackCameraMetadata } from './PlaybackCameraView';
 import { playbackDebugInc } from './playbackDebug';
-import { seekPlaybackVideo, seekingAgeMs, lowReadyStateAgeMs, SEEKING_STUCK_MS, shouldEmitPlaybackClock, isPastDecodedEof } from './playbackVideoSync';
+import { seekPlaybackVideo, seekingAgeMs, lowReadyStateAgeMs, SEEKING_STUCK_MS, LOW_READY_RELOAD_MS, shouldEmitPlaybackClock, isPastDecodedEof } from './playbackVideoSync';
 import { advanceOrStopAtEof } from './playbackEof';
 import {
   drainVideoElement,
@@ -94,6 +94,8 @@ export function SplitPlaybackCell({
   const [localFrameSize, setLocalFrameSize] = useState<FrameSize | null>(null);
   const [localEpoch, setLocalEpoch] = useState(0);
   const mediaEpoch = mediaEpochProp + localEpoch;
+  const pinnedThisMediaRef = useRef(false);
+  const remountedUrlRef = useRef<string | null>(null);
   const parentVideoSize = frameSizeProp ?? localFrameSize;
   const onVideoClockRef = useRef(onVideoClock);
   onVideoClockRef.current = onVideoClock;
@@ -263,9 +265,17 @@ export function SplitPlaybackCell({
     let pausedZombieTicks = 0;
     let softReloadCount = 0;
     const softReload = () => {
+      if (softReloadCount >= 2) return;
       softReloadCount += 1;
+      pinnedThisMediaRef.current = false;
       reloadVideoMedia(video);
-      if (softReloadCount === 3 && video.readyState < 2) {
+      if (
+        softReloadCount >= 2 &&
+        video.readyState < 2 &&
+        videoUrl &&
+        remountedUrlRef.current !== videoUrl
+      ) {
+        remountedUrlRef.current = videoUrl;
         setLocalEpoch((n) => n + 1);
       }
     };
@@ -274,7 +284,7 @@ export function SplitPlaybackCell({
         pausedZombieTicks += 1;
         playbackDebugInc('playCalls');
         void video.play().catch(() => playbackDebugInc('playRejects'));
-        if (pausedZombieTicks === 2) {
+        if (pausedZombieTicks === 2 && video.readyState >= 2) {
           seekPlaybackVideo(video, getPositionRef.current(), startTs, {
             playing: true,
             force: true,
@@ -285,7 +295,11 @@ export function SplitPlaybackCell({
           });
           drawFrame();
         }
-        if (pausedZombieTicks >= 6 && video.readyState < 2) {
+        if (
+          pausedZombieTicks >= 8 &&
+          video.readyState === 0 &&
+          lowReadyStateAgeMs(video) >= LOW_READY_RELOAD_MS
+        ) {
           softReload();
         }
         return;
@@ -304,31 +318,21 @@ export function SplitPlaybackCell({
             Number.isFinite(video.duration) && video.duration > 0 ? startTs + video.duration : undefined,
         });
         drawFrame();
-        if (stuckAttempts === 2 || stuckAttempts >= 4) {
+        if (stuckAttempts >= 4 && video.readyState === 0) {
           softReload();
         }
         return;
       }
-      if (lowReadyStateAgeMs(video) >= SEEKING_STUCK_MS) {
+      if (video.readyState === 0 && lowReadyStateAgeMs(video) >= LOW_READY_RELOAD_MS) {
         playbackDebugInc('seekingStuckRecoveries');
         stuckAttempts += 1;
         setSeeking(false);
         if (stuckAttempts >= 2) {
           softReload();
-        } else if (video.readyState >= 1) {
-          seekPlaybackVideo(video, getPositionRef.current(), startTs, {
-            playing: playingRef.current,
-            force: true,
-            scrubbing: true,
-            thresholdSec: 0,
-            segmentEndTs:
-              Number.isFinite(video.duration) && video.duration > 0 ? startTs + video.duration : undefined,
-          });
-          drawFrame();
         }
         return;
       }
-      if (!playingRef.current && video.readyState < 2) {
+      if (!playingRef.current && video.readyState === 0 && lowReadyStateAgeMs(video) >= LOW_READY_RELOAD_MS) {
         stuckAttempts += 1;
         if (stuckAttempts >= 3) {
           stuckAttempts = 0;
@@ -343,6 +347,14 @@ export function SplitPlaybackCell({
     return () => window.clearInterval(timer);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [scrubbing, playing, videoUrl, startTs, mediaEpoch]);
+
+  useEffect(() => {
+    pinnedThisMediaRef.current = false;
+  }, [videoUrl, mediaEpoch]);
+
+  useEffect(() => {
+    remountedUrlRef.current = null;
+  }, [videoUrl]);
 
   useEffect(() => {
     const video = videoRef.current;
@@ -523,7 +535,18 @@ export function SplitPlaybackCell({
       drawFrame();
       return;
     }
-    if (video.readyState < 1 && !userSeeking && !scrubbing) {
+    if (video.readyState < 2 && !userSeeking && !scrubbing) {
+      if (video.readyState >= 1 && !pinnedThisMediaRef.current) {
+        pinnedThisMediaRef.current = true;
+        seekPlaybackVideo(video, position, startTs, {
+          playing,
+          force: true,
+          thresholdSec: 0,
+          segmentEndTs:
+            Number.isFinite(video.duration) && video.duration > 0 ? startTs + video.duration : undefined,
+        });
+        drawFrame();
+      }
       if (playing && video.paused) void video.play().catch(() => null);
       return;
     }
@@ -597,7 +620,10 @@ export function SplitPlaybackCell({
       />
       <PlaybackBusyHint
         seeking={seeking}
-        loading={metaLoading}
+        loading={
+          Boolean(metaLoading) ||
+          (Boolean(videoUrl) && mediaReadyState != null && mediaReadyState < 2)
+        }
         hasObjects={(displayMeta?.objects?.length ?? 0) > 0}
         mediaReadyState={mediaReadyState}
       />
