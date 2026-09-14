@@ -48,11 +48,12 @@ export function PlaybackBusyHint({
       return;
     }
     const noProgress = mediaReadyState == null || mediaReadyState < 2;
-    // Long WAN seek with decode progress: do not kill the hint by a dumb wall clock.
-    if (!noProgress) {
+    // Still no decoded frame: keep the hint (silent black is worse than a long label).
+    if (noProgress) {
       setSeekExpired(false);
       return;
     }
+    // Long WAN seek with decode progress: hide the label after a wall clock.
     const maxMs = Math.max(SEEK_HINT_MAX_MS, SEEKING_STUCK_MS);
     const timer = window.setTimeout(() => setSeekExpired(true), maxMs);
     return () => window.clearTimeout(timer);

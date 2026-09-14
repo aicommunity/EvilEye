@@ -265,9 +265,7 @@ export function SplitPlaybackCell({
     const softReload = () => {
       softReloadCount += 1;
       reloadVideoMedia(video);
-      if (softReloadCount >= 3 && video.readyState < 2) {
-        softReloadCount = 0;
-        stuckAttempts = 0;
+      if (softReloadCount === 3 && video.readyState < 2) {
         setLocalEpoch((n) => n + 1);
       }
     };
@@ -480,9 +478,10 @@ export function SplitPlaybackCell({
   }, [videoUrl, cameraId, mediaEpoch]);
 
   useEffect(() => {
+    const el = videoRef.current;
     return () => {
-      drainVideoElement(videoRef.current);
-      resetErrorMediaBackoff(videoRef.current);
+      drainVideoElement(el);
+      resetErrorMediaBackoff(el);
     };
   }, [videoUrl, mediaEpoch]);
 
@@ -524,7 +523,7 @@ export function SplitPlaybackCell({
       drawFrame();
       return;
     }
-    if (video.readyState < 2 && !userSeeking && !scrubbing) {
+    if (video.readyState < 1 && !userSeeking && !scrubbing) {
       if (playing && video.paused) void video.play().catch(() => null);
       return;
     }

@@ -184,11 +184,10 @@ export function usePlaybackCameraSlot(
       return;
     }
 
-    // No decoded frames yet: do not chase the shared playhead with seekPlaybackVideo.
-    // Other cams advance the clock; hammering this element keeps Firefox at readyState 0
-    // and sticky "Ищем кадр…". Watchdog reload / remount recovers.
+    // HAVE_NOTHING: wait for metadata. Once HAVE_METADATA (1+), allow a pin seek.
+    // Blocking all seeks until readyState>=2 left Cam1 permanently black (never pinned).
     if (
-      v.readyState < 2 &&
+      v.readyState < 1 &&
       !userSeekingRef.current &&
       !scrubbingRef.current
     ) {
@@ -391,12 +390,15 @@ export function usePlaybackCameraSlot(
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [slot?.url, mediaEpoch]);
 
-  // Drain previous Range GETs on src/day change — not only on full unmount.
+  // Drain the element that belonged to this effect run — never ref.current in
+  // cleanup (mediaEpoch remount already retargets the ref to the new <video>).
   useEffect(() => {
+    const el = ref.current;
+    const preload = preloadRef.current;
     return () => {
-      drainVideoElement(ref.current);
-      drainVideoElement(preloadRef.current);
-      resetErrorMediaBackoff(ref.current);
+      drainVideoElement(el);
+      drainVideoElement(preload);
+      resetErrorMediaBackoff(el);
     };
   }, [slot?.url, mediaEpoch]);
 
@@ -435,17 +437,14 @@ export function usePlaybackCameraSlot(
       if (reloadVideoMedia(v)) {
         kick();
       }
-      // Last resort: remount <video> after repeated soft reloads still leave readyState < 2.
-      if (softReloadCount >= 3 && v.readyState < 2) {
-        softReloadCount = 0;
-        stuckSeekAttempts = 0;
-        pausedZombieTicks = 0;
-        setMediaEpoch((n) => n + 1);
+      // Last resort remount — at most once per watchdog instance (per url/epoch).
+      if (softReloadCount === 3 && v.readyState < 2) {
         clientTelemetryLog(
           'video_remount',
           { camera: clockId ?? null, src: slotRef.current?.url ?? null },
           'playback',
         );
+        setMediaEpoch((n) => n + 1);
       }
     };
     if (playing) {
@@ -787,16 +786,15 @@ export function PlaybackVideoSurface({
     v.addEventListener('waiting', syncReady);
     setSeeking(v.seeking);
     setMediaReadyState(v.readyState);
-    // Clear sticky seeking UI when the element never fires seeked (Firefox zombie).
+    // Keep a visible busy hint while the tile has a src but no decoded frame yet.
     const clearStuck = window.setInterval(() => {
-      if (!v.seeking && v.readyState >= 2) {
-        setSeeking(false);
+      syncReady();
+      if (v.readyState >= 2) {
+        if (!v.seeking) setSeeking(false);
         return;
       }
-      if (lowReadyStateAgeMs(v) >= SEEKING_STUCK_MS) {
-        setSeeking(false);
-        setMediaReadyState(v.readyState);
-      }
+      // readyState 0/1 with a live src: treat as buffering so UI is not silent black.
+      setSeeking(true);
     }, 500);
     return () => {
       window.clearInterval(clearStuck);
