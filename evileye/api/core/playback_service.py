@@ -989,6 +989,8 @@ def load_segments(
     from_ts: Optional[float] = None,
     to_ts: Optional[float] = None,
     date: Optional[str] = None,
+    *,
+    run_id: Optional[int] = None,
 ) -> list[dict[str, Any]]:
     if date:
         try:
@@ -996,14 +998,21 @@ def load_segments(
                 ensure_segment_index,
                 filter_segments_window,
                 read_segment_index_if_fresh,
+                schedule_detection_ticks_refresh,
+                schedule_event_intervals_refresh,
+                schedule_segment_index_refresh,
                 upsert_segment_index_camera,
             )
 
             cached = read_segment_index_if_fresh(date)
             if cached is not None and camera in cached:
                 return filter_segments_window(cached.get(camera) or [], from_ts, to_ts)
-            # Windowed query before an index exists: keep the mvhd skip optimization.
+            # Windowed query before an index exists: keep the mvhd skip optimization,
+            # but kick a full day-index rebuild so the next request is warm.
             if cached is None and (from_ts is not None or to_ts is not None):
+                schedule_segment_index_refresh(date, [camera])
+                schedule_detection_ticks_refresh(date, [camera], run_id=run_id)
+                schedule_event_intervals_refresh(date, [camera])
                 return load_segments_uncached(camera, from_ts, to_ts, date=date)
             by_camera = ensure_segment_index(date_folder=date, cameras=[camera])
             if camera not in by_camera or not by_camera.get(camera):
@@ -1021,6 +1030,8 @@ def load_segments_batch(
     from_ts: Optional[float] = None,
     to_ts: Optional[float] = None,
     date: Optional[str] = None,
+    *,
+    run_id: Optional[int] = None,
 ) -> dict[str, list[dict[str, Any]]]:
     cam_list = [cam for cam in cameras if cam]
     if date and cam_list:
@@ -1029,11 +1040,17 @@ def load_segments_batch(
                 ensure_segment_index,
                 filter_segments_window,
                 read_segment_index_if_fresh,
+                schedule_detection_ticks_refresh,
+                schedule_event_intervals_refresh,
+                schedule_segment_index_refresh,
                 upsert_segment_index_camera,
             )
 
             cached = read_segment_index_if_fresh(date)
             if cached is None and (from_ts is not None or to_ts is not None):
+                schedule_segment_index_refresh(date, cam_list)
+                schedule_detection_ticks_refresh(date, cam_list, run_id=run_id)
+                schedule_event_intervals_refresh(date, cam_list)
                 return {
                     cam: load_segments_uncached(cam, from_ts, to_ts, date=date)
                     for cam in cam_list

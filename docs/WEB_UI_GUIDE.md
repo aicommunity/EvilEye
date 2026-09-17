@@ -166,6 +166,8 @@ Settings page (`/settings`): language, date format, visible cameras, change pass
 | `EVILEYE_MJPEG_IDLE_SEC` | `8` | Close MJPEG if no frames |
 | `EVILEYE_PLAYBACK_ROUTE_TIMEOUT_SEC` | `15` | Max wait for playback cameras/segments/timeline; stale fallback when available |
 | `EVILEYE_PLAYBACK_DETECTIONS_TIMEOUT_SEC` | `45` | Max wait for coalesced `/playback/detections` journal scans |
+| `EVILEYE_PLAYBACK_WARM_RECENT_DAYS` | `14` | How many recent archive dates the continuous index warmer covers |
+| `EVILEYE_PLAYBACK_WARM_INTERVAL_SEC` | `300` | Seconds between warmer cycles (segments + detection ticks + event intervals) |
 | `EVILEYE_STATE_ROUTE_TIMEOUT_SEC` | `8` | Max wait for `/state/*` heavy routes; on timeout serve in-process cache when available |
 | `EVILEYE_DATA_DIR` | `EvilEyeData` | Streams / Events root |
 
@@ -177,7 +179,7 @@ Config: `server.publish_fps` (stream level), `server.preview_encode_workers`, `s
 - **Live camera health:** `GET /api/v1/state/cameras` includes `is_working`, `last_frame_age_sec`, `reconnecting`. UI status dots use hysteresis (12s enter / 5s exit); metadata overlays are not torn down on brief stale.
 - **Live preview hub:** per-client latest-wins queues; hub stats include `dropped`, `client_timeouts`, `client_replaced`, `clients_kicked`.
 - **MJPEG refcount:** each stream connection acquires a broker ref; soft `stream:stop` is a no-op (disconnect releases). On MJPEG release demand is forced back to `grid`.
-- **Playback:** logical cameras from run config (`Cam2`/`Cam3`, not composite `Cam2-Cam3`); split crop via canvas + `src_coords`; selection in `localStorage` (`evileye.playback.layout.v1`); auto-load segments; timeline segment blocks. Heavy routes use `EVILEYE_PLAYBACK_ROUTE_TIMEOUT_SEC` with stale segment-index / memory fallback (503 only when no data). Timeline indexes use stale-while-revalidate (serve stale ticks/events/segments and refresh in background), today soft TTL ~300s, singleflight rebuilds, and a short in-process happy-path cache (~45s). FE caches timeline responses ~60s and omits composite folder ids from timeline requests.
+- **Playback:** logical cameras from run config (`Cam2`/`Cam3`, not composite `Cam2-Cam3`); split crop via canvas + `src_coords`; selection in `localStorage` (`evileye.playback.layout.v1`); auto-load segments; timeline segment blocks. Heavy routes use `EVILEYE_PLAYBACK_ROUTE_TIMEOUT_SEC` with stale segment-index / memory fallback (503 only when no data). Timeline indexes use stale-while-revalidate (serve stale ticks/events/segments and refresh in background), today soft TTL ~300s, singleflight rebuilds, and a short in-process happy-path cache (~45s). A continuous warmer (`EVILEYE_PLAYBACK_WARM_INTERVAL_SEC`, last `EVILEYE_PLAYBACK_WARM_RECENT_DAYS`) keeps on-disk indexes current as archive grows; cold windowed `/segments` also schedules a background day-index rebuild. FE caches timeline responses ~60s and omits composite folder ids from timeline requests.
 - **State routes:** `EVILEYE_STATE_ROUTE_TIMEOUT_SEC` with existing in-process cache fallback.
 - **Journals / logs / WS metadata:** unchanged cadence (poll/SSE/backoff).
 

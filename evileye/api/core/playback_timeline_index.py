@@ -330,6 +330,27 @@ def filter_segments_window(
     return out
 
 
+def filter_event_intervals_window(
+    items: list[dict[str, Any]],
+    from_ts: float | None,
+    to_ts: float | None,
+) -> list[dict[str, Any]]:
+    """Same overlap rule as segments; also accepts point events with only `ts`."""
+    out: list[dict[str, Any]] = []
+    for row in items:
+        if "start_ts" in row or "end_ts" in row:
+            start = float(row.get("start_ts") or row.get("ts") or 0.0)
+            end = float(row.get("end_ts") or start)
+        else:
+            start = end = float(row.get("ts") or 0.0)
+        if from_ts is not None and end < from_ts:
+            continue
+        if to_ts is not None and start > to_ts:
+            continue
+        out.append(row)
+    return out
+
+
 def _ticks_from_payload(data: dict[str, Any], cameras: list[str]) -> dict[str, list[dict[str, Any]]]:
     raw_by = data.get("by_camera") or {}
     out: dict[str, list[dict[str, Any]]] = {}

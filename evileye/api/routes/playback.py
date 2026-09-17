@@ -303,6 +303,7 @@ async def playback_segments(
     from_ts: Optional[float] = Query(None, alias="from"),
     to_ts: Optional[float] = Query(None, alias="to"),
     date: Optional[str] = None,
+    run_id: Optional[int] = Query(None),
 ) -> dict:
     access = resolve_camera_access(request)
     if cameras:
@@ -310,7 +311,7 @@ async def playback_segments(
         mem_key = f"playback:segments:{date}:{from_ts}:{to_ts}:{','.join(cam_list)}"
 
         def _load():
-            return svc.load_segments_batch(cam_list, from_ts, to_ts, date)
+            return svc.load_segments_batch(cam_list, from_ts, to_ts, date, run_id=run_id)
 
         def _cached():
             mem = _recall(mem_key)
@@ -320,9 +321,15 @@ async def playback_segments(
 
         def _on_timeout():
             if date:
-                from evileye.api.core.playback_timeline_index import schedule_segment_index_refresh
+                from evileye.api.core.playback_timeline_index import (
+                    schedule_detection_ticks_refresh,
+                    schedule_event_intervals_refresh,
+                    schedule_segment_index_refresh,
+                )
 
                 schedule_segment_index_refresh(date, cam_list)
+                schedule_detection_ticks_refresh(date, cam_list, run_id=run_id)
+                schedule_event_intervals_refresh(date, cam_list)
 
         by_camera = await _to_thread_with_timeout_or_cached(
             _load,
@@ -340,7 +347,7 @@ async def playback_segments(
     mem_key = f"playback:segments:{date}:{from_ts}:{to_ts}:{camera}"
 
     def _load_one():
-        return svc.load_segments(camera, from_ts, to_ts, date)
+        return svc.load_segments(camera, from_ts, to_ts, date, run_id=run_id)
 
     def _cached_one():
         mem = _recall(mem_key)
@@ -353,9 +360,15 @@ async def playback_segments(
 
     def _on_timeout_one():
         if date:
-            from evileye.api.core.playback_timeline_index import schedule_segment_index_refresh
+            from evileye.api.core.playback_timeline_index import (
+                schedule_detection_ticks_refresh,
+                schedule_event_intervals_refresh,
+                schedule_segment_index_refresh,
+            )
 
             schedule_segment_index_refresh(date, [camera])
+            schedule_detection_ticks_refresh(date, [camera], run_id=run_id)
+            schedule_event_intervals_refresh(date, [camera])
 
     items = await _to_thread_with_timeout_or_cached(
         _load_one,
@@ -480,16 +493,32 @@ async def playback_events(
         _require_cameras(access, [camera], single=True)
     if cam_list:
         cam_list = _require_cameras(access, cam_list, single=False)
+    effective_cams = cam_list or ([camera] if camera else None)
 
     def _load():
-        intervals = svc.load_event_intervals(
-            from_ts,
-            to_ts,
-            camera,
-            cam_list or None,
-            date=date,
-            limit=limit,
+        from evileye.api.core.playback_timeline_index import (
+            ensure_event_intervals,
+            filter_event_intervals_window,
         )
+
+        if date:
+            items = ensure_event_intervals(
+                date_folder=date,
+                cameras=effective_cams,
+                limit=limit,
+            )
+            items = filter_event_intervals_window(items, from_ts, to_ts)
+            if len(items) > limit:
+                items = items[:limit]
+        else:
+            items = svc.load_event_intervals(
+                from_ts,
+                to_ts,
+                camera,
+                cam_list or None,
+                date=date,
+                limit=limit,
+            )
         legacy_markers = svc.load_event_markers(
             from_ts,
             to_ts,
@@ -498,12 +527,37 @@ async def playback_events(
             date=date,
             limit=limit,
         )
-        return {"items": intervals, "legacy_markers": legacy_markers}
+        return {"items": items, "legacy_markers": legacy_markers}
+
+    def _cached():
+        from evileye.api.core.playback_timeline_index import (
+            filter_event_intervals_window,
+            read_event_intervals_stale,
+            schedule_event_intervals_refresh,
+        )
+
+        if not date:
+            return None
+        stale = read_event_intervals_stale(date, effective_cams)
+        if stale is None:
+            return None
+        schedule_event_intervals_refresh(date, effective_cams, limit=limit)
+        items = filter_event_intervals_window(stale, from_ts, to_ts)
+        if len(items) > limit:
+            items = items[:limit]
+        return {"items": items, "legacy_markers": []}
+
+    def _on_timeout():
+        if date:
+            from evileye.api.core.playback_timeline_index import schedule_event_intervals_refresh
+
+            schedule_event_intervals_refresh(date, effective_cams, limit=limit)
 
     return await _to_thread_with_timeout_or_cached(
         _load,
-        lambda: None,
+        _cached,
         err_detail="playback_events timeout",
+        on_timeout=_on_timeout,
         log_ctx={
             "date": date,
             "n_cameras": len(cam_list) if cam_list else (1 if camera else 0),

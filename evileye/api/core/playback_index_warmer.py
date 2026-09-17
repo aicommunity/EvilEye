@@ -1,4 +1,8 @@
-"""Background warmer for playback on-disk indexes across archive dates."""
+"""Background warmer for playback on-disk indexes across archive dates.
+
+Runs continuously (daemon loop) so recent archive days stay warm as new
+recordings and journals appear — not only once at API startup.
+"""
 
 from __future__ import annotations
 
@@ -6,6 +10,7 @@ import logging
 import os
 import threading
 import time
+from datetime import date, timedelta
 
 logger = logging.getLogger(__name__)
 
@@ -13,6 +18,7 @@ _warm_stop = threading.Event()
 _warm_thread: threading.Thread | None = None
 
 _WARM_RECENT_DAYS = int(os.getenv("EVILEYE_PLAYBACK_WARM_RECENT_DAYS", "14") or 14)
+_WARM_INTERVAL_SEC = float(os.getenv("EVILEYE_PLAYBACK_WARM_INTERVAL_SEC", "300") or 300)
 
 
 def list_detection_dates(*, run_id: int | None = None) -> list[str]:
@@ -56,10 +62,50 @@ def list_stream_dates(*, run_id: int | None = None) -> list[str]:
     return out
 
 
+def list_event_dates(*, run_id: int | None = None) -> list[str]:
+    """Return YYYY-MM-DD folders under Events that have metadata."""
+    from evileye.api.core import playback_metadata_service as meta
+
+    params = meta._load_params_for_run(run_id)
+    base = meta._playback_data_dir(params) / "Events"
+    if not base.is_dir():
+        return []
+    out: list[str] = []
+    for path in sorted(base.iterdir()):
+        if not path.is_dir():
+            continue
+        name = path.name
+        if len(name) != 10 or name[4] != "-" or name[7] != "-":
+            continue
+        meta_dir = path / "Metadata"
+        if meta_dir.is_dir() and any(meta_dir.iterdir()):
+            out.append(name)
+            continue
+        if any(path.iterdir()):
+            out.append(name)
+    return out
+
+
 def _recent_dates(dates: list[str], *, limit: int = _WARM_RECENT_DAYS) -> list[str]:
     if limit <= 0:
         return list(dates)
     return list(dates)[-limit:]
+
+
+def _prioritize_dates(dates: list[str]) -> list[str]:
+    """Today first, then yesterday, then remaining newest-first."""
+    if not dates:
+        return []
+    today = date.today().isoformat()
+    yesterday = (date.today() - timedelta(days=1)).isoformat()
+    unique = sorted(set(dates), reverse=True)
+    head: list[str] = []
+    if today in unique:
+        head.append(today)
+    if yesterday in unique and yesterday != today:
+        head.append(yesterday)
+    head_set = set(head)
+    return head + [d for d in unique if d not in head_set]
 
 
 def _cameras_for_warm(*, run_id: int | None = None) -> list[str]:
@@ -260,32 +306,74 @@ def warm_playback_indexes_for_date(
     }
 
 
+def _tally_statuses(statuses: dict[str, str]) -> tuple[int, int, int]:
+    built = skip = fail = 0
+    for status in statuses.values():
+        if status == "built":
+            built += 1
+        elif status == "fail":
+            fail += 1
+        else:
+            skip += 1
+    return built, skip, fail
+
+
 def _warm_loop(run_id: int | None = None) -> None:
+    """Continuous warm cycles until stop_detection_ticks_warmer()."""
     if _warm_stop.wait(8.0):
         return
-    try:
-        stream_dates = _recent_dates(list_stream_dates(run_id=run_id))
-        det_dates = _recent_dates(list_detection_dates(run_id=run_id))
-        dates = sorted(set(stream_dates) | set(det_dates))
-        cameras = _cameras_for_warm(run_id=run_id)
-        logger.info(
-            "playback_index warm start dates=%s cameras=%s recent_limit=%s",
-            len(dates),
-            len(cameras),
-            _WARM_RECENT_DAYS,
-        )
-        for date_folder in dates:
-            if _warm_stop.is_set():
-                break
-            warm_playback_indexes_for_date(date_folder, run_id=run_id, cameras=cameras)
-            if _warm_stop.wait(0.25):
-                break
-        logger.info("playback_index warm finished")
-    except Exception as exc:
-        logger.warning("playback_index warm aborted: %s", exc)
+    while not _warm_stop.is_set():
+        t0 = time.time()
+        built = skip = fail = 0
+        try:
+            stream_dates = _recent_dates(list_stream_dates(run_id=run_id))
+            det_dates = _recent_dates(list_detection_dates(run_id=run_id))
+            event_dates = _recent_dates(list_event_dates(run_id=run_id))
+            dates = _prioritize_dates(sorted(set(stream_dates) | set(det_dates) | set(event_dates)))
+            cameras = _cameras_for_warm(run_id=run_id)
+            logger.info(
+                "playback_index warm cycle start dates=%s cameras=%s recent_limit=%s interval_sec=%s",
+                len(dates),
+                len(cameras),
+                _WARM_RECENT_DAYS,
+                _WARM_INTERVAL_SEC,
+            )
+            for date_folder in dates:
+                if _warm_stop.is_set():
+                    break
+                if (
+                    not _needs_segment_rebuild(date_folder)
+                    and not _needs_detection_rebuild(date_folder, run_id=run_id)
+                    and not _needs_event_rebuild(date_folder, cameras)
+                ):
+                    skip += 3
+                    continue
+                statuses = warm_playback_indexes_for_date(
+                    date_folder, run_id=run_id, cameras=cameras
+                )
+                b, s, f = _tally_statuses(statuses)
+                built += b
+                skip += s
+                fail += f
+                if _warm_stop.wait(0.25):
+                    break
+            logger.info(
+                "playback_index warm cycle end elapsed_ms=%s built=%s skip=%s fail=%s",
+                int((time.time() - t0) * 1000),
+                built,
+                skip,
+                fail,
+            )
+        except Exception as exc:
+            logger.warning("playback_index warm cycle aborted: %s", exc)
+        elapsed = time.time() - t0
+        wait_sec = max(1.0, float(_WARM_INTERVAL_SEC) - elapsed)
+        if _warm_stop.wait(wait_sec):
+            break
 
 
 def start_detection_ticks_warmer(*, run_id: int | None = None) -> None:
+    """Start the continuous playback index warmer (historical name)."""
     global _warm_thread
     if _warm_thread is not None and _warm_thread.is_alive():
         return

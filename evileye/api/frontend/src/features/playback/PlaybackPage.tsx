@@ -3,6 +3,7 @@ import { useSearchParams } from 'react-router-dom';
 import {
   playbackApi,
   stateApi,
+  ApiError,
   type PlaybackCamera,
   type PlaybackDetectionItem,
   type PlaybackEventInterval,
@@ -62,8 +63,41 @@ function today(): string {
 
 const INITIAL_WINDOW_SEC = 7200;
 const SEGMENTS_LOAD_TIMEOUT_MS = 60_000;
+/** Soft-retry delays for cold-index 503/timeout on initial day load. */
+const SEGMENTS_RETRY_BACKOFF_MS = [2_000, 5_000] as const;
 /** Half-width of the time range requested when seeking outside loaded data. */
 const SEEK_LOAD_HALF_SEC = 3600;
+
+function isSegmentsBusyOrTimeout(e: unknown): boolean {
+  if (!(e instanceof ApiError)) return false;
+  if (e.status !== 503) return false;
+  const detail = String(e.message || '').toLowerCase();
+  return (
+    detail.includes('busy') ||
+    detail.includes('timeout') ||
+    detail.includes('segments') ||
+    detail.includes('timeline') ||
+    detail.includes('playback')
+  );
+}
+
+function sleepAbortable(ms: number, signal: AbortSignal): Promise<void> {
+  return new Promise((resolve, reject) => {
+    if (signal.aborted) {
+      reject(new DOMException('Aborted', 'AbortError'));
+      return;
+    }
+    const timer = window.setTimeout(() => {
+      signal.removeEventListener('abort', onAbort);
+      resolve();
+    }, ms);
+    const onAbort = () => {
+      window.clearTimeout(timer);
+      reject(new DOMException('Aborted', 'AbortError'));
+    };
+    signal.addEventListener('abort', onAbort, { once: true });
+  });
+}
 
 function initialSegmentWindow(dateStr: string, anchorSec?: number | null): { from: number; to: number } {
   const { start, end } = dayBoundsLocal(dateStr);
@@ -564,63 +598,80 @@ export function PlaybackPage() {
         };
 
         try {
-          const batch = await playbackApi.segmentsBatch(nextSelected, opts?.from, opts?.to, useDate, {
-            signal: ac.signal,
-            runId,
-          });
-          if (ac.signal.aborted) return;
-          incoming = { ...(batch.by_camera || {}) };
-          for (const id of nextSelected) {
-            if (!incoming[id]) incoming[id] = [];
-          }
-          cacheSet(segKey, batch, SEGMENTS_TTL_MS);
-
-          if (isInitialLoad) {
-            const scheduleEnrich = () => {
-              void fetchTimelineEnrichment().catch((timelineErr) => {
-                if (isAbortError(timelineErr)) return;
-              });
-            };
-            if (typeof window.requestIdleCallback === 'function') {
-              window.requestIdleCallback(scheduleEnrich, { timeout: 3000 });
-            } else {
-              window.setTimeout(scheduleEnrich, 50);
-            }
-          } else {
+          let attempt = 0;
+          const maxRetries = isInitialLoad ? SEGMENTS_RETRY_BACKOFF_MS.length : 0;
+          for (;;) {
             try {
-              await fetchTimelineEnrichment();
-            } catch (timelineErr) {
-              if (isAbortError(timelineErr)) throw timelineErr;
-              const ev = await playbackApi.events(opts?.from, opts?.to, undefined, useDate, nextSelected, {
+              const batch = await playbackApi.segmentsBatch(nextSelected, opts?.from, opts?.to, useDate, {
                 signal: ac.signal,
+                runId,
               });
               if (ac.signal.aborted) return;
-              cacheSet(evKey, ev, SEGMENTS_TTL_MS);
-              evItems = ev.items;
-              evLegacy = ev.legacy_markers ?? [];
+              incoming = { ...(batch.by_camera || {}) };
+              for (const id of nextSelected) {
+                if (!incoming[id]) incoming[id] = [];
+              }
+              cacheSet(segKey, batch, SEGMENTS_TTL_MS);
+
+              if (isInitialLoad) {
+                const scheduleEnrich = () => {
+                  void fetchTimelineEnrichment().catch((timelineErr) => {
+                    if (isAbortError(timelineErr)) return;
+                  });
+                };
+                if (typeof window.requestIdleCallback === 'function') {
+                  window.requestIdleCallback(scheduleEnrich, { timeout: 3000 });
+                } else {
+                  window.setTimeout(scheduleEnrich, 50);
+                }
+              } else {
+                try {
+                  await fetchTimelineEnrichment();
+                } catch (timelineErr) {
+                  if (isAbortError(timelineErr)) throw timelineErr;
+                  const ev = await playbackApi.events(opts?.from, opts?.to, undefined, useDate, nextSelected, {
+                    signal: ac.signal,
+                  });
+                  if (ac.signal.aborted) return;
+                  cacheSet(evKey, ev, SEGMENTS_TTL_MS);
+                  evItems = ev.items;
+                  evLegacy = ev.legacy_markers ?? [];
+                }
+              }
+              break;
+            } catch (batchErr) {
+              if (isAbortError(batchErr)) throw batchErr;
+              try {
+                const timeline = await playbackApi.timeline(useDate ?? date, nextSelected, {
+                  from: opts?.from,
+                  to: opts?.to,
+                  runId,
+                  signal: ac.signal,
+                });
+                if (ac.signal.aborted) return;
+                incoming = {};
+                for (const id of nextSelected) {
+                  const row = timeline.by_camera?.[id];
+                  incoming[id] = row?.segments ?? [];
+                }
+                applyTimelineEnrichment(timeline);
+                cacheSet(segKey, { by_camera: incoming, items: Object.values(incoming).flat() }, SEGMENTS_TTL_MS);
+                cacheSet(evKey, { items: evItems, legacy_markers: [] }, SEGMENTS_TTL_MS);
+                break;
+              } catch (timelineErr) {
+                if (isAbortError(timelineErr)) throw timelineErr;
+                if (
+                  attempt < maxRetries &&
+                  isSegmentsBusyOrTimeout(batchErr) &&
+                  !ac.signal.aborted
+                ) {
+                  await sleepAbortable(SEGMENTS_RETRY_BACKOFF_MS[attempt], ac.signal);
+                  attempt += 1;
+                  continue;
+                }
+                throw batchErr;
+              }
             }
-          }
-        } catch (batchErr) {
-          if (isAbortError(batchErr)) throw batchErr;
-          try {
-            const timeline = await playbackApi.timeline(useDate ?? date, nextSelected, {
-              from: opts?.from,
-              to: opts?.to,
-              runId,
-              signal: ac.signal,
-            });
-            if (ac.signal.aborted) return;
-            incoming = {};
-            for (const id of nextSelected) {
-              const row = timeline.by_camera?.[id];
-              incoming[id] = row?.segments ?? [];
-            }
-            applyTimelineEnrichment(timeline);
-            cacheSet(segKey, { by_camera: incoming, items: Object.values(incoming).flat() }, SEGMENTS_TTL_MS);
-            cacheSet(evKey, { items: evItems, legacy_markers: [] }, SEGMENTS_TTL_MS);
-          } catch (timelineErr) {
-            if (isAbortError(timelineErr)) throw timelineErr;
-            throw batchErr;
           }
         } finally {
           if (preparingTimer != null) window.clearTimeout(preparingTimer);
@@ -1189,6 +1240,7 @@ export function PlaybackPage() {
             eventStartTs={globalEventStartTsList}
             eventIntervals={timelineEventIntervals}
             inferenceGaps={inferenceGaps}
+            dataLoading={camerasLoading || segmentsLoading || !segmentsLoaded}
             onSeek={seek}
             onViewChange={onViewChange}
             onPanningChange={setTimelinePanning}

@@ -41,6 +41,7 @@ export function Timeline({
   eventStartTs = [],
   eventIntervals = [],
   inferenceGaps = [],
+  dataLoading = false,
   onSeek,
   onViewChange,
   onPanningChange,
@@ -58,6 +59,8 @@ export function Timeline({
   eventStartTs?: number[];
   eventIntervals?: PlaybackEventInterval[];
   inferenceGaps?: PlaybackTimelineBand[];
+  /** True while cameras/segments hard-load is in flight — do not claim "no recordings". */
+  dataLoading?: boolean;
   onSeek: (sec: number) => void;
   onViewChange: (viewFrom: number, viewTo: number) => void;
   onPanningChange?: (panning: boolean) => void;
@@ -181,6 +184,7 @@ export function Timeline({
   const dateTicks = hasView ? buildTimelineDateLabels(displayFrom, displayTo) : [];
   const noData =
     segments.length === 0 && markers.length === 0 && detectionTs.length === 0 && eventIntervals.length === 0;
+  const settledEmpty = !dataLoading && noData;
   const playheadInView = hasView && position >= displayFrom && position <= displayTo;
   const playheadInGap =
     hasView && segmentsByCamera && !hasAnyPlayableAtPosition(segmentsByCamera, position);
@@ -523,7 +527,12 @@ export function Timeline({
           {!interacting ? (
             <EventMarkers markers={markers} from={displayFrom} to={displayTo} onSelect={(m) => onSeek(m.ts)} />
           ) : null}
-          {noData ? <div className="playback-timeline-empty-banner">{t('playback.timelineNoRecordings')}</div> : null}
+          {noData && dataLoading ? (
+            <div className="playback-timeline-empty-banner">{t('playback.timelineEmpty')}</div>
+          ) : null}
+          {settledEmpty ? (
+            <div className="playback-timeline-empty-banner">{t('playback.timelineNoRecordings')}</div>
+          ) : null}
         </>
       )}
     </div>

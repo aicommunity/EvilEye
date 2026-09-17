@@ -397,3 +397,49 @@ def test_load_segments_repairs_midnight_sidecar_with_continued_index(tmp_path, m
     )
     assert len(window_segs) >= 1
     assert any("00080" in Path(s["path"]).name for s in window_segs)
+
+
+def test_load_segments_batch_schedules_day_index_on_cold_window(tmp_path, monkeypatch):
+    """Windowed cold miss must kick background day-index rebuild without blocking."""
+    root = tmp_path / "EvilEyeData"
+    cam = root / "Streams" / "2026-08-21" / "Cam1"
+    cam.mkdir(parents=True)
+    (cam / "Cam1_20260821_120000_0_00000.mp4").write_bytes(b"fake")
+    monkeypatch.setenv("EVILEYE_DATA_DIR", str(root))
+    svc._data_dir_cache = None
+
+    calls: list[tuple] = []
+
+    def _seg(date, cams=None):
+        calls.append(("seg", date, list(cams or [])))
+
+    def _det(date, cams, *, run_id=None):
+        calls.append(("det", date, list(cams or []), run_id))
+
+    def _evt(date, cams=None, *, limit=2000):
+        calls.append(("evt", date, list(cams or [])))
+
+    monkeypatch.setattr(
+        "evileye.api.core.playback_timeline_index.schedule_segment_index_refresh",
+        _seg,
+    )
+    monkeypatch.setattr(
+        "evileye.api.core.playback_timeline_index.schedule_detection_ticks_refresh",
+        _det,
+    )
+    monkeypatch.setattr(
+        "evileye.api.core.playback_timeline_index.schedule_event_intervals_refresh",
+        _evt,
+    )
+    monkeypatch.setattr(
+        "evileye.api.core.playback_timeline_index.read_segment_index_if_fresh",
+        lambda date: None,
+    )
+    monkeypatch.setattr(svc, "load_segments_uncached", lambda cam, from_ts=None, to_ts=None, date=None: [{"path": "x", "start_ts": 1, "end_ts": 2}])
+
+    out = svc.load_segments_batch(["Cam1"], from_ts=1.0, to_ts=2.0, date="2026-08-21", run_id=7)
+    assert out["Cam1"]
+    kinds = [c[0] for c in calls]
+    assert kinds == ["seg", "det", "evt"]
+    assert calls[0][1] == "2026-08-21"
+    assert calls[1][3] == 7
