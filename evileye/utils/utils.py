@@ -574,11 +574,9 @@ class ObjectResultEncoder(json.JSONEncoder):
 
             if isinstance(obj, ObjectResultHistory):
                 return obj.__dict__
-        if type(obj).__name__ == "CaptureImage":
-            from ..capture.video_capture_base import CaptureImage
-
-            if isinstance(obj, CaptureImage):
-                return None
+        # Frame is the canonical type; CaptureImage is a backward-compat alias.
+        if type(obj).__name__ in ("CaptureImage", "Frame"):
+            return None
         if type(obj).__name__ == "SCTrack":
             return None
 

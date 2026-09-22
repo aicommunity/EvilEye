@@ -115,7 +115,14 @@ class UserStore:
 
         return _with_lock(self.path, mutate)
 
-    def create_user(self, email: str, password: str, *, role: str = "user") -> dict[str, Any]:
+    def create_user(
+        self,
+        email: str,
+        password: str,
+        *,
+        role: str = "user",
+        allowed_cameras: list[str] | None = None,
+    ) -> dict[str, Any]:
         """Admin-created user: immediately approved (no email invite)."""
         normalized = email.strip().lower()
         if not EMAIL_RE.match(normalized):
@@ -123,6 +130,9 @@ class UserStore:
         if len(password) < 8:
             raise ValueError("Password must be at least 8 characters")
         resolved_role = normalize_role(role)
+        acl = _new_user_acl_fields()
+        if allowed_cameras is not None:
+            acl["allowed_cameras"] = normalize_allowed_cameras(allowed_cameras)
 
         def mutate(payload: dict[str, Any]) -> dict[str, Any]:
             users = payload["users"]
@@ -136,7 +146,7 @@ class UserStore:
                 "status": "approved",
                 "disabled": False,
                 "created_at": time.time(),
-                **_new_user_acl_fields(),
+                **acl,
             }
             users.append(record)
             return record

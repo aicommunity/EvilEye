@@ -19,13 +19,21 @@ import { PlaybackBusyHint } from './PlaybackBusyHint';
 import { PlaybackMediaWithOverlay } from './PlaybackMediaWithOverlay';
 import { mergePlaybackMetadata } from './mergePlaybackMetadata';
 import { playbackDebugInc } from './playbackDebug';
-import { drainVideoElement, reloadVideoMedia } from './drainVideo';
-import { seekPlaybackVideo, shouldEmitPlaybackClock, isPastDecodedEof, seekingAgeMs, SEEKING_STUCK_MS, resetPlaybackClockOwner } from './playbackVideoSync';
+import { clientTelemetryLog } from '../../diagnostics/clientTelemetry';
+import {
+  drainVideoElement,
+  noteSameSrcMediaError,
+  reloadVideoMedia,
+  resetErrorMediaBackoff,
+  scheduleErrorMediaReload,
+} from './drainVideo';
+import { advanceOrStopAtEof } from './playbackEof';
+import { seekPlaybackVideo, shouldEmitPlaybackClock, isPastDecodedEof, seekingAgeMs, lowReadyStateAgeMs, SEEKING_STUCK_MS, LOW_READY_RELOAD_MS, PLAY_CHASE_THRESHOLD_SEC, resetPlaybackClockOwner } from './playbackVideoSync';
 import { usePlaybackMetadata } from './usePlaybackMetadata';
 import { usePlaybackStaticMetadata } from './usePlaybackStaticMetadata';
 import { PlaybackStaticFrame } from './PlaybackStaticFrame';
 import type { StaticFrameSource } from './markerNavigation';
-import { isPositionInRecordingSegment, pickContainingPlayableSegment, isPlayableSegment, isPositionInPlayableGap } from './timelineMath';
+import { isPositionInRecordingSegment, pickContainingPlayableSegment, isPositionInPlayableGap } from './timelineMath';
 
 const PLAYBACK_EVENT_ZONE_PAD_SEC = 1.5;
 
@@ -34,16 +42,6 @@ export type PlaybackMediaSlot = {
   startTs: number;
   endTs: number;
 };
-
-function nextSegment(segs: PlaybackSegment[], current: PlaybackSegment | null): PlaybackSegment | null {
-  if (!current || !segs.length) return null;
-  const idx = segs.findIndex((s) => s.path === current.path);
-  if (idx < 0) return null;
-  for (let i = idx + 1; i < segs.length; i++) {
-    if (isPlayableSegment(segs[i])) return segs[i];
-  }
-  return null;
-}
 
 export function usePlaybackCameraSlot(
   segments: PlaybackSegment[],
@@ -55,6 +53,7 @@ export function usePlaybackCameraSlot(
   userSeeking = false,
   onVideoClock?: (globalSec: number) => void,
   clockId?: string,
+  onPlaybackExhausted?: () => void,
 ) {
   const ref = useRef<HTMLVideoElement>(null);
   const preloadRef = useRef<HTMLVideoElement>(null);
@@ -74,12 +73,21 @@ export function usePlaybackCameraSlot(
   playingRef.current = playing;
   const onVideoClockRef = useRef(onVideoClock);
   onVideoClockRef.current = onVideoClock;
+  const onPlaybackExhaustedRef = useRef(onPlaybackExhausted);
+  onPlaybackExhaustedRef.current = onPlaybackExhausted;
   const [videoGlobalSec, setVideoGlobalSec] = useState<number | null>(null);
   const [videoSeeking, setVideoSeeking] = useState(false);
   const [recordingInProgress, setRecordingInProgress] = useState(false);
   const [inPlayableGap, setInPlayableGap] = useState(false);
-  /** Bump to force <video> remount when decoder is a zombie. */
+  /**
+   * Remount only as last-resort zombie recovery (not on every glitch).
+   * Seek-storms on readyState 0 must not bump this.
+   */
   const [mediaEpoch, setMediaEpoch] = useState(0);
+  /** One initial pin per media element; chase only after HAVE_CURRENT_DATA. */
+  const pinnedThisMediaRef = useRef(false);
+  /** At most one remount per segment URL — remount loops reset softReloadCount. */
+  const remountedUrlRef = useRef<string | null>(null);
 
   const publishVideoGlobal = () => {
     const v = ref.current;
@@ -151,21 +159,52 @@ export function usePlaybackCameraSlot(
     // Index end_ts can overrun the real mp4 duration; seeking past EOF freezes decode.
     if (isPastDecodedEof(v, position, current.startTs)) {
       const eofGlobal = current.startTs + Math.max(0, v.duration - 0.05);
-      const nxt = nextSegment(segs, seg);
-      const gapToNext = nxt ? nxt.start_ts - (current.startTs + v.duration) : Infinity;
-      if (nxt && gapToNext < 2 && allowVideoClock && !scrubbingRef.current) {
-        onVideoClockRef.current?.(nxt.start_ts);
+      const currentSeg =
+        seg ??
+        pickContainingPlayableSegment(segs, current.startTs) ??
+        ({
+          path: pathRef.current ?? '',
+          start_ts: current.startTs,
+          end_ts: current.endTs,
+          duration_ms: Math.max(0, (current.endTs - current.startTs) * 1000),
+        } as PlaybackSegment);
+      const decision = advanceOrStopAtEof(segs, currentSeg, {
+        decodedDurationSec: Number.isFinite(v.duration) ? v.duration : undefined,
+      });
+      if (decision.action === 'advanced' && allowVideoClock && !scrubbingRef.current) {
+        onVideoClockRef.current?.(decision.next.start_ts);
         return;
       }
+      // Stop pin: park at EOF visually but do not keep emitting clock / reloading.
       seekPlaybackVideo(v, eofGlobal, current.startTs, {
-        playing,
+        playing: false,
         scrubbing: scrubbingRef.current,
         force: userSeekingRef.current,
         segmentEndTs: current.endTs,
       });
-      if (allowVideoClock && Math.abs(position - eofGlobal) > 0.2) {
-        onVideoClockRef.current?.(eofGlobal);
+      if (allowVideoClock && !scrubbingRef.current) {
+        onPlaybackExhaustedRef.current?.();
       }
+      return;
+    }
+
+    // While buffering (rs < 2): do not chase the shared playhead — other cams advance
+    // the clock and seek-storms keep Firefox at 0↔1. Pin once when metadata exists.
+    if (
+      v.readyState < 2 &&
+      !userSeekingRef.current &&
+      !scrubbingRef.current
+    ) {
+      if (v.readyState >= 1 && !pinnedThisMediaRef.current) {
+        pinnedThisMediaRef.current = true;
+        seekPlaybackVideo(v, position, current.startTs, {
+          playing,
+          force: true,
+          thresholdSec: 0,
+          segmentEndTs: current.endTs,
+        });
+      }
+      if (playing && v.paused) void v.play().catch(() => null);
       return;
     }
 
@@ -184,10 +223,10 @@ export function usePlaybackCameraSlot(
         return;
       }
       const videoGlobal = current.startTs + v.currentTime;
-      if (Math.abs(position - videoGlobal) > 1.0) {
+      if (Math.abs(position - videoGlobal) > PLAY_CHASE_THRESHOLD_SEC) {
         seekPlaybackVideo(v, position, current.startTs, {
           playing: true,
-          thresholdSec: 1.0,
+          thresholdSec: PLAY_CHASE_THRESHOLD_SEC,
           segmentEndTs: current.endTs,
         });
         // Seek-storm / src change can leave the element paused while UI still plays.
@@ -250,12 +289,20 @@ export function usePlaybackCameraSlot(
     const onEnded = () => {
       const current = slotRef.current;
       if (!current) return;
-      const nxt = nextSegment(
-        segmentsRef.current,
-        pickContainingPlayableSegment(segmentsRef.current, current.startTs),
-      );
-      if (nxt && playingRef.current && !scrubbingRef.current) {
-        onVideoClockRef.current?.(nxt.start_ts);
+      const currentSeg =
+        pickContainingPlayableSegment(segmentsRef.current, current.startTs) ??
+        ({
+          path: pathRef.current ?? '',
+          start_ts: current.startTs,
+          end_ts: current.endTs,
+          duration_ms: Math.max(0, (current.endTs - current.startTs) * 1000),
+        } as PlaybackSegment);
+      const decision = advanceOrStopAtEof(segmentsRef.current, currentSeg, {
+        decodedDurationSec:
+          ref.current && Number.isFinite(ref.current.duration) ? ref.current.duration : undefined,
+      });
+      if (decision.action === 'advanced' && playingRef.current && !scrubbingRef.current) {
+        onVideoClockRef.current?.(decision.next.start_ts);
         return;
       }
       seekPlaybackVideo(ref.current, current.endTs, current.startTs, {
@@ -263,45 +310,92 @@ export function usePlaybackCameraSlot(
         scrubbing: scrubbingRef.current,
         segmentEndTs: current.endTs,
       });
+      if (playingRef.current && !scrubbingRef.current) {
+        onPlaybackExhaustedRef.current?.();
+      }
     };
+    const errorReloadTimers: number[] = [];
     const onError = () => {
       setVideoSeeking(false);
       playbackDebugInc('playRejects');
-      // 503 / aborted Range → black tile until src is re-requested.
+      const src = slotRef.current?.url ?? null;
+      const code = ref.current?.error?.code ?? null;
+      clientTelemetryLog(
+        'video_error',
+        {
+          camera: clockId ?? null,
+          code,
+          networkState: ref.current?.networkState ?? null,
+          readyState: ref.current?.readyState ?? null,
+          src,
+        },
+        'playback',
+      );
       const el = ref.current;
-      if (el && slotRef.current) {
-        window.setTimeout(() => {
-          if (ref.current !== el || !slotRef.current) return;
-          if (reloadVideoMedia(el)) {
-            applySync();
-          }
-        }, 400);
+      if (!el || !slotRef.current) return;
+      const { giveUp } = noteSameSrcMediaError(el, src, code);
+      if (giveUp) {
+        clientTelemetryLog(
+          'video_error_give_up',
+          { camera: clockId ?? null, code, src },
+          'playback',
+        );
+        const current = slotRef.current;
+        const currentSeg =
+          pickContainingPlayableSegment(segmentsRef.current, current.startTs) ??
+          ({
+            path: pathRef.current ?? '',
+            start_ts: current.startTs,
+            end_ts: current.endTs,
+            duration_ms: Math.max(0, (current.endTs - current.startTs) * 1000),
+          } as PlaybackSegment);
+        const decision = advanceOrStopAtEof(segmentsRef.current, currentSeg);
+        resetErrorMediaBackoff(el);
+        if (decision.action === 'advanced' && playingRef.current && !scrubbingRef.current) {
+          onVideoClockRef.current?.(decision.next.start_ts);
+          return;
+        }
+        if (playingRef.current && !scrubbingRef.current) {
+          onPlaybackExhaustedRef.current?.();
+        }
+        return;
       }
+      // 503 / aborted Range → backoff reload (not fixed 400ms) to avoid shed storms.
+      const timer = scheduleErrorMediaReload(el, () => {
+        if (ref.current !== el || !slotRef.current) return;
+        applySync();
+      });
+      if (timer != null) errorReloadTimers.push(timer);
     };
     const v = ref.current;
     if (!v) return;
     const onSeeking = () => setVideoSeeking(true);
+    const onCanPlayReset = () => {
+      resetErrorMediaBackoff(v);
+      onCanPlay();
+    };
     v.addEventListener('seeking', onSeeking);
     v.addEventListener('seeked', onSeeked);
     v.addEventListener('error', onError);
     setVideoSeeking(v.seeking);
     v.addEventListener('timeupdate', onTimeUpdate);
     v.addEventListener('loadeddata', onSeeked);
-    v.addEventListener('loadedmetadata', onCanPlay);
-    v.addEventListener('canplay', onCanPlay);
+    v.addEventListener('loadedmetadata', onCanPlayReset);
+    v.addEventListener('canplay', onCanPlayReset);
     v.addEventListener('ended', onEnded);
     applySync();
     publishVideoGlobal();
     resumeIfNeeded();
 
     return () => {
+      for (const t of errorReloadTimers) window.clearTimeout(t);
       v.removeEventListener('seeking', onSeeking);
       v.removeEventListener('seeked', onSeeked);
       v.removeEventListener('error', onError);
       v.removeEventListener('timeupdate', onTimeUpdate);
       v.removeEventListener('loadeddata', onSeeked);
-      v.removeEventListener('loadedmetadata', onCanPlay);
-      v.removeEventListener('canplay', onCanPlay);
+      v.removeEventListener('loadedmetadata', onCanPlayReset);
+      v.removeEventListener('canplay', onCanPlayReset);
       v.removeEventListener('ended', onEnded);
     };
     // Only rebind when the media element identity changes — NOT on scrubbing/playing
@@ -309,21 +403,28 @@ export function usePlaybackCameraSlot(
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [slot?.url, mediaEpoch]);
 
-  // Release Range GETs only when the element is actually going away.
+  // Drain the element that belonged to this effect run — never ref.current in
+  // cleanup (mediaEpoch remount already retargets the ref to the new <video>).
   useEffect(() => {
-    const videoEl = ref;
-    const preloadEl = preloadRef;
+    const el = ref.current;
+    const preload = preloadRef.current;
     return () => {
-      drainVideoElement(videoEl.current);
-      drainVideoElement(preloadEl.current);
+      drainVideoElement(el);
+      drainVideoElement(preload);
+      resetErrorMediaBackoff(el);
     };
-  }, []);
+  }, [slot?.url, mediaEpoch]);
 
   useEffect(() => {
     setVideoGlobalSec(null);
     setVideoSeeking(false);
+    pinnedThisMediaRef.current = false;
     resetPlaybackClockOwner();
   }, [slot?.url, mediaEpoch]);
+
+  useEffect(() => {
+    remountedUrlRef.current = null;
+  }, [slot?.url]);
 
   useEffect(() => {
     applySync();
@@ -331,13 +432,14 @@ export function usePlaybackCameraSlot(
   }, [positionSec, playMode, scrubbing, userSeeking]);
 
   // Recover stuck seeking even while paused (archive scrub). Prefer force-seek /
-  // load() — remount opens a new /media Range while the old one may still hold a slot.
+  // load() — remount at most once per URL (remount resets this effect).
   useEffect(() => {
     if (scrubbing) return;
     const v = ref.current;
     if (!v) return;
     let stuckSeekAttempts = 0;
     let pausedZombieTicks = 0;
+    let softReloadCount = 0;
     const kick = () => {
       playbackDebugInc('watchdogKick');
       applySync();
@@ -346,6 +448,30 @@ export function usePlaybackCameraSlot(
         void v.play().catch(() => {
           playbackDebugInc('playRejects');
         });
+      }
+    };
+    const softReload = () => {
+      // Cap recovery: reload storms reset readyState to 0 and flash «Ищем кадр».
+      if (softReloadCount >= 2) return;
+      softReloadCount += 1;
+      pinnedThisMediaRef.current = false;
+      if (reloadVideoMedia(v)) {
+        kick();
+      }
+      const url = slotRef.current?.url ?? '';
+      if (
+        softReloadCount >= 2 &&
+        v.readyState < 2 &&
+        url &&
+        remountedUrlRef.current !== url
+      ) {
+        remountedUrlRef.current = url;
+        clientTelemetryLog(
+          'video_remount',
+          { camera: clockId ?? null, src: url },
+          'playback',
+        );
+        setMediaEpoch((n) => n + 1);
       }
     };
     if (playing) {
@@ -360,7 +486,7 @@ export function usePlaybackCameraSlot(
         pausedZombieTicks += 1;
         playbackDebugInc('playCalls');
         void v.play().catch(() => playbackDebugInc('playRejects'));
-        if (pausedZombieTicks === 2 && current) {
+        if (pausedZombieTicks === 2 && current && v.readyState >= 2) {
           seekPlaybackVideo(v, getPositionRef.current(), current.startTs, {
             playing: true,
             force: true,
@@ -369,9 +495,9 @@ export function usePlaybackCameraSlot(
             segmentEndTs: current.endTs,
           });
         }
-        if (pausedZombieTicks >= 6 && v.readyState < 2) {
-          reloadVideoMedia(v);
-          kick();
+        // Only reload when truly HAVE_NOTHING for a long time (not while buffering metadata).
+        if (pausedZombieTicks >= 8 && v.readyState === 0 && lowReadyStateAgeMs(v) >= LOW_READY_RELOAD_MS) {
+          softReload();
         }
         return;
       }
@@ -388,32 +514,47 @@ export function usePlaybackCameraSlot(
           thresholdSec: 0,
           segmentEndTs: current.endTs,
         });
-        if (stuckSeekAttempts === 2 || stuckSeekAttempts >= 4) {
-          reloadVideoMedia(v);
-          kick();
+        if (stuckSeekAttempts >= 4 && v.readyState === 0) {
+          softReload();
+        }
+        return;
+      }
+
+      // HAVE_NOTHING only — HAVE_METADATA is normal Range buffering for ~180MB segments.
+      if (v.readyState === 0 && lowReadyStateAgeMs(v) >= LOW_READY_RELOAD_MS && current) {
+        playbackDebugInc('seekingStuckRecoveries');
+        stuckSeekAttempts += 1;
+        setVideoSeeking(false);
+        if (stuckSeekAttempts >= 2) {
+          softReload();
         }
         return;
       }
 
       // Paused archive can stay black after a failed Range (readyState 0, not seeking).
       if (!playingRef.current) {
-        if (v.readyState < 2 && current) {
+        if (v.readyState === 0 && current && lowReadyStateAgeMs(v) >= LOW_READY_RELOAD_MS) {
           stuckSeekAttempts += 1;
           if (stuckSeekAttempts >= 3) {
             stuckSeekAttempts = 0;
-            reloadVideoMedia(v);
-            kick();
+            softReload();
           }
-        } else {
+        } else if (v.readyState >= 2) {
           stuckSeekAttempts = 0;
+          softReloadCount = 0;
         }
         return;
       }
-      if (v.readyState >= 2) return;
+      if (v.readyState >= 2) {
+        stuckSeekAttempts = 0;
+        softReloadCount = 0;
+        return;
+      }
+      // Buffering with metadata: wait — do not pullback/reload.
+      if (v.readyState >= 1) return;
       if (!(v.currentTime > 2) || pullbacks >= 4) {
-        if (pullbacks >= 4 && v.readyState < 2) {
-          reloadVideoMedia(v);
-          kick();
+        if (pullbacks >= 4 && v.readyState === 0 && lowReadyStateAgeMs(v) >= LOW_READY_RELOAD_MS) {
+          softReload();
         }
         return;
       }
@@ -426,10 +567,10 @@ export function usePlaybackCameraSlot(
       void v.play().catch(() => null);
     }, 700);
     const hardTimer = window.setTimeout(() => {
-      if (!playingRef.current || v.readyState >= 2) return;
-      reloadVideoMedia(v);
-      kick();
-    }, 2800);
+      if (!playingRef.current || v.readyState !== 0) return;
+      if (lowReadyStateAgeMs(v) < LOW_READY_RELOAD_MS) return;
+      softReload();
+    }, LOW_READY_RELOAD_MS);
     return () => {
       v.removeEventListener('canplay', kick);
       window.clearTimeout(softTimer);
@@ -633,6 +774,19 @@ export function PlaybackVideoSurface({
 }) {
   const { t } = useI18n();
   const [seeking, setSeeking] = useState(false);
+  const [mediaReadyState, setMediaReadyState] = useState<number | null>(null);
+  const [hadDecodableFrame, setHadDecodableFrame] = useState(false);
+  const lastSlotUrlRef = useRef<string | null>(null);
+  if (slot?.url) lastSlotUrlRef.current = slot.url;
+  const videoSrc = slot?.url ?? (seeking ? lastSlotUrlRef.current : null);
+
+  useEffect(() => {
+    setHadDecodableFrame(false);
+  }, [slot?.url, mediaEpoch]);
+
+  useEffect(() => {
+    if (mediaReadyState != null && mediaReadyState >= 2) setHadDecodableFrame(true);
+  }, [mediaReadyState]);
 
   const emptyMessage = (() => {
     if (segmentsLoading) return t('playback.loadingSegment');
@@ -647,14 +801,35 @@ export function PlaybackVideoSurface({
   useEffect(() => {
     const v = videoRef.current;
     if (!v) return;
-    const onSeeking = () => setSeeking(true);
-    const onSeeked = () => setSeeking(false);
+    const syncReady = () => setMediaReadyState(v.readyState);
+    const onSeeking = () => {
+      setSeeking(true);
+      syncReady();
+    };
+    const onSeeked = () => {
+      setSeeking(false);
+      syncReady();
+    };
     v.addEventListener('seeking', onSeeking);
     v.addEventListener('seeked', onSeeked);
+    v.addEventListener('loadeddata', syncReady);
+    v.addEventListener('canplay', syncReady);
+    v.addEventListener('waiting', syncReady);
     setSeeking(v.seeking);
+    setMediaReadyState(v.readyState);
+    // Poll readyState for BusyHint loading label — do not fake `seeking` (that
+    // stuck the UI on «Ищем кадр» during normal Range buffering).
+    const clearStuck = window.setInterval(() => {
+      syncReady();
+      if (v.readyState >= 2 && !v.seeking) setSeeking(false);
+    }, 500);
     return () => {
+      window.clearInterval(clearStuck);
       v.removeEventListener('seeking', onSeeking);
       v.removeEventListener('seeked', onSeeked);
+      v.removeEventListener('loadeddata', syncReady);
+      v.removeEventListener('canplay', syncReady);
+      v.removeEventListener('waiting', syncReady);
     };
   }, [videoRef, slot?.url, mediaEpoch]);
 
@@ -677,12 +852,12 @@ export function PlaybackVideoSurface({
 
   return (
     <>
-      {slot?.url ? (
+      {videoSrc ? (
         <>
           <video
             key={`playback-media-${mediaEpoch}`}
             ref={videoRef as RefObject<HTMLVideoElement>}
-            src={slot.url}
+            src={videoSrc}
             playsInline
             preload="auto"
             className={previewClass}
@@ -713,8 +888,15 @@ export function PlaybackVideoSurface({
           />
           <PlaybackBusyHint
             seeking={seeking}
-            loading={loading}
+            loading={
+              Boolean(loading) ||
+              (!hadDecodableFrame &&
+                Boolean(videoSrc) &&
+                mediaReadyState != null &&
+                mediaReadyState < 2)
+            }
             hasObjects={(meta?.objects?.length ?? 0) > 0}
+            mediaReadyState={mediaReadyState}
           />
         </>
       ) : staticFrame?.previewPath ? (
@@ -743,7 +925,6 @@ export function PlaybackVideoSurface({
       {recordingInProgress && slot?.url ? (
         <div className="playback-recording-banner">{t('playback.recordingInProgress')}</div>
       ) : null}
-      {!showMetadata && slot?.url ? <div className="live-overlay-source">{cameraLabel}</div> : null}
       {onExpand ? (
         <div className="camera-card-overlay-actions">
           <button

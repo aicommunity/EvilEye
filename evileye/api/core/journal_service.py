@@ -324,7 +324,7 @@ def load_filters_meta() -> dict[str, Any]:
         "source_names": sorted(_current_source_names()),
         "event_types_events": [
             "attr_found", "attr_lost", "zone_entered", "zone_left",
-            "fov_found", "fov_lost", "cam", "sys",
+            "schedule_alarm_found", "schedule_alarm_lost", "fov_found", "fov_lost", "cam", "sys",
         ],
         "event_types_objects": ["found", "lost"],
     }
@@ -437,6 +437,21 @@ def _database_mode_status() -> dict[str, Any]:
         "reason": "ok",
         "message": "",
     }
+
+
+def database_operational() -> bool:
+    """True when the live stack is configured for PostgreSQL and connected."""
+    if configured_storage_mode() != "database":
+        return False
+    controller = _db_controller()
+    if controller is not None:
+        try:
+            if controller.is_connected():
+                return True
+        except Exception:
+            pass
+    avail = journal_availability()
+    return bool(avail.get("available") and avail.get("mode") == "database")
 
 
 def journal_availability() -> dict[str, Any]:
@@ -865,6 +880,12 @@ def _resolve_journal_frame_path_uncached(
         journal_type: str,
         mode: str = "found",
 ) -> str | None:
+    """Resolve a full-resolution frame path for archive UI.
+
+    Never fall back to tiny ``*_preview`` thumbnails (~150px): archive tiles
+    upscale them and look extremely soft. Prefer ``None`` (404) so the client
+    can show an empty placeholder instead.
+    """
     preview = _resolve_journal_preview_path_uncached(
         path=path,
         date=date,
@@ -873,8 +894,11 @@ def _resolve_journal_frame_path_uncached(
     )
     if not preview:
         return None
+    # Already a non-preview asset (full image stored under another name).
+    if "preview" not in os.path.basename(preview).lower():
+        return preview
     frame = JournalPathResolver.resolve_frame_path(preview, journal_type=journal_type)
-    return frame or preview
+    return frame
 
 
 def resolve_journal_video_path(*, path: str | None = None) -> str | None:

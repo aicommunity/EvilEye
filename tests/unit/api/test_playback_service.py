@@ -102,6 +102,7 @@ def test_path_traversal_rejected(tmp_path, monkeypatch):
 
 def test_date_dirs_covering_range(tmp_path):
     base = tmp_path / "Streams"
+    (base / "2026-08-03").mkdir(parents=True)
     (base / "2026-08-04").mkdir(parents=True)
     (base / "2026-08-05").mkdir(parents=True)
     (base / "2026-08-06").mkdir(parents=True)
@@ -109,9 +110,36 @@ def test_date_dirs_covering_range(tmp_path):
     end = __import__("datetime").datetime(2026, 8, 5, 18, 0, 0).timestamp()
     dirs = svc._date_dirs_covering(base, from_ts=start, to_ts=end)
     names = {p.name for p in dirs}
+    # Previous day included for GST overnight sessions.
+    assert "2026-08-03" in names
     assert "2026-08-04" in names
     assert "2026-08-05" in names
     assert "2026-08-06" not in names
+
+
+def test_date_dirs_today_includes_yesterday(tmp_path, monkeypatch):
+    base = tmp_path / "Streams"
+    today = __import__("datetime").datetime.now().astimezone().strftime("%Y-%m-%d")
+    from datetime import datetime, timedelta
+
+    yday = (datetime.now().astimezone().date() - timedelta(days=1)).isoformat()
+    (base / today).mkdir(parents=True)
+    (base / yday).mkdir(parents=True)
+    dirs = svc._date_dirs(base, today)
+    names = {p.name for p in dirs}
+    assert today in names
+    assert yday in names
+
+
+def test_date_dirs_past_day_includes_previous(tmp_path):
+    """Historical days also need D-1 for GST overnight parts left in the prior folder."""
+    base = tmp_path / "Streams"
+    (base / "2026-09-11").mkdir(parents=True)
+    (base / "2026-09-12").mkdir(parents=True)
+    dirs = svc._date_dirs(base, "2026-09-12")
+    names = {p.name for p in dirs}
+    assert "2026-09-12" in names
+    assert "2026-09-11" in names
 
 
 def test_load_segments_multi_day_from_to(tmp_path, monkeypatch):
@@ -322,3 +350,96 @@ def test_segment_playable_flag(tmp_path, monkeypatch):
     segs = {Path(s["path"]).name: s for s in svc.load_segments("Cam1", date="2026-08-20")}
     assert segs["Cam1_20260820_010000_0_00000.mp4"]["playable"] is True
     assert segs["Cam1_20260820_013000_0_00001.mp4"]["playable"] is False
+
+
+def test_load_segments_repairs_midnight_sidecar_with_continued_index(tmp_path, monkeypatch):
+    """Day-rotate sidecar start_ts=midnight + continued idx must use mtime wall clock."""
+    from datetime import datetime
+
+    from evileye.video_recorder.session_sidecar import sidecar_path_for_segment, write_session_sidecar
+
+    root = tmp_path / "EvilEyeData"
+    cam = root / "Streams" / "2026-09-13" / "Cam1"
+    cam.mkdir(parents=True)
+    # Sidecar claims session started at midnight, but indices continue from 77.
+    midnight = datetime(2026, 9, 13, 0, 7, 41).timestamp()
+    part_len = 1790.0
+    files = []
+    for i, idx in enumerate(range(77, 81)):
+        path = cam / f"Cam1_20260913_000741_0_{idx:05d}.mp4"
+        path.write_bytes(_minimal_mp4(part_len))
+        close = midnight + (i + 1) * part_len
+        os.utime(path, (close, close))
+        files.append(path)
+    write_session_sidecar(sidecar_path_for_segment(files[0]), midnight, first_pts_ns=0)
+
+    monkeypatch.setenv("EVILEYE_DATA_DIR", str(root))
+    monkeypatch.setattr(svc, "_configured_segment_length_sec", lambda: 1800.0)
+    svc._MP4_DURATION_CACHE.clear()
+
+    day_start = datetime(2026, 9, 13, 0, 0, 0).timestamp()
+    day_end = day_start + 86400
+    segs = svc.load_segments("Cam1", date="2026-09-13", from_ts=day_start, to_ts=day_end)
+    assert len(segs) == 4
+    for s in segs:
+        assert day_start <= s["start_ts"] < day_end
+        assert "2026-09-13" in s["path"]
+    # Nominal idx*1800 from midnight would land on Sep 14 afternoon.
+    assert segs[0]["start_ts"] < midnight + 3600
+    assert abs(segs[0]["start_ts"] - midnight) < 5.0
+
+    last_close = midnight + 4 * part_len
+    window_segs = svc.load_segments(
+        "Cam1",
+        date="2026-09-13",
+        from_ts=last_close - 7200,
+        to_ts=last_close + 60,
+    )
+    assert len(window_segs) >= 1
+    assert any("00080" in Path(s["path"]).name for s in window_segs)
+
+
+def test_load_segments_batch_schedules_day_index_on_cold_window(tmp_path, monkeypatch):
+    """Windowed cold miss must kick background day-index rebuild without blocking."""
+    root = tmp_path / "EvilEyeData"
+    cam = root / "Streams" / "2026-08-21" / "Cam1"
+    cam.mkdir(parents=True)
+    (cam / "Cam1_20260821_120000_0_00000.mp4").write_bytes(b"fake")
+    monkeypatch.setenv("EVILEYE_DATA_DIR", str(root))
+    svc._data_dir_cache = None
+
+    calls: list[tuple] = []
+
+    def _seg(date, cams=None):
+        calls.append(("seg", date, list(cams or [])))
+
+    def _det(date, cams, *, run_id=None):
+        calls.append(("det", date, list(cams or []), run_id))
+
+    def _evt(date, cams=None, *, limit=2000):
+        calls.append(("evt", date, list(cams or [])))
+
+    monkeypatch.setattr(
+        "evileye.api.core.playback_timeline_index.schedule_segment_index_refresh",
+        _seg,
+    )
+    monkeypatch.setattr(
+        "evileye.api.core.playback_timeline_index.schedule_detection_ticks_refresh",
+        _det,
+    )
+    monkeypatch.setattr(
+        "evileye.api.core.playback_timeline_index.schedule_event_intervals_refresh",
+        _evt,
+    )
+    monkeypatch.setattr(
+        "evileye.api.core.playback_timeline_index.read_segment_index_if_fresh",
+        lambda date: None,
+    )
+    monkeypatch.setattr(svc, "load_segments_uncached", lambda cam, from_ts=None, to_ts=None, date=None: [{"path": "x", "start_ts": 1, "end_ts": 2}])
+
+    out = svc.load_segments_batch(["Cam1"], from_ts=1.0, to_ts=2.0, date="2026-08-21", run_id=7)
+    assert out["Cam1"]
+    kinds = [c[0] for c in calls]
+    assert kinds == ["seg", "det", "evt"]
+    assert calls[0][1] == "2026-08-21"
+    assert calls[1][3] == 7

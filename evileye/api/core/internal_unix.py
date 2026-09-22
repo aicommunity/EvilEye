@@ -26,10 +26,15 @@ def internal_socket_path() -> Path:
     return runtime_dir() / "internal.sock"
 
 
+def internal_relay_target_url() -> str:
+    """Unix relay address for outbound frame publish (socket may not exist yet)."""
+    return f"unix://{internal_socket_path()}"
+
+
 def internal_relay_url() -> str | None:
     path = internal_socket_path()
     if path.exists() and path.is_socket():
-        return f"unix://{path}"
+        return internal_relay_target_url()
     return None
 
 

@@ -59,14 +59,32 @@ def reload_backend_cmd() -> None:
 
 @app.command("pipeline")
 def reload_pipeline_cmd(
-    config: str = typer.Argument(..., help="Configuration file path or name"),
+    config: Optional[str] = typer.Argument(
+        None,
+        help="Config path/name (optional: unique running pipeline or site profile)",
+    ),
     detach: bool = typer.Option(True, "--detach/--foreground"),
 ) -> None:
-    from evileye.stack_control import pipeline_restart
+    """Restart pipeline only. CONFIG optional when one run is active or profile is set."""
+    from evileye.stack_control import (
+        AmbiguousPipelineConfigError,
+        pipeline_restart,
+        require_pipeline_config,
+    )
 
     try:
-        spawn = pipeline_restart(config, site_dir=Path.cwd(), hold=True, detach=detach)
+        resolved = require_pipeline_config(
+            Path.cwd(),
+            explicit=config,
+            allow_running=True,
+        )
+        spawn = pipeline_restart(resolved, site_dir=Path.cwd(), hold=True, detach=detach)
+    except AmbiguousPipelineConfigError as exc:
+        console.print(f"[red]{exc}[/red]")
+        raise typer.Exit(1)
     except Exception as exc:
         console.print(f"[red]{exc}[/red]")
         raise typer.Exit(1)
-    console.print(f"[green]Pipeline reloaded[/green] pid={spawn.pid} mode={spawn.mode}")
+    console.print(
+        f"[green]Pipeline reloaded[/green] pid={spawn.pid} mode={spawn.mode} config={spawn.config_path}"
+    )

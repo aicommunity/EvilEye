@@ -1,5 +1,5 @@
 import { useEffect, useLayoutEffect, useRef, useState } from 'react';
-import type { PlaybackEventInterval, PlaybackEventMarker, PlaybackSegment } from '../../api';
+import type { PlaybackEventInterval, PlaybackEventMarker, PlaybackSegment, PlaybackTimelineBand } from '../../api';
 import { useI18n } from '../../i18n';
 import { EventMarkers } from './EventMarkers';
 import {
@@ -20,7 +20,7 @@ import {
   zoomViewWithinDay,
 } from './timelineMath';
 
-const TIMELINE_HEIGHT_PX = 92;
+const TIMELINE_HEIGHT_PX = 72;
 /** Commit wheel zoom to parent only after the gesture settles. */
 const ZOOM_COMMIT_MS = 160;
 /** Hide hover tooltip when it would sit on top of the playhead label. */
@@ -40,9 +40,12 @@ export function Timeline({
   detectionTs = [],
   eventStartTs = [],
   eventIntervals = [],
+  inferenceGaps = [],
+  dataLoading = false,
   onSeek,
   onViewChange,
   onPanningChange,
+  onCursorChange,
 }: {
   date: string;
   viewFrom: number | null;
@@ -55,9 +58,14 @@ export function Timeline({
   detectionTs?: number[];
   eventStartTs?: number[];
   eventIntervals?: PlaybackEventInterval[];
+  inferenceGaps?: PlaybackTimelineBand[];
+  /** True while cameras/segments hard-load is in flight — do not claim "no recordings". */
+  dataLoading?: boolean;
   onSeek: (sec: number) => void;
   onViewChange: (viewFrom: number, viewTo: number) => void;
   onPanningChange?: (panning: boolean) => void;
+  /** Hover/view cursor (unix sec); null when pointer leaves. */
+  onCursorChange?: (sec: number | null) => void;
 }) {
   const { t, formatDateTimeNoYear, formatDate, formatTime } = useI18n();
   const rootRef = useRef<HTMLDivElement>(null);
@@ -176,6 +184,7 @@ export function Timeline({
   const dateTicks = hasView ? buildTimelineDateLabels(displayFrom, displayTo) : [];
   const noData =
     segments.length === 0 && markers.length === 0 && detectionTs.length === 0 && eventIntervals.length === 0;
+  const settledEmpty = !dataLoading && noData;
   const playheadInView = hasView && position >= displayFrom && position <= displayTo;
   const playheadInGap =
     hasView && segmentsByCamera && !hasAnyPlayableAtPosition(segmentsByCamera, position);
@@ -198,7 +207,9 @@ export function Timeline({
     const el = rootRef.current;
     if (!el) return;
     const rect = el.getBoundingClientRect();
-    setHoverSec(unixAtClientX(clientX, rect, displayFrom, displayTo));
+    const sec = unixAtClientX(clientX, rect, displayFrom, displayTo);
+    setHoverSec(sec);
+    onCursorChange?.(sec);
   };
 
   const endPan = (wasPan: boolean) => {
@@ -327,7 +338,22 @@ export function Timeline({
             }
           : undefined
       }
-      onPointerLeave={hasView ? () => setHoverSec(null) : undefined}
+      onPointerLeave={
+        hasView
+          ? () => {
+              setHoverSec(null);
+              onCursorChange?.(null);
+            }
+          : undefined
+      }
+      onDoubleClick={
+        hasView
+          ? (e) => {
+              // Double-click seeks playhead to the view cursor (distinct from pan).
+              seekAtClientX(e.clientX);
+            }
+          : undefined
+      }
     >
       {!hasView ? (
         <div className="playback-timeline-empty-banner">{t('playback.timelineEmpty')}</div>
@@ -383,6 +409,28 @@ export function Timeline({
                     'repeating-linear-gradient(135deg, rgba(148, 163, 184, 0.35) 0 6px, rgba(100, 116, 139, 0.2) 6px 12px)',
                   borderRadius: 4,
                   border: '1px dashed rgba(148, 163, 184, 0.75)',
+                  pointerEvents: 'none',
+                }}
+              />
+            );
+          })}
+          {inferenceGaps.map((interval, idx) => {
+            const clipped = clipRangeToView(interval.from, interval.to, displayFrom, displayTo);
+            if (!clipped) return null;
+            return (
+              <div
+                key={`gap-${interval.from}-${idx}`}
+                className="timeline-segment-block timeline-segment-block--inference-gap"
+                title={t('playback.inferenceGapHint')}
+                aria-label={t('playback.inferenceGap')}
+                style={{
+                  position: 'absolute',
+                  left: `${clipped.leftPct}%`,
+                  width: `${Math.max(0.15, clipped.widthPct)}%`,
+                  top: '68%',
+                  height: '18%',
+                  background: 'rgba(244, 63, 94, 0.45)',
+                  borderRadius: 2,
                   pointerEvents: 'none',
                 }}
               />
@@ -479,7 +527,12 @@ export function Timeline({
           {!interacting ? (
             <EventMarkers markers={markers} from={displayFrom} to={displayTo} onSelect={(m) => onSeek(m.ts)} />
           ) : null}
-          {noData ? <div className="playback-timeline-empty-banner">{t('playback.timelineNoRecordings')}</div> : null}
+          {noData && dataLoading ? (
+            <div className="playback-timeline-empty-banner">{t('playback.timelineEmpty')}</div>
+          ) : null}
+          {settledEmpty ? (
+            <div className="playback-timeline-empty-banner">{t('playback.timelineNoRecordings')}</div>
+          ) : null}
         </>
       )}
     </div>

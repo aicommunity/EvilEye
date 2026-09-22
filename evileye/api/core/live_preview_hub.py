@@ -42,6 +42,7 @@ class LivePreviewClient:
     closed: bool = False
     send_timeouts: int = 0
     replaced_pending: int = 0
+    username: str | None = None
 
 
 class LivePreviewHub:
@@ -97,10 +98,16 @@ class LivePreviewHub:
             "send_timeout_sec": _send_timeout_sec(),
         }
 
-    async def register(self, websocket: WebSocket, run_id: int) -> LivePreviewClient | None:
+    async def register(
+        self,
+        websocket: WebSocket,
+        run_id: int,
+        *,
+        username: str | None = None,
+    ) -> LivePreviewClient | None:
         if len(self._clients) >= self._max_clients:
             return None
-        client = LivePreviewClient(websocket=websocket, run_id=run_id)
+        client = LivePreviewClient(websocket=websocket, run_id=run_id, username=username)
         client.send_event = asyncio.Event()
         loop = self._loop or asyncio.get_running_loop()
         client.sender_task = loop.create_task(self._client_sender(client))
@@ -186,16 +193,20 @@ class LivePreviewHub:
                             # Soft: allow a couple of slow sends before kick (WAN / busy tab).
                             if client.send_timeouts < 3:
                                 logger.debug(
-                                    "live preview client send timeout (run_id=%s timeouts=%s); retrying",
+                                    "live preview client send timeout (run_id=%s user=%s timeouts=%s pending=%s); retrying",
                                     client.run_id,
+                                    client.username,
                                     client.send_timeouts,
+                                    len(client.pending),
                                 )
                                 continue
                             self._stats["clients_kicked"] += 1
                             logger.warning(
-                                "live preview client send timeout (run_id=%s timeouts=%s); unregistering",
+                                "live preview client send timeout (run_id=%s user=%s timeouts=%s pending_sources=%s); unregistering",
                                 client.run_id,
+                                client.username,
                                 client.send_timeouts,
+                                list(client.pending.keys()),
                             )
                             self.unregister(client)
                             return

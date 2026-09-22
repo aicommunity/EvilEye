@@ -7,8 +7,8 @@ from pathlib import Path
 from fastapi import FastAPI, Response, Request
 from fastapi.middleware.cors import CORSMiddleware
 from starlette.middleware.base import BaseHTTPMiddleware
-from starlette.middleware.sessions import SessionMiddleware
 from starlette.middleware.trustedhost import TrustedHostMiddleware
+from uvicorn.middleware.proxy_headers import ProxyHeadersMiddleware
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 from contextlib import asynccontextmanager
@@ -19,6 +19,7 @@ from evileye.api.routes.configs import router as configs_router
 from evileye.api.routes.config_editors import router as config_editors_router
 from evileye.api.routes.journals import router as journals_router
 from evileye.api.routes.logs import router as logs_router
+from evileye.api.routes.diagnostics import router as diagnostics_router
 from evileye.api.routes.users import router as users_router
 from evileye.api.routes.bans import router as bans_router
 from evileye.api.routes.state import router as state_router
@@ -33,6 +34,7 @@ from evileye.api.core.web_auth_bootstrap import ensure_default_admin_credentials
 from evileye.api.core.ip_ban_store import get_ip_ban_store
 from evileye.api.core.rate_guard import get_rate_guard, load_protection_config
 from evileye.api.middleware.ip_protection import ProtectionMiddleware
+from evileye.api.middleware.adaptive_session import AdaptiveSessionMiddleware
 from evileye.api.security import (
     current_user,
     is_api_request_protected,
@@ -302,17 +304,31 @@ def create_app() -> FastAPI:
 
     allow_origins = _cors_origins(web_auth)
 
+    protection_cfg = load_protection_config({})
+    try:
+        creds_file = creds_path()
+        if creds_file.exists():
+            payload = json.loads(creds_file.read_text(encoding="utf-8"))
+            section = payload.get("web_auth") if isinstance(payload, dict) else {}
+            protection_cfg = load_protection_config(section if isinstance(section, dict) else {})
+    except Exception:
+        pass
+
     # Starlette: last added = outermost. Desired order:
-    # SecurityHeaders -> CORS -> TrustedHost? -> Session -> Protection -> AuthGuard -> routes
+    # SecurityHeaders -> CORS -> TrustedHost? -> ProxyHeaders? -> Session -> Protection -> AuthGuard -> routes
     app.add_middleware(AuthGuardMiddleware)
     app.add_middleware(ProtectionMiddleware)
     app.add_middleware(
-        SessionMiddleware,
+        AdaptiveSessionMiddleware,
         secret_key=web_auth.session_secret,
         session_cookie=web_auth.cookie_name,
         same_site="lax",
-        https_only=web_auth.secure_cookies,
+        secure_cookies=web_auth.secure_cookies,
     )
+    if protection_cfg.trust_proxy:
+        trusted_hosts = [ip for ip in (protection_cfg.trusted_proxy_ips or []) if ip]
+        if trusted_hosts:
+            app.add_middleware(ProxyHeadersMiddleware, trusted_hosts=trusted_hosts)
     allowed_hosts = os.getenv("EVILEYE_ALLOWED_HOSTS", "").strip()
     if allowed_hosts:
         hosts = [h.strip() for h in allowed_hosts.split(",") if h.strip()]
@@ -324,7 +340,7 @@ def create_app() -> FastAPI:
         allow_credentials=True,
         allow_methods=["*"],
         allow_headers=["*"],
-        expose_headers=["X-Export-Truncated"],
+        expose_headers=["X-Export-Truncated", "X-Playback-Cache"],
     )
     app.add_middleware(SecurityHeadersMiddleware)
     logger.info("CORS / protection / security headers middleware configured")
@@ -334,7 +350,11 @@ def create_app() -> FastAPI:
         payload: dict = {"status": "ok"}
         try:
             from evileye.api.core.internal_unix import internal_socket_path
-            from evileye.api.routes.playback import detections_inflight_count, media_inflight_count
+            from evileye.api.routes.playback import (
+                detections_inflight_count,
+                media_inflight_count,
+                memory_cache_stats,
+            )
 
             broker = get_frame_broker()
             stats = broker.get_runtime_stats() if hasattr(broker, "get_runtime_stats") else {}
@@ -370,10 +390,43 @@ def create_app() -> FastAPI:
             }
             payload["playback_detections_inflight"] = detections_inflight_count()
             payload["playback_media_inflight"] = media_inflight_count()
+            payload["playback_memory_cache"] = memory_cache_stats()
+            try:
+                from evileye.api.routes.streaming import mjpeg_clients_count
+
+                payload["mjpeg_clients"] = mjpeg_clients_count()
+            except Exception:
+                payload["mjpeg_clients"] = None
+            # Web-side proxy for relay lag: age of newest broker frame.
+            payload["relay_last_ok_age_sec"] = max_age
             try:
                 from evileye.api.core.rate_guard import get_rate_guard
 
                 payload["ws_reject_counts"] = get_rate_guard().ws_reject_counts()
+            except Exception:
+                pass
+            try:
+                from evileye.api.core.control_ipc import control_socket_path, send_control_command
+
+                if control_socket_path().exists():
+                    ipc_resp = send_control_command({"cmd": "get_objects_handler_stats"}, timeout=1.0)
+                    if isinstance(ipc_resp, dict) and ipc_resp.get("ok") and isinstance(ipc_resp.get("stats"), dict):
+                        oh_stats = dict(ipc_resp["stats"])
+                        qsize = oh_stats.get("queue_size")
+                        qmax = oh_stats.get("queue_maxsize") or 200
+                        pressure = oh_stats.get("queue_pressure")
+                        if pressure is None and qsize is not None and qmax:
+                            try:
+                                pressure = float(qsize) / float(qmax)
+                                oh_stats["queue_pressure"] = pressure
+                            except Exception:
+                                pass
+                        last_img = int(oh_stats.get("active_last_image_bytes") or 0)
+                        oh_stats["alert"] = bool(
+                            (pressure is not None and pressure >= 0.9)
+                            or last_img > 100_000_000
+                        )
+                        payload["objects_handler"] = oh_stats
             except Exception:
                 pass
         except Exception:
@@ -388,6 +441,7 @@ def create_app() -> FastAPI:
     app.include_router(state_router)
     app.include_router(journals_router)
     app.include_router(logs_router)
+    app.include_router(diagnostics_router)
     app.include_router(users_router)
     app.include_router(bans_router)
     app.include_router(config_editors_router)
@@ -399,7 +453,7 @@ def create_app() -> FastAPI:
     app.include_router(playback_router)
     app.include_router(internal_router)
     logger.info(
-        "Routers registered: auth, state, journals, logs, users, bans, config_editors, configs, setup, system, streaming, realtime, playback, internal"
+        "Routers registered: auth, state, journals, logs, diagnostics, users, bans, config_editors, configs, setup, system, streaming, realtime, playback, internal"
     )
 
     static_dir = Path(__file__).parent / "static"

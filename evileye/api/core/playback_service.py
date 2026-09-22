@@ -17,6 +17,9 @@ from evileye.video_recorder.session_sidecar import (
 
 _data_dir_cache: tuple[tuple[Any, ...], str] | None = None
 
+# Bad midnight sidecars keep fragment_id but reset start_ts; nominal then drifts by hours.
+SESSION_MTIME_DRIFT_SEC = 30 * 60
+
 
 def _config_mtime(config_path: str | None) -> float:
     if not config_path:
@@ -405,6 +408,31 @@ def _plausible_media_duration(duration: float | None, configured_length: float) 
     return duration
 
 
+def _mtime_based_start(path: str, configured_length: float) -> float | None:
+    """Estimate segment start from file mtime minus media/configured duration."""
+    mtime = _file_mtime(path)
+    if mtime is None:
+        return None
+    media_dur = _plausible_media_duration(_mp4_duration_sec(path), configured_length)
+    if media_dur is None:
+        media_dur = configured_length
+    return mtime - media_dur
+
+
+def _window_overlaps(
+    start: float,
+    end: float,
+    from_ts: float | None,
+    to_ts: float | None,
+    slack: float,
+) -> bool:
+    if from_ts is not None and end < from_ts - slack:
+        return False
+    if to_ts is not None and start > to_ts + slack:
+        return False
+    return True
+
+
 def _resolve_segment_starts(
     parsed: list[tuple[str, float, int | None]],
     *,
@@ -420,6 +448,9 @@ def _resolve_segment_starts(
     Closed parts: accumulate ``mvhd`` duration from the session start. Fallback
     to mtime only when duration is missing and the stamp is close to the
     nominal slot (not for the first part).
+
+    When a midnight day-rotate rewrote ``start_ts`` while fragment indices continued,
+    nominal slots land hours in the future — prefer mtime-based starts in that case.
     """
     if not parsed:
         return []
@@ -429,6 +460,7 @@ def _resolve_segment_starts(
 
     out: list[tuple[str, float]] = []
     slack = max(60.0, configured_length * 0.5)
+    drift = SESSION_MTIME_DRIFT_SEC
     for session_start, items in by_session.items():
         indices = [idx for _, idx in items if idx is not None]
         use_index = (
@@ -437,8 +469,15 @@ def _resolve_segment_starts(
             and len(set(indices)) == len(items)
         )
         if not use_index:
-            for path, _idx in items:
-                out.append((path, session_start))
+            for path, idx in items:
+                nominal = session_start + float(idx or 0) * configured_length
+                mtime_start = _mtime_based_start(path, configured_length)
+                # Only repair future-dated nominals (bad midnight sidecar + continued idx).
+                # Fresh test files have mtime≈now while nominal is historical — do not flip those.
+                if mtime_start is not None and (nominal - mtime_start) > drift:
+                    out.append((path, mtime_start))
+                else:
+                    out.append((path, session_start))
             continue
         ordered = sorted(items, key=lambda item: (item[1] if item[1] is not None else 0, item[0]))
         start = session_start
@@ -447,6 +486,11 @@ def _resolve_segment_starts(
             chosen = start
             if abs(chosen - nominal) > slack:
                 chosen = nominal
+            mtime_start = _mtime_based_start(path, configured_length)
+            if mtime_start is not None and (
+                (nominal - mtime_start) > drift or (chosen - mtime_start) > drift
+            ):
+                chosen = mtime_start
             out.append((path, chosen))
             media_dur = _plausible_media_duration(_mp4_duration_sec(path), configured_length)
             if media_dur is not None:
@@ -552,13 +596,37 @@ def _date_dirs(base: Path, date: Optional[str]) -> list[Path]:
     if date:
         # Accept YYYY-MM-DD, YYYYMMDD, or UI DD-MM-YYYY
         candidates = [base / date]
+        iso_date: str | None = None
         if re.fullmatch(r"\d{8}", date):
-            candidates.append(base / f"{date[:4]}-{date[4:6]}-{date[6:8]}")
+            iso_date = f"{date[:4]}-{date[4:6]}-{date[6:8]}"
+            candidates.append(base / iso_date)
         m = re.fullmatch(r"(\d{2})-(\d{2})-(\d{4})", date)
         if m:
             day, month, year = m.groups()
-            candidates.append(base / f"{year}-{month}-{day}")
-        return [p for p in candidates if p.exists()]
+            iso_date = f"{year}-{month}-{day}"
+            candidates.append(base / iso_date)
+        if re.fullmatch(r"\d{4}-\d{2}-\d{2}", date):
+            iso_date = date
+        found: list[Path] = []
+        seen: set[str] = set()
+        for p in candidates:
+            if p.exists() and p.name not in seen:
+                found.append(p)
+                seen.add(p.name)
+        # GST continuous recording may keep writing into the previous calendar
+        # day folder across midnight (or leave overnight parts there). Always
+        # scan D-1 for any requested day, not only when D is today.
+        if iso_date:
+            try:
+                day = datetime.strptime(iso_date, "%Y-%m-%d").date()
+                yday = day.fromordinal(day.toordinal() - 1).isoformat()
+                yp = base / yday
+                if yp.exists() and yp.name not in seen:
+                    found.append(yp)
+                    seen.add(yp.name)
+            except Exception:
+                pass
+        return found
     if not base.exists():
         return []
     return sorted([p for p in base.iterdir() if p.is_dir()], reverse=True)[:14]
@@ -585,6 +653,8 @@ def _date_dirs_covering(
             start, end = end, start
         day = datetime.fromtimestamp(start).date()
         end_day = datetime.fromtimestamp(end).date()
+        # Include previous calendar day: GST overnight sessions stay in start-day folder.
+        _add(base / day.fromordinal(day.toordinal() - 1).isoformat())
         while day <= end_day:
             _add(base / day.isoformat())
             day = day.fromordinal(day.toordinal() + 1)
@@ -707,6 +777,7 @@ def list_logical_cameras(run_id: int | None = None, date: Optional[str] = None) 
 
     base = data_dir() / "Streams"
     date_dirs = _date_dirs(base, date)
+    day_flags = _day_archive_flags(date) if date else {"has_detection_ticks": False, "has_events": False}
     cameras: list[dict[str, Any]] = []
 
     for item in summary.source_items:
@@ -739,6 +810,13 @@ def list_logical_cameras(run_id: int | None = None, date: Optional[str] = None) 
             except Exception:
                 logical_frame_size = None
 
+        shares_media_with = None
+        if parent_folder and "-" in str(parent_folder):
+            parts = [p for p in str(parent_folder).split("-") if p]
+            if logical_id in parts and parts and parts[0] != logical_id:
+                shares_media_with = parts[0]
+
+        has_stream = folder_exists or segment_count > 0
         cameras.append(
             {
                 "id": logical_id,
@@ -746,16 +824,66 @@ def list_logical_cameras(run_id: int | None = None, date: Optional[str] = None) 
                 "source_id": item.get("source_id"),
                 "storage_folder": storage_folder,
                 "parent_folder": parent_folder,
+                "shares_media_with": shares_media_with,
                 "split": split,
                 "src_coords": src_coords,
                 "logical_frame_size": logical_frame_size,
                 "folder": storage_folder,
                 "segment_count": segment_count,
-                "available": folder_exists or segment_count > 0,
+                "available": has_stream,
+                "has_stream_segments": has_stream,
+                "has_detection_ticks": bool(day_flags.get("has_detection_ticks")),
+                "has_events": bool(day_flags.get("has_events")),
             }
         )
 
     return cameras
+
+
+def _day_archive_flags(date: Optional[str]) -> dict[str, bool]:
+    """Cheap signals for empty-day UX (streams purged vs journal/events remain)."""
+    flags = {"has_detection_ticks": False, "has_events": False}
+    if not date:
+        return flags
+    iso = date
+    if re.fullmatch(r"\d{8}", date):
+        iso = f"{date[:4]}-{date[4:6]}-{date[6:8]}"
+    m = re.fullmatch(r"(\d{2})-(\d{2})-(\d{4})", date)
+    if m:
+        day, month, year = m.groups()
+        iso = f"{year}-{month}-{day}"
+    root = data_dir()
+    ticks = root / "Detections" / iso / "Metadata" / "detection_ticks.json"
+    if ticks.is_file():
+        try:
+            if ticks.stat().st_size > 256:
+                flags["has_detection_ticks"] = True
+            else:
+                import json as _json
+
+                data = _json.loads(ticks.read_text(encoding="utf-8"))
+                by_cam = data.get("by_camera") if isinstance(data, dict) else None
+                if isinstance(by_cam, dict) and any(by_cam.values()):
+                    flags["has_detection_ticks"] = True
+        except Exception:
+            pass
+    events_meta = root / "Events" / iso / "Metadata" / "event_intervals.json"
+    if events_meta.is_file():
+        try:
+            if events_meta.stat().st_size > 256:
+                flags["has_events"] = True
+        except Exception:
+            pass
+    if not flags["has_events"]:
+        ev_videos = root / "Events" / iso / "Videos"
+        if ev_videos.is_dir():
+            try:
+                for _ in ev_videos.rglob("*.mp4"):
+                    flags["has_events"] = True
+                    break
+            except OSError:
+                pass
+    return flags
 
 
 def _nominal_slot_bounds(
@@ -775,15 +903,23 @@ def _slot_might_overlap_window(
     from_ts: float | None,
     to_ts: float | None,
     slack: float,
+    path: str | None = None,
 ) -> bool:
     if from_ts is None and to_ts is None:
         return True
     start, end = _nominal_slot_bounds(session_start, index, configured_length)
-    if from_ts is not None and end < from_ts - slack:
-        return False
-    if to_ts is not None and start > to_ts + slack:
-        return False
-    return True
+    if _window_overlaps(start, end, from_ts, to_ts, slack):
+        return True
+    # Bad midnight sidecars push nominal hours into the future; still keep the
+    # file if wall-clock mtime overlaps the requested window. Use configured
+    # length only here — do not open MP4s during the cheap prefilter.
+    if path:
+        mtime = _file_mtime(path)
+        if mtime is not None and _window_overlaps(
+            mtime - configured_length, mtime, from_ts, to_ts, slack
+        ):
+            return True
+    return False
 
 
 def load_segments_uncached(
@@ -816,7 +952,7 @@ def load_segments_uncached(
             session_start, index = parsed
             session_start = _session_start_with_sidecar(path, session_start)
             if not _slot_might_overlap_window(
-                session_start, index, configured_length, from_ts, to_ts, slack
+                session_start, index, configured_length, from_ts, to_ts, slack, path=path
             ):
                 continue
             parsed_named.append((path, session_start, index))
@@ -853,6 +989,8 @@ def load_segments(
     from_ts: Optional[float] = None,
     to_ts: Optional[float] = None,
     date: Optional[str] = None,
+    *,
+    run_id: Optional[int] = None,
 ) -> list[dict[str, Any]]:
     if date:
         try:
@@ -860,14 +998,21 @@ def load_segments(
                 ensure_segment_index,
                 filter_segments_window,
                 read_segment_index_if_fresh,
+                schedule_detection_ticks_refresh,
+                schedule_event_intervals_refresh,
+                schedule_segment_index_refresh,
                 upsert_segment_index_camera,
             )
 
             cached = read_segment_index_if_fresh(date)
             if cached is not None and camera in cached:
                 return filter_segments_window(cached.get(camera) or [], from_ts, to_ts)
-            # Windowed query before an index exists: keep the mvhd skip optimization.
+            # Windowed query before an index exists: keep the mvhd skip optimization,
+            # but kick a full day-index rebuild so the next request is warm.
             if cached is None and (from_ts is not None or to_ts is not None):
+                schedule_segment_index_refresh(date, [camera])
+                schedule_detection_ticks_refresh(date, [camera], run_id=run_id)
+                schedule_event_intervals_refresh(date, [camera])
                 return load_segments_uncached(camera, from_ts, to_ts, date=date)
             by_camera = ensure_segment_index(date_folder=date, cameras=[camera])
             if camera not in by_camera or not by_camera.get(camera):
@@ -885,6 +1030,8 @@ def load_segments_batch(
     from_ts: Optional[float] = None,
     to_ts: Optional[float] = None,
     date: Optional[str] = None,
+    *,
+    run_id: Optional[int] = None,
 ) -> dict[str, list[dict[str, Any]]]:
     cam_list = [cam for cam in cameras if cam]
     if date and cam_list:
@@ -893,11 +1040,17 @@ def load_segments_batch(
                 ensure_segment_index,
                 filter_segments_window,
                 read_segment_index_if_fresh,
+                schedule_detection_ticks_refresh,
+                schedule_event_intervals_refresh,
+                schedule_segment_index_refresh,
                 upsert_segment_index_camera,
             )
 
             cached = read_segment_index_if_fresh(date)
             if cached is None and (from_ts is not None or to_ts is not None):
+                schedule_segment_index_refresh(date, cam_list)
+                schedule_detection_ticks_refresh(date, cam_list, run_id=run_id)
+                schedule_event_intervals_refresh(date, cam_list)
                 return {
                     cam: load_segments_uncached(cam, from_ts, to_ts, date=date)
                     for cam in cam_list

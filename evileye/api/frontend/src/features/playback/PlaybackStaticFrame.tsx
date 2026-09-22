@@ -1,5 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { journalFrameUrl, type PlaybackDetectionItem } from '../../api';
+import { clientTelemetryLog } from '../../diagnostics/clientTelemetry';
+import { useI18n } from '../../i18n';
 import { MetadataOverlayLayer } from '../overlay/MetadataOverlayLayer';
 import { useImageLetterbox } from '../overlay/useMediaLetterbox';
 import { mergePlaybackMetadata } from './mergePlaybackMetadata';
@@ -27,15 +29,18 @@ export function PlaybackStaticFrame({
   sourceId?: number | null;
   expanded?: boolean;
 }) {
+  const { t } = useI18n();
   const wrapRef = useRef<HTMLDivElement>(null);
   const imgRef = useRef<HTMLImageElement>(null);
   const [imgLoaded, setImgLoaded] = useState(0);
+  const [loadFailed, setLoadFailed] = useState(false);
   const [naturalSize, setNaturalSize] = useState<{ w: number; h: number } | null>(null);
   const frameKey = `${frame.markerKind}:${frame.ts}:${frame.previewPath}:${frame.mode}`;
 
   useEffect(() => {
     setImgLoaded(0);
     setNaturalSize(null);
+    setLoadFailed(false);
   }, [frameKey]);
 
   const layoutBox = useImageLetterbox(wrapRef, imgRef, [frameKey, imgLoaded]);
@@ -44,7 +49,7 @@ export function PlaybackStaticFrame({
     camera: cameraId,
     sourceId,
     runId,
-    enabled: showMetadata && naturalSize != null,
+    enabled: showMetadata && naturalSize != null && !loadFailed,
     frameSize: naturalSize,
   });
 
@@ -54,9 +59,9 @@ export function PlaybackStaticFrame({
   );
 
   const mergedMeta = useMemo(() => {
-    if (!showMetadata) return null;
+    if (!showMetadata || loadFailed) return null;
     return mergePlaybackMetadata(staticMeta, frameMeta, { stripObjects: false });
-  }, [showMetadata, staticMeta, frameMeta]);
+  }, [showMetadata, loadFailed, staticMeta, frameMeta]);
 
   const previewClass = expanded ? 'expanded-camera-frame' : 'camera-preview';
   const imageSrc = journalFrameUrl({
@@ -66,8 +71,16 @@ export function PlaybackStaticFrame({
     mode: frame.mode,
   });
 
+  if (loadFailed) {
+    return (
+      <div className={`${previewClass} camera-preview-empty`} style={{ position: 'relative' }}>
+        {t('playback.frameMissing')}
+      </div>
+    );
+  }
+
   return (
-    <div ref={wrapRef} className={`playback-static-frame ${previewClass}`} style={{ position: 'relative' }}>
+    <div ref={wrapRef} className="playback-static-frame" style={{ position: 'relative' }}>
       <img
         key={frameKey}
         ref={imgRef}
@@ -81,11 +94,26 @@ export function PlaybackStaticFrame({
           }
           setImgLoaded((n) => n + 1);
         }}
+        onError={() => {
+          setLoadFailed(true);
+          clientTelemetryLog(
+            'static_frame_error',
+            {
+              cameraId,
+              previewPath: frame.previewPath,
+              journalType: frame.journalType,
+              mode: frame.mode,
+              date,
+              ts: frame.ts,
+              markerKind: frame.markerKind,
+            },
+            'playback',
+          );
+        }}
       />
       {showMetadata && mergedMeta ? (
         <MetadataOverlayLayer meta={mergedMeta} layoutBox={layoutBox} density={expanded ? 'full' : 'compact'} />
       ) : null}
-      {!showMetadata ? <div className="live-overlay-source">{cameraLabel}</div> : null}
     </div>
   );
 }

@@ -27,6 +27,21 @@ from evileye.service_manager.state import load_state
 router = APIRouter(prefix="/api/v1/setup", tags=["setup"])
 
 
+class AlarmScheduleModel(BaseModel):
+    enabled: bool = False
+    weekdays: list[int] = Field(default_factory=lambda: list(range(7)))
+    periods: list[list[str]] = Field(default_factory=list)
+    class_ids: list[int] = Field(default_factory=list)
+    camera_cooldown_sec: int = 0
+
+
+class BasicAlarmCameraModel(BaseModel):
+    id: int = 0
+    name: str = "Cam1"
+    alarm_enabled: Optional[bool] = None
+    alarm_schedule: Optional[AlarmScheduleModel] = None
+
+
 class BasicSourceModel(BaseModel):
     id: int = 0
     name: str = "Cam1"
@@ -37,6 +52,10 @@ class BasicSourceModel(BaseModel):
     record: bool = True
     # Projection-only (split tails); ignored on apply.
     extra_names: Optional[list[str]] = None
+    logical_ids: Optional[list[int]] = None
+    # Deprecated: use alarm_cameras instead.
+    alarm_enabled: Optional[bool] = None
+    alarm_schedule: Optional[AlarmScheduleModel] = None
 
 
 class BasicDatabaseModel(BaseModel):
@@ -55,6 +74,8 @@ class BasicSetupModel(BaseModel):
     sources: list[BasicSourceModel] = Field(default_factory=list)
     analytics_enabled: bool = False
     recording_enabled: bool = False
+    alarm_schedule: Optional[AlarmScheduleModel] = None
+    alarm_cameras: list[BasicAlarmCameraModel] = Field(default_factory=list)
 
 
 class DataDirPayload(BaseModel):
@@ -144,6 +165,63 @@ def _analytics_enabled(config: dict[str, Any]) -> bool:
     return bool(detectors or trackers)
 
 
+def _merged_database_settings(creds: dict[str, Any], config: dict[str, Any]) -> dict[str, Any]:
+    db_creds = creds.get("database") if isinstance(creds.get("database"), dict) else {}
+    db_cfg = config.get("database") if isinstance(config.get("database"), dict) else {}
+    merged = dict(db_cfg)
+    merged.update({k: v for k, v in db_creds.items() if v is not None})
+    return merged
+
+
+def _probe_database_connection(creds: dict[str, Any], config: dict[str, Any]) -> bool:
+    db = _merged_database_settings(creds, config)
+    host = str(db.get("host_name") or "localhost")
+    try:
+        port = int(db.get("port") or 5432)
+    except (TypeError, ValueError):
+        port = 5432
+    dbname = str(db.get("database_name") or "evil_eye_db")
+    user = str(db.get("user_name") or "postgres")
+    password = str(db.get("password") or db.get("admin_password") or "")
+    connect_kwargs = {
+        "host": host,
+        "port": port,
+        "dbname": dbname,
+        "user": user,
+        "password": password,
+        "connect_timeout": 3,
+    }
+    try:
+        import psycopg2
+
+        conn = psycopg2.connect(**connect_kwargs)
+        conn.close()
+        return True
+    except Exception:
+        try:
+            import psycopg  # type: ignore
+
+            conn = psycopg.connect(**connect_kwargs)
+            conn.close()
+            return True
+        except Exception:
+            return False
+
+
+def _database_ready_for_run(config: dict[str, Any], creds: dict[str, Any]) -> bool:
+    from evileye.api.core.journal_service import database_operational
+    from evileye.api.core.server_state import storage_mode_from_params
+
+    if storage_mode_from_params(config) != "database":
+        return True
+    try:
+        if database_operational():
+            return True
+    except Exception:
+        pass
+    return _probe_database_connection(creds, config)
+
+
 def _build_status(config_name: Optional[str] = None) -> dict[str, Any]:
     creds = _load_json(_credentials_path())
     setup = _setup_section(creds)
@@ -158,10 +236,12 @@ def _build_status(config_name: Optional[str] = None) -> dict[str, Any]:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     config = _load_json(cfg_path) if cfg_path.exists() else minimal_system_config()
 
+    from evileye.api.core.server_state import storage_mode_from_params
+
     data_dir = resolve_usable_data_dir(config)
     has_sources = _has_sources(config)
-    controller = config.get("controller") if isinstance(config.get("controller"), dict) else {}
-    use_database = bool(controller.get("use_database", False))
+    storage_mode = storage_mode_from_params(config)
+    use_database = storage_mode == "database"
     record = config.get("record") if isinstance(config.get("record"), dict) else {}
     recording_enabled = recording_effectively_enabled(config)
 
@@ -172,8 +252,7 @@ def _build_status(config_name: Optional[str] = None) -> dict[str, Any]:
     if has_sources and not ready_to_run:
         ready_to_run = True
     if use_database:
-        db_creds = creds.get("database") if isinstance(creds.get("database"), dict) else {}
-        ready_to_run = ready_to_run and bool(db_creds.get("password") or db_creds.get("admin_password"))
+        ready_to_run = ready_to_run and _database_ready_for_run(config, creds)
 
     must_change = False
     web_auth = creds.get("web_auth") if isinstance(creds.get("web_auth"), dict) else {}
@@ -194,6 +273,7 @@ def _build_status(config_name: Optional[str] = None) -> dict[str, Any]:
         "data_dir": data_dir,
         "data_dir_confirmed": bool(setup.get("data_dir_confirmed")) or bool(data_dir),
         "use_database": use_database,
+        "storage_mode": storage_mode,
         "has_sources": has_sources,
         "source_count": len((config.get("pipeline") or {}).get("sources") or []) if isinstance(config.get("pipeline"), dict) else 0,
         "analytics_enabled": _analytics_enabled(config),

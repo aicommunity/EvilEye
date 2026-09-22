@@ -19,7 +19,8 @@ import time
 from timeit import default_timer as timer
 from evileye.visualization_modules.visualizer import Visualizer
 from evileye.events_detectors.cam_events_detector import CamEventsDetector
-from evileye.events_detectors.fov_events_detector import FieldOfViewEventsDetector
+from evileye.events_detectors.schedule_alarm_events_detector import ScheduleAlarmEventsDetector
+from evileye.events_detectors.schedule_alarm_logic import DETECTOR_CONFIG_KEY
 from evileye.events_detectors.zone_events_detector import ZoneEventsDetector
 from evileye.events_detectors.attribute_events_detector import AttributeEventsDetector
 from evileye.events_detectors.event_system import SystemEvent
@@ -133,6 +134,7 @@ class Controller(ControllerProcessingMixin):
         self.events_detectors_controller = None
         self.events_processor = None
         self.cam_events_detector = None
+        self.schedule_alarm_events_detector = None
         self.fov_events_detector = None
         self.zone_events_detector = None
         self.attr_events_detector = None
@@ -141,6 +143,7 @@ class Controller(ControllerProcessingMixin):
         self.db_controller = None
         self.db_adapter_obj = None
         self.db_adapter_cam_events = None
+        self.db_adapter_schedule_alarm_events = None
         self.db_adapter_fov_events = None
         self.db_adapter_zone_events = None
         self.db_adapter_attr_events = None
@@ -280,6 +283,13 @@ class Controller(ControllerProcessingMixin):
         except Exception:
             self._resource_stats_every_sec = 60.0
         self._resource_stats_last_ts = 0.0
+        try:
+            self._journal_heartbeat_every_sec = float(
+                os.getenv("EVILEYE_JOURNAL_HEARTBEAT_EVERY_SEC", "300") or "300"
+            )
+        except Exception:
+            self._journal_heartbeat_every_sec = 300.0
+        self._journal_heartbeat_last_ts = 0.0
 
         try:
             self._runtime_snapshot_every_sec = float(
@@ -512,6 +522,12 @@ class Controller(ControllerProcessingMixin):
                     ):
                         self._resource_stats_last_ts = now_ts
                         self._log_resource_stats(context="periodic")
+                    j_every = float(self._journal_heartbeat_every_sec or 0.0)
+                    if ProcessingService.should_log_resource_stats(
+                            self._journal_heartbeat_last_ts, j_every, now_ts=now_ts
+                    ):
+                        self._journal_heartbeat_last_ts = now_ts
+                        self._log_journal_heartbeat()
                 except Exception:
                     pass
 
@@ -735,6 +751,42 @@ class Controller(ControllerProcessingMixin):
         if self.system_events_detector:
             self.system_events_detector.emit_stopped()
             time.sleep(0.2)
+
+    def _log_journal_heartbeat(self) -> None:
+        """INFO heartbeat: detection journal buffers / save thread / queue liveness."""
+        try:
+            parts: list[str] = []
+            handler = getattr(self, "obj_handler", None)
+            if handler is not None:
+                try:
+                    qsz = handler.objs_queue.qsize() if getattr(handler, "objs_queue", None) else None
+                    parts.append(f"handler_q={qsz}")
+                except Exception:
+                    parts.append("handler_q=?")
+                lm = getattr(handler, "labeling_manager", None)
+                if lm is not None and hasattr(lm, "get_statistics"):
+                    try:
+                        st = lm.get_statistics()
+                        parts.append(
+                            "found_buf={found_buffered} lost_buf={lost_buffered} "
+                            "save_alive={save_thread_alive} found_mtime_age={objects_found_mtime_age_sec}".format(
+                                **{
+                                    "found_buffered": st.get("found_buffered"),
+                                    "lost_buffered": st.get("lost_buffered"),
+                                    "save_thread_alive": st.get("save_thread_alive"),
+                                    "objects_found_mtime_age_sec": (
+                                        None
+                                        if st.get("objects_found_mtime_age_sec") is None
+                                        else round(float(st.get("objects_found_mtime_age_sec")), 1)
+                                    ),
+                                }
+                            )
+                        )
+                    except Exception:
+                        parts.append("labeling=?")
+            self.logger.info("journal_heartbeat %s", " ".join(parts) if parts else "n/a")
+        except Exception:
+            pass
 
     def _log_resource_stats(self, context: str) -> None:
         """Log lightweight RSS/threads/FD metrics for the current process."""
@@ -1002,13 +1054,63 @@ class Controller(ControllerProcessingMixin):
 
     def _handle_control_command(self, command: dict) -> dict:
         cmd = str(command.get("cmd") or "")
+        if cmd == "apply_schedule_alarm":
+            return self._control_apply_schedule_alarm(command)
         if cmd == "apply_zones":
             return self._control_apply_zones(command)
         if cmd == "apply_zone_detector_params":
             return self._control_apply_zone_detector_params(command)
         if cmd == "apply_roi":
             return self._control_apply_roi(command)
+        if cmd == "get_objects_handler_stats":
+            return self._control_get_objects_handler_stats()
         return {"ok": False, "error": "unknown_command"}
+
+    def _control_get_objects_handler_stats(self) -> dict:
+        handler = getattr(self, "obj_handler", None)
+        if handler is None or not hasattr(handler, "get_runtime_stats"):
+            return {"ok": False, "error": "objects_handler_unavailable"}
+        try:
+            return {"ok": True, "stats": handler.get_runtime_stats()}
+        except Exception as exc:
+            return {"ok": False, "error": str(exc)}
+
+    def _control_apply_schedule_alarm(self, command: dict) -> dict:
+        detector = self.schedule_alarm_events_detector or self.fov_events_detector
+        if detector is None:
+            return {"ok": False, "error": "schedule_alarm_detector_unavailable"}
+
+        scope = str(command.get("scope") or "")
+        try:
+            if scope == "source":
+                source_id = int(command.get("source_id"))
+                override = command.get("schedule")
+                if override is not None and not isinstance(override, dict):
+                    return {"ok": False, "error": "invalid_schedule"}
+                detector.apply_source_schedule(source_id, override)
+                events_cfg = self.params.setdefault("events_detectors", {})
+                section = events_cfg.setdefault(DETECTOR_CONFIG_KEY, {})
+                sources = section.setdefault("sources", {})
+                key = str(source_id)
+                if override is None:
+                    sources.pop(key, None)
+                else:
+                    sources[key] = override
+            elif scope == "global":
+                params = command.get("params") or {}
+                if not isinstance(params, dict):
+                    return {"ok": False, "error": "invalid_params"}
+                merged = {**detector.get_params(), **params}
+                detector.apply_schedule(merged)
+                events_cfg = self.params.setdefault("events_detectors", {})
+                events_cfg[DETECTOR_CONFIG_KEY] = detector.get_params()
+            else:
+                return {"ok": False, "error": "invalid_scope"}
+        except (TypeError, ValueError):
+            return {"ok": False, "error": "invalid_source_id"}
+
+        self._publish_runtime_snapshot(state="running")
+        return {"ok": True}
 
     def _control_apply_zones(self, command: dict) -> dict:
         try:
@@ -1366,7 +1468,11 @@ class Controller(ControllerProcessingMixin):
                 # Сохраняем ссылки на адаптеры для обратной совместимости
                 self.db_adapter_obj = self._database_service.get_adapter('DatabaseAdapterObjects')
                 self.db_adapter_cam_events = self._database_service.get_adapter('DatabaseAdapterCamEvents')
-                self.db_adapter_fov_events = self._database_service.get_adapter('DatabaseAdapterFieldOfViewEvents')
+                self.db_adapter_schedule_alarm_events = (
+                    self._database_service.get_adapter('DatabaseAdapterScheduleAlarmEvents')
+                    or self._database_service.get_adapter('DatabaseAdapterFieldOfViewEvents')
+                )
+                self.db_adapter_fov_events = self.db_adapter_schedule_alarm_events
                 self.db_adapter_zone_events = self._database_service.get_adapter('DatabaseAdapterZoneEvents')
                 self.db_adapter_attr_events = self._database_service.get_adapter('DatabaseAdapterAttributeEvents')
                 self.db_adapter_system_events = self._database_service.get_adapter('DatabaseAdapterSystemEvents')
@@ -1389,9 +1495,10 @@ class Controller(ControllerProcessingMixin):
             )
 
         server_cfg = self.params.get("server", {}) if isinstance(self.params, dict) else {}
-        from evileye.api.core.internal_unix import internal_relay_url
+        managed_run = os.environ.get("EVILEYE_MANAGED_RUN") == "1"
+        from evileye.api.core.internal_unix import internal_relay_target_url, internal_relay_url
 
-        relay_base_url = internal_relay_url()
+        relay_base_url = internal_relay_target_url() if managed_run else internal_relay_url()
         relay_token = os.environ.get("EVILEYE_INTERNAL_TOKEN") or load_web_auth_config().internal_token
         default_workers = 2 if bool(server_cfg.get("enabled")) else 1
         default_render_workers = max(3, default_workers)
@@ -1415,20 +1522,14 @@ class Controller(ControllerProcessingMixin):
             )
 
         # Managed API runs already have an outer web server; do not start another one inside the child runtime.
-        managed_run = os.environ.get("EVILEYE_MANAGED_RUN") == "1"
         # Initialize web server in a separate process if configured
         if managed_run and server_cfg.get("enabled", False):
             self.logger.info("Skipping embedded web server for managed runtime launch")
             if self._streaming_service is not None:
-                from evileye.api.core.internal_unix import internal_relay_url
-
-                unix_relay = internal_relay_url()
-                if unix_relay:
-                    self._streaming_service.set_frame_relay(unix_relay, relay_token)
+                self._streaming_service.set_frame_relay(internal_relay_target_url(), relay_token)
         elif server_cfg.get("enabled", False) and str(server_cfg.get("execution_mode", "process")).lower() == "process":
             host = server_cfg.get("host", "127.0.0.1")
             port = int(server_cfg.get("port", 8181))
-            from evileye.api.core.internal_unix import internal_relay_url
             from evileye.service_manager import is_web_os_service_active, is_web_os_service_enabled
 
             ssl_certfile = ssl_keyfile = None
@@ -1443,7 +1544,7 @@ class Controller(ControllerProcessingMixin):
             except SslConfigError as exc:
                 self.logger.error("Invalid TLS configuration for embedded web server: %s", exc)
                 raise
-            inferred_base_url = internal_relay_url()
+            inferred_base_url = internal_relay_target_url()
             if is_web_os_service_enabled() or is_web_os_service_active():
                 if is_web_os_service_enabled() and not is_web_os_service_active():
                     self.logger.warning(
@@ -1597,7 +1698,9 @@ class Controller(ControllerProcessingMixin):
 
         self.params['events_detectors'] = dict()
         self.params['events_detectors']['CamEventsDetector'] = self.cam_events_detector.get_params()
-        self.params['events_detectors']['FieldOfViewEventsDetector'] = self.fov_events_detector.get_params()
+        self.params['events_detectors'][DETECTOR_CONFIG_KEY] = (
+            (self.schedule_alarm_events_detector or self.fov_events_detector).get_params()
+        )
         self.params['events_detectors']['ZoneEventsDetector'] = self.zone_events_detector.get_params()
         if self.attr_events_detector:
             self.params['events_detectors']['AttributeEventsDetector'] = self.attr_events_detector.get_params()
@@ -1936,10 +2039,12 @@ class Controller(ControllerProcessingMixin):
             self.debug_info.setdefault("cam_events_detector", {}))
         total_memory_usage += comp_debug_info["memory_measure_results"]
 
-        self.fov_events_detector.calc_memory_consumption()
-        comp_debug_info = self.fov_events_detector.insert_debug_info_by_id(
-            self.debug_info.setdefault("fov_events_detector", {}))
-        total_memory_usage += comp_debug_info["memory_measure_results"]
+        detector = self.schedule_alarm_events_detector or self.fov_events_detector
+        if detector:
+            detector.calc_memory_consumption()
+            comp_debug_info = detector.insert_debug_info_by_id(
+                self.debug_info.setdefault("schedule_alarm_events_detector", {}))
+            total_memory_usage += comp_debug_info["memory_measure_results"]
 
         self.zone_events_detector.calc_memory_consumption()
         comp_debug_info = self.zone_events_detector.insert_debug_info_by_id(
@@ -1968,10 +2073,12 @@ class Controller(ControllerProcessingMixin):
                 self.debug_info.setdefault("db_adapter_cam_events", {}))
             total_memory_usage += comp_debug_info["memory_measure_results"]
 
-            self.db_adapter_fov_events.calc_memory_consumption()
-            comp_debug_info = self.db_adapter_fov_events.insert_debug_info_by_id(
-                self.debug_info.setdefault("db_adapter_fov_events", {}))
-            total_memory_usage += comp_debug_info["memory_measure_results"]
+            db_schedule = self.db_adapter_schedule_alarm_events or self.db_adapter_fov_events
+            if db_schedule:
+                db_schedule.calc_memory_consumption()
+                comp_debug_info = db_schedule.insert_debug_info_by_id(
+                    self.debug_info.setdefault("db_adapter_schedule_alarm_events", {}))
+                total_memory_usage += comp_debug_info["memory_measure_results"]
 
             self.db_adapter_zone_events.calc_memory_consumption()
             comp_debug_info = self.db_adapter_zone_events.insert_debug_info_by_id(

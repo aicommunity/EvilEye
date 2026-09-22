@@ -34,6 +34,7 @@ export function ExpandedPlaybackView({
   globalDetectionTs = [],
   eventIntervals = [],
   onVideoClock,
+  onPlaybackExhausted,
   onClose,
   detectionsReady = true,
   anyCameraPlayableAtPosition = false,
@@ -56,6 +57,7 @@ export function ExpandedPlaybackView({
   globalDetectionTs?: number[];
   eventIntervals?: PlaybackEventInterval[];
   onVideoClock?: (globalSec: number) => void;
+  onPlaybackExhausted?: () => void;
   onClose: () => void;
   detectionsReady?: boolean;
   anyCameraPlayableAtPosition?: boolean;
@@ -76,7 +78,7 @@ export function ExpandedPlaybackView({
       userSeeking,
       onVideoClock,
       cameraId,
-    );
+      onPlaybackExhausted,);
   const { meta, loading } = usePlaybackCameraMetadata({
     cameraId,
     camera,
@@ -154,6 +156,8 @@ export function ExpandedPlaybackView({
             playing={playing}
             speed={speed}
             startTs={slot.startTs}
+            endTs={slot.endTs}
+            segments={segments}
             runId={runId}
             showMetadata={showMetadata}
             playMode={playMode}
@@ -163,6 +167,7 @@ export function ExpandedPlaybackView({
             globalDetectionTs={globalDetectionTs}
             eventIntervals={eventIntervals}
             onVideoClock={onVideoClock}
+            onPlaybackExhausted={onPlaybackExhausted}
             expanded
             frameSize={frameSize}
             onFrameSize={setFrameSize}

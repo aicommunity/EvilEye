@@ -1,12 +1,13 @@
 import { useEffect, useRef, useState } from 'react';
 import { streamSnapshotUrl, type StateCamera, type StreamMetadata } from '../../api';
 import { Button, Badge } from '../../components/ui';
+import { clientTelemetryLog } from '../../diagnostics/clientTelemetry';
 import { useI18n } from '../../i18n';
 import { OverlayCanvas } from '../overlay/OverlayCanvas';
 import { useImageLetterbox } from '../overlay/useMediaLetterbox';
 import { resolvePreviewMode, type PreviewMode } from './liveHealth';
-import { wantLiveSnapshotPoll, wantLiveWsPreview } from './livePreviewPrefer';
-import { useRunMetadataWs } from './useRunMetadataWs';
+import { shouldRaisePreviewError, wantLiveSnapshotPoll, wantLiveWsPreview } from './livePreviewPrefer';
+import { useRunMetadataWs, useMetadataFreshness } from './useRunMetadataWs';
 
 const LIVE_SNAPSHOT_MS = 3000;
 const STALE_SNAPSHOT_BACKOFF_MS = [2000, 4000, 8000];
@@ -70,6 +71,7 @@ export function CameraTile({
   const mediaRef = useRef<HTMLDivElement>(null);
   const imgRef = useRef<HTMLImageElement>(null);
   const [imgLoaded, setImgLoaded] = useState(0);
+  const prevModeRef = useRef<PreviewMode | null>(null);
 
   const [mode, setMode] = useState<PreviewMode>(() =>
     resolvePreviewMode(camera, false, {
@@ -92,8 +94,10 @@ export function CameraTile({
   const wantMetaSub = running && active && mode !== 'offline';
   const showOverlay =
     wantMetaSub && mode !== 'error' && camera.reconnecting !== true && (mode === 'live' || mode === 'stale');
-  const overlayDimmed = mode === 'stale';
   const meta = useRunMetadataWs(wantMetaSub ? camera.run_id : null, camera.source_id ?? null);
+  const metaFresh = useMetadataFreshness(wantMetaSub ? camera.run_id : null, camera.source_id ?? null);
+  const overlayDimmed = mode === 'stale' || !metaFresh;
+  const overlayMeta = meta;
   // Keep snapshot polling until the first WS blob arrives — otherwise onopen
   // (connected=true) blanks the tile after Live remount from Playback.
   const hasWsFrame = Boolean(previewBlobUrl);
@@ -111,6 +115,50 @@ export function CameraTile({
     previewWsActive,
     hasWsFrame,
   });
+
+  const imgSrcKind = useMjpeg ? 'mjpeg' : wantWsPreview ? 'ws' : 'snapshot';
+
+  useEffect(() => {
+    if (prevModeRef.current != null && prevModeRef.current !== mode) {
+      const frameAge = previewFrameAgeSec ?? null;
+      const blankNoise =
+        !hasWsFrame &&
+        (frameAge == null || frameAge === 0) &&
+        camera.reconnecting !== true;
+      // Cursor/blank-WS flaps produce huge live↔stale noise with frameAge=0.
+      if (!blankNoise) {
+        clientTelemetryLog(
+          'mode_change',
+          {
+            source_id: camera.source_id,
+            camera: camera.source_name,
+            from: prevModeRef.current,
+            to: mode,
+            frameAge,
+            reconnecting: camera.reconnecting === true,
+            is_working: camera.is_working,
+            preview_available: camera.preview_available,
+            imgSrcKind,
+            previewWsActive,
+            hasWsFrame,
+          },
+          'live',
+        );
+      }
+    }
+    prevModeRef.current = mode;
+  }, [
+    mode,
+    camera.source_id,
+    camera.source_name,
+    camera.reconnecting,
+    camera.is_working,
+    camera.preview_available,
+    previewFrameAgeSec,
+    imgSrcKind,
+    previewWsActive,
+    hasWsFrame,
+  ]);
 
   useEffect(() => {
     setPreviewError(false);
@@ -140,7 +188,21 @@ export function CameraTile({
   }, []);
 
   const onImgError = () => {
-    setPreviewError(true);
+    const raise = shouldRaisePreviewError({ previewWsActive, hasWsFrame });
+    if (raise) setPreviewError(true);
+    clientTelemetryLog(
+      'img_error',
+      {
+        source_id: camera.source_id,
+        camera: camera.source_name,
+        imgSrcKind,
+        hasWsFrame,
+        previewWsActive,
+        mode,
+        raisedPreviewError: raise,
+      },
+      'live',
+    );
     if (retryTimer.current != null) window.clearTimeout(retryTimer.current);
     const delay = ERROR_BACKOFF_MS[Math.min(backoffStep, ERROR_BACKOFF_MS.length - 1)];
     retryTimer.current = window.setTimeout(() => {
@@ -204,7 +266,7 @@ export function CameraTile({
               />
               {showOverlay ? (
                 <OverlayCanvas
-                  meta={meta as StreamMetadata | null}
+                  meta={overlayMeta as StreamMetadata | null}
                   layoutBox={layoutBox}
                   density={gridMode ? 'compact' : 'full'}
                   dimmed={overlayDimmed}
@@ -291,7 +353,7 @@ export function CameraTile({
               />
               {showOverlay ? (
                 <OverlayCanvas
-                  meta={meta as StreamMetadata | null}
+                  meta={overlayMeta as StreamMetadata | null}
                   layoutBox={layoutBox}
                   density="full"
                   dimmed={overlayDimmed}

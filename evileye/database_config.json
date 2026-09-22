@@ -55,7 +55,7 @@
         "job_id": "integer REFERENCES jobs (job_id) ON DELETE CASCADE",
         "project_id": "integer REFERENCES projects (project_id) ON DELETE CASCADE"
       },
-      "fov_events": {
+      "schedule_alarm_events": {
         "event_id": "integer PRIMARY KEY",
         "source_id": "integer",
         "time_stamp": "timestamp",
@@ -129,9 +129,9 @@
       "table_name": "camera_events",
       "event_name": "CameraEvent"
     },
-    "DatabaseAdapterFieldOfViewEvents": {
-      "table_name": "fov_events",
-      "event_name": "FieldOfViewEvent"
+    "DatabaseAdapterScheduleAlarmEvents": {
+      "table_name": "schedule_alarm_events",
+      "event_name": "ScheduleAlarmEvent"
     },
     "DatabaseAdapterZoneEvents": {
       "table_name": "zone_events",

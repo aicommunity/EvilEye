@@ -55,6 +55,9 @@ class FrameRelayClient:
         self._stop = threading.Event()
         self._conn: http.client.HTTPConnection | None = None
         self._unix_sock: socket.socket | None = None
+        self._fail_streak = 0
+        self._reconnect_backoff_sec = 0.5
+        self._last_ok_ts = 0.0
         self._thread = threading.Thread(target=self._loop, daemon=True, name="FrameRelay")
         self._thread.start()
 
@@ -111,6 +114,33 @@ class FrameRelayClient:
         else:
             self.logger.debug("Frame relay publish failed: %s", exc)
 
+    def _note_relay_ok(self) -> None:
+        was_down = self._fail_streak > 0
+        self._fail_streak = 0
+        self._reconnect_backoff_sec = 0.5
+        self._last_ok_ts = time.time()
+        if was_down:
+            self.logger.info("frame_relay reconnected")
+
+    def _note_relay_fail(self, exc: Exception) -> None:
+        self._fail_streak += 1
+        self._close_conn()
+        self._log_publish_failure(exc)
+        # Exponential backoff 0.5 → 1 → 2 … cap 10s between reconnect attempts.
+        delay = min(10.0, float(self._reconnect_backoff_sec))
+        self._reconnect_backoff_sec = min(10.0, delay * 2.0)
+        if self._stop.wait(delay):
+            return
+
+    def health(self) -> dict[str, Any]:
+        last_ok = self._last_ok_ts
+        age = (time.time() - last_ok) if last_ok > 0 else None
+        return {
+            "relay_fail_streak": self._fail_streak,
+            "relay_last_ok_age_sec": age,
+            "relay_last_ok_ts": last_ok or None,
+        }
+
     def _loop(self) -> None:
         while not self._stop.is_set():
             self._wake.wait(timeout=0.5)
@@ -122,9 +152,21 @@ class FrameRelayClient:
                     _key, item = self._pending.popitem()
                 pipeline_id, jpeg_bytes, source_id, metadata = item
                 try:
-                    self._post(pipeline_id, jpeg_bytes, source_id=source_id, metadata=metadata)
+                    ok = self._post(pipeline_id, jpeg_bytes, source_id=source_id, metadata=metadata)
+                    if ok:
+                        self._note_relay_ok()
+                    elif self._unix_path():
+                        # Connection refused / socket missing — back off before next try.
+                        self._note_relay_fail(ConnectionRefusedError("frame relay publish returned False"))
+                        with self._lock:
+                            # Keep latest frame for this key so we republish after reconnect.
+                            self._pending.setdefault(_key, item)
+                        break
                 except Exception as exc:
-                    self._log_publish_failure(exc)
+                    self._note_relay_fail(exc)
+                    with self._lock:
+                        self._pending.setdefault(_key, item)
+                    break
 
     def _unix_path(self) -> str | None:
         parsed = urlparse(self.base_url)
@@ -256,6 +298,7 @@ class StreamingService:
         self._last_publish_ts_by_key: dict[str, float] = {}
         self._server_process_manager = None
         self._frame_relay: FrameRelayClient | None = None
+        self._relay_token: str | None = None
         self._encoder: JpegEncoderBackend = create_jpeg_encoder()
         self._worker_count = 1
         self._preview_max_edge = 960
@@ -293,6 +336,7 @@ class StreamingService:
             self._publish_fps = max(0.0, float(publish_fps or 0.0))
             self._last_publish_ts_by_key.clear()
             self._server_process_manager = server_process_manager
+            self._relay_token = relay_token
             if self._frame_relay is not None:
                 try:
                     self._frame_relay.close()
@@ -317,6 +361,8 @@ class StreamingService:
 
     def set_frame_relay(self, relay_base_url: str | None, relay_token: str | None = None) -> None:
         with self._condition:
+            if relay_token is not None:
+                self._relay_token = relay_token
             if self._frame_relay is not None:
                 try:
                     self._frame_relay.close()
@@ -329,6 +375,19 @@ class StreamingService:
             elif relay_base_url:
                 self.logger.warning("Ignoring non-unix frame relay URL: %s", relay_base_url)
             self._condition.notify_all()
+
+    def _ensure_frame_relay_locked(self) -> None:
+        if self._frame_relay is not None:
+            return
+        if os.environ.get("EVILEYE_MANAGED_RUN") != "1":
+            return
+        from evileye.api.core.internal_unix import internal_relay_target_url
+
+        unix_url = _unix_relay_url(internal_relay_target_url())
+        if not unix_url:
+            return
+        self._frame_relay = FrameRelayClient(unix_url, token=self._relay_token or "")
+        self.logger.info("Lazy frame relay enabled: %s", unix_url)
 
     def submit_frame(
         self,
@@ -643,6 +702,16 @@ class StreamingService:
                 self._server_process_manager.publish_frame(pipeline_id, jpeg_bytes, metadata=metadata)
             except Exception:
                 pass
+        if self._frame_relay is not None:
+            self._frame_relay.publish_jpeg(
+                pipeline_id,
+                jpeg_bytes,
+                source_id=job.source_id,
+                metadata=metadata,
+            )
+            return
+        with self._condition:
+            self._ensure_frame_relay_locked()
         if self._frame_relay is not None:
             self._frame_relay.publish_jpeg(
                 pipeline_id,

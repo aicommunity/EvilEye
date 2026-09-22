@@ -849,6 +849,35 @@ def test_enrich_detection_ticks_adds_preview_path():
     assert out["Cam1"][0]["preview_path"].endswith("a.jpg")
 
 
+def test_ticks_only_batch_skips_full_objects_scan(tmp_path, monkeypatch):
+    """Archive timeline marks must not wait on objects_*.json enrichment."""
+    root = tmp_path / "EvilEyeData"
+    date = "2026-09-09"
+    meta = root / "Detections" / date / "Metadata"
+    meta.mkdir(parents=True)
+    (meta / "objects_found.json").write_text("{}", encoding="utf-8")
+    (meta / "objects_lost.json").write_text("{}", encoding="utf-8")
+    monkeypatch.setenv("EVILEYE_DATA_DIR", str(root))
+    monkeypatch.setattr(svc, "_load_params_for_run", lambda run_id: {})
+    monkeypatch.setattr(svc, "_playback_data_dir", lambda params: root)
+
+    def _boom(*args, **kwargs):
+        raise AssertionError("full day objects scan must not run on ticks_only path")
+
+    monkeypatch.setattr(svc, "_load_day_index_by_camera", _boom)
+    monkeypatch.setattr(
+        "evileye.api.core.playback_timeline_index.ensure_detection_ticks",
+        lambda **kwargs: {"Cam1": [{"ts": 1.0, "kind": "found", "object_id": 1}]},
+    )
+    out = svc.load_detection_index_batch(
+        cameras=["Cam1"],
+        date_folder=date,
+        run_id=1,
+        ticks_only=True,
+    )
+    assert out["Cam1"][0]["ts"] == 1.0
+
+
 def test_load_detection_index_found_and_lost(tmp_path, monkeypatch):
     root = tmp_path / "EvilEyeData"
     date = "2026-08-17"
@@ -1085,3 +1114,51 @@ def test_detection_index_uses_media_pts_plus_sidecar(tmp_path, monkeypatch):
     items = svc.load_detection_index(camera="Cam4", date_folder=date)
     assert items
     assert abs(items[0]["ts"] - (mux_start + 10.0)) < 0.05
+
+
+def test_detection_index_falls_back_to_wall_when_media_pts_skews(tmp_path, monkeypatch):
+    """Stale PTS + wrong-day session must not place morning finds on evening timeline."""
+    from evileye.video_recorder.session_sidecar import sidecar_path_for_segment, write_session_sidecar
+
+    root = tmp_path / "EvilEyeData"
+    date = "2026-09-08"
+    cam = root / "Streams" / date / "Cam1"
+    cam.mkdir(parents=True)
+    part0 = cam / "Cam1_20260908_132155_0_00000.mp4"
+    part0.write_bytes(b"fake")
+    mux_start = datetime(2026, 9, 8, 13, 21, 56).timestamp()
+    write_session_sidecar(sidecar_path_for_segment(part0), mux_start, first_pts_ns=0)
+
+    detections = root / "Detections" / date / "Metadata"
+    detections.mkdir(parents=True)
+    wall = "2026-09-08T09:26:25.379114"
+    (detections / "objects_found.json").write_text(
+        json.dumps(
+            [
+                {
+                    "timestamp": wall,
+                    "media_pts_sec": 22007.549847808,
+                    "source_name": "Cam1",
+                    "object_id": 35034,
+                    "image_filename": (
+                        "Detections/2026-09-08/Images/FoundPreviews/"
+                        "2026-09-08_09-26-25.379114_Cam1_preview.jpeg"
+                    ),
+                    "bounding_box": [0, 0, 10, 10],
+                }
+            ]
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("EVILEYE_DATA_DIR", str(root))
+    monkeypatch.setattr(svc, "_load_params_for_run", lambda _run_id: {"pipeline": {"sources": []}})
+    svc.DETECTION_INDEX_CACHE.clear()
+    if hasattr(svc, "DAY_INDEX_CACHE"):
+        svc.DAY_INDEX_CACHE.clear()
+
+    items = svc.load_detection_index(camera="Cam1", date_folder=date)
+    assert items
+    expected = datetime.fromisoformat(wall).timestamp()
+    assert abs(items[0]["ts"] - expected) < 0.05
+    # Must not be session_start + media_pts (~18:34).
+    assert abs(items[0]["ts"] - (mux_start + 22007.549847808)) > 60.0

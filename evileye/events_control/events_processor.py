@@ -35,10 +35,18 @@ class EventsProcessor(EvilEyeBase):
         # Create list of adapters for each event name (to support multiple adapters per event, e.g., DB + JSON)
         self.events_adapters = {}
         for adapter in self.db_adapters:
+            if adapter is None:
+                continue
             event_name = adapter.get_event_name()
             if event_name not in self.events_adapters:
                 self.events_adapters[event_name] = []
             self.events_adapters[event_name].append(adapter)
+
+        from evileye.events_detectors.schedule_alarm_compat import LEGACY_EVENT_ALIASES
+
+        for legacy, canonical in LEGACY_EVENT_ALIASES.items():
+            if canonical in self.events_adapters and legacy not in self.events_adapters:
+                self.events_adapters[legacy] = self.events_adapters[canonical]
 
         # For table names, use first adapter's table name (DB adapters only)
         self.events_tables = {}

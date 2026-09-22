@@ -99,3 +99,83 @@ def test_build_status_respects_config_query(tmp_path, monkeypatch):
     assert poly_status["needs_setup"] is False
     assert poly_status["has_sources"] is True
     assert poly_status["data_dir"] == "/tmp/data"
+
+
+def test_build_status_ready_with_database_when_operational(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    configs = tmp_path / "configs"
+    configs.mkdir()
+    import json
+
+    (tmp_path / "credentials.json").write_text(
+        json.dumps(
+            {
+                "web_auth": {"enabled": False, "users": []},
+                "setup": {"default_config": "poly-cameras-gst.json", "data_dir_confirmed": True},
+                "database": {"host_name": "localhost", "port": 5432, "database_name": "evil_eye_db", "user_name": "postgres", "password": ""},
+            }
+        ),
+        encoding="utf-8",
+    )
+    poly = {
+        "pipeline": {
+            "sources": [{"source": "IpCamera", "camera": "rtsp://cam", "source_ids": [0], "source_names": ["Cam1"], "out_dir": "/tmp/data"}],
+            "detectors": [{"source_ids": [0]}],
+            "trackers": [],
+        },
+        "controller": {"use_database": True},
+        "database": {"host_name": "localhost", "port": 5432},
+        "record": {},
+    }
+    (configs / "poly-cameras-gst.json").write_text(json.dumps(poly), encoding="utf-8")
+
+    monkeypatch.setattr("evileye.api.routes.setup._database_ready_for_run", lambda _cfg, _creds: True)
+    status = _build_status(config_name="poly-cameras-gst.json")
+    assert status["storage_mode"] == "database"
+    assert status["ready_to_run"] is True
+
+
+def test_build_status_not_ready_when_database_unreachable(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    configs = tmp_path / "configs"
+    configs.mkdir()
+    import json
+
+    (tmp_path / "credentials.json").write_text(
+        json.dumps(
+            {
+                "web_auth": {"enabled": False, "users": []},
+                "setup": {"default_config": "poly-cameras-gst.json"},
+                "database": {"password": ""},
+            }
+        ),
+        encoding="utf-8",
+    )
+    poly = {
+        "pipeline": {
+            "sources": [{"source": "IpCamera", "camera": "rtsp://cam", "source_ids": [0], "source_names": ["Cam1"], "out_dir": "/tmp/data"}],
+            "detectors": [{"source_ids": [0]}],
+            "trackers": [],
+        },
+        "controller": {"use_database": True},
+        "database": {},
+        "record": {},
+    }
+    (configs / "poly-cameras-gst.json").write_text(json.dumps(poly), encoding="utf-8")
+
+    monkeypatch.setattr("evileye.api.routes.setup._database_ready_for_run", lambda _cfg, _creds: False)
+    status = _build_status(config_name="poly-cameras-gst.json")
+    assert status["ready_to_run"] is False
+
+
+def test_database_ready_for_run_uses_operational_status(monkeypatch):
+    from evileye.api.routes.setup import _database_ready_for_run
+
+    monkeypatch.setattr("evileye.api.core.journal_service.database_operational", lambda: True)
+    assert _database_ready_for_run({"controller": {"use_database": True}}, {}) is True
+
+
+def test_database_ready_for_run_skips_json_mode():
+    from evileye.api.routes.setup import _database_ready_for_run
+
+    assert _database_ready_for_run({"controller": {"use_database": False}}, {}) is True

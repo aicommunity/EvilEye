@@ -183,6 +183,12 @@ def _wall_event_time(raw: dict[str, Any], kind: str | None = None) -> datetime |
     return None
 
 
+# media_pts is only valid when relative to the same recording session as the
+# sidecar start_ts. After pipeline restarts / long-running PTS clocks, pairing
+# with the nearest day's sidecar can shift ticks by hours; fall back to wall.
+MEDIA_PTS_MAX_WALL_SKEW_SEC = 60.0
+
+
 def _unix_from_media_pts(raw: dict[str, Any], camera: str, date_folder: str) -> float | None:
     media = raw.get("media_pts_sec")
     if media is None:
@@ -198,7 +204,10 @@ def _unix_from_media_pts(raw: dict[str, Any], camera: str, date_folder: str) -> 
     start = session_anchor_ts_for_camera(camera, date_folder, around_ts=around)
     if start is None:
         return None
-    return float(start) + media_f
+    candidate = float(start) + media_f
+    if around is not None and abs(candidate - around) > MEDIA_PTS_MAX_WALL_SKEW_SEC:
+        return None
+    return candidate
 
 
 def _record_event_time(
@@ -534,14 +543,17 @@ def load_detection_index_batch(
             )
             params = _load_params_for_run(run_id)
             base = _playback_data_dir(params)
-            full_by_camera = _load_day_index_by_camera(
-                base=base,
-                date_folder=date_folder,
-                run_id=run_id,
-                params=params,
-                cameras=cam_list,
-            )
-            by_ticks = _enrich_detection_ticks(by_ticks, full_by_camera)
+            # Enrich preview/bbox only from an already-warm day cache. Never scan
+            # objects_*.json on the ticks_only path — that was blocking archive
+            # timeline marks behind 45s+ timeouts while the compact ticks file
+            # was already available on disk.
+            day_key = _day_cache_key(base, date_folder, run_id)
+            found_path = base / "Detections" / date_folder / "Metadata" / "objects_found.json"
+            lost_path = base / "Detections" / date_folder / "Metadata" / "objects_lost.json"
+            json_mtime = _file_mtime_sum(found_path, lost_path)
+            cached = DAY_CAMERA_INDEX_CACHE.get(day_key)
+            if cached and _index_cache_valid(cached[0], cached[1], json_mtime, date_folder):
+                by_ticks = _enrich_detection_ticks(by_ticks, cached[2])
             out: dict[str, list[dict[str, Any]]] = {}
             for cam in cam_list:
                 rows = by_ticks.get(cam) or []

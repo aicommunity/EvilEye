@@ -27,7 +27,12 @@ def create_event_journal_adapters(db_controller, runtime_params: dict[str, Any])
     adapters.append(cam)
 
     fov = JournalAdapterFieldOfViewEvents()
-    fov.set_params(**adapter_params.get("DatabaseAdapterFieldOfViewEvents", {}))
+    fov_params = (
+        adapter_params.get("DatabaseAdapterScheduleAlarmEvents")
+        or adapter_params.get("DatabaseAdapterFieldOfViewEvents")
+        or {}
+    )
+    fov.set_params(**fov_params)
     fov.init()
     adapters.append(fov)
 

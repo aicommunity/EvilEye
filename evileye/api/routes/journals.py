@@ -2,9 +2,12 @@ from fastapi import APIRouter, HTTPException, Query, Request
 from fastapi.responses import FileResponse, StreamingResponse
 
 import asyncio
+import hashlib
 import mimetypes
 import os
+import time
 
+from evileye.core.logger import get_module_logger
 from evileye.api.core.camera_access import (
     list_effective_names,
     name_allowed_hard,
@@ -31,6 +34,7 @@ from evileye.api.core.journal_service import (
 )
 
 router = APIRouter(prefix="/api/v1/journals", tags=["journals"])
+diag_logger = get_module_logger("api.diag")
 
 _THUMB_CACHE: dict[tuple[str, int, float], bytes] = {}
 _THUMB_CACHE_MAX = 256
@@ -313,11 +317,18 @@ async def journal_preview(
 
 @router.get("/frame")
 async def journal_frame(
+        request: Request,
         path: str = Query(..., min_length=1),
         date: str | None = None,
         journal_type: str = Query("events", pattern="^(events|objects)$"),
         mode: str = Query("found", pattern="^(found|lost)$"),
 ):
+    t0 = time.perf_counter()
+    from evileye.api.security import current_user
+
+    user = current_user(request)
+    username = str((user or {}).get("username") or "") or None
+    path_hash = hashlib.sha1(path.encode("utf-8", errors="replace")).hexdigest()[:12]
     try:
         secured = await asyncio.to_thread(
             resolve_secured_journal_file,
@@ -326,9 +337,28 @@ async def journal_frame(
             ),
         )
     except JournalPathForbidden:
+        diag_logger.info(
+            "journal_frame user=%s status=403 path_hash=%s ms=%.1f",
+            username,
+            path_hash,
+            (time.perf_counter() - t0) * 1000.0,
+        )
         raise HTTPException(status_code=403, detail="Path outside data directory")
     except JournalPathNotFound:
+        diag_logger.info(
+            "journal_frame user=%s status=404 path_hash=%s basename=%s ms=%.1f",
+            username,
+            path_hash,
+            os.path.basename(path),
+            (time.perf_counter() - t0) * 1000.0,
+        )
         raise HTTPException(status_code=404, detail="Frame image not found")
+    diag_logger.info(
+        "journal_frame user=%s status=200 path_hash=%s ms=%.1f",
+        username,
+        path_hash,
+        (time.perf_counter() - t0) * 1000.0,
+    )
     return _file_response(secured, media_type=_media_type_for_path(secured, "image/jpeg"))
 
 

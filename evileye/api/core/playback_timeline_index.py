@@ -17,6 +17,73 @@ logger = logging.getLogger(__name__)
 INDEX_VERSION = 2
 # Soft TTL for "today" when source mtime keeps drifting under live capture.
 TODAY_REBUILD_SEC = 300.0
+# Video continuing this long after the last detection tick ⇒ journal likely stalled.
+# Short/medium quiet (empty scene) is normal and must not be painted as a fault.
+INFERENCE_STALL_AFTER_LAST_TICK_SEC = 3 * 3600.0
+
+
+def _merge_intervals(intervals: list[tuple[float, float]]) -> list[tuple[float, float]]:
+    if not intervals:
+        return []
+    ordered = sorted((float(a), float(b)) for a, b in intervals if b > a)
+    if not ordered:
+        return []
+    merged: list[tuple[float, float]] = [ordered[0]]
+    for start, end in ordered[1:]:
+        prev_start, prev_end = merged[-1]
+        if start <= prev_end:
+            merged[-1] = (prev_start, max(prev_end, end))
+        else:
+            merged.append((start, end))
+    return merged
+
+
+def inference_gap_bands(
+    segments: list[dict[str, Any]],
+    ticks: list[dict[str, Any]],
+    *,
+    stall_after_last_tick_sec: float = INFERENCE_STALL_AFTER_LAST_TICK_SEC,
+) -> list[dict[str, Any]]:
+    """Mark only 'journal stalled while video continued' — not quiet no-detection periods.
+
+    For each merged playable continuum that has at least one tick, if recording
+    continues more than ``stall_after_last_tick_sec`` past the last tick, emit
+    ``[last_tick, continuum_end]``. Mid-session quiet gaps and segments with
+    zero ticks are left unmarked (normal empty scene / no objects).
+    """
+    universe: list[tuple[float, float]] = []
+    for seg in segments or []:
+        try:
+            start = float(seg.get("start_ts"))
+            end = float(seg.get("end_ts"))
+        except (TypeError, ValueError):
+            continue
+        if end > start:
+            universe.append((start, end))
+    if not universe:
+        return []
+
+    tick_ts: list[float] = []
+    for tick in ticks or []:
+        try:
+            tick_ts.append(float(tick["ts"] if isinstance(tick, dict) else tick[0]))
+        except (TypeError, ValueError, KeyError, IndexError):
+            continue
+    tick_ts.sort()
+    if not tick_ts:
+        return []
+
+    stall_need = max(0.0, float(stall_after_last_tick_sec))
+    bands: list[dict[str, Any]] = []
+    for u_start, u_end in _merge_intervals(universe):
+        in_block = [ts for ts in tick_ts if u_start <= ts <= u_end]
+        if not in_block:
+            continue
+        last = in_block[-1]
+        if u_end - last < stall_need:
+            continue
+        bands.append({"from": last, "to": u_end, "kind": "inference_gap"})
+    return bands
 
 
 def _atomic_write_json(path: Path, payload: dict[str, Any]) -> None:
@@ -255,6 +322,27 @@ def filter_segments_window(
     for row in items:
         start = float(row.get("start_ts") or 0.0)
         end = float(row.get("end_ts") or 0.0)
+        if from_ts is not None and end < from_ts:
+            continue
+        if to_ts is not None and start > to_ts:
+            continue
+        out.append(row)
+    return out
+
+
+def filter_event_intervals_window(
+    items: list[dict[str, Any]],
+    from_ts: float | None,
+    to_ts: float | None,
+) -> list[dict[str, Any]]:
+    """Same overlap rule as segments; also accepts point events with only `ts`."""
+    out: list[dict[str, Any]] = []
+    for row in items:
+        if "start_ts" in row or "end_ts" in row:
+            start = float(row.get("start_ts") or row.get("ts") or 0.0)
+            end = float(row.get("end_ts") or start)
+        else:
+            start = end = float(row.get("ts") or 0.0)
         if from_ts is not None and end < from_ts:
             continue
         if to_ts is not None and start > to_ts:
@@ -562,6 +650,35 @@ def build_timeline(
                 "segments": segs,
                 "detection_ticks": ticks,
                 "events": cam_events,
+                "bands": inference_gap_bands(segs, ticks),
+            }
+        return {"date": date_folder, "by_camera": by_camera}
+
+    return singleflight(key, _build)
+
+
+def build_timeline_segments_only(
+    *,
+    date_folder: str,
+    cameras: list[str],
+    run_id: int | None = None,
+    from_ts: float | None = None,
+    to_ts: float | None = None,
+) -> dict[str, Any]:
+    """Fast timeline payload: segments only (no journal scans)."""
+    cam_list = [c for c in cameras if c]
+    key = f"timeline_segments:{date_folder}:{run_id}:{','.join(sorted(cam_list))}:{from_ts}:{to_ts}"
+
+    def _build() -> dict[str, Any]:
+        segments_by = ensure_segment_index(date_folder=date_folder, cameras=cam_list)
+        by_camera: dict[str, Any] = {}
+        for cam in cam_list:
+            segs = filter_segments_window(segments_by.get(cam) or [], from_ts, to_ts)
+            by_camera[cam] = {
+                "segments": segs,
+                "detection_ticks": [],
+                "events": [],
+                "bands": inference_gap_bands(segs, []),
             }
         return {"date": date_folder, "by_camera": by_camera}
 

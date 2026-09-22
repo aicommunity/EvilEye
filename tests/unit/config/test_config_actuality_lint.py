@@ -86,7 +86,15 @@ def test_poly_videos_benches_have_server_record_and_gst_flags() -> None:
         _assert_common(path, data, require_preview_encoder=False)
 
 
-def test_no_deploy_absolute_media_paths_in_tracked_configs() -> None:
+def test_no_legacy_schedule_alarm_names_in_tracked_configs() -> None:
+    forbidden = ("FieldOfViewEventsDetector", "DatabaseAdapterFieldOfViewEvents")
+    hits: list[str] = []
+    for root in (SAMPLES, CONFIGS):
+        for path in root.glob("*.json"):
+            text = path.read_text(encoding="utf-8", errors="ignore")
+            if any(token in text for token in forbidden):
+                hits.append(str(path.relative_to(REPO)))
+    assert hits == [], f"legacy schedule alarm names remain: {hits}"
     roots = [SAMPLES, CONFIGS]
     hits: list[str] = []
     for root in roots:

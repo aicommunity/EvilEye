@@ -19,12 +19,17 @@ class EventsDetector(EvilEyeBase):
 
     def start(self):
         self.run_flag = True
+        thread = self.processing_thread
+        if thread is None or thread.ident is not None:
+            # Recreate after a previous start/stop (Thread can only be started once).
+            self.processing_thread = Thread(target=self.process)
         self.processing_thread.start()
 
     def stop(self):
         self.run_flag = False
         self.queue_in.put(None)
-        self.processing_thread.join()
+        if self.processing_thread is not None and self.processing_thread.is_alive():
+            self.processing_thread.join()
 
     def get(self):
         if self.queue_out.empty():

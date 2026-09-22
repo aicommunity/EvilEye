@@ -2,6 +2,11 @@ import { useEffect, useState } from 'react';
 import { request, streamMetadataWsUrl, type StreamMetadata } from '../../api';
 
 const REST_FALLBACK_MS = 1500;
+export const METADATA_TTL_MS = 4000;
+/** No new metadata sequence for this long → wipe objects (pipeline likely dead). */
+export const METADATA_HARD_CLEAR_MS = 30000;
+/** Keep last non-empty objects across briefly empty publish sequences. */
+export const EMPTY_OBJECTS_HOLD_MS = 1500;
 
 function metadataFingerprint(payload: StreamMetadata): string {
   try {
@@ -19,6 +24,28 @@ function metadataFingerprint(payload: StreamMetadata): string {
   }
 }
 
+/** Exported for unit tests. Identifies a new logical metadata frame. */
+export function contentSequenceKey(payload: StreamMetadata): string {
+  const frameId = payload.frame_id;
+  if (frameId != null && Number.isFinite(Number(frameId))) {
+    return `f:${payload.source_id ?? 'all'}:${frameId}`;
+  }
+  const ts = payload.timestamp ?? payload.ts;
+  if (ts != null && Number.isFinite(Number(ts))) {
+    return `t:${payload.source_id ?? 'all'}:${Number(ts).toFixed(3)}`;
+  }
+  return metadataFingerprint(payload);
+}
+
+function clearedOverlayPayload(payload: StreamMetadata): StreamMetadata {
+  return {
+    ...payload,
+    objects: [],
+    event_labels: [],
+    signalization: false,
+  };
+}
+
 async function parseWsPayload(data: unknown): Promise<string | null> {
   if (typeof data === 'string') return data;
   if (data instanceof Blob) {
@@ -33,8 +60,10 @@ async function parseWsPayload(data: unknown): Promise<string | null> {
 
 type SourceKey = number | null;
 type Subscriber = (payload: StreamMetadata) => void;
+type FreshnessSubscriber = (fresh: boolean) => void;
 
-class RunMetadataStore {
+/** Exported for unit tests. */
+export class RunMetadataStore {
   readonly rid: number;
   private ws: WebSocket | null = null;
   private wsOpen = false;
@@ -44,8 +73,15 @@ class RunMetadataStore {
   private restTimer: number | null = null;
 
   private listenersBySource: Map<SourceKey, Set<Subscriber>> = new Map();
+  private freshnessListenersBySource: Map<SourceKey, Set<FreshnessSubscriber>> = new Map();
   private latestBySource: Map<SourceKey, StreamMetadata> = new Map();
-  private fpBySource: Map<SourceKey, string> = new Map();
+  private latestAtBySource: Map<SourceKey, number> = new Map();
+  private seqKeyBySource: Map<SourceKey, string> = new Map();
+  private wasFreshBySource: Map<SourceKey, boolean> = new Map();
+  private freshnessTimer: number | null = null;
+  private emptyHoldTimerBySource: Map<SourceKey, number> = new Map();
+  private heldObjectsBySource: Map<SourceKey, NonNullable<StreamMetadata['objects']>> = new Map();
+  private pendingEmptyBySource: Map<SourceKey, StreamMetadata> = new Map();
 
   constructor(rid: number) {
     this.rid = rid;
@@ -57,29 +93,151 @@ class RunMetadataStore {
     this.listenersBySource.get(sourceId)!.add(cb);
     const latest = this.latestBySource.get(sourceId);
     if (latest) cb(latest);
-    // Lazily connect: first subscriber triggers connect.
     if (!this.ws) void this.connect();
+    this._ensureFreshnessTimer();
     return () => {
       this.listenersBySource.get(sourceId)?.delete(cb);
-      // Stop only when the last subscriber for all source keys is removed.
       if ([...this.listenersBySource.values()].every((s) => s.size === 0)) {
         this.close();
       }
     };
   }
 
-  private pushPayload(payload: StreamMetadata) {
-    if (this.cancelled) return;
-    const key: SourceKey = payload.source_id ?? null;
-    const fp = metadataFingerprint(payload);
-    const lastFp = this.fpBySource.get(key);
-    if (fp === lastFp) return;
-    this.fpBySource.set(key, fp);
-    this.latestBySource.set(key, payload);
+  subscribeFreshness(sourceId: SourceKey, cb: FreshnessSubscriber): () => void {
+    if (!this.freshnessListenersBySource.has(sourceId)) {
+      this.freshnessListenersBySource.set(sourceId, new Set());
+    }
+    this.freshnessListenersBySource.get(sourceId)!.add(cb);
+    cb(this.isFresh(sourceId));
+    this._ensureFreshnessTimer();
+    return () => {
+      this.freshnessListenersBySource.get(sourceId)?.delete(cb);
+      if ([...this.freshnessListenersBySource.values()].every((s) => s.size === 0)) {
+        this._stopFreshnessTimer();
+      }
+    };
+  }
 
+  isFresh(sourceId: SourceKey, ttlMs = METADATA_TTL_MS): boolean {
+    const at = this.latestAtBySource.get(sourceId);
+    return at != null && Date.now() - at < ttlMs;
+  }
+
+  /** Test hook: push metadata without WebSocket. */
+  pushPayloadForTest(payload: StreamMetadata): void {
+    this.pushPayload(payload);
+  }
+
+  /** Test hook: run TTL expiry notifications. */
+  runFreshnessCheckForTest(): void {
+    this._notifyFreshness();
+  }
+
+  private _ensureFreshnessTimer() {
+    if (this.freshnessTimer != null) return;
+    this.freshnessTimer = window.setInterval(() => this._notifyFreshness(), 500);
+  }
+
+  private _stopFreshnessTimer() {
+    if (this.freshnessTimer != null) {
+      window.clearInterval(this.freshnessTimer);
+      this.freshnessTimer = null;
+    }
+  }
+
+  private _notifySubscribers(key: SourceKey, payload: StreamMetadata) {
     const subs = this.listenersBySource.get(key);
     if (!subs?.size) return;
     subs.forEach((fn) => fn(payload));
+  }
+
+  private _notifyFreshness() {
+    const keys = new Set<SourceKey>([
+      ...this.freshnessListenersBySource.keys(),
+      ...this.latestAtBySource.keys(),
+    ]);
+    for (const key of keys) {
+      const nowFresh = this.isFresh(key);
+      // Soft-stale: do NOT clear objects (hold + dim on the tile). Hard-clear only
+      // after a long gap with no new sequence key.
+      const at = this.latestAtBySource.get(key);
+      if (at != null && Date.now() - at >= METADATA_HARD_CLEAR_MS) {
+        const prev = this.latestBySource.get(key);
+        if (prev && (prev.objects?.length ?? 0) > 0) {
+          const cleared = clearedOverlayPayload(prev);
+          this.latestBySource.set(key, cleared);
+          this._notifySubscribers(key, cleared);
+        }
+      }
+
+      this.wasFreshBySource.set(key, nowFresh);
+
+      const subs = this.freshnessListenersBySource.get(key);
+      if (!subs?.size) continue;
+      subs.forEach((fn) => fn(nowFresh));
+    }
+  }
+
+  private _cancelEmptyHold(key: SourceKey) {
+    const timer = this.emptyHoldTimerBySource.get(key);
+    if (timer != null) {
+      window.clearTimeout(timer);
+      this.emptyHoldTimerBySource.delete(key);
+    }
+    this.pendingEmptyBySource.delete(key);
+  }
+
+  private pushPayload(payload: StreamMetadata) {
+    if (this.cancelled) return;
+    const key: SourceKey = payload.source_id ?? null;
+    const seqKey = contentSequenceKey(payload);
+    const prevSeq = this.seqKeyBySource.get(key);
+
+    if (seqKey === prevSeq) {
+      this._notifyFreshness();
+      return;
+    }
+
+    this.seqKeyBySource.set(key, seqKey);
+    this.latestAtBySource.set(key, Date.now());
+    this.wasFreshBySource.set(key, true);
+
+    const objects = payload.objects ?? [];
+    if (objects.length > 0) {
+      this._cancelEmptyHold(key);
+      this.heldObjectsBySource.set(key, objects);
+      this.latestBySource.set(key, payload);
+      this._notifySubscribers(key, payload);
+      this._notifyFreshness();
+      return;
+    }
+
+    const held = this.heldObjectsBySource.get(key);
+    if (held && held.length > 0) {
+      this._cancelEmptyHold(key);
+      this.pendingEmptyBySource.set(key, payload);
+      const display: StreamMetadata = { ...payload, objects: held };
+      this.latestBySource.set(key, display);
+      this._notifySubscribers(key, display);
+      const timer = window.setTimeout(() => {
+        this.emptyHoldTimerBySource.delete(key);
+        const pending = this.pendingEmptyBySource.get(key);
+        this.pendingEmptyBySource.delete(key);
+        this.heldObjectsBySource.delete(key);
+        if (!pending || this.cancelled) return;
+        const cleared = clearedOverlayPayload(pending);
+        this.latestBySource.set(key, cleared);
+        this._notifySubscribers(key, cleared);
+        this._notifyFreshness();
+      }, EMPTY_OBJECTS_HOLD_MS);
+      this.emptyHoldTimerBySource.set(key, timer);
+      this._notifyFreshness();
+      return;
+    }
+
+    this.latestBySource.set(key, payload);
+    this._notifySubscribers(key, payload);
+    this._notifyFreshness();
   }
 
   private startRestFallback() {
@@ -126,7 +284,6 @@ class RunMetadataStore {
     if (this.wsOpen) return;
     if (this.ws != null && this.ws.readyState === WebSocket.OPEN) return;
 
-    // If a previous attempt failed quickly, keep backoff in effect.
     const url = streamMetadataWsUrl(this.rid, null);
     try {
       this.ws = new WebSocket(url);
@@ -171,6 +328,12 @@ class RunMetadataStore {
 
   private close() {
     this.cancelled = true;
+    this._stopFreshnessTimer();
+    for (const timer of this.emptyHoldTimerBySource.values()) {
+      window.clearTimeout(timer);
+    }
+    this.emptyHoldTimerBySource.clear();
+    this.pendingEmptyBySource.clear();
     if (this.retryTimer != null) window.clearTimeout(this.retryTimer);
     if (this.restTimer != null) window.clearInterval(this.restTimer);
     this.retryTimer = null;
@@ -209,4 +372,25 @@ export function useRunMetadataWs(rid: number | null, sourceId: number | null | u
   }, [rid, sourceId]);
 
   return meta;
+}
+
+export function useMetadataFreshness(
+  rid: number | null,
+  sourceId: number | null | undefined,
+  ttlMs = METADATA_TTL_MS,
+) {
+  const [fresh, setFresh] = useState(false);
+  useEffect(() => {
+    setFresh(false);
+    if (rid == null) return;
+    const key: SourceKey = sourceId ?? null;
+    const store = getRunStore(rid);
+    const unsub = store.subscribeFreshness(key, (isFresh) => setFresh(isFresh));
+    const timer = window.setInterval(() => setFresh(store.isFresh(key, ttlMs)), 500);
+    return () => {
+      unsub();
+      window.clearInterval(timer);
+    };
+  }, [rid, sourceId, ttlMs]);
+  return fresh;
 }

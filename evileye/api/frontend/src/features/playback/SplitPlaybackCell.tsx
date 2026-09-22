@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import type { FrameSize, PlaybackCamera, PlaybackDetectionItem, PlaybackEventInterval, PlaybackPlayMode } from '../../api';
+import type { FrameSize, PlaybackCamera, PlaybackDetectionItem, PlaybackEventInterval, PlaybackPlayMode, PlaybackSegment } from '../../api';
 import { MetadataOverlayLayer } from '../overlay/MetadataOverlayLayer';
 import { prepareOverlayMetadata } from '../overlay/overlayMath';
 import { resolvePlaybackFrameSize } from '../overlay/playbackFrameSize';
@@ -8,8 +8,17 @@ import { useI18n } from '../../i18n';
 import { PlaybackBusyHint } from './PlaybackBusyHint';
 import { usePlaybackCameraMetadata } from './PlaybackCameraView';
 import { playbackDebugInc } from './playbackDebug';
-import { seekPlaybackVideo, seekingAgeMs, SEEKING_STUCK_MS, shouldEmitPlaybackClock } from './playbackVideoSync';
-import { drainVideoElement, reloadVideoMedia } from './drainVideo';
+import { seekPlaybackVideo, seekingAgeMs, lowReadyStateAgeMs, SEEKING_STUCK_MS, LOW_READY_RELOAD_MS, PLAY_CHASE_THRESHOLD_SEC, shouldEmitPlaybackClock, isPastDecodedEof } from './playbackVideoSync';
+import { advanceOrStopAtEof } from './playbackEof';
+import {
+  drainVideoElement,
+  noteSameSrcMediaError,
+  reloadVideoMedia,
+  resetErrorMediaBackoff,
+  scheduleErrorMediaReload,
+} from './drainVideo';
+import { clientTelemetryLog } from '../../diagnostics/clientTelemetry';
+import { pickContainingPlayableSegment } from './timelineMath';
 
 export function SplitPlaybackCell({
   videoUrl,
@@ -18,11 +27,13 @@ export function SplitPlaybackCell({
   cameraId,
   camera,
   sourceId: _sourceId,
+  segments = [],
   getPosition,
   positionSec,
   playing,
   speed,
   startTs,
+  endTs,
   runId,
   showMetadata,
   playMode = 'normal',
@@ -32,6 +43,7 @@ export function SplitPlaybackCell({
   globalDetectionTs = [],
   eventIntervals = [],
   onVideoClock,
+  onPlaybackExhausted,
   onExpand,
   expanded = false,
   frameSize: frameSizeProp,
@@ -45,11 +57,13 @@ export function SplitPlaybackCell({
   cameraId: string;
   camera?: PlaybackCamera;
   sourceId?: number | null;
+  segments?: PlaybackSegment[];
   getPosition: () => number;
   positionSec: number;
   playing: boolean;
   speed: number;
   startTs: number;
+  endTs?: number;
   runId: number | null;
   showMetadata: boolean;
   playMode?: PlaybackPlayMode;
@@ -59,6 +73,7 @@ export function SplitPlaybackCell({
   globalDetectionTs?: number[];
   eventIntervals?: PlaybackEventInterval[];
   onVideoClock?: (globalSec: number) => void;
+  onPlaybackExhausted?: () => void;
   onExpand?: () => void;
   expanded?: boolean;
   frameSize?: FrameSize | null;
@@ -74,13 +89,23 @@ export function SplitPlaybackCell({
   getPositionRef.current = getPosition;
   const [videoReady, setVideoReady] = useState(0);
   const [seeking, setSeeking] = useState(false);
+  const [mediaReadyState, setMediaReadyState] = useState<number | null>(null);
+  const [hadDecodableFrame, setHadDecodableFrame] = useState(false);
   const [videoGlobalSec, setVideoGlobalSec] = useState<number | null>(null);
   const [localFrameSize, setLocalFrameSize] = useState<FrameSize | null>(null);
   const [localEpoch, setLocalEpoch] = useState(0);
   const mediaEpoch = mediaEpochProp + localEpoch;
+  const pinnedThisMediaRef = useRef(false);
+  const remountedUrlRef = useRef<string | null>(null);
   const parentVideoSize = frameSizeProp ?? localFrameSize;
   const onVideoClockRef = useRef(onVideoClock);
   onVideoClockRef.current = onVideoClock;
+  const onPlaybackExhaustedRef = useRef(onPlaybackExhausted);
+  onPlaybackExhaustedRef.current = onPlaybackExhausted;
+  const segmentsRef = useRef(segments);
+  segmentsRef.current = segments;
+  const endTsRef = useRef(endTs ?? startTs);
+  endTsRef.current = endTs ?? startTs;
   const playingRef = useRef(playing);
   playingRef.current = playing;
   const scrubbingRef = useRef(scrubbing);
@@ -239,12 +264,28 @@ export function SplitPlaybackCell({
     if (!video) return;
     let stuckAttempts = 0;
     let pausedZombieTicks = 0;
+    let softReloadCount = 0;
+    const softReload = () => {
+      if (softReloadCount >= 2) return;
+      softReloadCount += 1;
+      pinnedThisMediaRef.current = false;
+      reloadVideoMedia(video);
+      if (
+        softReloadCount >= 2 &&
+        video.readyState < 2 &&
+        videoUrl &&
+        remountedUrlRef.current !== videoUrl
+      ) {
+        remountedUrlRef.current = videoUrl;
+        setLocalEpoch((n) => n + 1);
+      }
+    };
     const timer = window.setInterval(() => {
       if (playingRef.current && !scrubbingRef.current && video.paused) {
         pausedZombieTicks += 1;
         playbackDebugInc('playCalls');
         void video.play().catch(() => playbackDebugInc('playRejects'));
-        if (pausedZombieTicks === 2) {
+        if (pausedZombieTicks === 2 && video.readyState >= 2) {
           seekPlaybackVideo(video, getPositionRef.current(), startTs, {
             playing: true,
             force: true,
@@ -255,8 +296,12 @@ export function SplitPlaybackCell({
           });
           drawFrame();
         }
-        if (pausedZombieTicks >= 6 && video.readyState < 2) {
-          reloadVideoMedia(video);
+        if (
+          pausedZombieTicks >= 8 &&
+          video.readyState === 0 &&
+          lowReadyStateAgeMs(video) >= LOW_READY_RELOAD_MS
+        ) {
+          softReload();
         }
         return;
       }
@@ -274,20 +319,30 @@ export function SplitPlaybackCell({
             Number.isFinite(video.duration) && video.duration > 0 ? startTs + video.duration : undefined,
         });
         drawFrame();
-        if (stuckAttempts === 2 || stuckAttempts >= 4) {
-          reloadVideoMedia(video);
+        if (stuckAttempts >= 4 && video.readyState === 0) {
+          softReload();
         }
         return;
       }
-      if (!playingRef.current && video.readyState < 2) {
+      if (video.readyState === 0 && lowReadyStateAgeMs(video) >= LOW_READY_RELOAD_MS) {
+        playbackDebugInc('seekingStuckRecoveries');
+        stuckAttempts += 1;
+        setSeeking(false);
+        if (stuckAttempts >= 2) {
+          softReload();
+        }
+        return;
+      }
+      if (!playingRef.current && video.readyState === 0 && lowReadyStateAgeMs(video) >= LOW_READY_RELOAD_MS) {
         stuckAttempts += 1;
         if (stuckAttempts >= 3) {
           stuckAttempts = 0;
-          reloadVideoMedia(video);
+          softReload();
           drawFrame();
         }
-      } else if (!video.seeking) {
+      } else if (!video.seeking && video.readyState >= 2) {
         stuckAttempts = 0;
+        softReloadCount = 0;
       }
     }, 700);
     return () => window.clearInterval(timer);
@@ -295,18 +350,36 @@ export function SplitPlaybackCell({
   }, [scrubbing, playing, videoUrl, startTs, mediaEpoch]);
 
   useEffect(() => {
+    pinnedThisMediaRef.current = false;
+    setHadDecodableFrame(false);
+  }, [videoUrl, mediaEpoch]);
+
+  useEffect(() => {
+    if (mediaReadyState != null && mediaReadyState >= 2) setHadDecodableFrame(true);
+  }, [mediaReadyState]);
+
+  useEffect(() => {
+    remountedUrlRef.current = null;
+  }, [videoUrl]);
+
+  useEffect(() => {
     const video = videoRef.current;
     if (!video) return;
-    const onSeeking = () => setSeeking(true);
+    const syncReady = () => setMediaReadyState(video.readyState);
+    const onSeeking = () => {
+      setSeeking(true);
+      syncReady();
+    };
     const onSeeked = () => {
       setSeeking(false);
+      syncReady();
       const st = startTsRef.current;
       setVideoGlobalSec(st + video.currentTime);
       // Pin after load even while scrubbing (new segment src starts at t=0 otherwise).
       seekPlaybackVideo(video, getPositionRef.current(), st, {
         playing: playingRef.current,
         scrubbing: scrubbingRef.current,
-        thresholdSec: playingRef.current && !scrubbingRef.current ? 1.0 : undefined,
+        thresholdSec: playingRef.current && !scrubbingRef.current ? PLAY_CHASE_THRESHOLD_SEC : undefined,
         segmentEndTs:
           Number.isFinite(video.duration) && video.duration > 0 ? st + video.duration : undefined,
       });
@@ -322,54 +395,113 @@ export function SplitPlaybackCell({
     const onTime = () => {
       const st = startTsRef.current;
       if (video.readyState >= 2) setVideoGlobalSec(st + video.currentTime);
+      syncReady();
       if (video.seeking || scrubbingRef.current) return;
       if (userSeekingRef.current) return;
       if (playingRef.current && shouldEmitPlaybackClock(cameraId, video)) {
         onVideoClockRef.current?.(st + video.currentTime);
       }
     };
+    const errorReloadTimers: number[] = [];
+    const tryAdvanceOrStop = (decodedDurationSec?: number) => {
+      const st = startTsRef.current;
+      const et = endTsRef.current;
+      const currentSeg =
+        pickContainingPlayableSegment(segmentsRef.current, st) ??
+        ({
+          path: '',
+          start_ts: st,
+          end_ts: et,
+          duration_ms: Math.max(0, (et - st) * 1000),
+        } as PlaybackSegment);
+      const decision = advanceOrStopAtEof(segmentsRef.current, currentSeg, {
+        decodedDurationSec,
+      });
+      if (decision.action === 'advanced' && playingRef.current && !scrubbingRef.current) {
+        onVideoClockRef.current?.(decision.next.start_ts);
+        return true;
+      }
+      if (playingRef.current && !scrubbingRef.current) {
+        onPlaybackExhaustedRef.current?.();
+      }
+      return false;
+    };
+    const onEnded = () => {
+      const decoded =
+        Number.isFinite(video.duration) && video.duration > 0 ? video.duration : undefined;
+      if (tryAdvanceOrStop(decoded)) return;
+      seekPlaybackVideo(video, endTsRef.current, startTsRef.current, {
+        playing: false,
+        scrubbing: scrubbingRef.current,
+        segmentEndTs: endTsRef.current,
+      });
+      drawFrame();
+    };
     const onError = () => {
       setSeeking(false);
+      syncReady();
       playbackDebugInc('playRejects');
       const el = video;
-      window.setTimeout(() => {
+      const src = videoUrl;
+      const code = el.error?.code ?? null;
+      clientTelemetryLog('video_error', { camera: cameraId, code, src }, 'playback');
+      const { giveUp } = noteSameSrcMediaError(el, src, code);
+      if (giveUp) {
+        clientTelemetryLog('video_error_give_up', { camera: cameraId, code, src }, 'playback');
+        resetErrorMediaBackoff(el);
+        tryAdvanceOrStop();
+        return;
+      }
+      const timer = scheduleErrorMediaReload(el, () => {
         if (videoRef.current !== el || !videoUrl) return;
-        if (reloadVideoMedia(el)) {
-          seekPlaybackVideo(el, getPositionRef.current(), startTsRef.current, {
-            playing: playingRef.current,
-            scrubbing: scrubbingRef.current,
-            force: true,
-            thresholdSec: 0,
-            segmentEndTs:
-              Number.isFinite(el.duration) && el.duration > 0
-                ? startTsRef.current + el.duration
-                : undefined,
-          });
-          drawFrame();
-        }
-      }, 400);
+        seekPlaybackVideo(el, getPositionRef.current(), startTsRef.current, {
+          playing: playingRef.current,
+          scrubbing: scrubbingRef.current,
+          force: true,
+          thresholdSec: 0,
+          segmentEndTs:
+            Number.isFinite(el.duration) && el.duration > 0
+              ? startTsRef.current + el.duration
+              : undefined,
+        });
+        drawFrame();
+      });
+      if (timer != null) errorReloadTimers.push(timer);
+    };
+    const syncReadyReset = () => {
+      resetErrorMediaBackoff(video);
+      syncReady();
     };
     video.addEventListener('seeking', onSeeking);
     video.addEventListener('seeked', onSeeked);
     video.addEventListener('timeupdate', onTime);
     video.addEventListener('loadeddata', onSeeked);
+    video.addEventListener('canplay', syncReadyReset);
+    video.addEventListener('waiting', syncReady);
     video.addEventListener('error', onError);
+    video.addEventListener('ended', onEnded);
     setSeeking(video.seeking);
+    setMediaReadyState(video.readyState);
     return () => {
+      for (const t of errorReloadTimers) window.clearTimeout(t);
       video.removeEventListener('seeking', onSeeking);
       video.removeEventListener('seeked', onSeeked);
       video.removeEventListener('timeupdate', onTime);
       video.removeEventListener('loadeddata', onSeeked);
+      video.removeEventListener('canplay', syncReadyReset);
+      video.removeEventListener('waiting', syncReady);
       video.removeEventListener('error', onError);
+      video.removeEventListener('ended', onEnded);
     };
   }, [videoUrl, cameraId, mediaEpoch]);
 
   useEffect(() => {
-    const el = videoRef;
+    const el = videoRef.current;
     return () => {
-      drainVideoElement(el.current);
+      drainVideoElement(el);
+      resetErrorMediaBackoff(el);
     };
-  }, []);
+  }, [videoUrl, mediaEpoch]);
 
   useEffect(() => {
     const video = videoRef.current;
@@ -377,11 +509,58 @@ export function SplitPlaybackCell({
     const stuck = video.seeking && seekingAgeMs(video) >= SEEKING_STUCK_MS;
     if (video.seeking && !scrubbing && !userSeeking && !stuck) return;
     if (scrubbing && video.seeking && !userSeeking && !stuck) return;
-    seekPlaybackVideo(video, getPositionRef.current(), startTs, {
+    const position = getPositionRef.current();
+    if (isPastDecodedEof(video, position, startTs)) {
+      const decoded =
+        Number.isFinite(video.duration) && video.duration > 0 ? video.duration : undefined;
+      const currentSeg =
+        pickContainingPlayableSegment(segmentsRef.current, startTs) ??
+        ({
+          path: '',
+          start_ts: startTs,
+          end_ts: endTsRef.current,
+          duration_ms: Math.max(0, (endTsRef.current - startTs) * 1000),
+        } as PlaybackSegment);
+      const decision = advanceOrStopAtEof(segmentsRef.current, currentSeg, {
+        decodedDurationSec: decoded,
+      });
+      if (decision.action === 'advanced' && playing && !scrubbing && !userSeeking) {
+        onVideoClockRef.current?.(decision.next.start_ts);
+        return;
+      }
+      const eofGlobal = startTs + Math.max(0, (decoded ?? 0) - 0.05);
+      seekPlaybackVideo(video, eofGlobal, startTs, {
+        playing: false,
+        scrubbing,
+        force: userSeeking,
+        segmentEndTs: endTsRef.current,
+      });
+      if (playing && !scrubbing && !userSeeking) {
+        onPlaybackExhaustedRef.current?.();
+      }
+      drawFrame();
+      return;
+    }
+    if (video.readyState < 2 && !userSeeking && !scrubbing) {
+      if (video.readyState >= 1 && !pinnedThisMediaRef.current) {
+        pinnedThisMediaRef.current = true;
+        seekPlaybackVideo(video, position, startTs, {
+          playing,
+          force: true,
+          thresholdSec: 0,
+          segmentEndTs:
+            Number.isFinite(video.duration) && video.duration > 0 ? startTs + video.duration : undefined,
+        });
+        drawFrame();
+      }
+      if (playing && video.paused) void video.play().catch(() => null);
+      return;
+    }
+    seekPlaybackVideo(video, position, startTs, {
       playing,
       scrubbing,
       force: userSeeking || stuck,
-      thresholdSec: playing && !scrubbing ? 1.0 : undefined,
+      thresholdSec: playing && !scrubbing ? PLAY_CHASE_THRESHOLD_SEC : undefined,
       segmentEndTs:
         Number.isFinite(video.duration) && video.duration > 0 ? startTs + video.duration : undefined,
     });
@@ -421,7 +600,7 @@ export function SplitPlaybackCell({
           seekPlaybackVideo(video, getPositionRef.current(), startTs, {
             playing,
             scrubbing,
-            thresholdSec: playing && !scrubbing ? 1.0 : undefined,
+            thresholdSec: playing && !scrubbing ? PLAY_CHASE_THRESHOLD_SEC : undefined,
             segmentEndTs:
               video && Number.isFinite(video.duration) && video.duration > 0
                 ? startTs + video.duration
@@ -447,10 +626,16 @@ export function SplitPlaybackCell({
       />
       <PlaybackBusyHint
         seeking={seeking}
-        loading={metaLoading}
+        loading={
+          Boolean(metaLoading) ||
+          (!hadDecodableFrame &&
+            Boolean(videoUrl) &&
+            mediaReadyState != null &&
+            mediaReadyState < 2)
+        }
         hasObjects={(displayMeta?.objects?.length ?? 0) > 0}
+        mediaReadyState={mediaReadyState}
       />
-      {!showMetadata ? <div className="live-overlay-source">{label}</div> : null}
       {onExpand ? (
         <div className="camera-card-overlay-actions">
           <button
@@ -475,6 +660,9 @@ export function SplitPlaybackCell({
     <article className="camera-card camera-card-mini camera-card-grid playback-cell" onDoubleClick={onExpand}>
       <div className="camera-card-media" style={{ position: 'relative' }}>
         {inner}
+        <div className="camera-card-overlay-top">
+          <span className="camera-name">{label}</span>
+        </div>
       </div>
     </article>
   );

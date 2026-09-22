@@ -1,9 +1,10 @@
 from typing import Any, Literal, Optional
 
-from fastapi import APIRouter, HTTPException, Request
+from fastapi import APIRouter, HTTPException, Request, Response
 from pydantic import BaseModel, Field
 
 from evileye.api.core.camera_access import catalog_source_names, lookup_user_record, resolve_camera_access
+from evileye.api.core.client_debug import user_client_debug_enabled
 from evileye.api.core.user_prefs import (
     allowed_cameras_from_record,
     normalize_allowed_cameras,
@@ -94,8 +95,15 @@ async def auth_register(payload: RegisterPayload, request: Request) -> dict:
     }
 
 
+def _apply_client_debug_header(response: Response, username: str) -> bool:
+    enabled = user_client_debug_enabled(username)
+    if enabled:
+        response.headers["X-EvilEye-Debug"] = "1"
+    return enabled
+
+
 @router.get("/me")
-async def auth_me(request: Request) -> dict:
+async def auth_me(request: Request, response: Response) -> dict:
     auth = request.app.state.web_auth
     if not auth.enabled:
         return {
@@ -107,6 +115,7 @@ async def auth_me(request: Request) -> dict:
             "allowed_cameras": catalog_source_names(scope="active"),
             "camera_access": "all",
             "prefs": prefs_from_record(None),
+            "client_debug": False,
         }
     user = request.session.get("user")
     if not isinstance(user, dict):
@@ -115,12 +124,14 @@ async def auth_me(request: Request) -> dict:
     username = str(user.get("username") or "")
     session_user = {"username": username, "role": role}
     camera_fields = _me_camera_fields(request, username, role)
+    client_debug = _apply_client_debug_header(response, username)
     return {
         "authenticated": True,
         "auth_enabled": True,
         "user": session_user,
         "permissions": permissions_for_role(role),
         "must_change_password": _must_change_for_username(username),
+        "client_debug": client_debug,
         **camera_fields,
     }
 
@@ -189,7 +200,7 @@ async def auth_put_prefs(payload: PrefsPayload, request: Request) -> dict:
 
 
 @router.post("/login")
-async def auth_login(payload: LoginPayload, request: Request) -> dict:
+async def auth_login(payload: LoginPayload, request: Request, response: Response) -> dict:
     from evileye.api.core.rate_guard import get_rate_guard
 
     auth = request.app.state.web_auth
@@ -203,6 +214,7 @@ async def auth_login(payload: LoginPayload, request: Request) -> dict:
             "allowed_cameras": catalog_source_names(scope="active"),
             "camera_access": "all",
             "prefs": prefs_from_record(None),
+            "client_debug": False,
         }
     user = authenticate_user(payload.username, payload.password, auth)
     if user is None:
@@ -214,12 +226,14 @@ async def auth_login(payload: LoginPayload, request: Request) -> dict:
     session_user = {"username": username, "role": role}
     request.session["user"] = session_user
     camera_fields = _me_camera_fields(request, username, role)
+    client_debug = _apply_client_debug_header(response, username)
     return {
         "authenticated": True,
         "auth_enabled": True,
         "user": session_user,
         "permissions": permissions_for_role(role),
         "must_change_password": _must_change_for_username(username),
+        "client_debug": client_debug,
         **camera_fields,
     }
 

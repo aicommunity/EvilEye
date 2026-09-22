@@ -232,6 +232,15 @@ def validate_config(body: dict[str, Any]) -> dict[str, Any]:
             zones = ev.get("zones")
             if zones is not None and not isinstance(zones, list):
                 errors.append(f"events_detectors[{i}].zones must be a list")
+    elif isinstance(events, dict):
+        from evileye.api.core.schedule_alarm_config import (
+            schedule_alarm_detector_section,
+            validate_schedule_alarm_section,
+        )
+
+        section = schedule_alarm_detector_section(body)
+        if section:
+            errors.extend(validate_schedule_alarm_section(section))
 
     database = body.get("database")
     if database is not None:

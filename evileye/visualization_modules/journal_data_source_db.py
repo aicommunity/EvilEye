@@ -158,7 +158,8 @@ class DatabaseJournalDataSource(EventJournalDataSource):
         mapping = {
             'ZoneEvent': 'zone_entered',  # Will be paired with zone_left
             'AttributeEvent': 'attr_found',  # Will be paired with attr_lost
-            'FOVEvent': 'fov_found',  # Will be paired with fov_lost
+            'ScheduleAlarmEvent': 'schedule_alarm_found',
+            'FOVEvent': 'schedule_alarm_found',
             'CameraEvent': 'cam',
             'SystemEvent': 'sys',
         }
@@ -225,7 +226,7 @@ class DatabaseJournalDataSource(EventJournalDataSource):
         if not path:
             return
         records = self.db_controller.query(
-            "SELECT object_id, source_id FROM fov_events "
+            "SELECT object_id, source_id FROM schedule_alarm_events "
             "WHERE preview_path = %s OR lost_preview_path = %s LIMIT 1",
             (path, path),
         ) or []

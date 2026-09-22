@@ -6,6 +6,7 @@ import type {
   PlaybackEventMarker,
   PlaybackEventsResponse,
   PlaybackSegment,
+  PlaybackTimelineBand,
 } from './types';
 
 export type FrameSize = { w: number; h: number };
@@ -62,6 +63,7 @@ export const playbackApi = {
       from?: number;
       to?: number;
       runId?: number | null;
+      segmentsOnly?: boolean;
     },
   ): Promise<{
     date: string;
@@ -71,6 +73,7 @@ export const playbackApi = {
         segments: PlaybackSegment[];
         detection_ticks: PlaybackDetectionItem[];
         events: PlaybackEventInterval[];
+        bands?: PlaybackTimelineBand[];
       }
     >;
   }> {
@@ -78,6 +81,7 @@ export const playbackApi = {
     if (opts?.from != null) p.set('from', String(opts.from));
     if (opts?.to != null) p.set('to', String(opts.to));
     if (opts?.runId != null) p.set('run_id', String(opts.runId));
+    if (opts?.segmentsOnly) p.set('segments_only', 'true');
     return request(`/playback/timeline?${p}`, opts);
   },
   events(

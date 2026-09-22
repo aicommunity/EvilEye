@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { streamSnapshotUrl } from '../../api';
+import { clientTelemetryLog } from '../../diagnostics/clientTelemetry';
 
 export interface PreviewFrame {
   sourceId: number;
@@ -38,6 +39,9 @@ export function useLiveGridPreviewWs(runId: number | null, sourceIds: number[]) 
   const pendingHeaderRef = useRef<{ source_id: number; etag?: string; ts?: number } | null>(null);
   const etagsRef = useRef<Map<number, string>>(new Map());
   const reconnectAttemptRef = useRef(0);
+  const sourceIdsRef = useRef(sourceIds);
+  sourceIdsRef.current = sourceIds;
+  const sourceIdsKey = sourceIds.join(',');
 
   const revokeBlob = useCallback((sourceId: number) => {
     const old = blobUrlsRef.current.get(sourceId);
@@ -85,8 +89,9 @@ export function useLiveGridPreviewWs(runId: number | null, sourceIds: number[]) 
     [frames],
   );
 
+  // Connect / reconnect only when runId changes (or unmount).
   useEffect(() => {
-    if (runId == null || !sourceIds.length) {
+    if (runId == null) {
       setConnected(false);
       return;
     }
@@ -105,7 +110,11 @@ export function useLiveGridPreviewWs(runId: number | null, sourceIds: number[]) 
         reconnectAttemptRef.current = 0;
         setConnected(true);
         setFailed(false);
-        ws.send(JSON.stringify({ op: 'subscribe', source_ids: sourceIds }));
+        const ids = sourceIdsRef.current;
+        clientTelemetryLog('ws_open', { runId, sourceIds: ids }, 'live');
+        if (ids.length) {
+          ws.send(JSON.stringify({ op: 'subscribe', source_ids: ids }));
+        }
         if (pingTimer != null) window.clearInterval(pingTimer);
         pingTimer = window.setInterval(() => {
           if (ws.readyState === WebSocket.OPEN) {
@@ -146,7 +155,10 @@ export function useLiveGridPreviewWs(runId: number | null, sourceIds: number[]) 
         }
         const header = pendingHeaderRef.current;
         pendingHeaderRef.current = null;
-        if (!header) return;
+        if (!header) {
+          clientTelemetryLog('ws_drop_no_header', { runId }, 'live');
+          return;
+        }
         const blob =
           ev.data instanceof Blob
             ? ev.data
@@ -154,23 +166,34 @@ export function useLiveGridPreviewWs(runId: number | null, sourceIds: number[]) 
         applyBlob(header.source_id, blob, header.etag || '', header.ts);
       };
 
-      ws.onclose = () => {
+      ws.onclose = (ev) => {
         setConnected(false);
         wsRef.current = null;
         if (pingTimer != null) {
           window.clearInterval(pingTimer);
           pingTimer = null;
         }
+        clientTelemetryLog(
+          'ws_close',
+          { runId, code: ev.code, reason: ev.reason || '', wasClean: ev.wasClean },
+          'live',
+        );
         // Keep last blob URLs until unmount or a newer frame arrives (avoid empty flash).
         if (!cancelled) {
           setFailed(true);
           const delay = Math.min(30000, 1000 * 2 ** reconnectAttemptRef.current);
           reconnectAttemptRef.current += 1;
+          clientTelemetryLog(
+            'ws_reconnect',
+            { runId, attempt: reconnectAttemptRef.current, delayMs: delay },
+            'live',
+          );
           reconnectTimer = window.setTimeout(connect, delay);
         }
       };
 
       ws.onerror = () => {
+        clientTelemetryLog('ws_error', { runId }, 'live');
         ws.close();
       };
     };
@@ -190,7 +213,16 @@ export function useLiveGridPreviewWs(runId: number | null, sourceIds: number[]) 
       setFrames(new Map());
       setConnected(false);
     };
-  }, [runId, sourceIds.join(','), applyBlob]);
+  }, [runId, applyBlob]);
+
+  // Resubscribe without closing WS / wiping frames when only sourceIds change.
+  useEffect(() => {
+    if (runId == null || !sourceIds.length) return;
+    const ws = wsRef.current;
+    if (!ws || ws.readyState !== WebSocket.OPEN) return;
+    clientTelemetryLog('ws_resubscribe', { runId, sourceIds }, 'live');
+    ws.send(JSON.stringify({ op: 'subscribe', source_ids: sourceIds }));
+  }, [runId, sourceIdsKey]);
 
   return { frames, connected, failed, getBlobUrl, getPreviewFrameAgeSec };
 }

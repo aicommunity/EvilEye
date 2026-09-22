@@ -1,4 +1,5 @@
 import time
+
 from .db_adapter import DatabaseAdapterBase
 from .constants import QueryType, EventType
 from ..utils.utils import ObjectResultEncoder
@@ -15,6 +16,8 @@ from .event_image_writer import EventImageWriter
 
 
 class DatabaseAdapterZoneEvents(DatabaseAdapterBase):
+    _image_none_warn_ts = 0.0
+
     def __init__(self, db_controller):
         super().__init__(db_controller)
         self.image_dir = self.db_params['image_dir']
@@ -42,6 +45,8 @@ class DatabaseAdapterZoneEvents(DatabaseAdapterBase):
             sql.SQL(', ').join(sql.Placeholder() * len(fields))
         )
         self.queue_in.put((query_type, insert_query, data, preview_path, frame_path, event.img_entered))
+        # Drop event-owned frame copy after queueing (I7); queue holds the ref for IO.
+        event.img_entered = None
 
     def _update_impl(self, event):
         fields, data, preview_path, frame_path = self._prepare_for_updating(event)
@@ -78,6 +83,7 @@ class DatabaseAdapterZoneEvents(DatabaseAdapterBase):
             selected=where_query
         )
         self.queue_in.put((query_type, update_query, data, preview_path, frame_path, event.img_left))
+        event.img_left = None
 
     def _execute_query(self):
         while self.run_flag:
@@ -140,8 +146,14 @@ class DatabaseAdapterZoneEvents(DatabaseAdapterBase):
             )
             return
 
-        if image is None:
-            self.logger.warning('DB: Image is None in RETURNING; skipping image save')
+        if image is None or getattr(image, "image", None) is None:
+            now = time.time()
+            if (now - DatabaseAdapterZoneEvents._image_none_warn_ts) >= 60.0:
+                DatabaseAdapterZoneEvents._image_none_warn_ts = now
+                self.logger.warning(
+                    "DB: ZoneEvents image missing (frame=%s); skipping image save",
+                    None if image is None else type(image).__name__,
+                )
             return
 
         self._save_image(preview_path, frame_path, image, box, zone_coords)
@@ -165,9 +177,13 @@ class DatabaseAdapterZoneEvents(DatabaseAdapterBase):
                                                                        time_lost=event.time_left),
                                'video_path_left': getattr(event, 'video_path_left', None)}
 
-        if event.box_left is not None and event.img_left is not None and hasattr(event.img_left, 'image'):
-            image_height, image_width, _ = event.img_left.image.shape
-            # Use list() instead of deepcopy for bounding box (list of numbers)
+        if event.box_left is not None:
+            img_left = getattr(event, 'img_left', None)
+            pixels = getattr(img_left, 'image', None) if img_left is not None else None
+            if pixels is not None:
+                image_height, image_width = int(pixels.shape[0]), int(pixels.shape[1])
+            else:
+                image_height, image_width = 1080, 1920
             fields_for_updating['box_left'] = list(fields_for_updating['box_left'])
             fields_for_updating['box_left'][0] /= image_width
             fields_for_updating['box_left'][1] /= image_height
@@ -201,9 +217,13 @@ class DatabaseAdapterZoneEvents(DatabaseAdapterBase):
         coords_rounded = [[round(p[0], 4), round(p[1], 4)] for p in coords]
         fields_for_saving['zone_coords'] = coords_rounded
 
-        image_height, image_width, _ = event.img_entered.image.shape
-        # Use list() instead of deepcopy for bounding box (list of numbers)
-        fields_for_saving['box_entered'] = list(fields_for_saving['box_entered'])
+        img_entered = getattr(event, 'img_entered', None)
+        pixels = getattr(img_entered, 'image', None) if img_entered is not None else None
+        if pixels is not None:
+            image_height, image_width = int(pixels.shape[0]), int(pixels.shape[1])
+        else:
+            image_height, image_width = 1080, 1920
+        fields_for_saving['box_entered'] = list(fields_for_saving['box_entered'] or [0, 0, 0, 0])
         fields_for_saving['box_entered'][0] /= image_width
         fields_for_saving['box_entered'][1] /= image_height
         fields_for_saving['box_entered'][2] /= image_width

@@ -131,6 +131,92 @@ class ConfigRunManager:
         except ValueError:
             return 60.0
 
+    def _wait_config_pipeline_stopped(self, config_name: str, *, timeout: float) -> None:
+        from evileye.site_runtime_guard import find_alive_pipelines_for_config
+
+        deadline = time.time() + max(0.0, timeout)
+        while time.time() < deadline:
+            if not find_alive_pipelines_for_config(site_root(), config_name):
+                return
+            time.sleep(0.2)
+
+    @staticmethod
+    def _config_name_matches(item: ConfigRunItem, safe_name: str) -> bool:
+        want = Path(safe_name).name
+        return item.config_path.name == want
+
+    def _find_stopped_run_for_config(self, safe_name: str) -> Optional[ConfigRunItem]:
+        with self._lock:
+            for item in self._items.values():
+                if not self._config_name_matches(item, safe_name):
+                    continue
+                if item.state in (
+                    ConfigRunState.STOPPED,
+                    ConfigRunState.ERROR,
+                    ConfigRunState.CREATED,
+                ):
+                    return item
+        return None
+
+    def _reconcile_after_stack_restart(
+        self,
+        *,
+        safe_name: str,
+        spawn_pid: int,
+        previous_rid: int | None = None,
+    ) -> Optional[int]:
+        """Sync in-memory ConfigRunManager items with a stack_control-spawned process."""
+        from evileye.api.core.runtime_registry import list_runtime_records
+
+        with self._lock:
+            if previous_rid is not None:
+                prev = self._items.get(previous_rid)
+                if prev is not None:
+                    prev.pid = None
+                    prev.state = ConfigRunState.STOPPED
+                    prev._proc = None
+                    prev.error = None
+
+        records = list_runtime_records(discover=True)
+        matched_rid: Optional[int] = None
+        matched_rec: Optional[dict] = None
+        for rec in records.values():
+            if not isinstance(rec, dict):
+                continue
+            if int(rec.get("pid") or 0) != int(spawn_pid):
+                continue
+            path = str(rec.get("config_path") or "")
+            if path and Path(path).name != Path(safe_name).name:
+                continue
+            matched_rid = int(rec["id"])
+            matched_rec = rec
+            break
+
+        if matched_rid is None or matched_rec is None:
+            return None
+
+        with self._lock:
+            item = self._items.get(matched_rid)
+            if item is None:
+                cfg_path = matched_rec.get("config_path")
+                if not cfg_path:
+                    return matched_rid
+                item = ConfigRunItem(
+                    matched_rid,
+                    matched_rec.get("name") or Path(cfg_path).stem,
+                    Path(cfg_path),
+                )
+                self._items[matched_rid] = item
+            item.pid = int(spawn_pid)
+            item.state = ConfigRunState.RUNNING
+            item.error = None
+            item.session_id = matched_rec.get("session_id")
+        return matched_rid
+
+    def _raise_if_start_failed(self, started: Dict, *, context: str) -> None:
+        if started.get("state") == ConfigRunState.ERROR:
+            raise RuntimeError(started.get("error") or context)
+
     def _terminate_process_tree(self, pid: int, *, grace_sec: float) -> bool:
         if not pid:
             return True
@@ -184,10 +270,19 @@ class ConfigRunManager:
 
         matching = find_matching_runtime(records, safe_name)
         if matching is None:
-            # No running process — just create and start a managed run.
-            rid = self.next_run_id()
-            self.create(rid, Path(safe_name).stem, config_name=safe_name)
-            started = self.start(rid, api_base_url=api_base_url)
+            # No running process — reuse a stopped run when possible, else create.
+            stopped = self._find_stopped_run_for_config(safe_name)
+            if stopped is not None:
+                rid = stopped.id
+            else:
+                rid = self.next_run_id()
+                self.create(rid, Path(safe_name).stem, config_name=safe_name)
+            started = self.start(
+                rid,
+                api_base_url=api_base_url,
+                singleton_policy="replace",
+            )
+            self._raise_if_start_failed(started, context="Pipeline failed to start")
             return {
                 "mode": "managed_start",
                 "scheduled": False,
@@ -236,17 +331,59 @@ class ConfigRunManager:
                 "restart_cmd": cmd,
             }
 
-        # External / managed run under standalone API: classic stop + recreate.
-        try:
-            self.stop(rid)
-        except KeyError:
-            pass
-        except RuntimeError as exc:
-            # Should not be self-hosted here, but surface clearly.
-            raise
+        # External run under standalone API.
+        site = site_root()
+        from evileye.stack_control import pipeline_restart, should_use_managed_launch
+
+        if should_use_managed_launch(site):
+            # Site runs API as a service and pipelines via stack_control; use the
+            # same stop→wait→start path as `evileye pipeline restart --no-hold`.
+            spawn = pipeline_restart(
+                safe_name,
+                site_dir=site,
+                hold=False,
+                api_base_url=api_base_url,
+            )
+            if not spawn.pid:
+                raise RuntimeError(
+                    f"Pipeline restart for {safe_name} did not return a running pid"
+                )
+            new_rid = self._reconcile_after_stack_restart(
+                safe_name=safe_name,
+                spawn_pid=int(spawn.pid),
+                previous_rid=rid,
+            )
+            self.logger.info(
+                "Managed-site restart via stack_control: config=%s pid=%s mode=%s rid=%s",
+                safe_name,
+                spawn.pid,
+                spawn.mode,
+                new_rid,
+            )
+            return {
+                "mode": "managed_restart",
+                "scheduled": False,
+                "config_name": safe_name,
+                "previous_rid": rid,
+                "pid": spawn.pid,
+                "rid": new_rid,
+                "spawn_mode": spawn.mode,
+                "managed": True,
+            }
+
+        # Direct-launch sites: stop + recreate via ConfigRunManager.
+        from evileye.stack_control import stop_pipelines
+
+        stop_pipelines(site_dir=site, config=safe_name, hold=False)
+        self._wait_config_pipeline_stopped(safe_name, timeout=self._stop_grace_sec())
         new_rid = self.next_run_id()
         self.create(new_rid, Path(safe_name).stem, config_name=safe_name)
-        started = self.start(new_rid, api_base_url=api_base_url)
+        started = self.start(
+            new_rid,
+            api_base_url=api_base_url,
+            singleton_policy="replace",
+        )
+        self._raise_if_start_failed(started, context="Pipeline failed to start after restart")
         return {
             "mode": "managed_restart",
             "scheduled": False,
@@ -278,6 +415,28 @@ class ConfigRunManager:
         }
 
     def _refresh_item_state_locked(self, item: ConfigRunItem) -> None:
+        # Adopt an externally started pipeline (watchdog / CLI) that reuses this rid.
+        try:
+            runtime = load_runtime_record(item.id, refresh_state=True)
+        except Exception:
+            runtime = None
+        if runtime and (
+            runtime.get("alive") or runtime.get("state") in {"running", "starting"}
+        ):
+            pid = runtime.get("pid")
+            if pid:
+                item.pid = int(pid)
+            item.state = (
+                ConfigRunState.STARTING
+                if runtime.get("state") == "starting"
+                else ConfigRunState.RUNNING
+            )
+            item.error = None
+            sid = runtime.get("session_id")
+            if sid:
+                item.session_id = sid
+            return
+
         pid = item.pid
         if not pid or item.state not in (
                 ConfigRunState.STARTING,
@@ -382,7 +541,13 @@ class ConfigRunManager:
             self.logger.info(f"ConfigRun '{rid}' deleted")
             return {"id": rid, "status": "deleted"}
 
-    def start(self, rid: int, *, api_base_url: str | None = None) -> Dict:
+    def start(
+        self,
+        rid: int,
+        *,
+        api_base_url: str | None = None,
+        singleton_policy: str = "fail",
+    ) -> Dict:
         with self._lock:
             item = self._items.get(rid)
             if item is None:
@@ -403,9 +568,10 @@ class ConfigRunManager:
         from evileye.site_runtime_guard import DuplicatePipelineError, ensure_pipeline_singleton, spawn_lock
 
         site = site_root()
+        policy = singleton_policy if singleton_policy in {"fail", "replace", "skip"} else "fail"
         try:
             with spawn_lock(site):
-                ensure_pipeline_singleton(str(item.config_path), site, policy="fail")
+                ensure_pipeline_singleton(str(item.config_path), site, policy=policy)
         except DuplicatePipelineError as exc:
             item.state = ConfigRunState.ERROR
             item.error = str(exc)

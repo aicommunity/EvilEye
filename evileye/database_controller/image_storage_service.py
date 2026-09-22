@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from typing import Optional, Tuple
 import os
+import time
 import cv2
 import numpy as np
 from ..core.logger import get_module_logger
@@ -12,6 +13,9 @@ from ..utils import utils
 
 class ImageStorageService:
     """Сервис для сохранения изображений в файловую систему."""
+
+    _none_warn_ts = 0.0
+    _none_warn_interval_sec = 60.0
 
     def __init__(self, image_dir: str, preview_width: int = 150, preview_height: int = 100, logger=None):
         """Инициализация сервиса сохранения изображений.
@@ -61,11 +65,13 @@ class ImageStorageService:
             Кортеж (preview_saved, frame_saved): True если сохранение успешно
         """
         if image is None:
-            self.logger.warning("Image is None in save_image; skipping image save")
+            self._warn_none_image("Image is None in save_image; skipping image save")
             return False, False
 
         if not hasattr(image, 'image') or image.image is None:
-            self.logger.warning("Image object has no image attribute or image.image is None; skipping image save")
+            self._warn_none_image(
+                "Image object has no image attribute or image.image is None; skipping image save"
+            )
             return False, False
 
         # Разрешаем относительные пути относительно базового каталога
@@ -111,6 +117,13 @@ class ImageStorageService:
             self.logger.error(f"ERROR: can't save image file {frame_save_dir}")
 
         return preview_saved, frame_saved
+
+    def _warn_none_image(self, message: str) -> None:
+        now = time.time()
+        if (now - ImageStorageService._none_warn_ts) < ImageStorageService._none_warn_interval_sec:
+            return
+        ImageStorageService._none_warn_ts = now
+        self.logger.warning(message)
 
     def save_image_simple(
             self,

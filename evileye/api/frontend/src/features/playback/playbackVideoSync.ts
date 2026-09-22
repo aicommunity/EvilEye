@@ -10,14 +10,25 @@ export const PAUSED_SEEK_THRESHOLD_SEC = 1 / 30;
 export const PLAYBACK_EOF_PAD_SEC = 0.05;
 /** After this, allow force-seek even while `video.seeking` (decoder hang recovery). */
 export const SEEKING_STUCK_MS = 1800;
+/**
+ * HAVE_METADATA (1) with no decoded frame is often still buffering a large Range —
+ * do not soft-reload / remount at the seeking-stuck cadence (that thrashes Cam1).
+ */
+export const LOW_READY_RELOAD_MS = 8000;
 /** Drop shared clock ownership if the owner cannot emit for this long. */
 export const CLOCK_OWNER_STALE_MS = 2500;
 /** Ignore stale video clock right after scrubbing clears (anti-rollback). */
 export const CLOCK_GRACE_MS = 400;
+/**
+ * While playing, only chase the shared playhead beyond this drift.
+ * A 1s chase on a slow Cam1 causes seek→rs dip→clock steal→more chase (low FPS + hint flicker).
+ */
+export const PLAY_CHASE_THRESHOLD_SEC = 3.5;
 
 let playbackClockOwner: string | null = null;
 let ownerBlockSince: number | null = null;
 const seekingSince = new WeakMap<HTMLVideoElement, number>();
+const lowReadySince = new WeakMap<HTMLVideoElement, number>();
 
 /** Injectable clock for unit tests. */
 let nowMs: () => number = () =>
@@ -50,6 +61,20 @@ export function seekingAgeMs(video: HTMLVideoElement): number {
   return nowMs() - started;
 }
 
+/** How long `readyState < 2` (HAVE_NOTHING/HAVE_METADATA) has lasted — onmatsko-class hang. */
+export function lowReadyStateAgeMs(video: HTMLVideoElement): number {
+  if (video.readyState >= 2) {
+    lowReadySince.delete(video);
+    return 0;
+  }
+  const started = lowReadySince.get(video);
+  if (started == null) {
+    lowReadySince.set(video, nowMs());
+    return 0;
+  }
+  return nowMs() - started;
+}
+
 function noteSeekingState(video: HTMLVideoElement): void {
   if (video.seeking) {
     if (!seekingSince.has(video)) seekingSince.set(video, nowMs());
@@ -67,9 +92,15 @@ function noteSeekingState(video: HTMLVideoElement): void {
 export function shouldEmitPlaybackClock(ownerId: string, video: HTMLVideoElement): boolean {
   noteSeekingState(video);
   if (video.readyState < 2) {
+    // Brief HAVE_METADATA dips are normal while Range-buffering; clearing the owner
+    // here lets another cam steal the clock and forces this tile into a seek storm.
     if (playbackClockOwner === ownerId) {
-      playbackClockOwner = null;
-      ownerBlockSince = null;
+      if (ownerBlockSince == null) ownerBlockSince = nowMs();
+      if (nowMs() - ownerBlockSince >= CLOCK_OWNER_STALE_MS) {
+        playbackClockOwner = null;
+        ownerBlockSince = null;
+        if (isPlaybackDebugEnabled()) playbackDebugSetMeta({ clockOwnerId: null });
+      }
     }
     return false;
   }
@@ -141,7 +172,7 @@ export function seekPlaybackVideo(
   }
   const paused = Boolean(opts?.scrubbing) || !opts?.playing;
   // While playing, tolerate larger drift so follower cameras do not thrash seeks.
-  const threshold = opts?.thresholdSec ?? (paused ? PAUSED_SEEK_THRESHOLD_SEC : 1.0);
+  const threshold = opts?.thresholdSec ?? (paused ? PAUSED_SEEK_THRESHOLD_SEC : PLAY_CHASE_THRESHOLD_SEC);
 
   const age = seekingAgeMs(video);
   const stuck = age >= SEEKING_STUCK_MS;

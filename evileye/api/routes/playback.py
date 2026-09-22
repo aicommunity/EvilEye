@@ -10,7 +10,7 @@ from copy import deepcopy
 from typing import Any, Callable, Optional
 
 from fastapi import APIRouter, HTTPException, Query, Request
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, JSONResponse
 
 from evileye.api.core import playback_service as svc
 from evileye.api.core import playback_metadata_service as metadata_svc
@@ -22,6 +22,7 @@ from evileye.api.core.camera_access import (
 )
 from evileye.api.core.playback_metadata_service import DEFAULT_MATCH_SEC
 from evileye.api.core.route_timeouts import playback_detections_timeout_sec, playback_route_timeout_sec
+from evileye.api.core.singleflight import singleflight
 
 logger = logging.getLogger("evileye.api.playback")
 
@@ -32,8 +33,15 @@ _memory_lock = threading.Lock()
 _memory_cache: dict[str, tuple[float | None, Any]] = {}
 _TIMELINE_HAPPY_TTL_SEC = 45.0
 _TIMELINE_SLOT_WAIT_SEC = 15.0
+_METADATA_HAPPY_TTL_SEC = 10.0
 # Keep light endpoints off the default pool so timeline rebuilds cannot starve /cameras.
 _light_pool = ThreadPoolExecutor(max_workers=4, thread_name_prefix="playback-light")
+# Metadata builds can be cold-heavy; keep them off the media/cameras light pool.
+_metadata_pool = ThreadPoolExecutor(max_workers=4, thread_name_prefix="playback-meta")
+# Timeline rebuilds must not share the default/asyncio pool with Range/FileResponse.
+_timeline_pool = ThreadPoolExecutor(max_workers=2, thread_name_prefix="playback-tl")
+# Media path resolve+stat isolated from cameras/timeline light work.
+_media_pool = ThreadPoolExecutor(max_workers=8, thread_name_prefix="playback-media")
 # Heavy journal scans — tiny pool + semaphore so wheel/seek storms cannot open unbounded work.
 _detections_pool = ThreadPoolExecutor(max_workers=2, thread_name_prefix="playback-det")
 _timeline_slots = asyncio.Semaphore(2)
@@ -91,6 +99,47 @@ def _recall(key: str, *, require_fresh: bool = False) -> Any | None:
         return deepcopy(cached)
 
 
+def memory_cache_stats() -> dict[str, int]:
+    """Observability: in-process playback memory cache size and freshness."""
+    now = time.time()
+    with _memory_lock:
+        keys = len(_memory_cache)
+        fresh = 0
+        expired = 0
+        sticky = 0
+        for expires_at, _ in _memory_cache.values():
+            if expires_at is None:
+                sticky += 1
+            elif expires_at > now:
+                fresh += 1
+            else:
+                expired += 1
+    return {
+        "keys": keys,
+        "fresh": fresh,
+        "expired": expired,
+        "sticky": sticky,
+    }
+
+
+def clear_memory_cache() -> int:
+    """Clear in-process playback memory cache (diagnostics / cold-server simulation)."""
+    with _memory_lock:
+        cleared = len(_memory_cache)
+        _memory_cache.clear()
+    return cleared
+
+
+def _json_with_cache(payload: Any, cache_status: str | None = None) -> JSONResponse:
+    headers: dict[str, str] = {}
+    status = cache_status
+    if isinstance(payload, dict) and payload.get("stale"):
+        status = "stale"
+    if status:
+        headers["X-Playback-Cache"] = status
+    return JSONResponse(content=payload, headers=headers)
+
+
 async def _to_thread_with_timeout_or_cached(
     value_fn: Callable[[], Any],
     cached_fn: Callable[[], Any | None],
@@ -112,7 +161,19 @@ async def _to_thread_with_timeout_or_cached(
             "playback route timeout detail=%s timeout_sec=%s executor=%s %s",
             err_detail,
             timeout,
-            "light" if executor is _light_pool else ("detections" if executor is _detections_pool else "default"),
+            (
+                "light"
+                if executor is _light_pool
+                else "metadata"
+                if executor is _metadata_pool
+                else "timeline"
+                if executor is _timeline_pool
+                else "media"
+                if executor is _media_pool
+                else "detections"
+                if executor is _detections_pool
+                else "default"
+            ),
             " ".join(f"{k}={v}" for k, v in (log_ctx or {}).items()),
         )
         if on_timeout is not None:
@@ -215,16 +276,23 @@ async def playback_cameras(
             return svc.list_logical_cameras(run_id, date)
         return svc.discover_cameras(date)
 
+    cached_fresh = _recall(cache_key, require_fresh=True)
+    if cached_fresh is not None:
+        access = resolve_camera_access(request)
+        filtered = filter_by_source_name(cached_fresh or [], access, key="id", use_visible=True)
+        return _json_with_cache({"items": filtered}, "hit")
+
     items = await _to_thread_with_timeout_or_cached(
         _load,
         lambda: _recall(cache_key),
         err_detail="playback_cameras timeout",
         executor=_light_pool,
     )
+    cache_status = "miss" if items is not None else "stale"
     _remember(cache_key, items)
     access = resolve_camera_access(request)
     filtered = filter_by_source_name(items or [], access, key="id", use_visible=True)
-    return {"items": filtered}
+    return _json_with_cache({"items": filtered}, cache_status)
 
 
 @router.get("/segments")
@@ -235,6 +303,7 @@ async def playback_segments(
     from_ts: Optional[float] = Query(None, alias="from"),
     to_ts: Optional[float] = Query(None, alias="to"),
     date: Optional[str] = None,
+    run_id: Optional[int] = Query(None),
 ) -> dict:
     access = resolve_camera_access(request)
     if cameras:
@@ -242,7 +311,7 @@ async def playback_segments(
         mem_key = f"playback:segments:{date}:{from_ts}:{to_ts}:{','.join(cam_list)}"
 
         def _load():
-            return svc.load_segments_batch(cam_list, from_ts, to_ts, date)
+            return svc.load_segments_batch(cam_list, from_ts, to_ts, date, run_id=run_id)
 
         def _cached():
             mem = _recall(mem_key)
@@ -252,15 +321,23 @@ async def playback_segments(
 
         def _on_timeout():
             if date:
-                from evileye.api.core.playback_timeline_index import schedule_segment_index_refresh
+                from evileye.api.core.playback_timeline_index import (
+                    schedule_detection_ticks_refresh,
+                    schedule_event_intervals_refresh,
+                    schedule_segment_index_refresh,
+                )
 
                 schedule_segment_index_refresh(date, cam_list)
+                schedule_detection_ticks_refresh(date, cam_list, run_id=run_id)
+                schedule_event_intervals_refresh(date, cam_list)
 
         by_camera = await _to_thread_with_timeout_or_cached(
             _load,
             _cached,
             err_detail="playback_segments timeout",
             on_timeout=_on_timeout,
+            executor=_light_pool,
+            log_ctx={"route": "segments", "n_cameras": len(cam_list), "date": date},
         )
         _remember(mem_key, by_camera)
         return {"by_camera": by_camera, "items": [item for items in by_camera.values() for item in items]}
@@ -270,7 +347,7 @@ async def playback_segments(
     mem_key = f"playback:segments:{date}:{from_ts}:{to_ts}:{camera}"
 
     def _load_one():
-        return svc.load_segments(camera, from_ts, to_ts, date)
+        return svc.load_segments(camera, from_ts, to_ts, date, run_id=run_id)
 
     def _cached_one():
         mem = _recall(mem_key)
@@ -283,15 +360,23 @@ async def playback_segments(
 
     def _on_timeout_one():
         if date:
-            from evileye.api.core.playback_timeline_index import schedule_segment_index_refresh
+            from evileye.api.core.playback_timeline_index import (
+                schedule_detection_ticks_refresh,
+                schedule_event_intervals_refresh,
+                schedule_segment_index_refresh,
+            )
 
             schedule_segment_index_refresh(date, [camera])
+            schedule_detection_ticks_refresh(date, [camera], run_id=run_id)
+            schedule_event_intervals_refresh(date, [camera])
 
     items = await _to_thread_with_timeout_or_cached(
         _load_one,
         _cached_one,
         err_detail="playback_segments timeout",
         on_timeout=_on_timeout_one,
+        executor=_light_pool,
+        log_ctx={"route": "segments", "n_cameras": 1, "date": date},
     )
     _remember(mem_key, items)
     return {"items": items}
@@ -305,6 +390,7 @@ async def playback_timeline(
     run_id: Optional[int] = Query(None),
     from_ts: Optional[float] = Query(None, alias="from"),
     to_ts: Optional[float] = Query(None, alias="to"),
+    segments_only: bool = Query(False, description="Return segments only (skip detection/event scans)"),
 ) -> dict:
     """Compact day timeline: segments + detection ticks + event intervals in one round-trip."""
     from evileye.api.core.playback_timeline_index import (
@@ -312,19 +398,29 @@ async def playback_timeline(
         schedule_event_intervals_refresh,
         schedule_segment_index_refresh,
         build_timeline,
+        build_timeline_segments_only,
     )
 
     access = resolve_camera_access(request)
     cam_list = _require_cameras(access, [c.strip() for c in cameras.split(",") if c.strip()], single=False)
     if not cam_list:
         raise HTTPException(status_code=400, detail="cameras query required")
-    mem_key = f"playback:timeline:{date}:{run_id}:{from_ts}:{to_ts}:{','.join(cam_list)}"
+    mode = "segments" if segments_only else "full"
+    mem_key = f"playback:timeline:{mode}:{date}:{run_id}:{from_ts}:{to_ts}:{','.join(cam_list)}"
 
     fresh = _recall(mem_key, require_fresh=True)
     if fresh is not None:
-        return fresh
+        return _json_with_cache(fresh, "hit")
 
     def _load():
+        if segments_only:
+            return build_timeline_segments_only(
+                date_folder=date,
+                cameras=cam_list,
+                run_id=run_id,
+                from_ts=from_ts,
+                to_ts=to_ts,
+            )
         return build_timeline(
             date_folder=date,
             cameras=cam_list,
@@ -351,7 +447,7 @@ async def playback_timeline(
         cached = _cached()
         if cached is not None:
             _on_timeout()
-            return cached
+            return _json_with_cache(cached, "stale")
         try:
             await asyncio.wait_for(_timeline_slots.acquire(), timeout=_TIMELINE_SLOT_WAIT_SEC)
         except asyncio.TimeoutError:
@@ -363,7 +459,7 @@ async def playback_timeline(
             stale = _cached()
             if stale is not None:
                 _on_timeout()
-                return stale
+                return _json_with_cache(stale, "stale")
             raise HTTPException(status_code=503, detail="playback_timeline slot busy")
     try:
         payload = await _to_thread_with_timeout_or_cached(
@@ -371,12 +467,14 @@ async def playback_timeline(
             _cached,
             err_detail="playback_timeline timeout",
             on_timeout=_on_timeout,
+            executor=_timeline_pool,
             log_ctx={"date": date, "n_cameras": len(cam_list), "route": "timeline"},
         )
     finally:
         _timeline_slots.release()
+    cache_status = "stale" if isinstance(payload, dict) and payload.get("stale") else "miss"
     _remember(mem_key, payload, ttl_sec=_TIMELINE_HAPPY_TTL_SEC)
-    return payload
+    return _json_with_cache(payload, cache_status)
 
 
 @router.get("/events")
@@ -395,16 +493,32 @@ async def playback_events(
         _require_cameras(access, [camera], single=True)
     if cam_list:
         cam_list = _require_cameras(access, cam_list, single=False)
+    effective_cams = cam_list or ([camera] if camera else None)
 
     def _load():
-        intervals = svc.load_event_intervals(
-            from_ts,
-            to_ts,
-            camera,
-            cam_list or None,
-            date=date,
-            limit=limit,
+        from evileye.api.core.playback_timeline_index import (
+            ensure_event_intervals,
+            filter_event_intervals_window,
         )
+
+        if date:
+            items = ensure_event_intervals(
+                date_folder=date,
+                cameras=effective_cams,
+                limit=limit,
+            )
+            items = filter_event_intervals_window(items, from_ts, to_ts)
+            if len(items) > limit:
+                items = items[:limit]
+        else:
+            items = svc.load_event_intervals(
+                from_ts,
+                to_ts,
+                camera,
+                cam_list or None,
+                date=date,
+                limit=limit,
+            )
         legacy_markers = svc.load_event_markers(
             from_ts,
             to_ts,
@@ -413,12 +527,37 @@ async def playback_events(
             date=date,
             limit=limit,
         )
-        return {"items": intervals, "legacy_markers": legacy_markers}
+        return {"items": items, "legacy_markers": legacy_markers}
+
+    def _cached():
+        from evileye.api.core.playback_timeline_index import (
+            filter_event_intervals_window,
+            read_event_intervals_stale,
+            schedule_event_intervals_refresh,
+        )
+
+        if not date:
+            return None
+        stale = read_event_intervals_stale(date, effective_cams)
+        if stale is None:
+            return None
+        schedule_event_intervals_refresh(date, effective_cams, limit=limit)
+        items = filter_event_intervals_window(stale, from_ts, to_ts)
+        if len(items) > limit:
+            items = items[:limit]
+        return {"items": items, "legacy_markers": []}
+
+    def _on_timeout():
+        if date:
+            from evileye.api.core.playback_timeline_index import schedule_event_intervals_refresh
+
+            schedule_event_intervals_refresh(date, effective_cams, limit=limit)
 
     return await _to_thread_with_timeout_or_cached(
         _load,
-        lambda: None,
+        _cached,
         err_detail="playback_events timeout",
+        on_timeout=_on_timeout,
         log_ctx={
             "date": date,
             "n_cameras": len(cam_list) if cam_list else (1 if camera else 0),
@@ -440,13 +579,21 @@ async def playback_metadata(
     static_only: bool = Query(False, description="Return config-only layers (zones, ROI)"),
     frame_w: Optional[int] = Query(None, ge=1, description="Actual video frame width from client"),
     frame_h: Optional[int] = Query(None, ge=1, description="Actual video frame height from client"),
-) -> dict:
+) -> JSONResponse:
     access = resolve_camera_access(request)
     effective_ts = float(ts if ts is not None else 0.0)
     if not static_only and ts is None:
         raise HTTPException(status_code=400, detail="ts query required unless static_only=true")
     if cameras:
         cam_list = _require_cameras(access, [c.strip() for c in cameras.split(",") if c.strip()], single=False)
+        cams_key = ",".join(cam_list)
+        mem_key = (
+            f"playback:metadata:{int(static_only)}:{date}:{run_id}:{window}:"
+            f"{frame_w}x{frame_h}:{int(effective_ts)}:{cams_key}"
+        )
+        fresh = _recall(mem_key, require_fresh=True)
+        if fresh is not None:
+            return _json_with_cache(fresh, "hit")
 
         def _batch():
             return {
@@ -462,15 +609,28 @@ async def playback_metadata(
                 )
             }
 
-        return await _to_thread_with_timeout_or_cached(
-            _batch,
-            lambda: None,
+        def _load():
+            return singleflight(mem_key, _batch)
+
+        payload = await _to_thread_with_timeout_or_cached(
+            _load,
+            lambda: _recall(mem_key),
             err_detail="playback_metadata timeout",
+            executor=_metadata_pool,
             log_ctx={"date": date, "n_cameras": len(cam_list), "route": "metadata"},
         )
+        _remember(mem_key, payload, ttl_sec=_METADATA_HAPPY_TTL_SEC)
+        return _json_with_cache(payload, "miss")
     if not camera:
         raise HTTPException(status_code=400, detail="camera or cameras query required")
     _require_cameras(access, [camera], single=True)
+    mem_key = (
+        f"playback:metadata:{int(static_only)}:{date}:{run_id}:{window}:"
+        f"{frame_w}x{frame_h}:{int(effective_ts)}:{camera}:{source_id}"
+    )
+    fresh = _recall(mem_key, require_fresh=True)
+    if fresh is not None:
+        return _json_with_cache(fresh, "hit")
 
     def _one():
         if static_only:
@@ -494,12 +654,18 @@ async def playback_metadata(
             )
         return {"metadata": payload}
 
-    return await _to_thread_with_timeout_or_cached(
-        _one,
-        lambda: None,
+    def _load_one():
+        return singleflight(mem_key, _one)
+
+    payload = await _to_thread_with_timeout_or_cached(
+        _load_one,
+        lambda: _recall(mem_key),
         err_detail="playback_metadata timeout",
+        executor=_metadata_pool,
         log_ctx={"date": date, "n_cameras": 1, "route": "metadata"},
     )
+    _remember(mem_key, payload, ttl_sec=_METADATA_HAPPY_TTL_SEC)
+    return _json_with_cache(payload, "miss")
 
 
 def _slice_detections_payload(
@@ -508,12 +674,17 @@ def _slice_detections_payload(
     from_ts: float | None,
     to_ts: float | None,
     ticks_only: bool,
+    cameras: list[str] | None = None,
 ) -> dict[str, Any]:
-    """Filter a day-wide detections payload to the caller's time window."""
+    """Filter a day-wide detections payload to the caller's time window and cameras."""
+    cam_filter = {str(c) for c in cameras} if cameras else None
     if "by_camera" in payload:
         by_camera: dict[str, list] = {}
         for cam, items in (payload.get("by_camera") or {}).items():
-            by_camera[str(cam)] = metadata_svc._filter_index_window(
+            cam_key = str(cam)
+            if cam_filter is not None and cam_key not in cam_filter:
+                continue
+            by_camera[cam_key] = metadata_svc._filter_index_window(
                 list(items or []),
                 from_ts,
                 to_ts,
@@ -529,6 +700,13 @@ def _slice_detections_payload(
         to_ts,
         ticks_only=ticks_only,
     )
+    if cam_filter is not None:
+        items = [
+            it
+            for it in items
+            if str((it or {}).get("camera") or (it or {}).get("source_name") or "") in cam_filter
+            or not ((it or {}).get("camera") or (it or {}).get("source_name"))
+        ]
     return {"items": items}
 
 
@@ -548,17 +726,27 @@ async def _coalesced_detections_load(
     from_ts: float | None,
     to_ts: float | None,
     ticks_only: bool,
+    cameras: list[str] | None = None,
     log_ctx: dict[str, Any] | None = None,
 ) -> Any:
-    """One journal scan per day/cameras/mode; waiters share the same Future.
+    """One journal scan per day/mode; waiters share the same Future.
 
-    Time windows are applied after the scan so wheel/seek remounts coalesce
-    instead of starting orphan workers. After asyncio wait timeout the executor
+    Time windows and ACL camera lists are applied after the scan so admin warm
+    hits serve restricted users. After asyncio wait timeout the executor
     thread may still finish and populate the memory cache via done-callback.
     """
+    def _slice(payload: dict[str, Any]) -> dict[str, Any]:
+        return _slice_detections_payload(
+            payload,
+            from_ts=from_ts,
+            to_ts=to_ts,
+            ticks_only=ticks_only,
+            cameras=cameras,
+        )
+
     fresh = _recall(scan_key, require_fresh=True)
     if fresh is not None:
-        return _slice_detections_payload(fresh, from_ts=from_ts, to_ts=to_ts, ticks_only=ticks_only)
+        return _slice(fresh)
 
     loop = asyncio.get_running_loop()
     owned = False
@@ -578,11 +766,11 @@ async def _coalesced_detections_load(
         timeout = playback_detections_timeout_sec()
         try:
             payload = await asyncio.wait_for(asyncio.shield(shared), timeout=timeout)
-            return _slice_detections_payload(payload, from_ts=from_ts, to_ts=to_ts, ticks_only=ticks_only)
+            return _slice(payload)
         except asyncio.TimeoutError:
             cached = _recall(scan_key)
             if cached is not None:
-                return _slice_detections_payload(cached, from_ts=from_ts, to_ts=to_ts, ticks_only=ticks_only)
+                return _slice(cached)
             raise HTTPException(status_code=503, detail="playback_detections timeout")
         except asyncio.CancelledError:
             raise
@@ -591,7 +779,7 @@ async def _coalesced_detections_load(
                 raise
             cached = _recall(scan_key)
             if cached is not None:
-                return _slice_detections_payload(cached, from_ts=from_ts, to_ts=to_ts, ticks_only=ticks_only)
+                return _slice(cached)
             raise HTTPException(status_code=503, detail="playback_detections timeout") from exc
 
     acquired = False
@@ -621,7 +809,7 @@ async def _coalesced_detections_load(
                 shared.set_result(fresh)
             _detections_slots.release()
             acquired = False
-            return _slice_detections_payload(fresh, from_ts=from_ts, to_ts=to_ts, ticks_only=ticks_only)
+            return _slice(fresh)
 
         with _detections_inflight_count_lock:
             _detections_inflight_count += 1
@@ -665,7 +853,7 @@ async def _coalesced_detections_load(
         timeout = playback_detections_timeout_sec()
         try:
             payload = await asyncio.wait_for(asyncio.shield(shared), timeout=timeout)
-            return _slice_detections_payload(payload, from_ts=from_ts, to_ts=to_ts, ticks_only=ticks_only)
+            return _slice(payload)
         except asyncio.TimeoutError:
             logger.warning(
                 "playback route timeout detail=playback_detections timeout timeout_sec=%s executor=detections %s",
@@ -674,7 +862,7 @@ async def _coalesced_detections_load(
             )
             cached = _recall(scan_key)
             if cached is not None:
-                return _slice_detections_payload(cached, from_ts=from_ts, to_ts=to_ts, ticks_only=ticks_only)
+                return _slice(cached)
             raise HTTPException(status_code=503, detail="playback_detections timeout")
     finally:
         async with _detections_inflight_lock:
@@ -722,19 +910,35 @@ async def playback_detections(
 
             date = dt.now().strftime("%Y-%m-%d")
 
-    # Quantize was previously part of the mem key and caused orphan scans per wheel tick.
-    # Coalesce on day+cameras+mode; filter the caller's window after the shared scan.
+    # Day-wide memory key (no ACL cam_list) so admin warm serves restricted users.
+    # Caller camera list is applied when slicing the cached payload.
+
+    mode = "ticks" if ticks_only else "full"
+    scan_key = f"playback:detections:scan:{date}:{run_id}:{mode}"
+
+    def _warm_cameras() -> list[str]:
+        try:
+            rows = svc.list_logical_cameras(run_id, date)
+            ids = [str(r.get("id") or "") for r in rows if r.get("id") and "-" not in str(r.get("id"))]
+            if ids:
+                return ids
+        except Exception:
+            pass
+        try:
+            rows = svc.discover_cameras(date)
+            return [str(r.get("id") or "") for r in rows if r.get("id") and "-" not in str(r.get("id"))]
+        except Exception:
+            return []
 
     if cameras:
         cam_list = _require_cameras(access, [c.strip() for c in cameras.split(",") if c.strip()], single=False)
-        scan_key = (
-            f"playback:detections:scan:{date}:{run_id}:"
-            f"{'ticks' if ticks_only else 'full'}:{','.join(cam_list)}"
-        )
 
         def _batch():
+            warm = _warm_cameras() or list(cam_list)
+            # Union so requested cams are always included even if discover lagged.
+            warm_set = list(dict.fromkeys([*warm, *cam_list]))
             by_camera = metadata_svc.load_detection_index_batch(
-                cameras=cam_list,
+                cameras=warm_set,
                 date_folder=date,
                 run_id=run_id,
                 from_ts=None,
@@ -743,41 +947,56 @@ async def playback_detections(
             )
             return {"by_camera": by_camera, "items": [item for items in by_camera.values() for item in items]}
 
-        return await _coalesced_detections_load(
+        fresh = _recall(scan_key, require_fresh=True)
+        if fresh is not None:
+            sliced = _slice_detections_payload(
+                fresh, from_ts=from_ts, to_ts=to_ts, ticks_only=False, cameras=cam_list
+            )
+            return _json_with_cache(sliced, "hit")
+        result = await _coalesced_detections_load(
             scan_key,
             _batch,
             from_ts=from_ts,
             to_ts=to_ts,
             ticks_only=False,  # scan already applied ticks_only mode
+            cameras=cam_list,
             log_ctx={"date": date, "n_cameras": len(cam_list), "route": "detections"},
         )
+        return _json_with_cache(result, "miss")
     if not camera:
         raise HTTPException(status_code=400, detail="camera or cameras query required")
     _require_cameras(access, [camera], single=True)
-    scan_key = (
-        f"playback:detections:scan:{date}:{run_id}:"
-        f"{'ticks' if ticks_only else 'full'}:{camera}"
-    )
+    cam_list = [camera]
 
     def _one():
-        items = metadata_svc.load_detection_index(
-            camera=camera,
+        warm = _warm_cameras() or cam_list
+        warm_set = list(dict.fromkeys([*warm, *cam_list]))
+        by_camera = metadata_svc.load_detection_index_batch(
+            cameras=warm_set,
             date_folder=date,
             run_id=run_id,
             from_ts=None,
             to_ts=None,
             ticks_only=ticks_only,
         )
-        return {"items": items}
+        return {"by_camera": by_camera, "items": [item for items in by_camera.values() for item in items]}
 
-    return await _coalesced_detections_load(
+    fresh = _recall(scan_key, require_fresh=True)
+    if fresh is not None:
+        sliced = _slice_detections_payload(
+            fresh, from_ts=from_ts, to_ts=to_ts, ticks_only=ticks_only, cameras=cam_list
+        )
+        return _json_with_cache(sliced, "hit")
+    result = await _coalesced_detections_load(
         scan_key,
         _one,
         from_ts=from_ts,
         to_ts=to_ts,
-        ticks_only=False,  # scan already applied ticks_only mode
+        ticks_only=ticks_only,
+        cameras=cam_list,
         log_ctx={"date": date, "n_cameras": 1, "route": "detections"},
     )
+    return _json_with_cache(result, "miss")
 
 
 @router.get("/media")
@@ -809,11 +1028,33 @@ async def playback_media(request: Request, path: str = Query(...)):
             assert_name_allowed(access, cam_name)
 
     global _media_inflight, _media_inflight_last_warn_at
-    with _media_inflight_lock:
-        _media_inflight += 1
-        inflight_now = _media_inflight
     warn_at = _media_inflight_warn_at()
-    if inflight_now >= warn_at:
+    with _media_inflight_lock:
+        # Soft shed above warn_at so Range storms cannot unbounded-grow inflight.
+        if _media_inflight >= warn_at:
+            inflight_now = _media_inflight
+            shed = True
+        else:
+            _media_inflight += 1
+            inflight_now = _media_inflight
+            shed = False
+    if shed:
+        now = time.time()
+        with _media_inflight_warn_lock:
+            if now - _media_inflight_last_warn_at >= 5.0:
+                _media_inflight_last_warn_at = now
+                logger.warning(
+                    "playback media shed inflight=%s warn_at=%s path=%s",
+                    inflight_now,
+                    warn_at,
+                    path,
+                )
+        raise HTTPException(
+            status_code=503,
+            detail="playback_media busy",
+            headers={"Retry-After": "1"},
+        )
+    if inflight_now >= max(1, warn_at - 8):
         now = time.time()
         with _media_inflight_warn_lock:
             if now - _media_inflight_last_warn_at >= 5.0:
@@ -826,6 +1067,11 @@ async def playback_media(request: Request, path: str = Query(...)):
                 )
     released = False
     release_lock = threading.Lock()
+    # Slot covers resolve+stat only. Holding through the whole FileResponse body
+    # saturated warn_at=96 under normal multi-cam Range traffic and caused
+    # permanent 503 black tiles. CancelledError during await must still release
+    # (BaseException on 3.9+).
+    handed_off = False
 
     def _release_media_inflight() -> None:
         nonlocal released
@@ -839,25 +1085,46 @@ async def playback_media(request: Request, path: str = Query(...)):
 
     try:
         try:
-            resolved = await asyncio.to_thread(svc.resolve_media_path, path)
+            loop = asyncio.get_running_loop()
+
+            def _resolve_and_stat():
+                resolved = svc.resolve_media_path(path)
+                if not resolved.is_file():
+                    return None
+                return resolved, resolved.stat()
+
+            pair = await loop.run_in_executor(_media_pool, _resolve_and_stat)
         except PermissionError as exc:
             raise HTTPException(status_code=403, detail=str(exc)) from exc
-        if not resolved.exists() or not resolved.is_file():
+        if pair is None:
             raise HTTPException(status_code=404, detail="Media not found")
+        resolved, st = pair
         media_type = mimetypes.guess_type(str(resolved))[0] or "application/octet-stream"
-
-        class _TrackedFileResponse(FileResponse):
-            async def __call__(self, scope, receive, send):  # type: ignore[no-untyped-def]
-                try:
-                    await super().__call__(scope, receive, send)
-                finally:
-                    _release_media_inflight()
-
-        return _TrackedFileResponse(
+        # Drop the slot before returning the body stream.
+        _release_media_inflight()
+        handed_off = True
+        return FileResponse(
             str(resolved),
             media_type=media_type,
+            stat_result=st,
             headers={"Accept-Ranges": "bytes", "Cache-Control": "public, max-age=3600"},
         )
-    except Exception:
-        _release_media_inflight()
+    except BaseException:
+        if not handed_off:
+            _release_media_inflight()
         raise
+
+
+@router.post("/_debug/clear-memory-cache")
+async def playback_debug_clear_memory_cache(request: Request) -> dict:
+    """Opt-in: simulate cold server memory cache (requires EVILEYE_PLAYBACK_DEBUG=1 + admin)."""
+    import os
+
+    flag = os.getenv("EVILEYE_PLAYBACK_DEBUG", "").strip().lower()
+    if flag not in ("1", "true", "yes", "on"):
+        raise HTTPException(status_code=404, detail="Not found")
+    from evileye.api.security import require_permission
+
+    require_permission(request, "system:admin")
+    cleared = clear_memory_cache()
+    return {"cleared": cleared, "stats": memory_cache_stats()}

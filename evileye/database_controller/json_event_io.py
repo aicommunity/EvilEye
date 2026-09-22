@@ -22,5 +22,9 @@ def append_json_record(file_path: str, record: dict) -> None:
     os.makedirs(os.path.dirname(file_path), exist_ok=True)
     records = load_json_records(file_path)
     records.append(record)
-    with open(file_path, "w", encoding="utf-8") as f:
+    tmp_path = f"{file_path}.tmp"
+    with open(tmp_path, "w", encoding="utf-8") as f:
         json.dump(records, f, ensure_ascii=False, indent=2)
+        f.flush()
+        os.fsync(f.fileno())
+    os.replace(tmp_path, file_path)

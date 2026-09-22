@@ -226,3 +226,37 @@ def test_build_timeline_singleflight(monkeypatch):
         outs = list(pool.map(lambda _: call(), range(3)))
     assert builds["n"] == 1
     assert all(o["by_camera"]["Cam1"]["detection_ticks"][0]["ts"] == 1.5 for o in outs)
+    # Tick inside short segment — no long stall after last tick.
+    assert outs[0]["by_camera"]["Cam1"]["bands"] == []
+
+
+def test_inference_gap_bands_skips_empty_and_short_quiet():
+    """No ticks / brief quiet between ticks is normal — do not paint red."""
+    segs = [{"start_ts": 100.0, "end_ts": 500.0}]
+    assert idx.inference_gap_bands(segs, []) == []
+    ticks = [{"ts": 120.0}, {"ts": 200.0}]  # 80s quiet mid-block, then more video < stall
+    assert idx.inference_gap_bands(segs, ticks, stall_after_last_tick_sec=600.0) == []
+
+
+def test_inference_gap_bands_marks_stall_after_last_tick():
+    segs = [{"start_ts": 0.0, "end_ts": 20_000.0}]
+    ticks = [{"ts": 100.0}, {"ts": 500.0}]
+    bands = idx.inference_gap_bands(segs, ticks, stall_after_last_tick_sec=3 * 3600.0)
+    assert bands == [{"from": 500.0, "to": 20_000.0, "kind": "inference_gap"}]
+
+
+def test_inference_gap_bands_ignores_sub_threshold_terminal_quiet():
+    segs = [{"start_ts": 0.0, "end_ts": 5_000.0}]
+    ticks = [{"ts": 100.0}, {"ts": 4_000.0}]  # ~16 min of video after last tick
+    assert idx.inference_gap_bands(segs, ticks, stall_after_last_tick_sec=3 * 3600.0) == []
+
+
+def test_filter_event_intervals_window():
+    rows = [
+        {"start_ts": 10.0, "end_ts": 20.0, "camera": "Cam1"},
+        {"start_ts": 30.0, "end_ts": 40.0, "camera": "Cam1"},
+        {"ts": 50.0, "camera": "Cam2"},
+    ]
+    assert len(idx.filter_event_intervals_window(rows, 15, 35)) == 2
+    assert len(idx.filter_event_intervals_window(rows, 45, 55)) == 1
+    assert len(idx.filter_event_intervals_window(rows, 21, 29)) == 0

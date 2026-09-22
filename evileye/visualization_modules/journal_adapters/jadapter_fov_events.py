@@ -23,19 +23,19 @@ class JournalAdapterFieldOfViewEvents(JournalAdapterBase):
         pass
 
     def select_query(self) -> str:
-        # Return columns compatible with EventsJournal:
-        # time_stamp, type, information, source_name, time_lost, preview_path, lost_preview_path, object_id, zone_id, event_id
-        # Get source_name from objects table using LEFT JOIN (much faster than correlated subquery per row)
-        query = ('SELECT fe.time_stamp, '
-                 'CAST(\'FOVEvent\' AS text) AS type, '
-                 '(\'Intrusion detected on source \' || fe.source_id) AS information, '
-                 'COALESCE(o.source_name, CAST(fe.source_id AS text)) AS source_name, '
-                 'fe.time_lost, '
-                 'fe.preview_path, fe.lost_preview_path, '
-                 'fe.video_path, fe.video_path_lost, '
-                 'fe.object_id::integer AS object_id, NULL::integer AS zone_id, '
-                 'fe.event_id::integer AS event_id, '
-                 'fe.source_id::integer AS source_id '
-                 'FROM fov_events fe '
-                 'LEFT JOIN (SELECT source_id, MAX(source_name) AS source_name FROM objects GROUP BY source_id) o ON o.source_id = fe.source_id')
-        return query
+        table = self.table_name or "schedule_alarm_events"
+        return (
+            f'SELECT fe.time_stamp, '
+            f"CAST('ScheduleAlarmEvent' AS text) AS type, "
+            f"('Schedule alarm on source ' || fe.source_id) AS information, "
+            f'COALESCE(o.source_name, CAST(fe.source_id AS text)) AS source_name, '
+            f'fe.time_lost, '
+            f'fe.preview_path, fe.lost_preview_path, '
+            f'fe.video_path, fe.video_path_lost, '
+            f'fe.object_id::integer AS object_id, NULL::integer AS zone_id, '
+            f'fe.event_id::integer AS event_id, '
+            f'fe.source_id::integer AS source_id '
+            f'FROM {table} fe '
+            f'LEFT JOIN (SELECT source_id, MAX(source_name) AS source_name FROM objects GROUP BY source_id) o '
+            f'ON o.source_id = fe.source_id'
+        )

@@ -8,7 +8,6 @@ const WARM_MS = 5000;
 const POLL_MS = 450;
 const KEEPALIVE_MS = 12000;
 const ERROR_BACKOFF_MS = [1000, 2000, 4000, 8000];
-const MAX_IMG_ERRORS = 4;
 
 export function shouldAttachMjpeg(
   status: { has_frame?: boolean; web_stream_available?: boolean } | null,
@@ -79,15 +78,11 @@ export function useMjpegStream(opts: {
 
   const onImgError = useCallback(() => {
     imgErrorCount.current += 1;
-    if (imgErrorCount.current > MAX_IMG_ERRORS) {
-      setPhase('error');
-      setError('streamError');
-      setSrc('');
-      return;
-    }
     const delay = ERROR_BACKOFF_MS[Math.min(imgErrorCount.current - 1, ERROR_BACKOFF_MS.length - 1)];
+    // Keep retrying forever with capped backoff — sticky hard-stop left tiles dead after 503 shed.
     setPhase('warming');
     setSrc('');
+    setError(null);
     clearRetryTimer();
     retryTimer.current = window.setTimeout(() => {
       setAttempt((a) => a + 1);
@@ -107,9 +102,11 @@ export function useMjpegStream(opts: {
     let attached = false;
     let pollId = 0;
     const startedAt = Date.now();
+    // Serialize source switches: clear previous MJPEG URL before attaching a new one.
     setPhase('warming');
     setSrc('');
     setError(null);
+    imgErrorCount.current = 0;
 
     const attach = (bust: number) => {
       if (cancelled || attached) return;
