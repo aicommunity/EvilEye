@@ -20,7 +20,11 @@ from evileye.api.core.camera_access import (
     intersect_camera_query,
     resolve_camera_access,
 )
-from evileye.api.core.media_access import assert_media_path_allowed, cameras_from_media_path
+from evileye.api.core.media_access import (
+    assert_media_path_allowed,
+    cameras_from_media_path,
+    resolve_authorized_media,
+)
 from evileye.api.core.playback_cache import (
     clear_memory_cache,
     memory_cache_stats as _cache_stats_base,
@@ -998,7 +1002,6 @@ async def playback_detections(
 @router.get("/media")
 async def playback_media(request: Request, path: str = Query(...)):
     access = resolve_camera_access(request)
-    _assert_media_cameras_allowed(access, path)
 
     global _media_inflight, _media_inflight_last_warn_at
     warn_at = _media_inflight_warn_at()
@@ -1060,13 +1063,16 @@ async def playback_media(request: Request, path: str = Query(...)):
         try:
             loop = asyncio.get_running_loop()
 
-            def _resolve_and_stat():
-                resolved = svc.resolve_media_path(path)
-                if not resolved.is_file():
+            def _resolve_authorize_and_stat():
+                # ACL after canonicalize (R01): never trust raw path owners.
+                media = resolve_authorized_media(access, path, data_root=svc.data_dir())
+                if not media.path.is_file():
                     return None
-                return resolved, resolved.stat()
+                return media.path, media.path.stat()
 
-            pair = await loop.run_in_executor(_media_pool, _resolve_and_stat)
+            pair = await loop.run_in_executor(_media_pool, _resolve_authorize_and_stat)
+        except HTTPException:
+            raise
         except PermissionError as exc:
             raise HTTPException(status_code=403, detail=str(exc)) from exc
         if pair is None:
@@ -1080,7 +1086,10 @@ async def playback_media(request: Request, path: str = Query(...)):
             str(resolved),
             media_type=media_type,
             stat_result=st,
-            headers={"Accept-Ranges": "bytes", "Cache-Control": "public, max-age=3600"},
+            headers={
+                "Accept-Ranges": "bytes",
+                "Cache-Control": "private, no-store",
+            },
         )
     except BaseException:
         if not handed_off:
