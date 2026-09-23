@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { stateApi, journalsApi, streamStatus, type StateCamera, cacheGet, cacheSet, formatApiError, isAbortError, ApiError } from '../../api';
+import { stateApi, journalsApi, streamStatus, type StateCamera, cacheGet, cacheSet, cacheInvalidate, formatApiError, isAbortError, ApiError } from '../../api';
 import { useAuth } from '../../auth/AuthContext';
 import { Button } from '../../components/ui';
 import { StreamOverlay } from '../../components/StreamOverlay';
@@ -11,11 +11,11 @@ import { ExpandedCameraView } from './ExpandedCameraView';
 import { LiveAlertsRail } from './LiveAlertsRail';
 import { useLiveLayout } from './useLiveLayout';
 import { useLiveGridPreviewWs } from './useLiveGridPreviewWs';
-import { mergeLiveCameraPoll } from './mergeLiveCameraPoll';
+import { LIVE_CAMERAS_CACHE_KEY, mergeLiveCameraPoll, resetLiveCameraCache } from './mergeLiveCameraPoll';
 import { cancelPreviewDemandGrace, startPreviewDemandGrace } from './previewDemandGrace';
 import { fitColsForCount } from '../layout/fitGrid';
 
-const CAMERAS_CACHE_KEY = 'state:cameras:current';
+const CAMERAS_CACHE_KEY = LIVE_CAMERAS_CACHE_KEY;
 const STATS_CACHE_KEY = 'journals:stats';
 const CAMERAS_TTL_MS = 12_000;
 const STATS_TTL_MS = 20_000;
@@ -34,14 +34,6 @@ export function LivePage() {
   const { refresh, user } = useAuth();
   const username = user?.username ?? null;
 
-  useEffect(() => {
-    if (username !== lastLiveUsername) {
-      lastLiveUsername = username;
-      lastGoodLiveCameras = [];
-      emptyCameraPollStreak = 0;
-    }
-  }, [username]);
-
   const cachedCams = cacheGet<{ items: StateCamera[] }>(CAMERAS_CACHE_KEY);
   const cachedStats = cacheGet<{ available: boolean; events_total?: number; objects_total?: number }>(STATS_CACHE_KEY);
   const [cameras, setCameras] = useState<StateCamera[]>(
@@ -57,6 +49,16 @@ export function LivePage() {
       ? { events: cachedStats.events_total, objects: cachedStats.objects_total }
       : {},
   );
+
+  useEffect(() => {
+    if (username !== lastLiveUsername) {
+      lastLiveUsername = username;
+      const reset = resetLiveCameraCache(cacheInvalidate);
+      lastGoodLiveCameras = reset.lastGood;
+      emptyCameraPollStreak = reset.emptyStreak;
+      setCameras([]);
+    }
+  }, [username]);
   const [stream, setStream] = useState<{ rid: number; sid: number | null } | null>(null);
   const [expandedKey, setExpandedKey] = useState<string | null>(null);
   const { cols, setCols, order, setOrder, mode, setMode } = useLiveLayout();

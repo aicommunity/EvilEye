@@ -1,5 +1,5 @@
-import { describe, expect, it } from 'vitest';
-import { mergeLiveCameraPoll } from './mergeLiveCameraPoll';
+import { describe, expect, it, vi } from 'vitest';
+import { mergeLiveCameraPoll, resetLiveCameraCache } from './mergeLiveCameraPoll';
 
 describe('mergeLiveCameraPoll', () => {
   const cam = { run_id: 1, source_id: 0 };
@@ -23,5 +23,20 @@ describe('mergeLiveCameraPoll', () => {
     const d = mergeLiveCameraPoll([cam], [], [], 5, 2);
     expect(d.cameras).toEqual([cam]);
     expect(d.emptyStreak).toBe(0);
+  });
+
+  it('writes empty when cleared (cache caller contract)', () => {
+    const d = mergeLiveCameraPoll([], [cam], [cam], 1, 2);
+    expect(d.cleared).toBe(true);
+    expect(d.cameras).toEqual([]);
+  });
+});
+
+describe('resetLiveCameraCache', () => {
+  it('invalidates live cameras key and returns empty grace state', () => {
+    const invalidate = vi.fn();
+    const reset = resetLiveCameraCache(invalidate);
+    expect(invalidate).toHaveBeenCalledWith('state:cameras:current');
+    expect(reset).toEqual({ lastGood: [], emptyStreak: 0 });
   });
 });

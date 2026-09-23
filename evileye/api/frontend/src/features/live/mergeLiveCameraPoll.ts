@@ -9,6 +9,8 @@ export interface LiveCameraPollDecision<T> {
   cleared: boolean;
 }
 
+export const LIVE_CAMERAS_CACHE_KEY = 'state:cameras:current';
+
 /**
  * After `graceEmptyPolls` consecutive successful empty polls, clear the list.
  * Non-empty always wins and resets the streak.
@@ -45,4 +47,13 @@ export function mergeLiveCameraPoll<T extends LiveCameraLike>(
     emptyStreak: nextStreak,
     cleared: false,
   };
+}
+
+/** Reset module-level Live camera grace state + SPA cache on user change. */
+export function resetLiveCameraCache(invalidate: (key: string) => void): {
+  lastGood: never[];
+  emptyStreak: number;
+} {
+  invalidate(LIVE_CAMERAS_CACHE_KEY);
+  return { lastGood: [], emptyStreak: 0 };
 }
