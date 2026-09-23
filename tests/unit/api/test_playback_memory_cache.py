@@ -4,8 +4,6 @@ from __future__ import annotations
 
 import time
 
-import pytest
-
 from evileye.api.routes import playback as playback_routes
 
 
@@ -61,8 +59,10 @@ def test_memory_cache_evicts_when_over_max_keys(monkeypatch):
     for i in range(12):
         playback_routes._remember(f"k{i}", {"i": i}, ttl_sec=60.0)
     assert playback_routes.memory_cache_stats()["keys"] <= 8
-    # Most recent keys should survive.
     assert playback_routes._recall("k11", require_fresh=True)["i"] == 11
+
+
+def test_second_recall_faster_than_cold_remember():
     """Simulate warm memory path: recall after remember is instant."""
     playback_routes._memory_cache.clear()
     key = "playback:cameras:None:2026-08-19"

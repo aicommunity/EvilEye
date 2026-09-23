@@ -148,7 +148,7 @@ line_length = 88
 known_first_party = ["core", "pipelines", "object_tracker", "object_detector", "object_multi_camera_tracker", "events_detectors", "events_control", "database_controller", "visualization_modules", "utils", "preprocessing", "capture", "objects_handler"]
 
 [tool.mypy]
-python_version = "3.8"
+python_version = "3.10"
 warn_return_any = true
 warn_unused_configs = true
 disallow_untyped_defs = true

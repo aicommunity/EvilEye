@@ -20,6 +20,7 @@ from evileye.api.core.camera_access import (
     intersect_camera_query,
     resolve_camera_access,
 )
+from evileye.api.core.media_access import assert_media_path_allowed, cameras_from_media_path
 from evileye.api.core.playback_metadata_service import DEFAULT_MATCH_SEC
 from evileye.api.core.route_timeouts import playback_detections_timeout_sec, playback_route_timeout_sec
 from evileye.api.core.singleflight import singleflight
@@ -225,45 +226,9 @@ def _camera_name_from_media_path(path: str) -> str | None:
     return cams[0] if cams else None
 
 
-def cameras_from_media_path(path: str) -> list[str] | None:
-    """Extract logical camera names from archive path.
-
-    Streams/YYYY-MM-DD/<Cam or CamA-CamB>/file → [Cam] or [CamA, CamB].
-    Events/.../<camera>/... → [camera] when present.
-    Returns None when cameras cannot be determined.
-    """
-    from pathlib import Path
-
-    try:
-        parts = Path(path).parts
-    except Exception:
-        return None
-    for i, part in enumerate(parts):
-        if part == "Streams" and i + 2 < len(parts):
-            folder = parts[i + 2]
-            if not folder or folder in {".", ".."}:
-                return None
-            if "-" in folder:
-                names = [p for p in folder.split("-") if p]
-                return names or None
-            return [folder]
-        if part == "Events" and i + 2 < len(parts):
-            # Events/date/<CameraOrSystem>/...
-            folder = parts[i + 2]
-            if folder and folder not in {".", "..", "Metadata", "Images"}:
-                return [folder]
-    return None
-
-
 def _assert_media_cameras_allowed(access, path: str) -> None:
-    """Hard ACL for playback media (audit A03): composite requires all parts."""
-    cams = cameras_from_media_path(path)
-    if access.unrestricted:
-        return
-    if not cams:
-        raise HTTPException(status_code=403, detail="Camera access denied")
-    for name in cams:
-        assert_name_allowed(access, name)
+    """Delegate to shared media_access (audit A03 / Stage 3)."""
+    assert_media_path_allowed(access, path)
 
 
 def _stale_segments_by_camera(

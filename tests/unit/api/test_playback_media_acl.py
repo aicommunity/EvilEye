@@ -9,10 +9,7 @@ from fastapi.testclient import TestClient
 
 from evileye.api.app import create_app
 from evileye.api.core.camera_access import CameraAccess
-from evileye.api.routes.playback import (
-    _assert_media_cameras_allowed,
-    cameras_from_media_path,
-)
+from evileye.api.core.media_access import assert_media_path_allowed, cameras_from_media_path
 from evileye.api.security import hash_password
 from fastapi import HTTPException
 
@@ -35,7 +32,7 @@ def test_assert_media_composite_requires_all():
         visible_names=None,
     )
     with pytest.raises(HTTPException) as exc:
-        _assert_media_cameras_allowed(access, "Streams/2026-01-01/Cam2-Cam3/x.mp4")
+        assert_media_path_allowed(access, "Streams/2026-01-01/Cam2-Cam3/x.mp4")
     assert exc.value.status_code == 403
 
     access2 = CameraAccess(
@@ -43,7 +40,7 @@ def test_assert_media_composite_requires_all():
         allowed_names=frozenset({"Cam2", "Cam3"}),
         visible_names=None,
     )
-    _assert_media_cameras_allowed(access2, "Streams/2026-01-01/Cam2-Cam3/x.mp4")
+    assert_media_path_allowed(access2, "Streams/2026-01-01/Cam2-Cam3/x.mp4")
 
 
 def test_assert_media_denies_unmapped_for_restricted():
@@ -53,7 +50,7 @@ def test_assert_media_denies_unmapped_for_restricted():
         visible_names=None,
     )
     with pytest.raises(HTTPException) as exc:
-        _assert_media_cameras_allowed(access, "Detections/foo.bin")
+        assert_media_path_allowed(access, "Detections/foo.bin")
     assert exc.value.status_code == 403
 
 
