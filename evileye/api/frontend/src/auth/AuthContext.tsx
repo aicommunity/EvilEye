@@ -8,7 +8,20 @@ import {
   type ReactNode,
 } from 'react';
 import { authApi, ApiError, type AuthUser, type UserPrefs } from '../api';
+import { cacheClear } from '../api/dataCache';
 import { applyClientDebugFromAuth } from '../diagnostics/clientTelemetry';
+
+/** Bumped on login/logout so scoped caches can key off auth epoch (R09). */
+let authEpoch = 0;
+
+export function getAuthEpoch(): number {
+  return authEpoch;
+}
+
+function bumpAuthScope(): void {
+  authEpoch += 1;
+  cacheClear();
+}
 
 interface AuthState {
   loading: boolean;
@@ -88,6 +101,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       return Boolean(me.user);
     } catch (e) {
       if (e instanceof ApiError && e.status === 401) {
+        bumpAuthScope();
         apply(true, null, [], false);
         setLoading(false);
         return false;
@@ -104,6 +118,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const login = useCallback(
     async (username: string, password: string) => {
       const result = await authApi.login(username, password);
+      bumpAuthScope();
       apply(
         result.auth_enabled,
         result.user,
@@ -127,6 +142,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   const logout = useCallback(async () => {
     await authApi.logout();
+    bumpAuthScope();
     apply(authEnabled, null, [], false);
   }, [apply, authEnabled]);
 
