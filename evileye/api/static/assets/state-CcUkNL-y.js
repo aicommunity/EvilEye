@@ -1,0 +1,1 @@
+import{h as t}from"./index-DTcsP0d0.js";const a={overview(r){return t("/state/overview",r)},runs(r="current",e){return t(`/state/runs?scope=${r}`,e)},run(r,e){return t(`/state/runs/${r}`,e)},cameras(r="current",e){return t(`/state/cameras?scope=${r}`,e)}};export{a as s};

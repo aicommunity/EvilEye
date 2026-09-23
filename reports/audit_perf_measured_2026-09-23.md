@@ -78,3 +78,16 @@ Remeasure after A12/B04/B05/B06 (same probe, post-`systemctl --user restart evil
 | events | **37** | 316 | 201 KiB | p50 improved; p95 outlier |
 
 `memory_cache_stats` now reports `bytes_est` / `copy_ms` / `thread_inflight` (A12/B06). No growth of in-flight counters on repeated probe. Browser Profiler not re-captured.
+
+## After reaudit gap follow-up (R01–R17 + F1)
+
+Git SHA: `74ac723` (+ SPA rebuild). Probe: `scripts/audit_perf_probe.py` → [`reports/audit_perf_probe_reaudit.json`](audit_perf_probe_reaudit.json), samples [`reports/audit_perf_samples_2026-09-23.jsonl`](audit_perf_samples_2026-09-23.jsonl). `--reps 5`, Cam1, date `2026-09-23`. Aux via `GET /ready` (embeds `playback_memory_cache` + `state_thread_stats`).
+
+| Endpoint | p50 ms | p95 ms | bytes p50 | notes |
+|----------|--------|--------|-----------|-------|
+| timeline | 190 | 377 | ~1.55 MiB | codes 200 |
+| detections (`ticks_only=true`) | **457** | **622** | ~3.05 MiB | smaller than old limit=500 full payload |
+| events | **37** | **51** | 201 KiB | stable |
+| media (segment path from timeline) | ~2041 | ~2059 | large body | path extraction fixed (R17) |
+
+R09 SPA: `authEpoch` in cache keys + ACL-revision bump shipped in same wave; restart applied after `evileye web build`.

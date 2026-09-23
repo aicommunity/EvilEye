@@ -85,7 +85,7 @@ function MobileLiveInner() {
       emptyMobilePollStreak = decision.emptyStreak;
       lastGoodMobileCameras = decision.lastGood;
       if (decision.cleared || items.length) {
-        cacheSet(liveCamerasCacheKey, { items: decision.cameras }, CAMERAS_TTL_MS);
+        cacheSet(liveCamerasCacheKey(), { items: decision.cameras }, CAMERAS_TTL_MS);
       }
       setCameras(decision.cameras);
     } catch (e) {
