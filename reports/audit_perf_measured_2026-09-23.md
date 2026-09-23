@@ -34,12 +34,12 @@ Snapshot path: `/api/v1/runs/{rid}/snapshot?source_id=`. Live WS `bytes_sent` no
 
 ## Observations vs prior baseline notes
 
-1. **state** hot path is already fast (p95 &lt; 10 ms) under current semaphore.
+1. **state** hot path is already fast (p95 &lt; 10 ms) under current semaphore; queue wait is included in the deadline (R07).
 2. **timeline** warm responses are large (~0.9 MiB) with p95 ~145 ms — candidates for cache hit rate / payload trim.
-3. **detections** day camera window is the heavy hit (~4 MiB, p95 ~0.8 s) — matches audit A11/B detection payload concern.
-4. **events** day ACL-filtered payload ~200 KiB / p95 ~57 ms — acceptable for day open.
-5. `_memory_cache` still key-capped (256) without soft byte budget / `copy_ms` (A12 pending in F2.2).
-6. `wait_for(to_thread)` still releases route slots on timeout while worker may continue (B06 pending).
+3. **detections** day camera window was heavy with `limit=500`; probe now uses UI-style `ticks_only=true` (R17).
+4. **events** day ACL-filtered payload ~200 KiB / p95 ~57 ms — acceptable for day open; index build is uncapped with `covered_cameras` (R05).
+5. `playback_cache` stores entry nbytes, keeps sticky/stale on fresh miss (R06/R15); `/ready` exposes `playback_memory_cache` + `state_thread_stats`.
+6. Media ACL runs after canonicalize; live WS refreshes ACL on ping/subscribe (R01/R02/R08).
 
 ## B07 SPA (build-time)
 

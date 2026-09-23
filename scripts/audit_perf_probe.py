@@ -217,7 +217,11 @@ def main() -> int:
             "GET",
             "/api/v1/playback/detections",
             args.reps,
-            params={"date": args.date, "camera": args.camera, "limit": 500},
+            params={
+                "date": args.date,
+                "cameras": args.camera,
+                "ticks_only": "true",
+            },
             warm=1,
         )
     )
@@ -237,8 +241,10 @@ def main() -> int:
         tl = client.get_json("/api/v1/playback/timeline", {"date": args.date, "cameras": args.camera})
         media_path = None
         by_cam = (tl.get("by_camera") or {}) if isinstance(tl, dict) else {}
-        segs = by_cam.get(args.camera) or []
-        if segs:
+        entry = by_cam.get(args.camera) or {}
+        # Timeline returns {segments, detection_ticks, events} per camera (R17).
+        segs = entry.get("segments") if isinstance(entry, dict) else entry
+        if isinstance(segs, list) and segs:
             media_path = (
                 segs[0].get("path")
                 or segs[0].get("file")
@@ -262,19 +268,38 @@ def main() -> int:
     except Exception as exc:
         results.append({"name": "playback.media", "error": str(exc)})
 
+    # Prefer /ready which embeds memory_cache_stats / state_thread_stats (R17).
     for path in (
+        "/api/v1/ready",
+        "/ready",
         "/api/v1/diagnostics/playback_cache",
         "/api/v1/system/status",
-        "/api/v1/playback/debug/memory_cache",
     ):
         code, ms, body, _ = client.request("GET", path)
-        if code == 200:
+        if code in (200, 304):
             try:
                 parsed = json.loads(body.decode("utf-8"))
             except Exception:
                 parsed = {"bytes": len(body)}
-            results.append({"name": "aux", "path": path, "ms": round(ms, 2), "body": parsed})
+            results.append({"name": "aux", "path": path, "ms": round(ms, 2), "code": code, "body": parsed})
             break
+        results.append({"name": "aux", "path": path, "code": code, "ms": round(ms, 2)})
+
+    # Fail harness if required endpoints returned unexpected codes.
+    required = {"playback.timeline", "playback.detections", "playback.events"}
+    bad = []
+    for row in results:
+        name = row.get("name")
+        if name not in required:
+            continue
+        codes = row.get("codes") or {}
+        ok = sum(int(codes.get(k, 0)) for k in ("200", "304"))
+        total = sum(int(v) for v in codes.values()) if codes else 0
+        if total and ok == 0:
+            bad.append(name)
+    if bad:
+        print(f"ERROR: required endpoints without 200/304: {bad}", file=sys.stderr)
+        return 2
 
     payload = {
         "base": args.base,
@@ -291,6 +316,16 @@ def main() -> int:
     if args.out:
         args.out.parent.mkdir(parents=True, exist_ok=True)
         args.out.write_text(text + "\n", encoding="utf-8")
+        # Also append raw one-line samples for archival (R17).
+        samples_path = args.out.with_name(
+            args.out.stem.replace("probe", "samples") + ".jsonl"
+            if "probe" in args.out.stem
+            else args.out.stem + "_samples.jsonl"
+        )
+        if "audit_perf" in str(args.out):
+            samples_path = Path("reports") / f"audit_perf_samples_{time.strftime('%Y-%m-%d')}.jsonl"
+        with samples_path.open("a", encoding="utf-8") as fh:
+            fh.write(json.dumps({"ts": payload["ts"], "results": results}, separators=(",", ":")) + "\n")
     return 0
 
 
