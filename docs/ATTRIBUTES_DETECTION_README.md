@@ -372,7 +372,7 @@ PYTHONPATH=/home/user/EvilEye python tests/test_attributes_detection.py
 
 ## Совместимость
 
-- **Python**: 3.8+
+- **Python**: 3.10+
 - **OpenCV**: 4.0+
 - **ONNX Runtime**: 1.12+
 - **Процессоры**: Intel/AMD x64, ARM64 (Jetson)

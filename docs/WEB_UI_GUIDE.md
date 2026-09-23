@@ -101,10 +101,12 @@ python scripts/ws_live_preview_load.py --run-id 1 --clients 20
 - Streaming: `/api/v1/runs/{rid}/snapshot|stream.mjpg|stream:status|metadata`
   - `GET` / `POST /stream:status` with body `{ "level": "grid"|"stream" }` (demand keepalive)
   - Snapshot supports `ETag` / `If-None-Match` → `304`
+  - **Frame identity:** every live preview (REST snapshot/MJPEG, WS `/ws/live`, and the SPA frame Map) is keyed by **`(run_id, source_id)`** — never `source_id` alone across runs.
 - Preview WS: `/api/v1/runs/{rid}/ws/live` (grid JPEG push; auth `live:view`)
   - Until `{"op":"subscribe","source_ids":[…]}`, the hub sends **no** frames (empty `source_ids` = none).
   - `source_ids: []` means zero cameras; each subscribe **replaces** the set (intersected with camera ACL).
   - Notify mode: client GETs `/snapshot` with `If-None-Match` only for an already-applied ETag (not the notify’s fresh etag).
+  - Binary/notify payloads are attributed to the subscribed `source_id` within that `run_id` only.
 - Metadata WS: `/api/v1/runs/{rid}/ws` (objects/zones for expand/MJPEG)
 - Internal relay: `POST /api/v1/internal/frames/{rid}` accepts JPEG or multipart (`metadata` JSON + `frame`)
 - Playback: `/api/v1/playback/cameras?run_id=&date=` (logical cameras), `segments`, `events?cameras=`, `media`
