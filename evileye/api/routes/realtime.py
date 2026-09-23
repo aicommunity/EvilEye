@@ -292,6 +292,15 @@ async def live_grid_preview_ws(websocket: WebSocket, rid: int):
         await websocket.close(code=4001)
         return
 
+    from evileye.api.core.camera_access import allowed_source_ids_for_run
+
+    access = _camera_access_from_websocket(websocket)
+    allowed_ids = allowed_source_ids_for_run(access, int(run_info["id"]))
+    # Restricted with empty ACL: reject before accept/register (audit A01).
+    if allowed_ids is not None and len(allowed_ids) == 0:
+        await websocket.close(code=4403)
+        return
+
     hub = get_live_preview_hub()
     if len(hub._clients) >= hub._max_clients:
         await websocket.close(code=4429)
@@ -308,11 +317,7 @@ async def live_grid_preview_ws(websocket: WebSocket, rid: int):
     if client is None:
         await websocket.close(code=4429)
         return
-
-    from evileye.api.core.camera_access import allowed_source_ids_for_run
-
-    access = _camera_access_from_websocket(websocket)
-    allowed_ids = allowed_source_ids_for_run(access, int(run_info["id"]))
+    # Start with empty source_ids (= none until explicit subscribe).
 
     try:
         while True:
@@ -327,10 +332,8 @@ async def live_grid_preview_ws(websocket: WebSocket, rid: int):
                 if isinstance(ids, list):
                     source_ids = [int(x) for x in ids]
                     if allowed_ids is not None:
-                        if not source_ids:
-                            source_ids = sorted(allowed_ids)
-                        else:
-                            source_ids = [sid for sid in source_ids if sid in allowed_ids]
+                        # Empty subscribe stays empty (none); do not fill from ACL.
+                        source_ids = [sid for sid in source_ids if sid in allowed_ids]
                     hub.set_client_sources(client, source_ids)
                     for sid in source_ids:
                         _touch_preview_demand_ws(websocket, rid, "grid", source_id=sid)

@@ -253,7 +253,8 @@ class LivePreviewHub:
             for client in list(self._clients):
                 if client.closed or client.run_id != run_id:
                     continue
-                if client.source_ids and source_id not in client.source_ids:
+                # Empty source_ids means none (not all) — audit A01.
+                if source_id not in client.source_ids:
                     continue
                 if etag and client.last_etag.get(source_id) == etag:
                     continue

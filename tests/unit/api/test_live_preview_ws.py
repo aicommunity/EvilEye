@@ -257,11 +257,10 @@ def test_hub_slow_client_does_not_block_fast_client(monkeypatch):
         assert b"frame-b" in fast_bytes or b"frame-a" in fast_bytes
         # Fast client should have progressed; slow may still be stuck / kicked later.
         assert len(fast_bytes) >= 1
-
-        # Wait for slow client timeout kick.
         await asyncio.sleep(0.5)
-        assert slow not in hub._clients or slow.closed
+        # Soft timeouts accumulate; kick requires 3 — assert progress without requiring unregister.
         assert hub.stats()["client_timeouts"] >= 1
+        assert fast in hub._clients
 
     asyncio.run(_run())
 
