@@ -177,7 +177,10 @@ class LivePreviewHub:
                 while client.pending and not client.closed:
                     batch = dict(client.pending)
                     client.pending.clear()
-                    for _source_id, (header, payload) in batch.items():
+                    for source_id, (header, payload) in batch.items():
+                        # Re-check ACL/subscribe set before send (R08).
+                        if source_id not in client.source_ids:
+                            continue
                         try:
                             await asyncio.wait_for(client.websocket.send_json(header), timeout=timeout)
                             if payload is not None:
@@ -267,8 +270,11 @@ class LivePreviewHub:
                     pass
 
     def set_client_sources(self, client: LivePreviewClient, source_ids: list[int]) -> None:
-        client.source_ids = {int(s) for s in source_ids}
+        new_ids = {int(s) for s in source_ids}
+        client.source_ids = new_ids
         client.last_etag.clear()
+        # Drop frames for unsubscribed sources immediately (R08).
+        client.pending.clear()
 
 
 _hub: Optional[LivePreviewHub] = None

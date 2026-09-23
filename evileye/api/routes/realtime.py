@@ -334,6 +334,14 @@ async def live_grid_preview_ws(websocket: WebSocket, rid: int):
         return
     # Start with empty source_ids (= none until explicit subscribe).
 
+    def _refresh_allowed() -> set[int] | None:
+        """Re-read ACL from session; None means close with 4403."""
+        access_now = _camera_access_from_websocket(websocket)
+        ids_now = allowed_source_ids_for_run(access_now, int(run_info["id"]))
+        if live_preview_acl_rejects_empty(ids_now):
+            return None
+        return ids_now
+
     try:
         while True:
             raw = await websocket.receive_text()
@@ -343,6 +351,10 @@ async def live_grid_preview_ws(websocket: WebSocket, rid: int):
                 continue
             op = msg.get("op") or msg.get("subscribe")
             if op == "subscribe" or msg.get("subscribe") is not None:
+                allowed_ids = _refresh_allowed()
+                if allowed_ids is None:
+                    await websocket.close(code=4403)
+                    return
                 ids = msg.get("source_ids") or msg.get("subscribe") or []
                 if isinstance(ids, list):
                     source_ids = filter_live_subscribe_ids(allowed_ids, [int(x) for x in ids])
@@ -350,6 +362,14 @@ async def live_grid_preview_ws(websocket: WebSocket, rid: int):
                     for sid in source_ids:
                         _touch_preview_demand_ws(websocket, rid, "grid", source_id=sid)
             elif op == "ping":
+                allowed_ids = _refresh_allowed()
+                if allowed_ids is None:
+                    await websocket.close(code=4403)
+                    return
+                # Narrow subscribed set if ACL shrank since last subscribe.
+                narrowed = [sid for sid in client.source_ids if sid in allowed_ids]
+                if set(narrowed) != client.source_ids:
+                    hub.set_client_sources(client, narrowed)
                 _touch_preview_demand_ws(websocket, rid, "grid")
                 for sid in client.source_ids:
                     _touch_preview_demand_ws(websocket, rid, "grid", source_id=sid)
