@@ -20,10 +20,10 @@ from evileye.api.core.camera_access import (
     intersect_camera_query,
     resolve_camera_access,
 )
+from evileye.api.core.archive_media_resolver import ArchiveMediaResolver
 from evileye.api.core.media_access import (
     assert_media_path_allowed,
     cameras_from_media_path,
-    resolve_authorized_media,
 )
 from evileye.api.core.playback_cache import (
     clear_memory_cache,
@@ -1065,7 +1065,7 @@ async def playback_media(request: Request, path: str = Query(...)):
 
             def _resolve_authorize_and_stat():
                 # ACL after canonicalize (R01): never trust raw path owners.
-                media = resolve_authorized_media(access, path, data_root=svc.data_dir())
+                media = ArchiveMediaResolver(svc.data_dir()).resolve(access, path)
                 if not media.path.is_file():
                     return None
                 return media.path, media.path.stat()

@@ -10,6 +10,8 @@ import time
 from pathlib import Path
 from typing import Any, Optional
 
+from evileye.api.core.cache_policy import DEFAULT_CACHE_POLICY
+from evileye.api.core.index_repository import project_event_items
 from evileye.api.core.singleflight import singleflight
 
 logger = logging.getLogger(__name__)
@@ -20,6 +22,9 @@ TODAY_REBUILD_SEC = 300.0
 # Video continuing this long after the last detection tick ⇒ journal likely stalled.
 # Short/medium quiet (empty scene) is normal and must not be painted as a fault.
 INFERENCE_STALL_AFTER_LAST_TICK_SEC = 3 * 3600.0
+
+# Re-export policy for diagnostics / tests (T19).
+CACHE_POLICY = DEFAULT_CACHE_POLICY
 
 
 def _merge_intervals(intervals: list[tuple[float, float]]) -> list[tuple[float, float]]:
@@ -685,12 +690,6 @@ def ensure_event_intervals(
     )
     cam_list = [c for c in (cameras or []) if c]
 
-    def _project(items: list[dict[str, Any]]) -> list[dict[str, Any]]:
-        if not cam_list:
-            return list(items)
-        cam_set = set(cam_list)
-        return [it for it in items if not it.get("camera") or it.get("camera") in cam_set]
-
     def _rebuild_full() -> list[dict[str, Any]]:
         # Pass requested cams only for covered_cameras bookkeeping, not return filter.
         return _rebuild_event_intervals(
@@ -706,8 +705,8 @@ def ensure_event_intervals(
                     f"ensure_event_intervals:{date_folder}",
                     _rebuild_full,
                 )
-                return _project(full)
-            return _project(items)
+                return project_event_items(full, cam_list)
+            return project_event_items(items, cam_list)
 
     stale = read_event_intervals_stale(date_folder, cameras)
     if stale is not None:
@@ -718,7 +717,7 @@ def ensure_event_intervals(
         f"ensure_event_intervals:{date_folder}",
         _rebuild_full,
     )
-    return _project(full)
+    return project_event_items(full, cam_list)
 
 
 def build_timeline(

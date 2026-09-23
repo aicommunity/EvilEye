@@ -34,7 +34,7 @@ from evileye.api.core.journal_service import (
     resolve_secured_journal_file,
     restore_config_history,
 )
-from evileye.api.core.media_access import assert_resolved_media_allowed
+from evileye.api.core.archive_media_resolver import ArchiveMediaResolver
 from evileye.api.core.playback_service import data_dir as playback_data_dir
 
 router = APIRouter(prefix="/api/v1/journals", tags=["journals"])
@@ -112,10 +112,9 @@ def _file_response(path: str, *, media_type: str | None = None) -> FileResponse:
 def _authorize_journal_media(request: Request, secured: str, *, allow_kinds: frozenset[str]):
     """Camera/kind ACL on canonical journal file (R02)."""
     access = resolve_camera_access(request)
-    return assert_resolved_media_allowed(
+    return ArchiveMediaResolver(playback_data_dir()).authorize_existing(
         access,
         Path(secured),
-        data_root=playback_data_dir(),
         allow_kinds=allow_kinds,
     )
 
