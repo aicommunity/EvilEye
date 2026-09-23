@@ -125,6 +125,31 @@ class LivePreviewHub:
         client.pending.clear()
         self._clients = [c for c in self._clients if c is not client]
 
+    def unregister_username(self, username: str) -> int:
+        """Close all live preview WS clients for a username (R08 revoke)."""
+        name = str(username or "").strip()
+        if not name:
+            return 0
+        closed = 0
+        for client in list(self._clients):
+            if str(client.username or "") != name:
+                continue
+            try:
+                # Best-effort sync close; sender cleanup happens in unregister.
+                close = getattr(client.websocket, "close", None)
+                if close is not None:
+                    result = close(code=4403)
+                    # Starlette close may return a coroutine.
+                    if hasattr(result, "close") or hasattr(result, "__await__"):
+                        loop = self._loop
+                        if loop is not None and getattr(loop, "is_running", lambda: False)():
+                            loop.create_task(result)  # type: ignore[arg-type]
+            except Exception:
+                pass
+            self.unregister(client)
+            closed += 1
+        return closed
+
     def on_broker_publish(self, pipeline_id: str, payload: bytes, metadata: dict[str, Any]) -> None:
         if not payload or ":" not in pipeline_id:
             return

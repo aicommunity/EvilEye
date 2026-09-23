@@ -124,10 +124,20 @@ async def _to_thread_with_timeout_or_cached(
 ):
     global _thread_timeouts, _thread_503s
     timeout = playback_route_timeout_sec()
-    if slot_sem is not None:
-        await slot_sem.acquire()
-    held_sem = slot_sem or release_sem_on_done
     loop = asyncio.get_running_loop()
+    deadline = loop.time() + float(timeout)
+    if slot_sem is not None:
+        remaining = max(0.0, deadline - loop.time())
+        try:
+            await asyncio.wait_for(slot_sem.acquire(), timeout=remaining)
+        except asyncio.TimeoutError:
+            _thread_timeouts += 1
+            cached = cached_fn()
+            if cached is not None:
+                return cached
+            _thread_503s += 1
+            raise HTTPException(status_code=503, detail=err_detail)
+    held_sem = slot_sem or release_sem_on_done
     if executor is not None:
         fut = loop.run_in_executor(executor, value_fn)
     else:
@@ -146,9 +156,10 @@ async def _to_thread_with_timeout_or_cached(
                 pass
 
     fut.add_done_callback(_done)
+    remaining = max(0.001, deadline - loop.time())
     try:
         # shield: timeout must not cancel the worker; slot tracking keeps fut in _thread_inflight.
-        return await asyncio.wait_for(asyncio.shield(fut), timeout=timeout)
+        return await asyncio.wait_for(asyncio.shield(fut), timeout=remaining)
     except asyncio.TimeoutError:
         _thread_timeouts += 1
         logger.warning(
@@ -498,6 +509,7 @@ async def playback_events(
             ensure_event_intervals,
             filter_event_intervals_window,
         )
+        from evileye.api.core.index_repository import project_event_items
 
         if date:
             items = ensure_event_intervals(
@@ -506,6 +518,7 @@ async def playback_events(
                 limit=limit,
             )
             items = filter_event_intervals_window(items, from_ts, to_ts)
+            items = project_event_items(items, effective_cams)
             if len(items) > limit:
                 items = items[:limit]
         else:
@@ -517,6 +530,7 @@ async def playback_events(
                 date=date,
                 limit=limit,
             )
+            items = project_event_items(items, effective_cams)
         legacy_markers = svc.load_event_markers(
             from_ts,
             to_ts,
@@ -533,6 +547,7 @@ async def playback_events(
             read_event_intervals_stale,
             schedule_event_intervals_refresh,
         )
+        from evileye.api.core.index_repository import project_event_items
 
         if not date:
             return None
@@ -541,6 +556,7 @@ async def playback_events(
             return None
         schedule_event_intervals_refresh(date, effective_cams, limit=limit)
         items = filter_event_intervals_window(stale, from_ts, to_ts)
+        items = project_event_items(items, effective_cams)
         if len(items) > limit:
             items = items[:limit]
         return {"items": items, "legacy_markers": []}

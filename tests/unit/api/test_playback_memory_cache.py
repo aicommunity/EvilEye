@@ -56,7 +56,13 @@ def test_json_with_cache_sets_stale_header():
 
 def test_memory_cache_evicts_when_over_max_keys(monkeypatch):
     pc.clear_memory_cache()
-    monkeypatch.setattr(pc, "_MEMORY_CACHE_MAX_KEYS", 8)
+    from evileye.api.core.cache_policy import CachePolicy
+
+    monkeypatch.setattr(
+        pc,
+        "_policy",
+        CachePolicy(max_keys=8, max_bytes=pc.get_cache_policy().max_bytes),
+    )
     for i in range(12):
         pc.remember(f"k{i}", {"i": i}, ttl_sec=60.0)
     assert playback_routes.memory_cache_stats()["keys"] <= 8

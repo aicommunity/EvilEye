@@ -9,16 +9,27 @@ import time
 from copy import deepcopy
 from typing import Any
 
+from evileye.api.core.cache_policy import DEFAULT_CACHE_POLICY, CachePolicy
+
 _memory_lock = threading.Lock()
 # key -> (fresh_until|None, stale_until, value, nbytes)
 _memory_cache: dict[str, tuple[float | None, float, Any, int]] = {}
-_MEMORY_CACHE_MAX_KEYS = 256
-_MEMORY_CACHE_MAX_BYTES = 64 * 1024 * 1024  # soft budget (A12)
-_STALE_GRACE_SEC = 300.0
-_STALE_BUDGET_STICKY_SEC = 3600.0
+_policy: CachePolicy = DEFAULT_CACHE_POLICY
 _memory_cache_bytes_est = 0
 _copy_ms_total = 0.0
 _copy_count = 0
+
+
+def set_cache_policy(policy: CachePolicy | None = None) -> CachePolicy:
+    """Replace active policy (tests / diagnostics). None restores default."""
+    global _policy
+    with _memory_lock:
+        _policy = policy or DEFAULT_CACHE_POLICY
+        return _policy
+
+
+def get_cache_policy() -> CachePolicy:
+    return _policy
 
 
 def _estimate_cache_bytes(value: Any) -> int:
@@ -34,26 +45,20 @@ def _estimate_cache_bytes(value: Any) -> int:
 
 def remember(key: str, value: Any, *, ttl_sec: float | None = None) -> None:
     global _memory_cache_bytes_est, _copy_ms_total, _copy_count
-    now = time.time()
-    if ttl_sec is not None:
-        fresh_until: float | None = now + float(ttl_sec)
-        stale_until = now + max(float(ttl_sec), _STALE_GRACE_SEC)
-    else:
-        # Sticky: never fresh for require_fresh; keep as stale fallback (R06).
-        fresh_until = None
-        stale_until = now + _STALE_BUDGET_STICKY_SEC
+    policy = _policy
+    fresh_until, stale_until = policy.fresh_and_stale(ttl_sec)
     # Copy outside the lock to reduce contention (A12).
     t0 = time.perf_counter()
     stored = deepcopy(value)
     copy_ms = (time.perf_counter() - t0) * 1000.0
     est = _estimate_cache_bytes(stored)
     # Reject single oversized entries instead of pinning forever (R15).
-    if est > _MEMORY_CACHE_MAX_BYTES:
+    if est > policy.max_bytes:
         return
     with _memory_lock:
         _copy_ms_total += copy_ms
         _copy_count += 1
-        now = time.time()
+        now = float(policy.clock())
         expired = [
             k
             for k, (_fresh, stale, _val, _n) in _memory_cache.items()
@@ -69,12 +74,11 @@ def remember(key: str, value: Any, *, ttl_sec: float | None = None) -> None:
         _memory_cache[key] = (fresh_until, stale_until, stored, est)
         _memory_cache_bytes_est += est
         while _memory_cache and (
-            len(_memory_cache) > _MEMORY_CACHE_MAX_KEYS
-            or _memory_cache_bytes_est > _MEMORY_CACHE_MAX_BYTES
+            len(_memory_cache) > policy.max_keys
+            or _memory_cache_bytes_est > policy.max_bytes
         ):
             oldest = next(iter(_memory_cache))
             if oldest == key and len(_memory_cache) == 1:
-                # Only entry still over budget — drop it rather than pin forever.
                 dropped = _memory_cache.pop(oldest, None)
                 if dropped is not None:
                     _memory_cache_bytes_est = max(0, _memory_cache_bytes_est - dropped[3])
@@ -92,14 +96,14 @@ def remember(key: str, value: Any, *, ttl_sec: float | None = None) -> None:
 
 def recall(key: str, *, require_fresh: bool = False) -> Any | None:
     global _memory_cache_bytes_est
+    policy = _policy
     with _memory_lock:
         entry = _memory_cache.get(key)
         if entry is None:
             return None
         fresh_until, stale_until, cached, nbytes = entry
-        now = time.time()
+        now = float(policy.clock())
         if require_fresh:
-            # Fresh miss must NOT drop stale fallback (R06).
             if fresh_until is None or fresh_until <= now:
                 return None
         elif stale_until <= now:
@@ -107,7 +111,6 @@ def recall(key: str, *, require_fresh: bool = False) -> Any | None:
             if popped is not None:
                 _memory_cache_bytes_est = max(0, _memory_cache_bytes_est - popped[3])
             return None
-        # LRU touch
         _memory_cache.pop(key, None)
         _memory_cache[key] = (fresh_until, stale_until, cached, nbytes)
         snapshot = cached
@@ -116,7 +119,8 @@ def recall(key: str, *, require_fresh: bool = False) -> Any | None:
 
 def memory_cache_stats(*, extra: dict[str, int | float] | None = None) -> dict[str, int | float]:
     """Observability: in-process playback memory cache size and freshness."""
-    now = time.time()
+    policy = _policy
+    now = float(policy.clock())
     with _memory_lock:
         keys = len(_memory_cache)
         fresh = 0
@@ -130,7 +134,6 @@ def memory_cache_stats(*, extra: dict[str, int | float] | None = None) -> dict[s
             elif stale_until <= now:
                 expired += 1
             else:
-                # Past fresh but within stale window.
                 expired += 1
         bytes_est = int(_memory_cache_bytes_est)
         copy_ms = float(_copy_ms_total)
@@ -141,7 +144,7 @@ def memory_cache_stats(*, extra: dict[str, int | float] | None = None) -> dict[s
         "expired": expired,
         "sticky": sticky,
         "bytes_est": bytes_est,
-        "max_bytes": int(_MEMORY_CACHE_MAX_BYTES),
+        "max_bytes": int(policy.max_bytes),
         "copy_ms": round(copy_ms, 3),
         "copy_count": copies,
     }

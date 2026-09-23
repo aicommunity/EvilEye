@@ -241,6 +241,20 @@ async def patch_user(user_id: str, payload: PatchUserPayload, request: Request) 
         raise HTTPException(status_code=404, detail="User not found") from exc
 
     _reload_web_auth(request)
+    # R08: revoke open live preview sockets when user is disabled or ACL shrinks.
+    should_kick = (
+        payload.disabled is True
+        or payload.status in {"rejected", "disabled"}
+        or payload.allowed_cameras is not None
+        or (payload.role is not None and normalize_role(payload.role) != "admin")
+    )
+    if should_kick and target_id:
+        try:
+            from evileye.api.core.live_preview_hub import get_live_preview_hub
+
+            get_live_preview_hub().unregister_username(target_id)
+        except Exception:
+            pass
     return {"ok": True, "user": public}
 
 
