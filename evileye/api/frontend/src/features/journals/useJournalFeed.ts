@@ -18,6 +18,11 @@ function groupedCacheKey(tab: JournalType, filters: JournalDateFilters, page: nu
   return `journals:grouped:${tab}:${filters.date_from ?? ''}:${filters.date_to ?? ''}:${filters.date ?? ''}:${filters.source_name ?? ''}:${filters.event_type ?? ''}:p${page}`;
 }
 
+/** B04: ignore delayed responses after filter switch / abort. */
+export function shouldApplyJournalResult(gen: number, currentGen: number, aborted: boolean): boolean {
+  return !aborted && gen === currentGen;
+}
+
 export function useJournalFeed(tab: JournalType, filters: JournalDateFilters) {
   const { t } = useI18n();
   const initialKey = groupedCacheKey(tab, filters, 0);
@@ -48,6 +53,7 @@ export function useJournalFeed(tab: JournalType, filters: JournalDateFilters) {
             ? await journalsApi.eventsGrouped(nextPage, 30, filters, { signal: ac.signal })
             : await journalsApi.objectsGrouped(nextPage, 30, filters, { signal: ac.signal });
         if (gen !== generationRef.current || ac.signal.aborted) return;
+        if (!shouldApplyJournalResult(gen, generationRef.current, ac.signal.aborted)) return;
         if (!append) cacheSet(groupedCacheKey(tab, filters, 0), res, GROUPED_TTL_MS);
         if (!res.available) {
           setRows([]);
@@ -108,6 +114,7 @@ export function useJournalFeed(tab: JournalType, filters: JournalDateFilters) {
             ? await journalsApi.eventsGrouped(0, 30, filters, { signal: effective })
             : await journalsApi.objectsGrouped(0, 30, filters, { signal: effective });
         if (effective.aborted || gen !== generationRef.current) return;
+        if (!shouldApplyJournalResult(gen, generationRef.current, effective.aborted)) return;
         cacheSet(groupedCacheKey(tab, filters, 0), res, GROUPED_TTL_MS);
         if (!res.available) {
           setRows([]);
@@ -147,6 +154,7 @@ export function useJournalFeed(tab: JournalType, filters: JournalDateFilters) {
           ? await journalsApi.eventsGrouped(0, 30, filters)
           : await journalsApi.objectsGrouped(0, 30, filters);
       if (gen !== generationRef.current) return;
+      if (!shouldApplyJournalResult(gen, generationRef.current, false)) return;
       if (!res.available) return;
       cacheSet(groupedCacheKey(tab, filters, 0), res, GROUPED_TTL_MS);
       setRows((prev) => mergePrependRows(prev, res.items).rows);
