@@ -1,5 +1,7 @@
 /** Pure helpers for Live camera list merge / grace (A08). */
 
+import { withAuthScope } from '../../auth/authScope';
+
 export type LiveCameraLike = { run_id: number; source_id?: number | null };
 
 export interface LiveCameraPollDecision<T> {
@@ -9,6 +11,11 @@ export interface LiveCameraPollDecision<T> {
   cleared: boolean;
 }
 
+export function liveCamerasCacheKey(): string {
+  return withAuthScope('state:cameras:current');
+}
+
+/** @deprecated use liveCamerasCacheKey() — kept for tests that patch the name */
 export const LIVE_CAMERAS_CACHE_KEY = 'state:cameras:current';
 
 /**
@@ -54,6 +61,7 @@ export function resetLiveCameraCache(invalidate: (key: string) => void): {
   lastGood: never[];
   emptyStreak: number;
 } {
+  invalidate(liveCamerasCacheKey());
   invalidate(LIVE_CAMERAS_CACHE_KEY);
   return { lastGood: [], emptyStreak: 0 };
 }

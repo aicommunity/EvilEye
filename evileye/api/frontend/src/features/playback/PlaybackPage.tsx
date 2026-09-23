@@ -15,6 +15,7 @@ import {
   formatApiError,
   isAbortError,
 } from '../../api';
+import { withAuthScope } from '../../auth/authScope';
 import { Button, DatePickerField } from '../../components/ui';
 import { useToast } from '../../components/ui/Toast';
 import { useI18n } from '../../i18n';
@@ -176,7 +177,7 @@ function quantizeFloor(sec: number, step: number): number {
 }
 
 function camerasCacheKey(date: string, runId: number | null): string {
-  return `playback:cameras:${date}:${runId ?? 'none'}`;
+  return withAuthScope(`playback:cameras:${date}:${runId ?? 'none'}`);
 }
 
 export function PlaybackPage() {
@@ -445,8 +446,8 @@ export function PlaybackPage() {
           return;
         }
         const useDate = opts?.date ?? date;
-        const segKey = `playback:segments:${useDate ?? ''}:${opts?.from ?? ''}:${opts?.to ?? ''}:${nextSelected.join(',')}`;
-        const evKey = `playback:events:${useDate ?? ''}:${opts?.from ?? ''}:${opts?.to ?? ''}:${nextSelected.join(',')}`;
+        const segKey = withAuthScope(`playback:segments:${useDate ?? ''}:${opts?.from ?? ''}:${opts?.to ?? ''}:${nextSelected.join(',')}`);
+        const evKey = withAuthScope(`playback:events:${useDate ?? ''}:${opts?.from ?? ''}:${opts?.to ?? ''}:${nextSelected.join(',')}`);
 
         const cachedBatch = cacheGet<{ by_camera: Record<string, PlaybackSegment[]>; items: PlaybackSegment[] }>(segKey);
         const cachedEv = cacheGet<{ items: PlaybackEventInterval[]; legacy_markers?: PlaybackEventMarker[] }>(evKey);

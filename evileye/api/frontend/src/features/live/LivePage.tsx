@@ -11,12 +11,15 @@ import { ExpandedCameraView } from './ExpandedCameraView';
 import { LiveAlertsRail } from './LiveAlertsRail';
 import { useLiveLayout } from './useLiveLayout';
 import { useLiveGridPreviewWs } from './useLiveGridPreviewWs';
-import { LIVE_CAMERAS_CACHE_KEY, mergeLiveCameraPoll, resetLiveCameraCache } from './mergeLiveCameraPoll';
+import { mergeLiveCameraPoll, resetLiveCameraCache, liveCamerasCacheKey } from './mergeLiveCameraPoll';
 import { cancelPreviewDemandGrace, startPreviewDemandGrace } from './previewDemandGrace';
 import { fitColsForCount } from '../layout/fitGrid';
+import { withAuthScope } from '../../auth/authScope';
 
-const CAMERAS_CACHE_KEY = LIVE_CAMERAS_CACHE_KEY;
-const STATS_CACHE_KEY = 'journals:stats';
+function statsCacheKey(): string {
+  return withAuthScope('journals:stats');
+}
+
 const CAMERAS_TTL_MS = 12_000;
 const STATS_TTL_MS = 20_000;
 const PREVIEW_DEMAND_MS = 5_000;
@@ -34,8 +37,8 @@ export function LivePage() {
   const { refresh, user } = useAuth();
   const username = user?.username ?? null;
 
-  const cachedCams = cacheGet<{ items: StateCamera[] }>(CAMERAS_CACHE_KEY);
-  const cachedStats = cacheGet<{ available: boolean; events_total?: number; objects_total?: number }>(STATS_CACHE_KEY);
+  const cachedCams = cacheGet<{ items: StateCamera[] }>(liveCamerasCacheKey());
+  const cachedStats = cacheGet<{ available: boolean; events_total?: number; objects_total?: number }>(statsCacheKey());
   const [cameras, setCameras] = useState<StateCamera[]>(
     () => (cachedCams?.items?.length ? cachedCams.items : lastGoodLiveCameras),
   );
@@ -73,7 +76,7 @@ export function LivePage() {
       window.clearTimeout(camerasLoadingTimerRef.current);
       camerasLoadingTimerRef.current = null;
     }
-    if (!camerasRef.current.length && !cacheGet(CAMERAS_CACHE_KEY)) {
+    if (!camerasRef.current.length && !cacheGet(liveCamerasCacheKey())) {
       camerasLoadingTimerRef.current = window.setTimeout(() => setCamerasLoading(true), 1500);
     } else {
       setCamerasLoading(false);
@@ -97,7 +100,7 @@ export function LivePage() {
       emptyCameraPollStreak = decision.emptyStreak;
       lastGoodLiveCameras = decision.lastGood;
       if (decision.cleared || items.length) {
-        cacheSet(CAMERAS_CACHE_KEY, { items: decision.cameras }, CAMERAS_TTL_MS);
+        cacheSet(liveCamerasCacheKey(), { items: decision.cameras }, CAMERAS_TTL_MS);
       }
       setCameras(decision.cameras);
       setCamerasPolledAtMs(Date.now());
@@ -105,7 +108,7 @@ export function LivePage() {
         .stats(undefined, { signal: ac.signal })
         .then((st) => {
           if (ac.signal.aborted || !st?.available) return;
-          cacheSet(STATS_CACHE_KEY, st, STATS_TTL_MS);
+          cacheSet(statsCacheKey(), st, STATS_TTL_MS);
           setStats({ events: st.events_total, objects: st.objects_total });
         })
         .catch(() => undefined);

@@ -16,7 +16,7 @@ import { useVisibilityPolling } from '../../hooks/useVisibilityPolling';
 import { StreamOverlay } from '../../components/StreamOverlay';
 import { useI18n } from '../../i18n';
 import {
-  LIVE_CAMERAS_CACHE_KEY,
+  liveCamerasCacheKey,
   mergeLiveCameraPoll,
   resetLiveCameraCache,
 } from './mergeLiveCameraPoll';
@@ -36,7 +36,7 @@ function MobileLiveInner() {
   const { t, lang, setLang } = useI18n();
   const { user } = useAuth();
   const username = user?.username ?? null;
-  const cached = cacheGet<{ items: StateCamera[] }>(LIVE_CAMERAS_CACHE_KEY);
+  const cached = cacheGet<{ items: StateCamera[] }>(liveCamerasCacheKey());
   const [cameras, setCameras] = useState<StateCamera[]>(() => cached?.items ?? []);
   const [camerasLoading, setCamerasLoading] = useState(() => !(cached?.items?.length));
   const [idx, setIdx] = useState(0);
@@ -85,7 +85,7 @@ function MobileLiveInner() {
       emptyMobilePollStreak = decision.emptyStreak;
       lastGoodMobileCameras = decision.lastGood;
       if (decision.cleared || items.length) {
-        cacheSet(LIVE_CAMERAS_CACHE_KEY, { items: decision.cameras }, CAMERAS_TTL_MS);
+        cacheSet(liveCamerasCacheKey, { items: decision.cameras }, CAMERAS_TTL_MS);
       }
       setCameras(decision.cameras);
     } catch (e) {

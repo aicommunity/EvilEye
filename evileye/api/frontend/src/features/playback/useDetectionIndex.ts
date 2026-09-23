@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { ApiError, cacheGet, cacheSet, isAbortError, playbackApi, type PlaybackDetectionItem } from '../../api';
+import { getAuthEpoch, withAuthScope } from '../../auth/authScope';
 import { mergeGlobalDetectionTs } from './detectionSync';
 
 const DETECTIONS_CACHE_TTL_MS = 90_000;
@@ -12,7 +13,9 @@ function detectionsCacheKey(
   toSec: number,
   cameras: string[],
 ): string {
-  return `playback:detections:${date}:${runId ?? 'none'}:${Math.round(fromSec)}:${Math.round(toSec)}:ticks-preview-v2:${cameras.join(',')}`;
+  return withAuthScope(
+    `playback:detections:${date}:${runId ?? 'none'}:${Math.round(fromSec)}:${Math.round(toSec)}:ticks-preview-v2:${cameras.join(',')}`,
+  );
 }
 
 /** Merge detection tick rows per camera (ts/kind/object_id). */
@@ -51,6 +54,7 @@ async function fetchDetectionTicks(
     signal?: AbortSignal;
   },
 ): Promise<Record<string, PlaybackDetectionItem[]>> {
+  const epochAtStart = getAuthEpoch();
   const cacheKey = detectionsCacheKey(opts.date, opts.runId, opts.fromSec, opts.toSec, cameras);
   const cached = cacheGet<{ by_camera: Record<string, PlaybackDetectionItem[]> }>(cacheKey);
   if (cached?.by_camera) {
@@ -65,12 +69,21 @@ async function fetchDetectionTicks(
     ticksOnly: true,
     signal: opts.signal,
   });
+  if (epochAtStart !== getAuthEpoch()) {
+    return mappedEmpty(cameras);
+  }
   cacheSet(cacheKey, { by_camera: res.by_camera ?? {} }, DETECTIONS_CACHE_TTL_MS);
 
   const mapped: Record<string, PlaybackDetectionItem[]> = {};
   for (const cam of cameras) {
     mapped[cam] = res.by_camera?.[cam] ?? [];
   }
+  return mapped;
+}
+
+function mappedEmpty(cameras: string[]): Record<string, PlaybackDetectionItem[]> {
+  const mapped: Record<string, PlaybackDetectionItem[]> = {};
+  for (const cam of cameras) mapped[cam] = [];
   return mapped;
 }
 

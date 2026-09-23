@@ -4,24 +4,20 @@ import {
   useContext,
   useEffect,
   useMemo,
+  useRef,
   useState,
   type ReactNode,
 } from 'react';
 import { authApi, ApiError, type AuthUser, type UserPrefs } from '../api';
-import { cacheClear } from '../api/dataCache';
 import { applyClientDebugFromAuth } from '../diagnostics/clientTelemetry';
+import {
+  aclFingerprint,
+  bumpAuthScope,
+  getAuthEpoch,
+  setAuthUsername,
+} from './authScope';
 
-/** Bumped on login/logout so scoped caches can key off auth epoch (R09). */
-let authEpoch = 0;
-
-export function getAuthEpoch(): number {
-  return authEpoch;
-}
-
-function bumpAuthScope(): void {
-  authEpoch += 1;
-  cacheClear();
-}
+export { getAuthEpoch } from './authScope';
 
 interface AuthState {
   loading: boolean;
@@ -33,6 +29,7 @@ interface AuthState {
   cameraAccess: 'all' | 'restricted';
   prefs: UserPrefs | null;
   clientDebug: boolean;
+  authEpoch: number;
   refresh: () => Promise<boolean>;
   login: (username: string, password: string) => Promise<void>;
   register: (email: string, password: string) => Promise<string>;
@@ -59,6 +56,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [cameraAccess, setCameraAccess] = useState<'all' | 'restricted'>('restricted');
   const [prefs, setPrefs] = useState<UserPrefs | null>(null);
   const [clientDebug, setClientDebug] = useState(false);
+  const [authEpoch, setAuthEpochState] = useState(() => getAuthEpoch());
+  const aclFpRef = useRef<string>('');
+  const userRef = useRef<string>('');
 
   const apply = useCallback(
     (
@@ -72,7 +72,25 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         prefs?: UserPrefs;
         client_debug?: boolean;
       },
+      opts?: { bump?: boolean },
     ) => {
+      const nextName = nextUser?.username ?? '';
+      const nextFp = aclFingerprint(extra?.allowed_cameras, extra?.camera_access);
+      const shouldBump =
+        opts?.bump === true ||
+        (Boolean(nextName) &&
+          nextName === userRef.current &&
+          aclFpRef.current !== '' &&
+          nextFp !== aclFpRef.current);
+
+      if (shouldBump) {
+        setAuthEpochState(bumpAuthScope(nextName || null));
+      } else {
+        setAuthUsername(nextName || null);
+      }
+      userRef.current = nextName;
+      aclFpRef.current = nextFp;
+
       setAuthEnabled(enabled);
       setUser(nextUser);
       setPermissions(new Set(perms));
@@ -101,8 +119,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       return Boolean(me.user);
     } catch (e) {
       if (e instanceof ApiError && e.status === 401) {
-        bumpAuthScope();
-        apply(true, null, [], false);
+        setAuthEpochState(bumpAuthScope(null));
+        userRef.current = '';
+        aclFpRef.current = '';
+        apply(true, null, [], false, undefined, { bump: false });
         setLoading(false);
         return false;
       }
@@ -118,7 +138,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const login = useCallback(
     async (username: string, password: string) => {
       const result = await authApi.login(username, password);
-      bumpAuthScope();
+      setAuthEpochState(bumpAuthScope(result.user?.username ?? username));
+      userRef.current = result.user?.username ?? username;
+      aclFpRef.current = aclFingerprint(result.allowed_cameras, result.camera_access);
       apply(
         result.auth_enabled,
         result.user,
@@ -130,6 +152,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           prefs: result.prefs,
           client_debug: result.client_debug,
         },
+        { bump: false },
       );
     },
     [apply],
@@ -142,8 +165,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   const logout = useCallback(async () => {
     await authApi.logout();
-    bumpAuthScope();
-    apply(authEnabled, null, [], false);
+    setAuthEpochState(bumpAuthScope(null));
+    userRef.current = '';
+    aclFpRef.current = '';
+    apply(authEnabled, null, [], false, undefined, { bump: false });
   }, [apply, authEnabled]);
 
   const hasPermission = useCallback(
@@ -167,6 +192,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       cameraAccess,
       prefs,
       clientDebug,
+      authEpoch,
       refresh,
       login,
       register,
@@ -184,6 +210,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       cameraAccess,
       prefs,
       clientDebug,
+      authEpoch,
       refresh,
       login,
       register,

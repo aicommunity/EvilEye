@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { isAbortError, playbackApi, PLAYBACK_DETECTION_MATCH_SEC, type FrameSize, type StreamMetadata } from '../../api';
+import { getAuthEpoch, onAuthScopeChange, withAuthScope } from '../../auth/authScope';
 import { localDateString } from './timelineMath';
 
 const FETCH_DEBOUNCE_MS = 130;
@@ -13,6 +14,7 @@ function roundTs(ts: number): number {
 type CacheEntry = { ts: number; meta: StreamMetadata | null };
 
 const metadataCache = new Map<string, CacheEntry>();
+onAuthScopeChange(() => metadataCache.clear());
 
 function hasFrameSize(frameSize: FrameSize | null | undefined): frameSize is FrameSize {
   return Boolean(frameSize && frameSize.w > 0 && frameSize.h > 0);
@@ -25,7 +27,9 @@ function cacheKey(
   runId: number | null,
   frameSize: FrameSize,
 ): string {
-  return `${camera}:${roundTs(ts)}:${date}:${runId ?? 'none'}:${frameSize.w}x${frameSize.h}`;
+  return withAuthScope(
+    `${camera}:${roundTs(ts)}:${date}:${runId ?? 'none'}:${frameSize.w}x${frameSize.h}`,
+  );
 }
 
 export function usePlaybackMetadata({

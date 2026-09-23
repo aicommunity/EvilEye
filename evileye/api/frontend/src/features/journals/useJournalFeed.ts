@@ -8,6 +8,7 @@ import {
   formatApiError,
   isAbortError,
 } from '../../api';
+import { getAuthEpoch, trackAuthAbort, withAuthScope } from '../../auth/authScope';
 import { useI18n } from '../../i18n';
 import { mergePrependRows, type JournalType } from './journalMath';
 
@@ -15,7 +16,9 @@ const GROUPED_TTL_MS = 12_000;
 const GROUPED_LOAD_TIMEOUT_MS = 30_000;
 
 function groupedCacheKey(tab: JournalType, filters: JournalDateFilters, page: number): string {
-  return `journals:grouped:${tab}:${filters.date_from ?? ''}:${filters.date_to ?? ''}:${filters.date ?? ''}:${filters.source_name ?? ''}:${filters.event_type ?? ''}:p${page}`;
+  return withAuthScope(
+    `journals:grouped:${tab}:${filters.date_from ?? ''}:${filters.date_to ?? ''}:${filters.date ?? ''}:${filters.source_name ?? ''}:${filters.event_type ?? ''}:p${page}`,
+  );
 }
 
 /** B04: ignore delayed responses after filter switch / abort. */
@@ -56,6 +59,8 @@ export function useJournalFeed(tab: JournalType, filters: JournalDateFilters) {
       loadAbortRef.current?.abort();
       const ac = new AbortController();
       loadAbortRef.current = ac;
+      const untrack = trackAuthAbort(ac);
+      const epochAtStart = getAuthEpoch();
       const gen = ++generationRef.current;
       const timeoutAc = new AbortController();
       const timeoutId = window.setTimeout(() => timeoutAc.abort(), GROUPED_LOAD_TIMEOUT_MS);
@@ -67,6 +72,7 @@ export function useJournalFeed(tab: JournalType, filters: JournalDateFilters) {
           tab === 'events'
             ? await journalsApi.eventsGrouped(nextPage, 30, filters, { signal: effective })
             : await journalsApi.objectsGrouped(nextPage, 30, filters, { signal: effective });
+        if (epochAtStart !== getAuthEpoch()) return;
         if (!shouldApplyJournalResult(gen, generationRef.current, effective.aborted)) return;
         if (!append) cacheSet(groupedCacheKey(tab, filters, 0), res, GROUPED_TTL_MS);
         if (!res.available) {
@@ -80,8 +86,10 @@ export function useJournalFeed(tab: JournalType, filters: JournalDateFilters) {
         setPage(nextPage);
         setHasMore(res.items.length >= 30);
       } catch (e) {
-        // Stale gen / abort: do not overwrite message (R14).
-        if (!shouldApplyJournalResult(gen, generationRef.current, effective.aborted || isAbortError(e))) {
+        if (
+          epochAtStart !== getAuthEpoch() ||
+          !shouldApplyJournalResult(gen, generationRef.current, effective.aborted || isAbortError(e))
+        ) {
           return;
         }
         if (!append) {
@@ -89,6 +97,7 @@ export function useJournalFeed(tab: JournalType, filters: JournalDateFilters) {
         }
       } finally {
         window.clearTimeout(timeoutId);
+        untrack();
         if (gen === generationRef.current) setLoading(false);
       }
     },
@@ -99,6 +108,7 @@ export function useJournalFeed(tab: JournalType, filters: JournalDateFilters) {
     async (signal?: AbortSignal) => {
       generationRef.current += 1;
       const gen = generationRef.current;
+      const epochAtStart = getAuthEpoch();
       setPage(0);
       const cached = cacheGet<{ items: JournalGroupedRow[]; available: boolean; message?: string }>(
         groupedCacheKey(tab, filters, 0),
@@ -118,14 +128,19 @@ export function useJournalFeed(tab: JournalType, filters: JournalDateFilters) {
         setLoading(true);
       }
       const timeoutAc = new AbortController();
+      const localAc = new AbortController();
+      const untrack = trackAuthAbort(localAc);
       const timeoutId = window.setTimeout(() => timeoutAc.abort(), GROUPED_LOAD_TIMEOUT_MS);
-      const signals = signal ? [signal, timeoutAc.signal] : [timeoutAc.signal];
+      const signals = signal
+        ? [signal, timeoutAc.signal, localAc.signal]
+        : [timeoutAc.signal, localAc.signal];
       const effective = abortAny(signals);
       try {
         const res =
           tab === 'events'
             ? await journalsApi.eventsGrouped(0, 30, filters, { signal: effective })
             : await journalsApi.objectsGrouped(0, 30, filters, { signal: effective });
+        if (epochAtStart !== getAuthEpoch()) return;
         if (!shouldApplyJournalResult(gen, generationRef.current, effective.aborted)) return;
         cacheSet(groupedCacheKey(tab, filters, 0), res, GROUPED_TTL_MS);
         if (!res.available) {
@@ -139,7 +154,10 @@ export function useJournalFeed(tab: JournalType, filters: JournalDateFilters) {
         setPage(0);
         setHasMore(res.items.length >= 30);
       } catch (e) {
-        if (!shouldApplyJournalResult(gen, generationRef.current, effective.aborted || isAbortError(e))) {
+        if (
+          epochAtStart !== getAuthEpoch() ||
+          !shouldApplyJournalResult(gen, generationRef.current, effective.aborted || isAbortError(e))
+        ) {
           return;
         }
         if (!cached?.items?.length) {
@@ -149,7 +167,7 @@ export function useJournalFeed(tab: JournalType, filters: JournalDateFilters) {
         }
       } finally {
         window.clearTimeout(timeoutId);
-        // Clear loading even when our timeout aborted (R14).
+        untrack();
         if (gen === generationRef.current) setLoading(false);
       }
     },
@@ -158,18 +176,23 @@ export function useJournalFeed(tab: JournalType, filters: JournalDateFilters) {
 
   const poll = useCallback(async () => {
     const gen = generationRef.current;
+    const epochAtStart = getAuthEpoch();
     const ac = new AbortController();
+    const untrack = trackAuthAbort(ac);
     try {
       const res =
         tab === 'events'
           ? await journalsApi.eventsGrouped(0, 30, filters, { signal: ac.signal })
           : await journalsApi.objectsGrouped(0, 30, filters, { signal: ac.signal });
+      if (epochAtStart !== getAuthEpoch()) return;
       if (!shouldApplyJournalResult(gen, generationRef.current, ac.signal.aborted)) return;
       if (!res.available) return;
       cacheSet(groupedCacheKey(tab, filters, 0), res, GROUPED_TTL_MS);
       setRows((prev) => mergePrependRows(prev, res.items).rows);
     } catch {
       /* ignore */
+    } finally {
+      untrack();
     }
   }, [tab, filters]);
 

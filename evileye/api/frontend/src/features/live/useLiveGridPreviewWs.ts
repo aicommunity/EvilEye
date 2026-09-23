@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { streamSnapshotUrl } from '../../api';
+import { onAuthScopeChange } from '../../auth/authScope';
 import { clientTelemetryLog } from '../../diagnostics/clientTelemetry';
 
 export interface PreviewFrame {
@@ -294,6 +295,22 @@ export function useLiveGridPreviewWs(byRun: LivePreviewByRun) {
       setFrames(new Map());
       setConnectedRuns(new Set());
     };
+  }, []);
+
+  // Auth scope change: drop frames/etags immediately (R09).
+  useEffect(() => {
+    return onAuthScopeChange(() => {
+      blobUrlsRef.current.forEach((url) => URL.revokeObjectURL(url));
+      blobUrlsRef.current.clear();
+      etagsRef.current.clear();
+      setFrames(new Map());
+      for (const [runId, state] of socketsRef.current) {
+        const ws = state.ws;
+        if (ws && ws.readyState === WebSocket.OPEN) {
+          ws.send(JSON.stringify({ op: 'subscribe', source_ids: [] }));
+        }
+      }
+    });
   }, []);
 
   useEffect(() => {

@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
 import { journalsApi, type JournalGroupedRow, cacheGet, cacheSet, formatApiError, isAbortError } from '../../api';
+import { withAuthScope } from '../../auth/authScope';
 import { Button, DatePickerField } from '../../components/ui';
 import { useToast } from '../../components/ui/Toast';
 import { useI18n } from '../../i18n';
@@ -30,7 +31,7 @@ function daysAgo(n: number): string {
   return formatLocalDate(d);
 }
 
-const META_CACHE_KEY = 'journals:meta';
+const metaCacheKey = () => withAuthScope('journals:meta');
 const META_TTL_MS = 60_000;
 
 export function EventsPage() {
@@ -46,7 +47,7 @@ export function EventsPage() {
     event_types_events: string[];
     event_types_objects: string[];
     source_names: string[];
-  }>(META_CACHE_KEY);
+  }>(metaCacheKey());
   const [eventTypes, setEventTypes] = useState<string[]>(() =>
     tab === 'objects' ? cachedMeta?.event_types_objects ?? [] : cachedMeta?.event_types_events ?? [],
   );
@@ -80,13 +81,13 @@ export function EventsPage() {
       setEventTypes(tab === 'objects' ? meta.event_types_objects : meta.event_types_events);
       setSources(meta.source_names);
     };
-    const cached = cacheGet<typeof cachedMeta>(META_CACHE_KEY);
+    const cached = cacheGet<typeof cachedMeta>(metaCacheKey());
     if (cached) apply(cached);
     void journalsApi
       .filtersMeta({ signal: ac.signal })
       .then((meta) => {
         if (ac.signal.aborted) return;
-        cacheSet(META_CACHE_KEY, meta, META_TTL_MS);
+        cacheSet(metaCacheKey(), meta, META_TTL_MS);
         apply(meta);
       })
       .catch((e) => {

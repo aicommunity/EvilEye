@@ -30,4 +30,7 @@
 
 ## Auth scope (SPA)
 
-- Login / logout / 401 refresh bumps `authEpoch` and calls `cacheClear()`.
+- Login / logout / 401 refresh / ACL revision (same user, changed `allowed_cameras` or `camera_access`) bumps `authEpoch`.
+- Sensitive `dataCache` keys are prefixed with `auth:{user}|e{epoch}:…` via `withAuthScope`.
+- In-flight fetches registered with `trackAuthAbort` are aborted on bump; fetch handlers discard results when epoch changes.
+- Live preview frames/etags clear on scope change; do not rely on page-local effects alone.
