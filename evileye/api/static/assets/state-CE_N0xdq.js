@@ -1,0 +1,1 @@
+import{e as t}from"./index-Cj-juIYW.js";const a={overview(r){return t("/state/overview",r)},runs(r="current",e){return t(`/state/runs?scope=${r}`,e)},run(r,e){return t(`/state/runs/${r}`,e)},cameras(r="current",e){return t(`/state/cameras?scope=${r}`,e)}};export{a as s};
