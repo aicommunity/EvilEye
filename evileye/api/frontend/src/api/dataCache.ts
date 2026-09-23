@@ -6,6 +6,19 @@ type CacheEntry = {
 };
 
 const store = new Map<string, CacheEntry>();
+const MAX_KEYS = 256;
+
+function evictExpiredAndOverflow(): void {
+  const now = Date.now();
+  for (const [key, entry] of store) {
+    if (entry.expiresAt <= now) store.delete(key);
+  }
+  while (store.size > MAX_KEYS) {
+    const oldest = store.keys().next().value;
+    if (oldest == null) break;
+    store.delete(oldest);
+  }
+}
 
 export function cacheGet<T>(key: string): T | undefined {
   const entry = store.get(key);
@@ -24,7 +37,9 @@ export function cacheIsFresh(key: string): boolean {
 }
 
 export function cacheSet<T>(key: string, value: T, ttlMs: number): void {
+  store.delete(key); // refresh insertion order for FIFO eviction
   store.set(key, { value, expiresAt: Date.now() + Math.max(0, ttlMs) });
+  evictExpiredAndOverflow();
 }
 
 export function cacheInvalidate(keyOrPrefix: string): void {

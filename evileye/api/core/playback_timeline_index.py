@@ -179,9 +179,6 @@ _REFRESH_SLOTS = threading.Semaphore(2)
 
 def _schedule_refresh(name: str, key: str, fn) -> None:
     def _job() -> None:
-        if not _REFRESH_SLOTS.acquire(blocking=False):
-            logger.debug("background %s refresh skipped (in-flight cap)", name)
-            return
         try:
             singleflight(key, fn)
         except Exception as exc:
@@ -189,6 +186,10 @@ def _schedule_refresh(name: str, key: str, fn) -> None:
         finally:
             _REFRESH_SLOTS.release()
 
+    # F10: acquire permit before spawning the daemon thread.
+    if not _REFRESH_SLOTS.acquire(blocking=False):
+        logger.debug("background %s refresh skipped (in-flight cap)", name)
+        return
     threading.Thread(target=_job, name=name, daemon=True).start()
 
 
@@ -496,9 +497,10 @@ def _rebuild_detection_ticks(
     except Exception as exc:
         logger.debug("failed to write detection ticks %s: %s", index_path, exc)
 
+    # F08: return full day compact→items for all cams in the file (not leader projection).
     result: dict[str, list[dict[str, Any]]] = {}
-    for cam in cam_list:
-        result[cam] = [_tick_row_to_item(row) for row in (compact.get(cam) or [])]
+    for cam, rows in compact.items():
+        result[str(cam)] = [_tick_row_to_item(row) for row in (rows or [])]
     return result
 
 
@@ -525,10 +527,12 @@ def ensure_detection_ticks(
         return _ticks_from_payload(cached, cam_list)
     if cached is not None and not _payload_covers_cameras(cached, cam_list):
         # Partial index: merge missing cameras without discarding coverage.
-        return singleflight(
-            f"ensure_detection_ticks:{date_folder}:{run_id}",
+        full = singleflight(
+            f"ensure_detection_ticks:{date_folder}:{run_id}:{base}",
             lambda: _rebuild_detection_ticks(date_folder=date_folder, cameras=cam_list, run_id=run_id),
         )
+        # After shared build, project this caller's cameras (F08).
+        return {c: list(full.get(c) or []) for c in cam_list}
 
     stale = read_detection_ticks_stale(date_folder, cam_list, run_id=run_id)
     if stale is not None:
@@ -538,10 +542,11 @@ def ensure_detection_ticks(
             schedule_detection_ticks_refresh(date_folder, cam_list, run_id=run_id)
             return stale
 
-    return singleflight(
-        f"ensure_detection_ticks:{date_folder}:{run_id}",
+    full = singleflight(
+        f"ensure_detection_ticks:{date_folder}:{run_id}:{base}",
         lambda: _rebuild_detection_ticks(date_folder=date_folder, cameras=cam_list, run_id=run_id),
     )
+    return {c: list(full.get(c) or []) for c in cam_list}
 
 
 def _compact_tick_row(item: dict[str, Any]) -> list[Any]:
@@ -653,7 +658,22 @@ def _rebuild_event_intervals(
         }
     )
     requested = {c for c in (cameras or []) if c}
-    covered = sorted(set(cam_names) | requested)
+    # F09: persist previous negative coverage for the same source version.
+    prev = _read_json(index_path) or {}
+    prev_covered = prev.get("covered_cameras") if isinstance(prev.get("covered_cameras"), list) else []
+    prev_mtime = prev.get("source_mtime")
+    same_version = (
+        int(prev.get("version") or 0) == INDEX_VERSION
+        and prev_mtime is not None
+        and abs(float(prev_mtime) - float(source_mtime)) <= 1e-3
+    )
+    covered_set = set(cam_names) | requested
+    if same_version:
+        covered_set |= {str(c) for c in prev_covered if c}
+    # System rows are frequently injected for restricted queries.
+    if "System" in requested or any(str(it.get("camera") or "") == "System" for it in items):
+        covered_set.add("System")
+    covered = sorted(covered_set)
     payload = {
         "version": INDEX_VERSION,
         "date": date_folder,

@@ -47,12 +47,14 @@ def remember(key: str, value: Any, *, ttl_sec: float | None = None) -> None:
     global _memory_cache_bytes_est, _copy_ms_total, _copy_count
     policy = _policy
     fresh_until, stale_until = policy.fresh_and_stale(ttl_sec)
-    # Copy outside the lock to reduce contention (A12).
+    # F11: estimate before deepcopy to avoid temp RAM spike on oversized reject.
+    est_probe = _estimate_cache_bytes(value)
+    if est_probe > policy.max_bytes:
+        return
     t0 = time.perf_counter()
     stored = deepcopy(value)
     copy_ms = (time.perf_counter() - t0) * 1000.0
     est = _estimate_cache_bytes(stored)
-    # Reject single oversized entries instead of pinning forever (R15).
     if est > policy.max_bytes:
         return
     with _memory_lock:

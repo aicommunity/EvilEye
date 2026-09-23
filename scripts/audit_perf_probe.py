@@ -105,14 +105,28 @@ def _time_endpoint(
     params: dict[str, Any] | None = None,
     headers: dict[str, str] | None = None,
     warm: int = 2,
+    raw_out: list[dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
     samples: list[float] = []
     codes: dict[str, int] = {}
     bytes_list: list[int] = []
     for i in range(reps + warm):
+        phase = "warm" if i < warm else "measure"
         code, ms, body, _ = client.request(method, path, params=params, headers=headers)
         key = str(code)
         codes[key] = codes.get(key, 0) + 1
+        if raw_out is not None:
+            raw_out.append(
+                {
+                    "name": name,
+                    "path": path,
+                    "phase": phase,
+                    "code": code,
+                    "ms": round(ms, 3),
+                    "bytes": len(body),
+                    "ts": time.time(),
+                }
+            )
         if i >= warm:
             samples.append(ms)
             bytes_list.append(len(body))
@@ -151,6 +165,7 @@ def main() -> int:
         source_ids = [int(i["source_id"]) for i in items]
 
     results: list[dict[str, Any]] = []
+    raw_samples: list[dict[str, Any]] = []
     results.append(
         _time_endpoint(
             client,
@@ -159,6 +174,7 @@ def main() -> int:
             "/api/v1/state/cameras",
             args.reps,
             params={"scope": "current"},
+            raw_out=raw_samples,
         )
     )
 
@@ -208,6 +224,7 @@ def main() -> int:
             args.reps,
             params={"date": args.date, "cameras": args.camera},
             warm=1,
+            raw_out=raw_samples,
         )
     )
     results.append(
@@ -223,6 +240,7 @@ def main() -> int:
                 "ticks_only": "true",
             },
             warm=1,
+            raw_out=raw_samples,
         )
     )
     results.append(
@@ -234,6 +252,7 @@ def main() -> int:
             args.reps,
             params={"date": args.date},
             warm=1,
+            raw_out=raw_samples,
         )
     )
 
@@ -252,19 +271,22 @@ def main() -> int:
                 or segs[0].get("media_path")
             )
         if media_path:
+            # F13: measure Range seek latency, not full-file download.
             results.append(
                 _time_endpoint(
                     client,
-                    "playback.media",
+                    "playback.media.range",
                     "GET",
                     "/api/v1/playback/media",
                     min(args.reps, 11),
                     params={"path": media_path},
+                    headers={"Range": "bytes=0-65535"},
                     warm=1,
+                    raw_out=raw_samples,
                 )
             )
         else:
-            results.append({"name": "playback.media", "skipped": "no segment path"})
+            results.append({"name": "playback.media.range", "skipped": "no segment path"})
     except Exception as exc:
         results.append({"name": "playback.media", "error": str(exc)})
 
@@ -286,20 +308,38 @@ def main() -> int:
         results.append({"name": "aux", "path": path, "code": code, "ms": round(ms, 2)})
 
     # Fail harness if required endpoints returned unexpected codes.
-    required = {"playback.timeline", "playback.detections", "playback.events"}
+    # F13: every required endpoint must have at least one 200/304; state/snapshot included.
+    required = {
+        "playback.timeline",
+        "playback.detections",
+        "playback.events",
+        "state.cameras.current",
+    }
     bad = []
     for row in results:
         name = row.get("name")
         if name not in required:
             continue
         codes = row.get("codes") or {}
-        ok = sum(int(codes.get(k, 0)) for k in ("200", "304"))
+        ok = sum(int(codes.get(k, 0)) for k in ("200", "304", "206"))
         total = sum(int(v) for v in codes.values()) if codes else 0
         if total and ok == 0:
             bad.append(name)
     if bad:
-        print(f"ERROR: required endpoints without 200/304: {bad}", file=sys.stderr)
+        print(f"ERROR: required endpoints without 200/304/206: {bad}", file=sys.stderr)
         return 2
+
+    import subprocess
+
+    sha = ""
+    try:
+        sha = (
+            subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=str(Path(__file__).resolve().parents[1]))
+            .decode()
+            .strip()
+        )
+    except Exception:
+        sha = ""
 
     payload = {
         "base": args.base,
@@ -308,6 +348,7 @@ def main() -> int:
         "source_ids": source_ids,
         "camera": args.camera,
         "reps": args.reps,
+        "git_sha": sha,
         "results": results,
         "ts": time.strftime("%Y-%m-%dT%H:%M:%S"),
     }
@@ -316,16 +357,11 @@ def main() -> int:
     if args.out:
         args.out.parent.mkdir(parents=True, exist_ok=True)
         args.out.write_text(text + "\n", encoding="utf-8")
-        # Also append raw one-line samples for archival (R17).
-        samples_path = args.out.with_name(
-            args.out.stem.replace("probe", "samples") + ".jsonl"
-            if "probe" in args.out.stem
-            else args.out.stem + "_samples.jsonl"
-        )
-        if "audit_perf" in str(args.out):
-            samples_path = Path("reports") / f"audit_perf_samples_{time.strftime('%Y-%m-%d')}.jsonl"
+        # Per-request raw samples (not aggregated report) — F13.
+        samples_path = Path("reports") / f"audit_perf_samples_{time.strftime('%Y-%m-%d')}.jsonl"
         with samples_path.open("a", encoding="utf-8") as fh:
-            fh.write(json.dumps({"ts": payload["ts"], "results": results}, separators=(",", ":")) + "\n")
+            for row in raw_samples:
+                fh.write(json.dumps({"git_sha": sha, **row}, separators=(",", ":")) + "\n")
     return 0
 
 

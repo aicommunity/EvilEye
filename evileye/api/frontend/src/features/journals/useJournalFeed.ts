@@ -8,7 +8,7 @@ import {
   formatApiError,
   isAbortError,
 } from '../../api';
-import { getAuthEpoch, trackAuthAbort, withAuthScope } from '../../auth/authScope';
+import { getAuthEpoch, onAuthScopeChange, trackAuthAbort, withAuthScope } from '../../auth/authScope';
 import { useI18n } from '../../i18n';
 import { mergePrependRows, type JournalType } from './journalMath';
 
@@ -174,27 +174,39 @@ export function useJournalFeed(tab: JournalType, filters: JournalDateFilters) {
     [tab, filters, t],
   );
 
+  const pollInFlightRef = useRef(false);
+  const pollAbortRef = useRef<AbortController | null>(null);
+
   const poll = useCallback(async () => {
+    if (pollInFlightRef.current || loading) return;
     const gen = generationRef.current;
     const epochAtStart = getAuthEpoch();
+    pollAbortRef.current?.abort();
     const ac = new AbortController();
+    pollAbortRef.current = ac;
     const untrack = trackAuthAbort(ac);
+    const timeoutAc = new AbortController();
+    const timeoutId = window.setTimeout(() => timeoutAc.abort(), GROUPED_LOAD_TIMEOUT_MS);
+    const effective = abortAny([ac.signal, timeoutAc.signal]);
+    pollInFlightRef.current = true;
     try {
       const res =
         tab === 'events'
-          ? await journalsApi.eventsGrouped(0, 30, filters, { signal: ac.signal })
-          : await journalsApi.objectsGrouped(0, 30, filters, { signal: ac.signal });
+          ? await journalsApi.eventsGrouped(0, 30, filters, { signal: effective })
+          : await journalsApi.objectsGrouped(0, 30, filters, { signal: effective });
       if (epochAtStart !== getAuthEpoch()) return;
-      if (!shouldApplyJournalResult(gen, generationRef.current, ac.signal.aborted)) return;
+      if (!shouldApplyJournalResult(gen, generationRef.current, effective.aborted)) return;
       if (!res.available) return;
       cacheSet(groupedCacheKey(tab, filters, 0), res, GROUPED_TTL_MS);
       setRows((prev) => mergePrependRows(prev, res.items).rows);
     } catch {
       /* ignore */
     } finally {
+      window.clearTimeout(timeoutId);
       untrack();
+      pollInFlightRef.current = false;
     }
-  }, [tab, filters]);
+  }, [tab, filters, loading]);
 
   useEffect(() => {
     const ac = new AbortController();
@@ -202,9 +214,22 @@ export function useJournalFeed(tab: JournalType, filters: JournalDateFilters) {
     return () => {
       ac.abort();
       loadAbortRef.current?.abort();
+      pollAbortRef.current?.abort();
       generationRef.current += 1;
     };
   }, [tab, filters.source_name, filters.event_type, filters.date, filters.date_from, filters.date_to]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // F06: clear displayed rows and reload when auth epoch changes.
+  useEffect(() => {
+    return onAuthScopeChange(() => {
+      setRows([]);
+      setMessage(null);
+      loadAbortRef.current?.abort();
+      pollAbortRef.current?.abort();
+      generationRef.current += 1;
+      void reload();
+    });
+  }, [reload]);
 
   return { rows, hasMore, message, loading, loadMore: () => void load(true), reload: () => void reload(), poll };
 }

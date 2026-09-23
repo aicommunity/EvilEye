@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 import { request, streamMetadataWsUrl, type StreamMetadata } from '../../api';
+import { registerAuthScopeCleanup } from '../../auth/authScope';
 
 const REST_FALLBACK_MS = 1500;
 export const METADATA_TTL_MS = 4000;
@@ -131,6 +132,15 @@ export class RunMetadataStore {
   /** Test hook: run TTL expiry notifications. */
   runFreshnessCheckForTest(): void {
     this._notifyFreshness();
+  }
+
+  /** F06: clear cached metadata and tear down transport for auth scope change. */
+  resetAuthScope(): void {
+    this.latestBySource.clear();
+    this.latestAtBySource.clear();
+    this.pendingEmptyBySource.clear();
+    this.close();
+    this.cancelled = false;
   }
 
   private _ensureFreshnessTimer() {
@@ -292,10 +302,18 @@ export class RunMetadataStore {
           }
         });
         await Promise.all(workers);
-        this.restCursor = (start + ordered.length) % Math.max(1, sourceKeys.length);
+        // F07: advance from last assigned index, not ordered.length (which resets to start).
+        const assigned = Math.min(idx, ordered.length);
+        if (assigned > 0) {
+          const lastKey = ordered[assigned - 1];
+          const lastPos = sourceKeys.indexOf(lastKey);
+          this.restCursor = (Math.max(0, lastPos) + 1) % Math.max(1, sourceKeys.length);
+        }
       } finally {
         window.clearTimeout(cycleDeadline);
-        this.restInFlight = false;
+        if (this.restAbort === cycleAbort) {
+          this.restInFlight = false;
+        }
       }
     };
     void pollRest();
@@ -371,11 +389,13 @@ export class RunMetadataStore {
   private close() {
     this.cancelled = true;
     this._stopFreshnessTimer();
+    this.stopRestFallback();
     for (const timer of this.emptyHoldTimerBySource.values()) {
       window.clearTimeout(timer);
     }
     this.emptyHoldTimerBySource.clear();
     this.pendingEmptyBySource.clear();
+    this.latestBySource.clear();
     if (this.retryTimer != null) window.clearTimeout(this.retryTimer);
     if (this.restTimer != null) window.clearInterval(this.restTimer);
     this.retryTimer = null;
@@ -397,6 +417,18 @@ function getRunStore(rid: number) {
     runStores.set(rid, store);
   }
   return store;
+}
+
+/** F06: drop all run metadata stores on auth scope change. */
+export function clearAllRunMetadataStores() {
+  for (const [, store] of [...runStores.entries()]) {
+    try {
+      store.resetAuthScope();
+    } catch {
+      /* ignore */
+    }
+  }
+  runStores.clear();
 }
 
 export function useRunMetadataWs(rid: number | null, sourceId: number | null | undefined) {
@@ -436,3 +468,5 @@ export function useMetadataFreshness(
   }, [rid, sourceId, ttlMs]);
   return fresh;
 }
+
+registerAuthScopeCleanup(clearAllRunMetadataStores);

@@ -116,6 +116,9 @@ export function useDetectionIndex({
   const backoffStepRef = useRef(0);
   const backoffUntilRef = useRef(0);
   const fetchGenRef = useRef(0);
+  const primaryDoneRef = useRef(false);
+  const [primaryDoneTick, setPrimaryDoneTick] = useState(0);
+  const retryPendingRef = useRef(false);
 
   const cameraKey = cameras.join(',');
   const queryKey = `${date}:${runId ?? 'none'}:${cameraKey}`;
@@ -137,10 +140,12 @@ export function useDetectionIndex({
       setTickByCamera({});
       setLoading(false);
       setPhase('idle');
+      primaryDoneRef.current = false;
       return;
     }
     setTickByCamera({});
     setPhase('idle');
+    primaryDoneRef.current = false;
     backoffStepRef.current = 0;
     backoffUntilRef.current = 0;
     fetchGenRef.current += 1;
@@ -160,15 +165,25 @@ export function useDetectionIndex({
     let retryTimer: number | null = null;
     const gen = ++fetchGenRef.current;
     setPhase('primary');
+    retryPendingRef.current = false;
+
+    const markPrimaryDone = () => {
+      if (ac.signal.aborted || gen !== fetchGenRef.current) return;
+      primaryDoneRef.current = true;
+      setPhase('primary_done');
+      setPrimaryDoneTick((n) => n + 1);
+    };
 
     const run = () => {
       if (ac.signal.aborted || gen !== fetchGenRef.current) return;
       const now = Date.now();
       if (now < backoffUntilRef.current) {
+        retryPendingRef.current = true;
         retryTimer = window.setTimeout(run, backoffUntilRef.current - now);
         return;
       }
       setLoading(true);
+      retryPendingRef.current = false;
       void fetchDetectionTicks(cameras, {
         date,
         runId,
@@ -180,7 +195,7 @@ export function useDetectionIndex({
           if (ac.signal.aborted || gen !== fetchGenRef.current) return;
           backoffStepRef.current = 0;
           setTickByCamera((prev) => mergeDetectionItems(prev, mapped, cameras));
-          setPhase(dayWideTicks ? 'primary_done' : 'primary_done');
+          markPrimaryDone();
         })
         .catch((e) => {
           if (isAbortError(e) || ac.signal.aborted || gen !== fetchGenRef.current) return;
@@ -189,15 +204,16 @@ export function useDetectionIndex({
             const delay = BACKOFF_MS[Math.min(step, BACKOFF_MS.length - 1)];
             backoffStepRef.current = Math.min(step + 1, BACKOFF_MS.length - 1);
             backoffUntilRef.current = Date.now() + delay;
+            retryPendingRef.current = true;
             retryTimer = window.setTimeout(run, delay);
             return;
           }
           setTickByCamera({});
+          markPrimaryDone();
         })
         .finally(() => {
-          if (!ac.signal.aborted && gen === fetchGenRef.current) {
+          if (!ac.signal.aborted && gen === fetchGenRef.current && !retryPendingRef.current) {
             setLoading(false);
-            setPhase((p) => (p === 'primary' ? 'primary_done' : p));
           }
         });
     };
@@ -216,9 +232,11 @@ export function useDetectionIndex({
     ticksToSec == null ? null : Math.ceil(ticksToSec),
     enabled,
     dayWideTicks,
+    cameras,
   ]);
 
   // If primary window was viewport-only, still pull day ticks once for full-timeline markers.
+  // F05: trigger via primaryDoneTick — never put `phase` in deps (self-abort).
   useEffect(() => {
     if (
       !enabled ||
@@ -226,7 +244,8 @@ export function useDetectionIndex({
       backgroundFromSec == null ||
       backgroundToSec == null ||
       dayWideTicks ||
-      phase !== 'primary_done'
+      !primaryDoneRef.current ||
+      primaryDoneTick < 1
     ) {
       return;
     }
@@ -235,6 +254,11 @@ export function useDetectionIndex({
     let retryTimer: number | null = null;
     const gen = fetchGenRef.current;
     setPhase('background');
+
+    const finishBg = () => {
+      if (ac.signal.aborted || gen !== fetchGenRef.current) return;
+      setPhase('primary_done');
+    };
 
     const run = () => {
       if (ac.signal.aborted || gen !== fetchGenRef.current) return;
@@ -253,6 +277,7 @@ export function useDetectionIndex({
         .then((mapped) => {
           if (ac.signal.aborted || gen !== fetchGenRef.current) return;
           setTickByCamera((prev) => mergeDetectionItems(prev, mapped, cameras));
+          finishBg();
         })
         .catch((e) => {
           if (isAbortError(e) || ac.signal.aborted || gen !== fetchGenRef.current) return;
@@ -262,7 +287,9 @@ export function useDetectionIndex({
             backoffStepRef.current = Math.min(step + 1, BACKOFF_MS.length - 1);
             backoffUntilRef.current = Date.now() + delay;
             retryTimer = window.setTimeout(run, delay);
+            return;
           }
+          finishBg();
         });
     };
 
@@ -280,7 +307,8 @@ export function useDetectionIndex({
     backgroundToSec,
     enabled,
     dayWideTicks,
-    phase,
+    cameras,
+    primaryDoneTick,
   ]);
 
   const seedTicks = useCallback(

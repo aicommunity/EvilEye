@@ -282,14 +282,32 @@ async def playback_cameras(
         filtered = filter_by_source_name(cached_fresh or [], access, key="id", use_visible=True)
         return _json_with_cache({"items": filtered}, "hit")
 
+    served_from_stale = False
+    loaded_fresh = [False]
+
+    def _load_tracked():
+        loaded_fresh[0] = True
+        return _load()
+
+    def _cached_cameras():
+        nonlocal served_from_stale
+        mem = _recall(cache_key, require_fresh=False)
+        if mem is not None:
+            served_from_stale = True
+            return mem
+        return None
+
     items = await _to_thread_with_timeout_or_cached(
-        _load,
-        lambda: _recall(cache_key),
+        _load_tracked,
+        _cached_cameras,
         err_detail="playback_cameras timeout",
         executor=_light_pool,
     )
-    cache_status = "miss" if items is not None else "stale"
-    _remember(cache_key, items)
+    if loaded_fresh[0]:
+        cache_status = "miss"
+        _remember(cache_key, items)
+    else:
+        cache_status = "stale"
     access = resolve_camera_access(request)
     filtered = filter_by_source_name(items or [], access, key="id", use_visible=True)
     return _json_with_cache({"items": filtered}, cache_status)
@@ -331,15 +349,23 @@ async def playback_segments(
                 schedule_detection_ticks_refresh(date, cam_list, run_id=run_id)
                 schedule_event_intervals_refresh(date, cam_list)
 
+        loaded_fresh = [False]
+
+        def _load_tracked():
+            result = _load()
+            loaded_fresh[0] = True
+            return result
+
         by_camera = await _to_thread_with_timeout_or_cached(
-            _load,
+            _load_tracked,
             _cached,
             err_detail="playback_segments timeout",
             on_timeout=_on_timeout,
             executor=_light_pool,
             log_ctx={"route": "segments", "n_cameras": len(cam_list), "date": date},
         )
-        _remember(mem_key, by_camera)
+        if loaded_fresh[0]:
+            _remember(mem_key, by_camera)
         return {"by_camera": by_camera, "items": [item for items in by_camera.values() for item in items]}
     if not camera:
         raise HTTPException(status_code=400, detail="camera or cameras query required")
@@ -440,27 +466,7 @@ async def playback_timeline(
         schedule_detection_ticks_refresh(date, cam_list, run_id=run_id)
         schedule_event_intervals_refresh(date, cam_list)
 
-    # Cap concurrent timeline rebuilds so the default thread pool stays responsive.
-    try:
-        await asyncio.wait_for(_timeline_slots.acquire(), timeout=0.05)
-    except asyncio.TimeoutError:
-        cached = _cached()
-        if cached is not None:
-            _on_timeout()
-            return _json_with_cache(cached, "stale")
-        try:
-            await asyncio.wait_for(_timeline_slots.acquire(), timeout=_TIMELINE_SLOT_WAIT_SEC)
-        except asyncio.TimeoutError:
-            logger.warning(
-                "playback route timeout detail=playback_timeline slot_busy date=%s n_cameras=%s",
-                date,
-                len(cam_list),
-            )
-            stale = _cached()
-            if stale is not None:
-                _on_timeout()
-                return _json_with_cache(stale, "stale")
-            raise HTTPException(status_code=503, detail="playback_timeline slot busy")
+    # F10: slot wait is inside the same route deadline (like state routes).
     payload = await _to_thread_with_timeout_or_cached(
         _load,
         _cached,
@@ -468,10 +474,13 @@ async def playback_timeline(
         on_timeout=_on_timeout,
         executor=_timeline_pool,
         log_ctx={"date": date, "n_cameras": len(cam_list), "route": "timeline"},
-        release_sem_on_done=_timeline_slots,
+        slot_sem=_timeline_slots,
     )
-    cache_status = "stale" if isinstance(payload, dict) and payload.get("stale") else "miss"
-    _remember(mem_key, payload, ttl_sec=_TIMELINE_HAPPY_TTL_SEC)
+    is_stale = isinstance(payload, dict) and bool(payload.get("stale"))
+    cache_status = "stale" if is_stale else "miss"
+    # Do not re-remember stale fallback as freshly computed (F10).
+    if not is_stale:
+        _remember(mem_key, payload, ttl_sec=_TIMELINE_HAPPY_TTL_SEC)
     return _json_with_cache(payload, cache_status)
 
 

@@ -25,6 +25,17 @@ INDEX_TTL_SEC = 45.0
 DETECTION_INDEX_CACHE: dict[str, tuple[float, float, list[dict[str, Any]]]] = {}
 DAY_CAMERA_INDEX_CACHE: dict[str, tuple[float, float, dict[str, list[dict[str, Any]]]]] = {}
 JSON_OBJECTS_CACHE: dict[str, tuple[float, list[dict[str, Any]]]] = {}
+_MAX_JSON_OBJECTS_CACHE = 64
+_MAX_DAY_CAMERA_INDEX_CACHE = 32
+_MAX_DETECTION_INDEX_CACHE = 32
+
+
+def _trim_cache(cache: dict, max_keys: int) -> None:
+    while len(cache) > max_keys:
+        try:
+            cache.pop(next(iter(cache)))
+        except StopIteration:
+            break
 _EVENT_FILES = {
     "camera_events.json": "camera_events",
     "system_events.json": "system_events",
@@ -242,6 +253,7 @@ def _read_json_objects(filepath: Path) -> list[dict[str, Any]]:
     objects_list = data if isinstance(data, list) else data.get("objects", [])
     parsed = [obj for obj in objects_list if isinstance(obj, dict)]
     JSON_OBJECTS_CACHE[key] = (mtime, parsed)
+    _trim_cache(JSON_OBJECTS_CACHE, _MAX_JSON_OBJECTS_CACHE)
     return parsed
 
 
@@ -417,6 +429,7 @@ def _load_camera_index_items(
         source_id=sid,
     )
     DETECTION_INDEX_CACHE[cache_key] = (json_mtime, time.time(), items)
+    _trim_cache(DETECTION_INDEX_CACHE, _MAX_DETECTION_INDEX_CACHE)
     return items
 
 
@@ -469,6 +482,8 @@ def _load_day_index_by_camera(
         DETECTION_INDEX_CACHE[per_cam_key] = (json_mtime, time.time(), by_camera[cam])
 
     DAY_CAMERA_INDEX_CACHE[day_key] = (json_mtime, time.time(), by_camera)
+    _trim_cache(DETECTION_INDEX_CACHE, _MAX_DETECTION_INDEX_CACHE)
+    _trim_cache(DAY_CAMERA_INDEX_CACHE, _MAX_DAY_CAMERA_INDEX_CACHE)
     return by_camera
 
 

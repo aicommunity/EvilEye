@@ -9,6 +9,7 @@ let authEpoch = 0;
 let authUsername = '';
 const scopeListeners = new Set<() => void>();
 const inflightAborts = new Set<AbortController>();
+const scopeCleanups = new Set<() => void>();
 
 export function getAuthEpoch(): number {
   return authEpoch;
@@ -39,6 +40,14 @@ export function onAuthScopeChange(listener: () => void): () => void {
   };
 }
 
+/** Register a sync cleanup (stores) invoked on every bumpAuthScope. */
+export function registerAuthScopeCleanup(fn: () => void): () => void {
+  scopeCleanups.add(fn);
+  return () => {
+    scopeCleanups.delete(fn);
+  };
+}
+
 /** Track an AbortController; aborted automatically on next bumpAuthScope. */
 export function trackAuthAbort(ac: AbortController): () => void {
   inflightAborts.add(ac);
@@ -65,6 +74,13 @@ export function bumpAuthScope(nextUsername?: string | null): number {
     }
   }
   inflightAborts.clear();
+  for (const cleanup of [...scopeCleanups]) {
+    try {
+      cleanup();
+    } catch {
+      /* ignore */
+    }
+  }
   for (const listener of [...scopeListeners]) {
     try {
       listener();

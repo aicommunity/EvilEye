@@ -118,6 +118,7 @@ export function usePlaybackMetadata({
       const ac = new AbortController();
       abortRef.current = ac;
       inflightKeyRef.current = key;
+      const epochAtStart = getAuthEpoch();
       setLoading(true);
       void playbackApi
         .metadata(camera, rounded, eventDate, runId, {
@@ -128,6 +129,7 @@ export function usePlaybackMetadata({
         })
         .then((res) => {
           if (ac.signal.aborted) return;
+          if (epochAtStart !== getAuthEpoch()) return;
           const payload = res.metadata ?? null;
           const payloadTs = payload?.ts != null ? Number(payload.ts) : rounded;
           if (Math.abs(payloadTs - roundedRef.current) >= APPLY_SLACK_SEC) {

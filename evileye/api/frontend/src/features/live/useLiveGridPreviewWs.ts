@@ -151,11 +151,24 @@ export function useLiveGridPreviewWs(byRun: LivePreviewByRun) {
     for (const [rid, state] of [...sockets.entries()]) {
       if (wanted.has(rid)) continue;
       state.cancelled = true;
+      const abortAll = (state as SocketState & { abortAllNotify?: () => void }).abortAllNotify;
+      abortAll?.();
       if (state.reconnectTimer != null) window.clearTimeout(state.reconnectTimer);
       if (state.pingTimer != null) window.clearInterval(state.pingTimer);
       state.ws?.close();
       sockets.delete(rid);
       markConnected(rid, false);
+      // Drop blobs for removed run.
+      for (const key of [...blobUrlsRef.current.keys()]) {
+        if (key.startsWith(`${rid}:`)) revokeBlob(key);
+      }
+      setFrames((prev) => {
+        const next = new Map(prev);
+        for (const key of [...next.keys()]) {
+          if (key.startsWith(`${rid}:`)) next.delete(key);
+        }
+        return next;
+      });
     }
 
     const connectRun = (runId: number) => {
@@ -169,8 +182,49 @@ export function useLiveGridPreviewWs(byRun: LivePreviewByRun) {
         cancelled: false,
       };
       sockets.set(runId, state);
-      let notifyGen = 0;
-      let notifyAbort: AbortController | null = null;
+      // F04: per-source notify abort/generation (not shared across cameras of the run).
+      const notifyBySource = new Map<number, { abort: AbortController | null; gen: number }>();
+      let parallelActive = 0;
+      const PARALLEL_CAP = 4;
+      const pendingNotify = new Map<number, { etag?: string; ts?: number }>();
+
+      const runNotifyFetch = async (sid: number, headerTs?: number) => {
+        const key = frameKey(runId, sid);
+        const prevEtag = etagsRef.current.get(key);
+        const entry = notifyBySource.get(sid) ?? { abort: null, gen: 0 };
+        entry.abort?.abort();
+        const ac = new AbortController();
+        entry.abort = ac;
+        entry.gen += 1;
+        const gen = entry.gen;
+        notifyBySource.set(sid, entry);
+        if (parallelActive >= PARALLEL_CAP) {
+          pendingNotify.set(sid, { etag: prevEtag, ts: headerTs });
+          return;
+        }
+        parallelActive += 1;
+        try {
+          const fetched = await fetchSnapshotBlob(runId, sid, prevEtag, ac.signal);
+          if (gen !== entry.gen || ac.signal.aborted || state.cancelled) return;
+          if (fetched) applyBlob(runId, sid, fetched.blob, fetched.etag, headerTs);
+        } finally {
+          parallelActive = Math.max(0, parallelActive - 1);
+          const queued = pendingNotify.get(sid);
+          if (queued && !state.cancelled) {
+            pendingNotify.delete(sid);
+            void runNotifyFetch(sid, queued.ts);
+          }
+        }
+      };
+
+      // Expose abort-all for auth bump / run teardown.
+      (state as SocketState & { abortAllNotify?: () => void }).abortAllNotify = () => {
+        for (const [, entry] of notifyBySource) {
+          entry.abort?.abort();
+          entry.gen += 1;
+        }
+        pendingNotify.clear();
+      };
 
       const connect = () => {
         if (state.cancelled || !sockets.has(runId)) return;
@@ -205,16 +259,7 @@ export function useLiveGridPreviewWs(byRun: LivePreviewByRun) {
               };
               if (header.op === 'pong') return;
               if (header.type === 'preview_notify' && header.source_id != null) {
-                const sid = header.source_id;
-                const key = frameKey(runId, sid);
-                const prevEtag = etagsRef.current.get(key);
-                notifyAbort?.abort();
-                const ac = new AbortController();
-                notifyAbort = ac;
-                const gen = ++notifyGen;
-                const fetched = await fetchSnapshotBlob(runId, sid, prevEtag, ac.signal);
-                if (gen !== notifyGen || ac.signal.aborted || state.cancelled) return;
-                if (fetched) applyBlob(runId, sid, fetched.blob, fetched.etag, header.ts);
+                void runNotifyFetch(header.source_id, header.ts);
                 return;
               }
               if (header.type === 'preview' && header.source_id != null) {
@@ -297,9 +342,13 @@ export function useLiveGridPreviewWs(byRun: LivePreviewByRun) {
     };
   }, []);
 
-  // Auth scope change: drop frames/etags immediately (R09).
+  // Auth scope change: abort notify, drop frames, resubscribe allowed sources (F04/F06).
   useEffect(() => {
     return onAuthScopeChange(() => {
+      for (const [, state] of socketsRef.current) {
+        const abortAll = (state as SocketState & { abortAllNotify?: () => void }).abortAllNotify;
+        abortAll?.();
+      }
       blobUrlsRef.current.forEach((url) => URL.revokeObjectURL(url));
       blobUrlsRef.current.clear();
       etagsRef.current.clear();
@@ -307,7 +356,8 @@ export function useLiveGridPreviewWs(byRun: LivePreviewByRun) {
       for (const [runId, state] of socketsRef.current) {
         const ws = state.ws;
         if (ws && ws.readyState === WebSocket.OPEN) {
-          ws.send(JSON.stringify({ op: 'subscribe', source_ids: [] }));
+          const ids = byRunRef.current.get(runId) ?? [];
+          ws.send(JSON.stringify({ op: 'subscribe', source_ids: ids }));
         }
       }
     });
