@@ -392,6 +392,12 @@ def create_app() -> FastAPI:
             payload["playback_media_inflight"] = media_inflight_count()
             payload["playback_memory_cache"] = memory_cache_stats()
             try:
+                from evileye.api.routes.state import state_thread_stats
+
+                payload["state_thread_stats"] = state_thread_stats()
+            except Exception:
+                payload["state_thread_stats"] = None
+            try:
                 from evileye.api.routes.streaming import mjpeg_clients_count
 
                 payload["mjpeg_clients"] = mjpeg_clients_count()

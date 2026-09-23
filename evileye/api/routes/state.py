@@ -54,13 +54,22 @@ async def _to_thread_with_timeout_or_cached(
 ):
     """Run value_fn in a thread; on timeout keep the future tracked until complete (B06).
 
-    When ``slot_sem`` is provided, the slot is held until the worker finishes
-    (not merely until wait_for times out).
+    When ``slot_sem`` is provided, the slot wait is included in the overall deadline (R07).
+    The slot is held until the worker finishes (not merely until wait_for times out).
     """
     global _state_thread_timeouts, _state_thread_503s
-    if slot_sem is not None:
-        await slot_sem.acquire()
     loop = asyncio.get_running_loop()
+    deadline = loop.time() + float(timeout_sec)
+    if slot_sem is not None:
+        remaining = max(0.0, deadline - loop.time())
+        try:
+            await asyncio.wait_for(slot_sem.acquire(), timeout=remaining)
+        except asyncio.TimeoutError:
+            cached = cached_fn()
+            if cached is not None:
+                return cached
+            _state_thread_503s += 1
+            raise HTTPException(status_code=503, detail=err_detail)
     fut = loop.run_in_executor(None, value_fn)
     _state_thread_inflight.add(fut)
     released = False
@@ -73,8 +82,9 @@ async def _to_thread_with_timeout_or_cached(
             slot_sem.release()
 
     fut.add_done_callback(_done)
+    remaining = max(0.001, deadline - loop.time())
     try:
-        return await asyncio.wait_for(asyncio.shield(fut), timeout=timeout_sec)
+        return await asyncio.wait_for(asyncio.shield(fut), timeout=remaining)
     except asyncio.TimeoutError:
         _state_thread_timeouts += 1
         cached = cached_fn()
