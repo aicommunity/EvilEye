@@ -218,8 +218,6 @@ async def _snapshot_impl(
         # No full frame yet — do not fall back to cropped (would confuse split editor).
         _log(404)
         raise HTTPException(status_code=404, detail="No full frame available")
-    if not payload and source_id is not None:
-        payload = broker.latest_payload(run_id_str)
     if not payload or not payload.data:
         _log(404)
         raise HTTPException(status_code=404, detail="No frame available")
