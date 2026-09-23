@@ -34,8 +34,15 @@ def cameras_from_media_path(path: str) -> list[str] | None:
             return [folder]
         if part == "Events" and i + 2 < len(parts):
             folder = parts[i + 2]
-            if folder and folder not in {".", "..", "Metadata", "Images"}:
-                return [folder]
+            # Events/<date>/Videos/<Cam>/file.mp4 → [Cam]
+            if folder == "Videos" and i + 4 < len(parts):
+                cam = parts[i + 3]
+                if cam and cam not in {".", ".."}:
+                    return [cam]
+                return None
+            if folder in {".", "..", "Metadata", "Images", "Videos"}:
+                return None
+            return [folder]
     return None
 
 

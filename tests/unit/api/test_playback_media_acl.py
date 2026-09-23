@@ -23,6 +23,10 @@ def test_cameras_from_media_path_streams_and_composite():
     assert cameras_from_media_path("Streams/2026-01-01/Cam2-Cam3/x.mp4") == ["Cam2", "Cam3"]
     assert cameras_from_media_path("Detections/2026-01-01/x.json") is None
     assert cameras_from_media_path("configs/system.json") is None
+    assert cameras_from_media_path("Events/2026-01-01/Videos/Cam2/clip.mp4") == ["Cam2"]
+    assert cameras_from_media_path("Events/2026-01-01/Cam9/clip.mp4") == ["Cam9"]
+    assert cameras_from_media_path("Events/2026-01-01/Videos/x.mp4") is None
+    assert cameras_from_media_path("Events/2026-01-01/Metadata/x.json") is None
 
 
 def test_assert_media_composite_requires_all():
@@ -89,6 +93,12 @@ def test_playback_media_acl_http(tmp_path, monkeypatch):
     outside = data / "Detections" / "2026-01-01" / "x.bin"
     outside.parent.mkdir(parents=True)
     outside.write_bytes(b"secret")
+    events_ok = data / "Events" / "2026-01-01" / "Videos" / "Cam2" / "clip.mp4"
+    events_ok.parent.mkdir(parents=True)
+    events_ok.write_bytes(b"event-mp4")
+    events_denied = data / "Events" / "2026-01-01" / "Videos" / "Cam9" / "clip.mp4"
+    events_denied.parent.mkdir(parents=True)
+    events_denied.write_bytes(b"other-event")
 
     _write_creds(
         tmp_path,
@@ -128,3 +138,16 @@ def test_playback_media_acl_http(tmp_path, monkeypatch):
         params={"path": "Detections/2026-01-01/x.bin"},
     )
     assert outside_res.status_code in {403, 404}
+
+    ev_ok = client.get(
+        "/api/v1/playback/media",
+        params={"path": "Events/2026-01-01/Videos/Cam2/clip.mp4"},
+    )
+    assert ev_ok.status_code == 200
+    assert ev_ok.content == b"event-mp4"
+
+    ev_denied = client.get(
+        "/api/v1/playback/media",
+        params={"path": "Events/2026-01-01/Videos/Cam9/clip.mp4"},
+    )
+    assert ev_denied.status_code == 403
