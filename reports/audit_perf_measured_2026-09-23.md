@@ -22,15 +22,15 @@ Browser Network / Performance / React Profiler: not captured in this automated p
 
 | Endpoint | HTTP | bytes p50 | p50 ms | p95 ms | p99 ms |
 |----------|------|-----------|--------|--------|--------|
-| `GET /state/cameras?scope=current` | 200 | 1.6 KiB | **5.6** | **7.3** | 8.2 |
-| `snapshot` 1 cam (fan-out wall) | 404* | 22 B | 6.1 | 6.9 | 7.5 |
-| `snapshot` 4 cams | 404* | 88 B | 24.3 | 26.2 | 26.9 |
-| `snapshot` 5 cams | 404* | 110 B | 29.1 | 35.4 | 38.8 |
-| `GET /playback/timeline` (Cam1) | 200 | **878 KiB** | **109** | **144** | 146 |
-| `GET /playback/detections` (Cam1, limit=500) | 200 | **3.86 MiB** | **626** | **783** | 882 |
-| `GET /playback/events` (day) | 200 | 201 KiB | **44** | **57** | 62 |
+| `GET /state/cameras?scope=current` | 200 | 1.6 KiB | **4.8** | **6.8** | ~8 |
+| `GET /runs/{rid}/snapshot` 1 cam | 200 | **94 KiB** | **7.3** | **10.3** | — |
+| `snapshot` 4 cams (sequential wall) | 200 | **421 KiB** | **26.1** | **32.6** | — |
+| `snapshot` 5 cams | 200 | **539 KiB** | **37.8** | **41.0** | — |
+| `GET /playback/timeline` (Cam1) | 200 | **878 KiB** | **115** | **292** | — |
+| `GET /playback/detections` (Cam1, limit=500) | 200 | **3.94 MiB** | **637** | **793** | — |
+| `GET /playback/events` (day) | 200 | 201 KiB | **42** | **62** | — |
 
-\* Snapshot path returned 404 on this stand (preview JPEG route / demand not warm for REST probe). Latency still reflects handler + auth overhead; Live WS path is preferred for bytes_sent.
+Snapshot path: `/api/v1/runs/{rid}/snapshot?source_id=`. Live WS `bytes_sent` not separately instrumented in this probe (use `scripts/ws_live_preview_load.py` for fan-out).
 
 ## Observations vs prior baseline notes
 
