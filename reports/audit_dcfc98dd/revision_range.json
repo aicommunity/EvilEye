@@ -1,0 +1,162 @@
+{
+  "baseline_report_commit": "4d7408f54aac4c789f35c57980caada86e12b77c",
+  "reviewed_head": "dcfc98dd0247a651ea8135a861d87378ddb5089e",
+  "commits": [
+    {
+      "sha": "8d6835098f877a9a2bb2f91b62e358aae3c95e34",
+      "subject": "test(reaudit): T01/T03 — retarget cache tests and widen CI gate"
+    },
+    {
+      "sha": "21259032eeb4d0590b8d734378adf2372cf3d3a8",
+      "subject": "fix(reaudit): R01/R02 — ACL after path canonicalize for playback/journals"
+    },
+    {
+      "sha": "c7629ef66a50d6e10b9d5d9b4464f1b22af8e5df",
+      "subject": "fix(reaudit): R03 — event singleflight returns full index"
+    },
+    {
+      "sha": "f91cd8a25a308cbd6093193c37e9e9387f950b22",
+      "subject": "fix(reaudit): R04/R05 — ticks freshness and uncapped event index"
+    },
+    {
+      "sha": "97956fd656174ea7cf3faad9701182cae31e2637",
+      "subject": "fix(reaudit): R06/R15 — fresh miss keeps stale; store entry nbytes"
+    },
+    {
+      "sha": "ff26a510380460b76184f52c7ada93f84675f04f",
+      "subject": "fix(reaudit): R07 — include semaphore wait in state deadline"
+    },
+    {
+      "sha": "5144dd24ef8bd5e36847e4eacd19d3e12e8cc31c",
+      "subject": "fix(reaudit): R08 — refresh live ACL and clear pending on unsubscribe"
+    },
+    {
+      "sha": "1b77a6c18a1aa245c74537dadf4aad6c454eac01",
+      "subject": "fix(reaudit): R09 — cacheClear on auth scope change"
+    },
+    {
+      "sha": "01c6ef6beddeb301a922431d2a86d708d70ac12c",
+      "subject": "fix(reaudit): R10–R14 — Live WS lifecycle, fair metadata, feed guards"
+    },
+    {
+      "sha": "c1303bcab58393d3adbe5a017f05297235522723",
+      "subject": "docs(reaudit): T18 — fix probe timeline/media and archive samples"
+    },
+    {
+      "sha": "ce8a6159125e07a8114132820e67a61d80395642",
+      "subject": "refactor(reaudit): T19 — ArchiveMediaResolver, IndexRepository, contracts"
+    },
+    {
+      "sha": "705dc45525a281ce2534a501369b829b80bc7f86",
+      "subject": "chore(reaudit): rebuild SPA and include reaudit tests in verify gate"
+    },
+    {
+      "sha": "95a94cb8ce23bcdebc9faddce629a5fd763d4edc",
+      "subject": "fix(reaudit): R09 — authEpoch in cache keys and ACL-revision bump"
+    },
+    {
+      "sha": "74ac723a3033170673711d18fa929554694c7846",
+      "subject": "fix(reaudit): R07/R08/R03 — playback deadline, WS kick, events project"
+    },
+    {
+      "sha": "dcfc98dd0247a651ea8135a861d87378ddb5089e",
+      "subject": "docs(reaudit): T18 — post-fix measured samples and SPA rebuild"
+    }
+  ],
+  "diff_stat": "93 files changed, 1783 insertions(+), 329 deletions(-)",
+  "changed_paths": [
+    ".github/workflows/web-journals.yml",
+    "docs/reaudit_contracts.md",
+    "evileye/api/app.py",
+    "evileye/api/core/archive_media_resolver.py",
+    "evileye/api/core/cache_policy.py",
+    "evileye/api/core/index_repository.py",
+    "evileye/api/core/live_preview_hub.py",
+    "evileye/api/core/media_access.py",
+    "evileye/api/core/playback_cache.py",
+    "evileye/api/core/playback_service.py",
+    "evileye/api/core/playback_timeline_index.py",
+    "evileye/api/frontend/src/auth/AuthContext.tsx",
+    "evileye/api/frontend/src/auth/authScope.test.ts",
+    "evileye/api/frontend/src/auth/authScope.ts",
+    "evileye/api/frontend/src/features/journals/EventsPage.tsx",
+    "evileye/api/frontend/src/features/journals/useJournalFeed.test.ts",
+    "evileye/api/frontend/src/features/journals/useJournalFeed.ts",
+    "evileye/api/frontend/src/features/live/LivePage.tsx",
+    "evileye/api/frontend/src/features/live/MobileLivePage.tsx",
+    "evileye/api/frontend/src/features/live/livePreviewPrefer.test.ts",
+    "evileye/api/frontend/src/features/live/livePreviewPrefer.ts",
+    "evileye/api/frontend/src/features/live/mergeLiveCameraPoll.ts",
+    "evileye/api/frontend/src/features/live/useLiveGridPreviewWs.ts",
+    "evileye/api/frontend/src/features/live/useRunMetadataWs.ts",
+    "evileye/api/frontend/src/features/playback/PlaybackPage.tsx",
+    "evileye/api/frontend/src/features/playback/useDetectionIndex.ts",
+    "evileye/api/frontend/src/features/playback/usePlaybackMetadata.ts",
+    "evileye/api/routes/journals.py",
+    "evileye/api/routes/playback.py",
+    "evileye/api/routes/realtime.py",
+    "evileye/api/routes/state.py",
+    "evileye/api/routes/users.py",
+    "evileye/api/static/assets/BansPage-Ck1nUepm.js",
+    "evileye/api/static/assets/CameraAclEditor-DBFJ1J1Z.js",
+    "evileye/api/static/assets/ConfigFilePage-C7acXmOY.js",
+    "evileye/api/static/assets/ConfigFilePage-Dd-6ebv3.js",
+    "evileye/api/static/assets/ConfigStudio-D7H5AGo_.js",
+    "evileye/api/static/assets/ConfigsListPage-DloVIex6.js",
+    "evileye/api/static/assets/ConfigsListPage-MYrIfxn3.js",
+    "evileye/api/static/assets/ConfigurePage-cuZ9h1rY.js",
+    "evileye/api/static/assets/EventsPage-CV5ShhQn.js",
+    "evileye/api/static/assets/EventsPage-_qVzOngh.js",
+    "evileye/api/static/assets/LivePage-BXl8kwWd.js",
+    "evileye/api/static/assets/LivePage-CzkzK1BM.js",
+    "evileye/api/static/assets/LogsPage-Brp7OW8o.js",
+    "evileye/api/static/assets/LogsPage-CX6akpI-.js",
+    "evileye/api/static/assets/MetadataOverlayLayer-DTDgEMkw.js",
+    "evileye/api/static/assets/MobileEventsPage-D3V1cEEL.js",
+    "evileye/api/static/assets/MobileEventsPage-ktAgowBd.js",
+    "evileye/api/static/assets/MobileLivePage-CP5dfWE-.js",
+    "evileye/api/static/assets/MobileLivePage-SvLGriPL.js",
+    "evileye/api/static/assets/OverlayCanvas-1RT97jjT.js",
+    "evileye/api/static/assets/PlaybackPage-7nvNLIXN.js",
+    "evileye/api/static/assets/PlaybackPage-Cz2bZItI.js",
+    "evileye/api/static/assets/RunsPage-BXCjcNIF.js",
+    "evileye/api/static/assets/RunsPage-DF9wo3rS.js",
+    "evileye/api/static/assets/SettingsPage-D2igFpI5.js",
+    "evileye/api/static/assets/UsersPage-ClWRyjdV.js",
+    "evileye/api/static/assets/dataCache-BTx4mzH3.js",
+    "evileye/api/static/assets/formatApiError-BRn6fFEn.js",
+    "evileye/api/static/assets/index-BYSWqj5z.js",
+    "evileye/api/static/assets/index-DTcsP0d0.js",
+    "evileye/api/static/assets/journals-DAS7c6oe.js",
+    "evileye/api/static/assets/mergeLiveCameraPoll-2ZuuKsMV.js",
+    "evileye/api/static/assets/mergeLiveCameraPoll-DBfUZJjp.js",
+    "evileye/api/static/assets/restartConfigRun-BvWPLNrs.js",
+    "evileye/api/static/assets/runs-D035LbZg.js",
+    "evileye/api/static/assets/setup-DP_G_Y_o.js",
+    "evileye/api/static/assets/setup-DVBlpPvl.js",
+    "evileye/api/static/assets/state-CcUkNL-y.js",
+    "evileye/api/static/assets/streaming-wnFsBHh9.js",
+    "evileye/api/static/assets/useJournalFeed-Sxs7BrZJ.js",
+    "evileye/api/static/assets/useJournalFeed-fJ9PZq1d.js",
+    "evileye/api/static/assets/useMediaLetterbox-BTNd7dDh.js",
+    "evileye/api/static/assets/useRunConfigFlags-DJNvLuCj.js",
+    "evileye/api/static/assets/useRunConfigFlags-Vv0fK4Ny.js",
+    "evileye/api/static/assets/useVisibilityPolling-C1nMedwf.js",
+    "evileye/api/static/index.html",
+    "reports/audit_perf_measured_2026-09-23.md",
+    "reports/audit_perf_probe_reaudit.json",
+    "reports/audit_perf_samples_2026-09-23.jsonl",
+    "scripts/audit_perf_probe.py",
+    "scripts/verify_web_journals.sh",
+    "tests/unit/api/test_playback_memory_cache.py",
+    "tests/unit/api/test_playback_metadata_ts_cache.py",
+    "tests/unit/api/test_playback_route_timeouts.py",
+    "tests/unit/api/test_reaudit_cache_stale.py",
+    "tests/unit/api/test_reaudit_detection_ticks_freshness.py",
+    "tests/unit/api/test_reaudit_event_singleflight.py",
+    "tests/unit/api/test_reaudit_live_ws_kick.py",
+    "tests/unit/api/test_reaudit_media_acl.py",
+    "tests/unit/api/test_reaudit_playback_queue_deadline.py",
+    "tests/unit/api/test_reaudit_state_queue_deadline.py"
+  ]
+}

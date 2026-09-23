@@ -1,0 +1,39 @@
+{
+  "http": {
+    "admin": {
+      "allowed_video": 200,
+      "other_video": 200,
+      "hyphen_camera": 200,
+      "object_preview": 403,
+      "event_preview": 200
+    },
+    "restricted": {
+      "allowed_video": 200,
+      "other_video": 403,
+      "hyphen_camera": 403,
+      "object_preview": 403,
+      "event_preview": 403
+    },
+    "old_traversal_now": 403,
+    "disabled_existing_session_media": 200,
+    "disabled_fresh_login": 401,
+    "demoted_existing_session_users_api": 200,
+    "demoted_existing_session_other_camera": 200
+  },
+  "websocket_route": {
+    "unrestricted": true,
+    "accepted": true,
+    "close_on_first_subscribe": 4403
+  },
+  "indexes": {
+    "detection_leader_keys": [
+      "Cam1"
+    ],
+    "detection_follower_requested": "Cam2",
+    "detection_follower_keys": [
+      "Cam1"
+    ],
+    "alternating_empty_event_queries": 4,
+    "full_event_rebuilds": 4
+  }
+}
