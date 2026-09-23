@@ -626,9 +626,10 @@ async def playback_metadata(
     if cameras:
         cam_list = _require_cameras(access, [c.strip() for c in cameras.split(",") if c.strip()], single=False)
         cams_key = ",".join(cam_list)
+        ts_key = f"{round(effective_ts, 3):.3f}"
         mem_key = (
             f"playback:metadata:{int(static_only)}:{date}:{run_id}:{window}:"
-            f"{frame_w}x{frame_h}:{int(effective_ts)}:{cams_key}"
+            f"{frame_w}x{frame_h}:{ts_key}:{cams_key}"
         )
         fresh = _recall(mem_key, require_fresh=True)
         if fresh is not None:
@@ -663,9 +664,10 @@ async def playback_metadata(
     if not camera:
         raise HTTPException(status_code=400, detail="camera or cameras query required")
     _require_cameras(access, [camera], single=True)
+    ts_key = f"{round(effective_ts, 3):.3f}"
     mem_key = (
         f"playback:metadata:{int(static_only)}:{date}:{run_id}:{window}:"
-        f"{frame_w}x{frame_h}:{int(effective_ts)}:{camera}:{source_id}"
+        f"{frame_w}x{frame_h}:{ts_key}:{camera}:{source_id}"
     )
     fresh = _recall(mem_key, require_fresh=True)
     if fresh is not None:
