@@ -200,7 +200,18 @@ def _require_cameras(access, names: list[str], *, single: bool) -> list[str]:
 
 
 def _camera_name_from_media_path(path: str) -> str | None:
-    """Best-effort: Streams/YYYY-MM-DD/<folder>/file.mp4 → folder or split part."""
+    """Best-effort first camera from Streams/.../<folder>/file."""
+    cams = cameras_from_media_path(path)
+    return cams[0] if cams else None
+
+
+def cameras_from_media_path(path: str) -> list[str] | None:
+    """Extract logical camera names from archive path.
+
+    Streams/YYYY-MM-DD/<Cam or CamA-CamB>/file → [Cam] or [CamA, CamB].
+    Events/.../<camera>/... → [camera] when present.
+    Returns None when cameras cannot be determined.
+    """
     from pathlib import Path
 
     try:
@@ -210,11 +221,29 @@ def _camera_name_from_media_path(path: str) -> str | None:
     for i, part in enumerate(parts):
         if part == "Streams" and i + 2 < len(parts):
             folder = parts[i + 2]
+            if not folder or folder in {".", ".."}:
+                return None
             if "-" in folder:
-                # composite split folder — cannot map to single logical without more context
-                return folder.split("-")[0]
-            return folder
+                names = [p for p in folder.split("-") if p]
+                return names or None
+            return [folder]
+        if part == "Events" and i + 2 < len(parts):
+            # Events/date/<CameraOrSystem>/...
+            folder = parts[i + 2]
+            if folder and folder not in {".", "..", "Metadata", "Images"}:
+                return [folder]
     return None
+
+
+def _assert_media_cameras_allowed(access, path: str) -> None:
+    """Hard ACL for playback media (audit A03): composite requires all parts."""
+    cams = cameras_from_media_path(path)
+    if access.unrestricted:
+        return
+    if not cams:
+        raise HTTPException(status_code=403, detail="Camera access denied")
+    for name in cams:
+        assert_name_allowed(access, name)
 
 
 def _stale_segments_by_camera(
@@ -494,6 +523,16 @@ async def playback_events(
     if cam_list:
         cam_list = _require_cameras(access, cam_list, single=False)
     effective_cams = cam_list or ([camera] if camera else None)
+    # Audit A04: without camera filter, inject hard ACL (like journals).
+    if effective_cams is None and not access.unrestricted:
+        from evileye.api.core.camera_access import list_effective_names
+
+        effective = list_effective_names(access)
+        if effective is not None:
+            if not effective:
+                raise HTTPException(status_code=403, detail="Camera access denied")
+            effective_cams = sorted(effective)
+            cam_list = list(effective_cams)
 
     def _load():
         from evileye.api.core.playback_timeline_index import (
@@ -1002,30 +1041,7 @@ async def playback_detections(
 @router.get("/media")
 async def playback_media(request: Request, path: str = Query(...)):
     access = resolve_camera_access(request)
-    cam_name = _camera_name_from_media_path(path)
-    if cam_name:
-        # Composite folders may contain multiple logical cams; check first part hard ACL.
-        # If folder is Cam2-Cam3, allow if user has any part — stricter: require first part.
-        parts = cam_name.split("-") if "-" in str(path) else [cam_name]
-        folder = None
-        try:
-            from pathlib import Path as P
-
-            pparts = P(path).parts
-            for i, part in enumerate(pparts):
-                if part == "Streams" and i + 2 < len(pparts):
-                    folder = pparts[i + 2]
-                    break
-        except Exception:
-            folder = cam_name
-        if folder and "-" in folder:
-            allowed_any = access.unrestricted or any(
-                p in access.allowed_names for p in folder.split("-") if p
-            )
-            if not allowed_any:
-                raise HTTPException(status_code=403, detail="Camera access denied")
-        else:
-            assert_name_allowed(access, cam_name)
+    _assert_media_cameras_allowed(access, path)
 
     global _media_inflight, _media_inflight_last_warn_at
     warn_at = _media_inflight_warn_at()
