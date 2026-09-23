@@ -11,6 +11,7 @@ import { ExpandedCameraView } from './ExpandedCameraView';
 import { LiveAlertsRail } from './LiveAlertsRail';
 import { useLiveLayout } from './useLiveLayout';
 import { useLiveGridPreviewWs } from './useLiveGridPreviewWs';
+import { mergeLiveCameraPoll } from './mergeLiveCameraPoll';
 import { cancelPreviewDemandGrace, startPreviewDemandGrace } from './previewDemandGrace';
 import { fitColsForCount } from '../layout/fitGrid';
 
@@ -20,18 +21,31 @@ const CAMERAS_TTL_MS = 12_000;
 const STATS_TTL_MS = 20_000;
 const PREVIEW_DEMAND_MS = 5_000;
 const HEALTH_TICK_MS = 1_000;
+const EMPTY_CAMERA_GRACE_POLLS = 2;
 
 /** Last non-empty Live camera list in this tab (survives section remount). */
 let lastGoodLiveCameras: StateCamera[] = [];
+let emptyCameraPollStreak = 0;
+let lastLiveUsername: string | null = null;
 
 export function LivePage() {
   const { showError } = useToast();
   const { t } = useI18n();
-  const { refresh } = useAuth();
+  const { refresh, user } = useAuth();
+  const username = user?.username ?? null;
+
+  useEffect(() => {
+    if (username !== lastLiveUsername) {
+      lastLiveUsername = username;
+      lastGoodLiveCameras = [];
+      emptyCameraPollStreak = 0;
+    }
+  }, [username]);
+
   const cachedCams = cacheGet<{ items: StateCamera[] }>(CAMERAS_CACHE_KEY);
   const cachedStats = cacheGet<{ available: boolean; events_total?: number; objects_total?: number }>(STATS_CACHE_KEY);
   const [cameras, setCameras] = useState<StateCamera[]>(
-    () => cachedCams?.items?.length ? cachedCams.items : lastGoodLiveCameras,
+    () => (cachedCams?.items?.length ? cachedCams.items : lastGoodLiveCameras),
   );
   const [camerasLoading, setCamerasLoading] = useState(() => !(cachedCams?.items?.length));
   const [camerasPolledAtMs, setCamerasPolledAtMs] = useState(() => Date.now());
@@ -53,7 +67,6 @@ export function LivePage() {
     abortRef.current?.abort();
     const ac = new AbortController();
     abortRef.current = ac;
-    // Avoid "Searching…" flicker on transient backend hiccups.
     if (camerasLoadingTimerRef.current != null) {
       window.clearTimeout(camerasLoadingTimerRef.current);
       camerasLoadingTimerRef.current = null;
@@ -72,16 +85,20 @@ export function LivePage() {
         if (ac.signal.aborted) return;
       }
       const items = camRes.items ?? [];
-      if (items.length) {
-        lastGoodLiveCameras = items;
-        cacheSet(CAMERAS_CACHE_KEY, camRes, CAMERAS_TTL_MS);
-        setCameras(items);
-        setCamerasPolledAtMs(Date.now());
-      } else if (!camerasRef.current.length && !lastGoodLiveCameras.length) {
-        cacheSet(CAMERAS_CACHE_KEY, camRes, CAMERAS_TTL_MS);
-        setCameras([]);
-        setCamerasPolledAtMs(Date.now());
+      const decision = mergeLiveCameraPoll(
+        items,
+        camerasRef.current,
+        lastGoodLiveCameras,
+        emptyCameraPollStreak,
+        EMPTY_CAMERA_GRACE_POLLS,
+      );
+      emptyCameraPollStreak = decision.emptyStreak;
+      lastGoodLiveCameras = decision.lastGood;
+      if (decision.cleared || items.length) {
+        cacheSet(CAMERAS_CACHE_KEY, { items: decision.cameras }, CAMERAS_TTL_MS);
       }
+      setCameras(decision.cameras);
+      setCamerasPolledAtMs(Date.now());
       void journalsApi
         .stats(undefined, { signal: ac.signal })
         .then((st) => {
@@ -115,25 +132,22 @@ export function LivePage() {
     return () => window.clearInterval(id);
   }, []);
 
-  const primaryRunId = useMemo(() => {
-    const ids = [...new Set(cameras.map((c) => c.run_id).filter((id) => Number.isFinite(id)))];
-    return ids.length === 1 ? ids[0] : ids[0] ?? null;
+  const previewByRun = useMemo(() => {
+    const m = new Map<number, number[]>();
+    for (const c of cameras) {
+      if (!Number.isFinite(c.run_id) || c.source_id == null) continue;
+      const list = m.get(c.run_id) ?? [];
+      list.push(c.source_id);
+      m.set(c.run_id, list);
+    }
+    return m;
   }, [cameras]);
 
-  const previewSourceIds = useMemo(
-    () =>
-      Array.from(new Set(cameras.map((c) => c.source_id).filter((id): id is number => id != null))).sort(
-        (a, b) => a - b,
-      ),
-    [cameras],
-  );
-
-  const previewWs = useLiveGridPreviewWs(primaryRunId, previewSourceIds);
+  const previewWs = useLiveGridPreviewWs(previewByRun);
   const [activeSources, setActiveSources] = useState<Array<{ runId: number; sourceId: number | null }>>([]);
   const activeSourcesRef = useRef(activeSources);
   activeSourcesRef.current = activeSources;
 
-  // Keep preview demand warm for visible tiles only (C3). On leave, short grace.
   useEffect(() => {
     cancelPreviewDemandGrace();
     if (!cameras.length) return;
@@ -150,7 +164,6 @@ export function LivePage() {
         }
         return;
       }
-      // Cold start before IO: touch each run once.
       const runIds = new Set<number>();
       for (const cam of cameras) {
         if (Number.isFinite(cam.run_id)) runIds.add(cam.run_id);
@@ -246,8 +259,8 @@ export function LivePage() {
               onOpenStream={(rid, sid) => setStream({ rid, sid })}
               onReorder={setOrder}
               onExpand={setExpandedKey}
-              getPreviewBlob={(sid) => previewWs.getBlobUrl(sid)}
-              getPreviewFrameAgeSec={(sid) => previewWs.getPreviewFrameAgeSec(sid)}
+              getPreviewBlob={(rid, sid) => previewWs.getBlobUrl(rid, sid)}
+              getPreviewFrameAgeSec={(rid, sid) => previewWs.getPreviewFrameAgeSec(rid, sid)}
               previewWsActive={previewWs.connected}
               camerasPolledAtMs={camerasPolledAtMs}
               healthTick={healthTick}

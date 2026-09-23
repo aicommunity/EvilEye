@@ -25,8 +25,8 @@ export function CameraGrid({
   onOpenStream: (rid: number, sid: number | null) => void;
   onReorder: (keys: string[]) => void;
   onExpand?: (key: string) => void;
-  getPreviewBlob?: (sourceId: number | null) => string | null | undefined;
-  getPreviewFrameAgeSec?: (sourceId: number | null) => number | null | undefined;
+  getPreviewBlob?: (runId: number, sourceId: number | null) => string | null | undefined;
+  getPreviewFrameAgeSec?: (runId: number, sourceId: number | null) => number | null | undefined;
   previewWsActive?: boolean;
   loading?: boolean;
   camerasPolledAtMs?: number;
@@ -130,8 +130,8 @@ export function CameraGrid({
               useMjpeg={false}
               gridMode
               active={isVisible}
-              previewBlobUrl={getPreviewBlob?.(camera.source_id) ?? null}
-              previewFrameAgeSec={getPreviewFrameAgeSec?.(camera.source_id) ?? null}
+              previewBlobUrl={getPreviewBlob?.(camera.run_id, camera.source_id) ?? null}
+              previewFrameAgeSec={getPreviewFrameAgeSec?.(camera.run_id, camera.source_id) ?? null}
               camerasPolledAtMs={camerasPolledAtMs}
               healthTick={healthTick}
               previewWsActive={previewWsActive}
