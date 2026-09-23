@@ -1,0 +1,1 @@
+import{e as r}from"./index-BYSWqj5z.js";function s(){return r("/configs/runs")}function u(n){return r(`/configs/runs/${n}`)}function o(n){return r("/configs/runs",{method:"POST",body:JSON.stringify(n)})}function e(n){return r(`/configs/runs/${n}/start`,{method:"POST"})}function i(n){return r(`/configs/runs/${n}/stop`,{method:"POST"})}export{i as a,o as b,e as c,u as d,s as r};

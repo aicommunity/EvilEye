@@ -1,1 +1,0 @@
-const n=new Map;function o(t){const e=n.get(t);if(e){if(Date.now()>e.expiresAt){n.delete(t);return}return e.value}}function a(t,e,r){n.set(t,{value:e,expiresAt:Date.now()+Math.max(0,r)})}function i(t){return t instanceof DOMException&&t.name==="AbortError"||t instanceof Error&&t.name==="AbortError"}export{a,o as c,i};

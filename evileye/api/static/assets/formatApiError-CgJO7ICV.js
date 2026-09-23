@@ -1,0 +1,1 @@
+import{A as o}from"./index-BYSWqj5z.js";function t(e,s){if(e instanceof o){const n=String(e.message||"").toLowerCase();return e.status===503||n.includes("timeout")?n.includes("playback")?s("playback.loadTimeout"):s("common.serverBusy"):e.message||s("common.error")}return e instanceof Error&&e.message?e.message:s("common.error")}export{t as f};

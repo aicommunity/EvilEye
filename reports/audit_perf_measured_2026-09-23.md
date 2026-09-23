@@ -43,7 +43,15 @@ Snapshot path: `/api/v1/runs/{rid}/snapshot?source_id=`. Live WS `bytes_sent` no
 
 ## B07 SPA (build-time)
 
-Recorded after `npm run build` in F4; until then from last tracked static: see F4 section / after-remeasure.
+After `evileye web build --force` (2026-09-23 F4):
+
+| Metric | Value |
+|--------|-------|
+| Initial `index-*.js` | **238 KiB** (`index-BYSWqj5z.js`) |
+| Lazy JS chunks | **33** |
+| Total JS under `static/assets` | ~540 KiB |
+
+TTI / React Profiler: not measured in headed browser this pass; lazy route split already in `App.tsx`.
 
 ## How to reproduce
 
