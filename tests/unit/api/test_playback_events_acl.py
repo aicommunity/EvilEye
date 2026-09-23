@@ -33,6 +33,13 @@ def _seed_events(root, date: str = "2026-08-19"):
                     "zone_name": "Z2",
                     "zone_id": "z2",
                 },
+                {
+                    "timestamp": f"{date}T12:02:00",
+                    "source_name": "System",
+                    "event_name": "sys",
+                    "zone_name": "sys",
+                    "zone_id": "sys",
+                },
             ]
         ),
         encoding="utf-8",
@@ -53,6 +60,13 @@ def _seed_events(root, date: str = "2026-08-19"):
                     "event_name": "Z2",
                     "zone_name": "Z2",
                     "zone_id": "z2",
+                },
+                {
+                    "timestamp": f"{date}T12:02:04",
+                    "source_name": "System",
+                    "event_name": "sys",
+                    "zone_name": "sys",
+                    "zone_id": "sys",
                 },
             ]
         ),
@@ -99,7 +113,8 @@ def test_playback_events_without_camera_respects_acl(tmp_path, monkeypatch):
     res = client.get("/api/v1/playback/events", params={"date": "2026-08-19"})
     assert res.status_code == 200
     cams = {it.get("camera") for it in res.json().get("items") or []}
-    assert cams == {"Cam2"}
+    assert cams == {"Cam2", "System"}
+    assert "Cam1" not in cams
 
     denied = client.get(
         "/api/v1/playback/events",

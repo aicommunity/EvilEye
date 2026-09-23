@@ -516,7 +516,8 @@ async def playback_events(
         if effective is not None:
             if not effective:
                 raise HTTPException(status_code=403, detail="Camera access denied")
-            effective_cams = sorted(effective)
+            # Keep System rows visible for restricted users (journals parity).
+            effective_cams = sorted(set(effective) | {"System"})
             cam_list = list(effective_cams)
 
     def _load():
