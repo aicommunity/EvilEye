@@ -25,12 +25,13 @@ export async function fetchSnapshotBlob(
   runId: number,
   sourceId: number,
   etag?: string,
+  signal?: AbortSignal,
 ): Promise<{ blob: Blob; etag: string } | null> {
   const url = streamSnapshotUrl(runId, sourceId);
   const headers: Record<string, string> = {};
   // A06: only precondition on an etag we already applied (never notify's fresh etag).
   if (etag) headers['If-None-Match'] = `"${etag}"`;
-  const res = await fetch(url, { credentials: 'same-origin', headers });
+  const res = await fetch(url, { credentials: 'same-origin', headers, signal });
   if (res.status === 304) return null;
   if (!res.ok) return null;
   const blob = await res.blob();
@@ -81,6 +82,7 @@ export function useLiveGridPreviewWs(byRun: LivePreviewByRun) {
       URL.revokeObjectURL(old);
       blobUrlsRef.current.delete(key);
     }
+    etagsRef.current.delete(key);
   }, []);
 
   const applyBlob = useCallback(
@@ -89,6 +91,7 @@ export function useLiveGridPreviewWs(byRun: LivePreviewByRun) {
       const url = URL.createObjectURL(blob);
       revokeBlob(key);
       blobUrlsRef.current.set(key, url);
+      // Atomic: etag only when blob is applied (R10).
       if (etag) etagsRef.current.set(key, etag);
       setFrames((prev) => {
         const next = new Map(prev);
@@ -124,7 +127,6 @@ export function useLiveGridPreviewWs(byRun: LivePreviewByRun) {
   );
 
   useEffect(() => {
-    let cancelled = false;
     const sockets = socketsRef.current;
 
     const markConnected = (runId: number, on: boolean) => {
@@ -144,7 +146,7 @@ export function useLiveGridPreviewWs(byRun: LivePreviewByRun) {
         .filter((n) => Number.isFinite(n)),
     );
 
-    // Close sockets for runs no longer needed.
+    // Close sockets for runs no longer needed (keep others alive — R10).
     for (const [rid, state] of [...sockets.entries()]) {
       if (wanted.has(rid)) continue;
       state.cancelled = true;
@@ -166,9 +168,11 @@ export function useLiveGridPreviewWs(byRun: LivePreviewByRun) {
         cancelled: false,
       };
       sockets.set(runId, state);
+      let notifyGen = 0;
+      let notifyAbort: AbortController | null = null;
 
       const connect = () => {
-        if (cancelled || state.cancelled) return;
+        if (state.cancelled || !sockets.has(runId)) return;
         const ws = new WebSocket(liveGridWsUrl(runId));
         ws.binaryType = 'arraybuffer';
         state.ws = ws;
@@ -203,7 +207,12 @@ export function useLiveGridPreviewWs(byRun: LivePreviewByRun) {
                 const sid = header.source_id;
                 const key = frameKey(runId, sid);
                 const prevEtag = etagsRef.current.get(key);
-                const fetched = await fetchSnapshotBlob(runId, sid, prevEtag);
+                notifyAbort?.abort();
+                const ac = new AbortController();
+                notifyAbort = ac;
+                const gen = ++notifyGen;
+                const fetched = await fetchSnapshotBlob(runId, sid, prevEtag, ac.signal);
+                if (gen !== notifyGen || ac.signal.aborted || state.cancelled) return;
                 if (fetched) applyBlob(runId, sid, fetched.blob, fetched.etag, header.ts);
                 return;
               }
@@ -241,7 +250,7 @@ export function useLiveGridPreviewWs(byRun: LivePreviewByRun) {
             { runId, code: ev.code, reason: ev.reason || '', wasClean: ev.wasClean },
             'live',
           );
-          if (!cancelled && !state.cancelled && sockets.has(runId)) {
+          if (!state.cancelled && sockets.has(runId)) {
             setFailed(true);
             const delay = Math.min(30000, 1000 * 2 ** state.reconnectAttempt);
             state.reconnectAttempt += 1;
@@ -266,9 +275,12 @@ export function useLiveGridPreviewWs(byRun: LivePreviewByRun) {
     for (const runId of wanted) {
       connectRun(runId);
     }
+  }, [runIdsKey, applyBlob]);
 
+  // Unmount only: tear down all sockets and blobs (R10).
+  useEffect(() => {
     return () => {
-      cancelled = true;
+      const sockets = socketsRef.current;
       for (const [, state] of sockets) {
         state.cancelled = true;
         if (state.reconnectTimer != null) window.clearTimeout(state.reconnectTimer);
@@ -278,10 +290,11 @@ export function useLiveGridPreviewWs(byRun: LivePreviewByRun) {
       sockets.clear();
       blobUrlsRef.current.forEach((url) => URL.revokeObjectURL(url));
       blobUrlsRef.current.clear();
+      etagsRef.current.clear();
       setFrames(new Map());
       setConnectedRuns(new Set());
     };
-  }, [runIdsKey, applyBlob]);
+  }, []);
 
   useEffect(() => {
     for (const [runId, state] of socketsRef.current) {

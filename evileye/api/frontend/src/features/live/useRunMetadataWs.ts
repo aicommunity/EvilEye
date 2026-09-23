@@ -242,6 +242,7 @@ export class RunMetadataStore {
 
   private restInFlight = false;
   private restAbort: AbortController | null = null;
+  private restCursor = 0;
 
   private startRestFallback() {
     if (this.restTimer != null) window.clearInterval(this.restTimer);
@@ -254,24 +255,46 @@ export class RunMetadataStore {
 
       this.restInFlight = true;
       this.restAbort?.abort();
-      const ac = new AbortController();
-      this.restAbort = ac;
-      const deadline = window.setTimeout(() => ac.abort(), 8000);
+      const cycleAbort = new AbortController();
+      this.restAbort = cycleAbort;
+      const cycleDeadline = window.setTimeout(() => cycleAbort.abort(), 8000);
+      const concurrency = 2;
+      const perRequestMs = 2000;
       try {
-        for (const sourceId of sourceKeys) {
-          if (ac.signal.aborted || this.cancelled || this.wsOpen) break;
-          try {
-            const qs = sourceId != null ? `?source_id=${sourceId}` : '';
-            const payload = await request<StreamMetadata>(`/runs/${this.rid}/metadata${qs}`, {
-              signal: ac.signal,
-            });
-            if (!this.cancelled && !ac.signal.aborted) this.pushPayload(payload);
-          } catch {
-            /* ignore */
+        // Round-robin from cursor so starved sources get a turn (R12).
+        const start = this.restCursor % sourceKeys.length;
+        const ordered = [
+          ...sourceKeys.slice(start),
+          ...sourceKeys.slice(0, start),
+        ];
+        let idx = 0;
+        const workers = Array.from({ length: Math.min(concurrency, ordered.length) }, async () => {
+          while (idx < ordered.length) {
+            if (cycleAbort.signal.aborted || this.cancelled || this.wsOpen) return;
+            const myIdx = idx++;
+            const sourceId = ordered[myIdx];
+            const reqAbort = new AbortController();
+            const onCycleAbort = () => reqAbort.abort();
+            cycleAbort.signal.addEventListener('abort', onCycleAbort);
+            const reqTimer = window.setTimeout(() => reqAbort.abort(), perRequestMs);
+            try {
+              const qs = sourceId != null ? `?source_id=${sourceId}` : '';
+              const payload = await request<StreamMetadata>(`/runs/${this.rid}/metadata${qs}`, {
+                signal: reqAbort.signal,
+              });
+              if (!this.cancelled && !cycleAbort.signal.aborted) this.pushPayload(payload);
+            } catch {
+              /* ignore */
+            } finally {
+              window.clearTimeout(reqTimer);
+              cycleAbort.signal.removeEventListener('abort', onCycleAbort);
+            }
           }
-        }
+        });
+        await Promise.all(workers);
+        this.restCursor = (start + ordered.length) % Math.max(1, sourceKeys.length);
       } finally {
-        window.clearTimeout(deadline);
+        window.clearTimeout(cycleDeadline);
         this.restInFlight = false;
       }
     };

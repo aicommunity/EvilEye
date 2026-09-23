@@ -138,21 +138,17 @@ export function LivePage() {
   const activeSourcesRef = useRef(activeSources);
   activeSourcesRef.current = activeSources;
 
-  // B01: subscribe only visible/active tiles (fallback to all until IO reports).
+  // R11: subscribe only activeSources; empty until IO ready = subscribe none (not all cameras).
   const previewByRun = useMemo(() => {
     const m = new Map<number, number[]>();
-    const source =
-      activeSources.length > 0
-        ? activeSources
-        : cameras.map((c) => ({ runId: c.run_id, sourceId: c.source_id ?? null }));
-    for (const { runId, sourceId } of source) {
+    for (const { runId, sourceId } of activeSources) {
       if (!Number.isFinite(runId) || sourceId == null) continue;
       const list = m.get(runId) ?? [];
       if (!list.includes(sourceId)) list.push(sourceId);
       m.set(runId, list);
     }
     return m;
-  }, [cameras, activeSources]);
+  }, [activeSources]);
 
   const previewWs = useLiveGridPreviewWs(previewByRun);
 
@@ -162,22 +158,14 @@ export function LivePage() {
 
     const tick = () => {
       const active = activeSourcesRef.current;
-      if (active.length) {
-        const seen = new Set<string>();
-        for (const { runId, sourceId } of active) {
-          const key = `${runId}:${sourceId ?? 'all'}`;
-          if (seen.has(key)) continue;
-          seen.add(key);
-          void streamStatus(runId, sourceId).catch(() => undefined);
-        }
-        return;
-      }
-      const runIds = new Set<number>();
-      for (const cam of cameras) {
-        if (Number.isFinite(cam.run_id)) runIds.add(cam.run_id);
-      }
-      for (const rid of runIds) {
-        void streamStatus(rid, null).catch(() => undefined);
+      // After mount, never fan-out streamStatus to all runs when nothing is visible (R11).
+      if (!active.length) return;
+      const seen = new Set<string>();
+      for (const { runId, sourceId } of active) {
+        const key = `${runId}:${sourceId ?? 'all'}`;
+        if (seen.has(key)) continue;
+        seen.add(key);
+        void streamStatus(runId, sourceId).catch(() => undefined);
       }
     };
     tick();

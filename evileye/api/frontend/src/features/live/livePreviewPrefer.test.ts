@@ -26,18 +26,19 @@ describe('wantLiveSnapshotPoll / wantLiveWsPreview (A1)', () => {
   });
 });
 
-describe('cameraTileActive (A2)', () => {
-  it('treats all tiles active before first IO callback in fixed mode', () => {
-    expect(cameraTileActive({ mode: 'fixed', ioReady: false, visible: false, selected: false })).toBe(true);
+describe('cameraTileActive (R11)', () => {
+  it('inactive until IntersectionObserver is ready', () => {
+    expect(cameraTileActive({ mode: 'fixed', ioReady: false, visible: false, selected: false })).toBe(false);
+    expect(cameraTileActive({ mode: 'fit', ioReady: false, visible: true, selected: false })).toBe(false);
   });
 
-  it('after IO only visible or selected stay active', () => {
+  it('after IO only visible or selected stay active in fixed mode', () => {
     expect(cameraTileActive({ mode: 'fixed', ioReady: true, visible: false, selected: false })).toBe(false);
     expect(cameraTileActive({ mode: 'fixed', ioReady: true, visible: true, selected: false })).toBe(true);
     expect(cameraTileActive({ mode: 'fixed', ioReady: true, visible: false, selected: true })).toBe(true);
   });
 
-  it('fit mode always active', () => {
+  it('fit mode active after IO ready', () => {
     expect(cameraTileActive({ mode: 'fit', ioReady: true, visible: false, selected: false })).toBe(true);
   });
 });

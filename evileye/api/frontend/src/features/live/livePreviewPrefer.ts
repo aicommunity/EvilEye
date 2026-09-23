@@ -22,14 +22,15 @@ export function wantLiveWsPreview(opts: {
   return running && active && !useMjpeg && previewWsActive && hasWsFrame;
 }
 
-/** Fixed-grid cold start: active until first IntersectionObserver callback (A2). */
+/** Until IntersectionObserver is ready, tiles are inactive (R11: subscribe none). */
 export function cameraTileActive(opts: {
   mode: 'fit' | 'fixed';
   ioReady: boolean;
   visible: boolean;
   selected: boolean;
 }): boolean {
-  return opts.mode === 'fit' || !opts.ioReady || opts.visible || opts.selected;
+  if (!opts.ioReady) return false;
+  return opts.mode === 'fit' || opts.visible || opts.selected;
 }
 
 /**

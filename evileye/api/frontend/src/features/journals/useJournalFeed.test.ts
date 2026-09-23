@@ -29,4 +29,10 @@ describe('shouldApplyJournalResult (B04)', () => {
     await Promise.all([p1, p2]);
     expect(applied).toEqual(['camB']);
   });
+
+  it('stale error path must not apply (R14)', () => {
+    // Catch branch: gen mismatch → shouldApply false → no setMessage.
+    expect(shouldApplyJournalResult(1, 2, false)).toBe(false);
+    expect(shouldApplyJournalResult(2, 2, true)).toBe(false);
+  });
 });

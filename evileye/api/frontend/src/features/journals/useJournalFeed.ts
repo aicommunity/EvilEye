@@ -23,6 +23,19 @@ export function shouldApplyJournalResult(gen: number, currentGen: number, aborte
   return !aborted && gen === currentGen;
 }
 
+function abortAny(signals: AbortSignal[]): AbortSignal {
+  const ac = new AbortController();
+  const onAbort = () => ac.abort();
+  for (const s of signals) {
+    if (s.aborted) {
+      ac.abort();
+      return ac.signal;
+    }
+    s.addEventListener('abort', onAbort, { once: true });
+  }
+  return ac.signal;
+}
+
 export function useJournalFeed(tab: JournalType, filters: JournalDateFilters) {
   const { t } = useI18n();
   const initialKey = groupedCacheKey(tab, filters, 0);
@@ -44,16 +57,17 @@ export function useJournalFeed(tab: JournalType, filters: JournalDateFilters) {
       const ac = new AbortController();
       loadAbortRef.current = ac;
       const gen = ++generationRef.current;
-      const timeoutId = window.setTimeout(() => ac.abort(), GROUPED_LOAD_TIMEOUT_MS);
+      const timeoutAc = new AbortController();
+      const timeoutId = window.setTimeout(() => timeoutAc.abort(), GROUPED_LOAD_TIMEOUT_MS);
+      const effective = abortAny([ac.signal, timeoutAc.signal]);
       setLoading(true);
       try {
         const nextPage = append ? page + 1 : 0;
         const res =
           tab === 'events'
-            ? await journalsApi.eventsGrouped(nextPage, 30, filters, { signal: ac.signal })
-            : await journalsApi.objectsGrouped(nextPage, 30, filters, { signal: ac.signal });
-        if (gen !== generationRef.current || ac.signal.aborted) return;
-        if (!shouldApplyJournalResult(gen, generationRef.current, ac.signal.aborted)) return;
+            ? await journalsApi.eventsGrouped(nextPage, 30, filters, { signal: effective })
+            : await journalsApi.objectsGrouped(nextPage, 30, filters, { signal: effective });
+        if (!shouldApplyJournalResult(gen, generationRef.current, effective.aborted)) return;
         if (!append) cacheSet(groupedCacheKey(tab, filters, 0), res, GROUPED_TTL_MS);
         if (!res.available) {
           setRows([]);
@@ -66,8 +80,8 @@ export function useJournalFeed(tab: JournalType, filters: JournalDateFilters) {
         setPage(nextPage);
         setHasMore(res.items.length >= 30);
       } catch (e) {
-        if (isAbortError(e) || ac.signal.aborted || gen !== generationRef.current) {
-          if (!append && !rows.length) setMessage(t('journals.loadError'));
+        // Stale gen / abort: do not overwrite message (R14).
+        if (!shouldApplyJournalResult(gen, generationRef.current, effective.aborted || isAbortError(e))) {
           return;
         }
         if (!append) {
@@ -78,7 +92,7 @@ export function useJournalFeed(tab: JournalType, filters: JournalDateFilters) {
         if (gen === generationRef.current) setLoading(false);
       }
     },
-    [tab, filters, page, rows.length, t, loading],
+    [tab, filters, page, t, loading],
   );
 
   const reload = useCallback(
@@ -103,17 +117,15 @@ export function useJournalFeed(tab: JournalType, filters: JournalDateFilters) {
       } else {
         setLoading(true);
       }
-      const localAc = signal ? null : new AbortController();
-      const effective = signal ?? localAc!.signal;
-      const timeoutId = window.setTimeout(() => {
-        if (!signal) localAc?.abort();
-      }, GROUPED_LOAD_TIMEOUT_MS);
+      const timeoutAc = new AbortController();
+      const timeoutId = window.setTimeout(() => timeoutAc.abort(), GROUPED_LOAD_TIMEOUT_MS);
+      const signals = signal ? [signal, timeoutAc.signal] : [timeoutAc.signal];
+      const effective = abortAny(signals);
       try {
         const res =
           tab === 'events'
             ? await journalsApi.eventsGrouped(0, 30, filters, { signal: effective })
             : await journalsApi.objectsGrouped(0, 30, filters, { signal: effective });
-        if (effective.aborted || gen !== generationRef.current) return;
         if (!shouldApplyJournalResult(gen, generationRef.current, effective.aborted)) return;
         cacheSet(groupedCacheKey(tab, filters, 0), res, GROUPED_TTL_MS);
         if (!res.available) {
@@ -127,10 +139,7 @@ export function useJournalFeed(tab: JournalType, filters: JournalDateFilters) {
         setPage(0);
         setHasMore(res.items.length >= 30);
       } catch (e) {
-        if (isAbortError(e) || effective.aborted || gen !== generationRef.current) {
-          if (!cached?.available && !(cached?.items?.length)) {
-            setMessage(t('journals.loadError'));
-          }
+        if (!shouldApplyJournalResult(gen, generationRef.current, effective.aborted || isAbortError(e))) {
           return;
         }
         if (!cached?.items?.length) {
@@ -140,7 +149,8 @@ export function useJournalFeed(tab: JournalType, filters: JournalDateFilters) {
         }
       } finally {
         window.clearTimeout(timeoutId);
-        if (gen === generationRef.current && !effective.aborted) setLoading(false);
+        // Clear loading even when our timeout aborted (R14).
+        if (gen === generationRef.current) setLoading(false);
       }
     },
     [tab, filters, t],
@@ -148,13 +158,13 @@ export function useJournalFeed(tab: JournalType, filters: JournalDateFilters) {
 
   const poll = useCallback(async () => {
     const gen = generationRef.current;
+    const ac = new AbortController();
     try {
       const res =
         tab === 'events'
-          ? await journalsApi.eventsGrouped(0, 30, filters)
-          : await journalsApi.objectsGrouped(0, 30, filters);
-      if (gen !== generationRef.current) return;
-      if (!shouldApplyJournalResult(gen, generationRef.current, false)) return;
+          ? await journalsApi.eventsGrouped(0, 30, filters, { signal: ac.signal })
+          : await journalsApi.objectsGrouped(0, 30, filters, { signal: ac.signal });
+      if (!shouldApplyJournalResult(gen, generationRef.current, ac.signal.aborted)) return;
       if (!res.available) return;
       cacheSet(groupedCacheKey(tab, filters, 0), res, GROUPED_TTL_MS);
       setRows((prev) => mergePrependRows(prev, res.items).rows);

@@ -98,8 +98,11 @@ export function useDetectionIndex({
 }) {
   const [tickByCamera, setTickByCamera] = useState<Record<string, PlaybackDetectionItem[]>>({});
   const [loading, setLoading] = useState(false);
+  /** idle | primary | primary_done | background — gate day enrich (R13). */
+  const [phase, setPhase] = useState<'idle' | 'primary' | 'primary_done' | 'background'>('idle');
   const backoffStepRef = useRef(0);
   const backoffUntilRef = useRef(0);
+  const fetchGenRef = useRef(0);
 
   const cameraKey = cameras.join(',');
   const queryKey = `${date}:${runId ?? 'none'}:${cameraKey}`;
@@ -120,17 +123,21 @@ export function useDetectionIndex({
     if (!enabled || !cameras.length) {
       setTickByCamera({});
       setLoading(false);
+      setPhase('idle');
       return;
     }
     setTickByCamera({});
+    setPhase('idle');
     backoffStepRef.current = 0;
     backoffUntilRef.current = 0;
+    fetchGenRef.current += 1;
   }, [enabled, queryKey]);
 
   useEffect(() => {
     if (!enabled || !cameras.length || ticksFromSec == null || ticksToSec == null) {
       setTickByCamera({});
       setLoading(false);
+      setPhase('idle');
       return;
     }
 
@@ -138,9 +145,11 @@ export function useDetectionIndex({
     const toSec = Math.ceil(ticksToSec);
     const ac = new AbortController();
     let retryTimer: number | null = null;
+    const gen = ++fetchGenRef.current;
+    setPhase('primary');
 
     const run = () => {
-      if (ac.signal.aborted) return;
+      if (ac.signal.aborted || gen !== fetchGenRef.current) return;
       const now = Date.now();
       if (now < backoffUntilRef.current) {
         retryTimer = window.setTimeout(run, backoffUntilRef.current - now);
@@ -155,12 +164,13 @@ export function useDetectionIndex({
         signal: ac.signal,
       })
         .then((mapped) => {
-          if (ac.signal.aborted) return;
+          if (ac.signal.aborted || gen !== fetchGenRef.current) return;
           backoffStepRef.current = 0;
           setTickByCamera((prev) => mergeDetectionItems(prev, mapped, cameras));
+          setPhase(dayWideTicks ? 'primary_done' : 'primary_done');
         })
         .catch((e) => {
-          if (isAbortError(e) || ac.signal.aborted) return;
+          if (isAbortError(e) || ac.signal.aborted || gen !== fetchGenRef.current) return;
           if (isBusyOrTimeout(e)) {
             const step = backoffStepRef.current;
             const delay = BACKOFF_MS[Math.min(step, BACKOFF_MS.length - 1)];
@@ -172,7 +182,10 @@ export function useDetectionIndex({
           setTickByCamera({});
         })
         .finally(() => {
-          if (!ac.signal.aborted) setLoading(false);
+          if (!ac.signal.aborted && gen === fetchGenRef.current) {
+            setLoading(false);
+            setPhase((p) => (p === 'primary' ? 'primary_done' : p));
+          }
         });
     };
 
@@ -189,6 +202,7 @@ export function useDetectionIndex({
     ticksFromSec == null ? null : Math.floor(ticksFromSec),
     ticksToSec == null ? null : Math.ceil(ticksToSec),
     enabled,
+    dayWideTicks,
   ]);
 
   // If primary window was viewport-only, still pull day ticks once for full-timeline markers.
@@ -199,16 +213,18 @@ export function useDetectionIndex({
       backgroundFromSec == null ||
       backgroundToSec == null ||
       dayWideTicks ||
-      loading
+      phase !== 'primary_done'
     ) {
       return;
     }
 
     const ac = new AbortController();
     let retryTimer: number | null = null;
+    const gen = fetchGenRef.current;
+    setPhase('background');
 
     const run = () => {
-      if (ac.signal.aborted) return;
+      if (ac.signal.aborted || gen !== fetchGenRef.current) return;
       const now = Date.now();
       if (now < backoffUntilRef.current) {
         retryTimer = window.setTimeout(run, backoffUntilRef.current - now);
@@ -222,11 +238,11 @@ export function useDetectionIndex({
         signal: ac.signal,
       })
         .then((mapped) => {
-          if (ac.signal.aborted) return;
+          if (ac.signal.aborted || gen !== fetchGenRef.current) return;
           setTickByCamera((prev) => mergeDetectionItems(prev, mapped, cameras));
         })
         .catch((e) => {
-          if (isAbortError(e) || ac.signal.aborted) return;
+          if (isAbortError(e) || ac.signal.aborted || gen !== fetchGenRef.current) return;
           if (isBusyOrTimeout(e)) {
             const step = backoffStepRef.current;
             const delay = BACKOFF_MS[Math.min(step, BACKOFF_MS.length - 1)];
@@ -251,7 +267,7 @@ export function useDetectionIndex({
     backgroundToSec,
     enabled,
     dayWideTicks,
-    loading,
+    phase,
   ]);
 
   const seedTicks = useCallback(
@@ -271,7 +287,7 @@ export function useDetectionIndex({
     globalTs,
     hasDetections,
     loading,
-    backgroundLoading: false,
+    backgroundLoading: phase === 'background',
     seedTicks,
   };
 }
