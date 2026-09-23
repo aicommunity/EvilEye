@@ -33,6 +33,13 @@ _memory_lock = threading.Lock()
 # key -> (expires_at_or_None, value). expires_at None = sticky timeout fallback only.
 _memory_cache: dict[str, tuple[float | None, Any]] = {}
 _MEMORY_CACHE_MAX_KEYS = 256
+_MEMORY_CACHE_MAX_BYTES = 64 * 1024 * 1024  # soft budget (A12)
+_memory_cache_bytes_est = 0
+_copy_ms_total = 0.0
+_copy_count = 0
+_thread_timeouts = 0
+_thread_503s = 0
+_thread_inflight: set[asyncio.Future] = set()
 _TIMELINE_HAPPY_TTL_SEC = 45.0
 _TIMELINE_SLOT_WAIT_SEC = 15.0
 _METADATA_HAPPY_TTL_SEC = 10.0
@@ -83,27 +90,64 @@ def media_inflight_count() -> int:
         return _media_inflight
 
 
+def _estimate_cache_bytes(value: Any) -> int:
+    """Soft size estimate for byte-budget eviction (JSON length preferred)."""
+    import json
+    import sys
+
+    try:
+        return len(json.dumps(value, default=str))
+    except Exception:
+        try:
+            return int(sys.getsizeof(value))
+        except Exception:
+            return 0
+
+
 def _remember(key: str, value: Any, *, ttl_sec: float | None = None) -> None:
+    global _memory_cache_bytes_est, _copy_ms_total, _copy_count
     expires_at = (time.time() + float(ttl_sec)) if ttl_sec is not None else None
     # Copy outside the lock to reduce contention (A12).
+    t0 = time.perf_counter()
     stored = deepcopy(value)
+    copy_ms = (time.perf_counter() - t0) * 1000.0
+    est = _estimate_cache_bytes(stored)
     with _memory_lock:
+        _copy_ms_total += copy_ms
+        _copy_count += 1
         now = time.time()
         # Drop expired entries opportunistically.
         expired = [k for k, (exp, _) in _memory_cache.items() if exp is not None and exp <= now]
         for k in expired:
-            _memory_cache.pop(k, None)
+            old = _memory_cache.pop(k, None)
+            if old is not None:
+                _memory_cache_bytes_est = max(0, _memory_cache_bytes_est - _estimate_cache_bytes(old[1]))
+        old_entry = _memory_cache.pop(key, None)
+        if old_entry is not None:
+            _memory_cache_bytes_est = max(0, _memory_cache_bytes_est - _estimate_cache_bytes(old_entry[1]))
         _memory_cache[key] = (expires_at, stored)
-        # LRU-ish: dict preserves insertion order; move key to end by reinsert.
-        while len(_memory_cache) > _MEMORY_CACHE_MAX_KEYS:
+        _memory_cache_bytes_est += est
+        # Evict by key count and soft byte budget (oldest first).
+        while _memory_cache and (
+            len(_memory_cache) > _MEMORY_CACHE_MAX_KEYS or _memory_cache_bytes_est > _MEMORY_CACHE_MAX_BYTES
+        ):
             oldest = next(iter(_memory_cache))
-            if oldest == key:
-                # Only this key left over cap somehow — break.
+            if oldest == key and len(_memory_cache) == 1:
                 break
-            _memory_cache.pop(oldest, None)
+            if oldest == key:
+                # Rotate: move current key to end, evict next.
+                cur = _memory_cache.pop(key)
+                _memory_cache[key] = cur
+                oldest = next(iter(_memory_cache))
+                if oldest == key:
+                    break
+            evicted = _memory_cache.pop(oldest, None)
+            if evicted is not None:
+                _memory_cache_bytes_est = max(0, _memory_cache_bytes_est - _estimate_cache_bytes(evicted[1]))
 
 
 def _recall(key: str, *, require_fresh: bool = False) -> Any | None:
+    global _memory_cache_bytes_est
     with _memory_lock:
         entry = _memory_cache.get(key)
         if entry is None:
@@ -111,7 +155,9 @@ def _recall(key: str, *, require_fresh: bool = False) -> Any | None:
         expires_at, cached = entry
         if require_fresh:
             if expires_at is None or expires_at <= time.time():
-                _memory_cache.pop(key, None)
+                popped = _memory_cache.pop(key, None)
+                if popped is not None:
+                    _memory_cache_bytes_est = max(0, _memory_cache_bytes_est - _estimate_cache_bytes(popped[1]))
                 return None
         # Refresh LRU order.
         _memory_cache.pop(key, None)
@@ -120,7 +166,7 @@ def _recall(key: str, *, require_fresh: bool = False) -> Any | None:
     return deepcopy(snapshot)
 
 
-def memory_cache_stats() -> dict[str, int]:
+def memory_cache_stats() -> dict[str, int | float]:
     """Observability: in-process playback memory cache size and freshness."""
     now = time.time()
     with _memory_lock:
@@ -135,19 +181,31 @@ def memory_cache_stats() -> dict[str, int]:
                 fresh += 1
             else:
                 expired += 1
+        bytes_est = int(_memory_cache_bytes_est)
+        copy_ms = float(_copy_ms_total)
+        copies = int(_copy_count)
     return {
         "keys": keys,
         "fresh": fresh,
         "expired": expired,
         "sticky": sticky,
+        "bytes_est": bytes_est,
+        "max_bytes": int(_MEMORY_CACHE_MAX_BYTES),
+        "copy_ms": round(copy_ms, 3),
+        "copy_count": copies,
+        "thread_inflight": len(_thread_inflight),
+        "thread_timeouts": int(_thread_timeouts),
+        "thread_503s": int(_thread_503s),
     }
 
 
 def clear_memory_cache() -> int:
     """Clear in-process playback memory cache (diagnostics / cold-server simulation)."""
+    global _memory_cache_bytes_est
     with _memory_lock:
         cleared = len(_memory_cache)
         _memory_cache.clear()
+        _memory_cache_bytes_est = 0
     return cleared
 
 
@@ -169,17 +227,40 @@ async def _to_thread_with_timeout_or_cached(
     on_timeout: Callable[[], None] | None = None,
     executor: ThreadPoolExecutor | None = None,
     log_ctx: dict[str, Any] | None = None,
+    slot_sem: asyncio.Semaphore | None = None,
+    release_sem_on_done: asyncio.Semaphore | None = None,
 ):
+    global _thread_timeouts, _thread_503s
     timeout = playback_route_timeout_sec()
+    if slot_sem is not None:
+        await slot_sem.acquire()
+    held_sem = slot_sem or release_sem_on_done
+    loop = asyncio.get_running_loop()
+    if executor is not None:
+        fut = loop.run_in_executor(executor, value_fn)
+    else:
+        fut = loop.run_in_executor(None, value_fn)
+    _thread_inflight.add(fut)
+    released = False
+
+    def _done(f: asyncio.Future) -> None:
+        nonlocal released
+        _thread_inflight.discard(f)
+        if held_sem is not None and not released:
+            released = True
+            try:
+                held_sem.release()
+            except Exception:
+                pass
+
+    fut.add_done_callback(_done)
     try:
-        if executor is not None:
-            loop = asyncio.get_running_loop()
-            fut = loop.run_in_executor(executor, value_fn)
-            return await asyncio.wait_for(fut, timeout=timeout)
-        return await asyncio.wait_for(asyncio.to_thread(value_fn), timeout=timeout)
+        # shield: timeout must not cancel the worker; slot tracking keeps fut in _thread_inflight.
+        return await asyncio.wait_for(asyncio.shield(fut), timeout=timeout)
     except asyncio.TimeoutError:
+        _thread_timeouts += 1
         logger.warning(
-            "playback route timeout detail=%s timeout_sec=%s executor=%s %s",
+            "playback route timeout detail=%s timeout_sec=%s executor=%s inflight=%s %s",
             err_detail,
             timeout,
             (
@@ -195,6 +276,7 @@ async def _to_thread_with_timeout_or_cached(
                 if executor is _detections_pool
                 else "default"
             ),
+            len(_thread_inflight),
             " ".join(f"{k}={v}" for k, v in (log_ctx or {}).items()),
         )
         if on_timeout is not None:
@@ -205,6 +287,7 @@ async def _to_thread_with_timeout_or_cached(
         cached = cached_fn()
         if cached is not None:
             return cached
+        _thread_503s += 1
         raise HTTPException(status_code=503, detail=err_detail)
 
 
@@ -475,17 +558,15 @@ async def playback_timeline(
                 _on_timeout()
                 return _json_with_cache(stale, "stale")
             raise HTTPException(status_code=503, detail="playback_timeline slot busy")
-    try:
-        payload = await _to_thread_with_timeout_or_cached(
-            _load,
-            _cached,
-            err_detail="playback_timeline timeout",
-            on_timeout=_on_timeout,
-            executor=_timeline_pool,
-            log_ctx={"date": date, "n_cameras": len(cam_list), "route": "timeline"},
-        )
-    finally:
-        _timeline_slots.release()
+    payload = await _to_thread_with_timeout_or_cached(
+        _load,
+        _cached,
+        err_detail="playback_timeline timeout",
+        on_timeout=_on_timeout,
+        executor=_timeline_pool,
+        log_ctx={"date": date, "n_cameras": len(cam_list), "route": "timeline"},
+        release_sem_on_done=_timeline_slots,
+    )
     cache_status = "stale" if isinstance(payload, dict) and payload.get("stale") else "miss"
     _remember(mem_key, payload, ttl_sec=_TIMELINE_HAPPY_TTL_SEC)
     return _json_with_cache(payload, cache_status)
