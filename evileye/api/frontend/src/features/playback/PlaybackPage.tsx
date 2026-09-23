@@ -1232,6 +1232,7 @@ export function PlaybackPage() {
             viewFrom={viewport.viewFrom}
             viewTo={viewport.viewTo}
             position={ctrl.positionSec}
+            getPosition={ctrl.getPosition}
             markers={timelineMarkers}
             segments={allSegments}
             segmentsByCamera={segmentsByCam}

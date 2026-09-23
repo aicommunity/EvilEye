@@ -39,6 +39,7 @@ export function usePlaybackController(
   const clockGraceUntilRef = useRef(0);
   const userSeekRef = useRef<UserSeekState | null>(null);
   const userSeekEndTimerRef = useRef<number | null>(null);
+  const lastUiPublishRef = useRef(0);
 
   playingRef.current = playing;
   toSecRef.current = toSec;
@@ -142,7 +143,11 @@ export function usePlaybackController(
     }
     lastVideoSyncAtRef.current = now;
     positionRef.current = next;
-    setPositionSec(next);
+    // B05: throttle React publish (~10Hz); Timeline/Grid should prefer getPosition().
+    if (now - lastUiPublishRef.current >= 100 || (upper != null && next >= upper)) {
+      lastUiPublishRef.current = now;
+      setPositionSec(next);
+    }
     setPlayheadMode(playingRef.current ? 'playing' : 'idle');
     playbackDebugSetMeta({ positionSec: next, playing: playingRef.current, scrubbing: scrubbingRef.current });
   }, [setPlaying]);
