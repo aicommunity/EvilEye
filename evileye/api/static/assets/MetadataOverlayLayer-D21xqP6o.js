@@ -1,0 +1,1 @@
+import{j as n}from"./index-z9zczofX.js";import{O as o}from"./OverlayCanvas-B3kTTx0s.js";function i({meta:r,layoutBox:a,density:t="full",visible:e=!0,renderMode:l="live"}){return!e||!r?null:n.jsx(o,{meta:r,layoutBox:a,density:t,renderMode:l})}export{i as M};

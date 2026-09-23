@@ -14,6 +14,11 @@ pytest \
   tests/unit/api/test_playback_memory_cache.py \
   tests/unit/api/test_playback_route_timeouts.py \
   tests/unit/api/test_playback_media_acl.py \
+  tests/unit/api/test_reaudit_media_acl.py \
+  tests/unit/api/test_reaudit_event_singleflight.py \
+  tests/unit/api/test_reaudit_detection_ticks_freshness.py \
+  tests/unit/api/test_reaudit_cache_stale.py \
+  tests/unit/api/test_reaudit_state_queue_deadline.py \
   tests/unit/api/test_playback_events_acl.py \
   tests/unit/api/test_live_preview_acl.py \
   tests/integration/api/test_journals_smoke.py \
