@@ -47,13 +47,17 @@ def resolve_camera_access(request: Request) -> CameraAccess:
     if auth is None or not getattr(auth, "enabled", False):
         return CameraAccess(unrestricted=True, allowed_names=frozenset(), visible_names=None)
 
-    user = request.session.get("user")
+    # Prefer principal revalidated against the live user store (F01).
+    from evileye.api.security import current_user
+
+    user = current_user(request)
     if not isinstance(user, dict):
         return CameraAccess(unrestricted=False, allowed_names=frozenset(), visible_names=frozenset())
 
-    role = normalize_role(str(user.get("role") or "user"))
     username = str(user.get("username") or "")
     record = lookup_user_record(username) if username else None
+    # Admin bypass must use the live record role, never a stale cookie role.
+    role = normalize_role(str((record or {}).get("role") or user.get("role") or "user"))
     prefs = prefs_from_record(record)
     visible_raw = prefs.get("visible_cameras")
     visible_names: frozenset[str] | None

@@ -208,7 +208,8 @@ def test_preview_cache_control_header(journal_client):
         f"/api/v1/journals/preview?path={preview_name}&date=2026-06-13&journal_type=objects"
     )
     assert response.status_code == 200
-    assert response.headers.get("cache-control") == "public, max-age=3600"
+    assert "no-store" in (response.headers.get("cache-control") or "").lower()
+    assert "private" in (response.headers.get("cache-control") or "").lower()
 
 
 def test_video_mkv_content_type(journal_client, tmp_path):

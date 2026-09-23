@@ -110,13 +110,38 @@ def _file_response(path: str, *, media_type: str | None = None) -> FileResponse:
 
 
 def _authorize_journal_media(request: Request, secured: str, *, allow_kinds: frozenset[str]):
-    """Camera/kind ACL on canonical journal file (R02)."""
+    """Camera/kind ACL on canonical journal file (R02/F02)."""
     access = resolve_camera_access(request)
-    return ArchiveMediaResolver(playback_data_dir()).authorize_existing(
-        access,
-        Path(secured),
-        allow_kinds=allow_kinds,
-    )
+    secured_path = Path(secured)
+    roots: list[Path] = []
+    try:
+        from evileye.api.core.journal_service import _image_base_dir
+
+        roots.append(Path(_image_base_dir()))
+    except Exception:
+        pass
+    try:
+        roots.append(Path(playback_data_dir()))
+    except Exception:
+        pass
+    last_exc: Exception | None = None
+    for root in roots:
+        try:
+            return ArchiveMediaResolver(root).authorize_existing(
+                access,
+                secured_path,
+                allow_kinds=allow_kinds,
+            )
+        except HTTPException as exc:
+            last_exc = exc
+            continue
+        except Exception as exc:
+            last_exc = exc
+            continue
+    if isinstance(last_exc, HTTPException):
+        raise last_exc
+    raise HTTPException(status_code=403, detail="Camera access denied")
+
 
 
 def _resize_jpeg(path: str, width: int) -> bytes | None:

@@ -241,7 +241,7 @@ async def patch_user(user_id: str, payload: PatchUserPayload, request: Request) 
         raise HTTPException(status_code=404, detail="User not found") from exc
 
     _reload_web_auth(request)
-    # R08: revoke open live preview sockets when user is disabled or ACL shrinks.
+    # F01/R08: revoke all transports when user is disabled, demoted, ACL shrinks, or deleted.
     should_kick = (
         payload.disabled is True
         or payload.status in {"rejected", "disabled"}
@@ -250,9 +250,9 @@ async def patch_user(user_id: str, payload: PatchUserPayload, request: Request) 
     )
     if should_kick and target_id:
         try:
-            from evileye.api.core.live_preview_hub import get_live_preview_hub
+            from evileye.api.core.transport_revoke import revoke_user_transports
 
-            get_live_preview_hub().unregister_username(target_id)
+            revoke_user_transports(target_id)
         except Exception:
             pass
     return {"ok": True, "user": public}
@@ -275,6 +275,13 @@ async def delete_user(user_id: str, request: Request) -> dict:
     except KeyError as exc:
         raise HTTPException(status_code=404, detail="User not found") from exc
     _reload_web_auth(request)
+    if target_id:
+        try:
+            from evileye.api.core.transport_revoke import revoke_user_transports
+
+            revoke_user_transports(target_id)
+        except Exception:
+            pass
     return {"ok": True}
 
 
@@ -297,4 +304,10 @@ async def reject_user(email: str, request: Request) -> dict:
     except KeyError as exc:
         raise HTTPException(status_code=404, detail="User not found") from exc
     _reload_web_auth(request)
+    try:
+        from evileye.api.core.transport_revoke import revoke_user_transports
+
+        revoke_user_transports(unquote(email).strip())
+    except Exception:
+        pass
     return {"ok": True, "user": _public_store_user(item)}

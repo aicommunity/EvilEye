@@ -1449,12 +1449,12 @@ def resolve_media_path(path: str) -> Path:
     if not candidate.is_absolute():
         candidate = data_dir() / path
     resolved = _secure_under(data_dir(), candidate)
-    # Audit A03: only Streams/ and Events/ archives are serveable.
+    # Audit A03/F02: Streams/Events/Detections archives are serveable.
     try:
         rel = resolved.relative_to(data_dir().resolve())
     except ValueError as exc:
         raise PermissionError(f"Path outside data dir: {path}") from exc
     parts = rel.parts
-    if not parts or parts[0] not in {"Streams", "Events"}:
-        raise PermissionError(f"Media path not under Streams/Events: {path}")
+    if not parts or parts[0] not in {"Streams", "Events", "Detections"}:
+        raise PermissionError(f"Media path not under Streams/Events/Detections: {path}")
     return resolved
