@@ -1,4 +1,5 @@
 import { describe, expect, it, vi, beforeEach } from 'vitest';
+import { fetchSnapshotBlob, frameKey } from './useLiveGridPreviewWs';
 
 describe('notify etag precondition (A06)', () => {
   beforeEach(() => {
@@ -20,20 +21,35 @@ describe('notify etag precondition (A06)', () => {
       }),
     );
 
-    const { streamSnapshotUrl } = await import('../../api');
-    // Inline the same contract as useLiveGridPreviewWs fetchSnapshotBlob
-    async function fetchSnapshotBlob(runId: number, sourceId: number, etag?: string) {
-      const url = streamSnapshotUrl(runId, sourceId);
-      const headers: Record<string, string> = {};
-      if (etag) headers['If-None-Match'] = `"${etag}"`;
-      const res = await fetch(url, { credentials: 'same-origin', headers });
-      return res;
-    }
-
     await fetchSnapshotBlob(1, 0, undefined);
     await fetchSnapshotBlob(1, 0, 'etag-1');
-    // Simulate bug: using notify etag as precondition would send If-None-Match on first fetch
     expect(calls[0]?.['If-None-Match']).toBeUndefined();
     expect(calls[1]?.['If-None-Match']).toBe('"etag-1"');
+  });
+
+  it('returns null on 304', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => ({
+        status: 304,
+        ok: false,
+        headers: { get: () => null },
+        blob: async () => new Blob(),
+      })),
+    );
+    expect(await fetchSnapshotBlob(1, 0, 'etag-1')).toBeNull();
+  });
+});
+
+describe('multi-run frame keys (A07)', () => {
+  it('same source_id under different runs stay distinct', () => {
+    const a = frameKey(10, 0);
+    const b = frameKey(20, 0);
+    expect(a).not.toBe(b);
+    const map = new Map<string, string>();
+    map.set(a, 'run10');
+    map.set(b, 'run20');
+    expect(map.get(frameKey(10, 0))).toBe('run10');
+    expect(map.get(frameKey(20, 0))).toBe('run20');
   });
 });

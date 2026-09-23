@@ -12,7 +12,7 @@ export interface PreviewFrame {
 
 export type LivePreviewByRun = Map<number, number[]>;
 
-function frameKey(runId: number, sourceId: number): string {
+export function frameKey(runId: number, sourceId: number): string {
   return `${runId}:${sourceId}`;
 }
 
@@ -21,7 +21,7 @@ function liveGridWsUrl(runId: number): string {
   return `${proto}://${window.location.host}/api/v1/runs/${runId}/ws/live`;
 }
 
-async function fetchSnapshotBlob(
+export async function fetchSnapshotBlob(
   runId: number,
   sourceId: number,
   etag?: string,
