@@ -104,13 +104,21 @@ def _read_json(path: Path) -> dict[str, Any] | None:
         return None
 
 
-def _dir_mtime_sig(root: Path, patterns: tuple[str, ...]) -> float:
+def _dir_mtime_sig(
+    root: Path,
+    patterns: tuple[str, ...],
+    *,
+    exclude_names: frozenset[str] | None = None,
+) -> float:
     if not root.is_dir():
         return 0.0
+    skip = exclude_names or frozenset()
     total = 0.0
     try:
         for pattern in patterns:
             for path in root.glob(pattern):
+                if path.name in skip:
+                    continue
                 try:
                     total += path.stat().st_mtime
                 except OSError:
@@ -118,6 +126,15 @@ def _dir_mtime_sig(root: Path, patterns: tuple[str, ...]) -> float:
     except OSError:
         return total
     return total
+
+
+_GENERATED_INDEX_NAMES = frozenset(
+    {
+        "detection_ticks.json",
+        "event_intervals.json",
+        "_timeline_segments.json",
+    }
+)
 
 
 def _is_today(date_folder: str) -> bool:
@@ -360,6 +377,21 @@ def _ticks_from_payload(data: dict[str, Any], cameras: list[str]) -> dict[str, l
     return out
 
 
+def _payload_covers_cameras(data: dict[str, Any], cameras: list[str]) -> bool:
+    """True when on-disk index has an entry for every requested camera."""
+    if not cameras:
+        return True
+    raw_by = data.get("by_camera")
+    if not isinstance(raw_by, dict):
+        # event_intervals store flat items — coverage via cameras field if present
+        covered = data.get("cameras")
+        if isinstance(covered, list) and covered:
+            have = {str(c) for c in covered}
+            return all(c in have for c in cameras)
+        return False
+    return all(cam in raw_by for cam in cameras)
+
+
 def read_detection_ticks_stale(
     date_folder: str,
     cameras: list[str],
@@ -398,7 +430,7 @@ def _rebuild_detection_ticks(
     cameras: list[str],
     run_id: int | None = None,
 ) -> dict[str, list[dict[str, Any]]]:
-    """Rebuild compact ticks only (no full bbox index payload on disk)."""
+    """Rebuild compact ticks; merge missing cameras into existing day index (A09)."""
     from evileye.api.core import playback_metadata_service as meta
 
     params = meta._load_params_for_run(run_id)
@@ -411,32 +443,41 @@ def _rebuild_detection_ticks(
     )
     cam_list = [c for c in cameras if c]
 
-    # Compact: one day parse via day cache, store only tick triples.
-    full = meta._load_day_index_by_camera(
-        base=base,
-        date_folder=date_folder,
-        run_id=run_id,
-        params=params,
-        cameras=cam_list,
-    )
-    compact: dict[str, list[list[Any]]] = {}
-    result: dict[str, list[dict[str, Any]]] = {}
-    for cam in cam_list:
-        items = full.get(cam) or []
-        compact[cam] = [_compact_tick_row(it) for it in items]
-        result[cam] = [meta._tick_only_item(it) for it in items]
+    existing = _read_json(index_path) or {}
+    prev_raw = existing.get("by_camera") if isinstance(existing.get("by_camera"), dict) else {}
+    compact: dict[str, list[list[Any]]] = {
+        str(k): list(v or []) for k, v in prev_raw.items()
+    }
+
+    missing = [c for c in cam_list if c not in compact]
+    if missing:
+        full = meta._load_day_index_by_camera(
+            base=base,
+            date_folder=date_folder,
+            run_id=run_id,
+            params=params,
+            cameras=missing,
+        )
+        for cam in missing:
+            items = full.get(cam) or []
+            compact[cam] = [_compact_tick_row(it) for it in items]
 
     payload = {
         "version": INDEX_VERSION,
         "date": date_folder,
         "built_at": time.time(),
         "source_mtime": source_mtime,
+        "cameras": sorted(compact.keys()),
         "by_camera": compact,
     }
     try:
         _atomic_write_json(index_path, payload)
     except Exception as exc:
         logger.debug("failed to write detection ticks %s: %s", index_path, exc)
+
+    result: dict[str, list[dict[str, Any]]] = {}
+    for cam in cam_list:
+        result[cam] = [_tick_row_to_item(row) for row in (compact.get(cam) or [])]
     return result
 
 
@@ -459,13 +500,22 @@ def ensure_detection_ticks(
     )
     cam_list = [c for c in cameras if c]
     cached = _index_fresh(index_path, source_mtime, date_folder)
-    if cached is not None:
+    if cached is not None and _payload_covers_cameras(cached, cam_list):
         return _ticks_from_payload(cached, cam_list)
+    if cached is not None and not _payload_covers_cameras(cached, cam_list):
+        # Partial index: merge missing cameras without discarding coverage.
+        return singleflight(
+            f"ensure_detection_ticks:{date_folder}:{run_id}",
+            lambda: _rebuild_detection_ticks(date_folder=date_folder, cameras=cam_list, run_id=run_id),
+        )
 
     stale = read_detection_ticks_stale(date_folder, cam_list, run_id=run_id)
     if stale is not None:
-        schedule_detection_ticks_refresh(date_folder, cam_list, run_id=run_id)
-        return stale
+        # Only serve stale if it covers requested cams; else rebuild sync.
+        stale_path = _read_json(index_path)
+        if stale_path is not None and _payload_covers_cameras(stale_path, cam_list):
+            schedule_detection_ticks_refresh(date_folder, cam_list, run_id=run_id)
+            return stale
 
     return singleflight(
         f"ensure_detection_ticks:{date_folder}:{run_id}",
@@ -557,20 +607,34 @@ def _rebuild_event_intervals(
 
     events_dir = svc.data_dir() / "Events" / date_folder / "Metadata"
     index_path = event_intervals_path(events_dir)
-    source_mtime = _dir_mtime_sig(events_dir, ("*.json",))
+    # A10: exclude generated index from signature so write does not invalidate itself.
+    source_mtime = _dir_mtime_sig(
+        events_dir,
+        ("*.json",),
+        exclude_names=_GENERATED_INDEX_NAMES,
+    )
+    # Always build full-day index; filter only on return.
     items = svc.load_event_intervals(
         None,
         None,
         None,
-        cameras,
+        None,
         date=date_folder,
-        limit=limit,
+        limit=max(limit, 2000),
+    )
+    cam_names = sorted(
+        {
+            str(it.get("camera") or "").strip()
+            for it in items
+            if str(it.get("camera") or "").strip()
+        }
     )
     payload = {
         "version": INDEX_VERSION,
         "date": date_folder,
         "built_at": time.time(),
         "source_mtime": source_mtime,
+        "cameras": cam_names,
         "items": items,
     }
     try:
@@ -594,13 +658,26 @@ def ensure_event_intervals(
 
     events_dir = svc.data_dir() / "Events" / date_folder / "Metadata"
     index_path = event_intervals_path(events_dir)
-    source_mtime = _dir_mtime_sig(events_dir, ("*.json",))
+    source_mtime = _dir_mtime_sig(
+        events_dir,
+        ("*.json",),
+        exclude_names=_GENERATED_INDEX_NAMES,
+    )
+    cam_list = [c for c in (cameras or []) if c]
     cached = _index_fresh(index_path, source_mtime, date_folder)
     if cached is not None:
         items = cached.get("items") or []
         if isinstance(items, list):
-            if cameras:
-                cam_set = set(cameras)
+            if cam_list and not _payload_covers_cameras(cached, cam_list):
+                # Incomplete coverage (old subset build) — rebuild full.
+                return singleflight(
+                    f"ensure_event_intervals:{date_folder}",
+                    lambda: _rebuild_event_intervals(
+                        date_folder=date_folder, cameras=cam_list or None, limit=limit
+                    ),
+                )
+            if cam_list:
+                cam_set = set(cam_list)
                 return [it for it in items if not it.get("camera") or it.get("camera") in cam_set]
             return list(items)
 

@@ -301,8 +301,14 @@ def _index_cache_key(base: Path, date_folder: str, camera: str, source_id: int |
     return f"{base}:{date_folder}:{camera}:{source_id}"
 
 
-def _day_cache_key(base: Path, date_folder: str, run_id: int | None) -> str:
-    return f"{base}:{date_folder}:{run_id if run_id is not None else 'none'}"
+def _day_cache_key(
+    base: Path,
+    date_folder: str,
+    run_id: int | None,
+    cameras: list[str] | None = None,
+) -> str:
+    cams = ",".join(sorted(c for c in (cameras or []) if c))
+    return f"{base}:{date_folder}:{run_id if run_id is not None else 'none'}:{cams}"
 
 
 def _file_mtime_sum(*paths: Path) -> float:
@@ -425,10 +431,13 @@ def _load_day_index_by_camera(
     found_path = base / "Detections" / date_folder / "Metadata" / "objects_found.json"
     lost_path = base / "Detections" / date_folder / "Metadata" / "objects_lost.json"
     json_mtime = _file_mtime_sum(found_path, lost_path)
-    day_key = _day_cache_key(base, date_folder, run_id)
+    day_key = _day_cache_key(base, date_folder, run_id, cameras)
     cached = DAY_CAMERA_INDEX_CACHE.get(day_key)
     if cached and _index_cache_valid(cached[0], cached[1], json_mtime, date_folder):
-        return cached[2]
+        by_cached = cached[2]
+        # A09: if cache miss for requested cams, fall through and rebuild/merge.
+        if all(cam in by_cached for cam in cameras if str(cam).strip()):
+            return by_cached
 
     camera_meta: dict[str, tuple[int | None, set[str]]] = {}
     for camera in cameras:
@@ -547,7 +556,7 @@ def load_detection_index_batch(
             # objects_*.json on the ticks_only path — that was blocking archive
             # timeline marks behind 45s+ timeouts while the compact ticks file
             # was already available on disk.
-            day_key = _day_cache_key(base, date_folder, run_id)
+            day_key = _day_cache_key(base, date_folder, run_id, cam_list)
             found_path = base / "Detections" / date_folder / "Metadata" / "objects_found.json"
             lost_path = base / "Detections" / date_folder / "Metadata" / "objects_lost.json"
             json_mtime = _file_mtime_sum(found_path, lost_path)
