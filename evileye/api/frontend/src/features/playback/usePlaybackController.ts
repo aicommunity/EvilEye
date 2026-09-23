@@ -159,6 +159,7 @@ export function usePlaybackController(
     resetPlaybackClockOwner();
     lastVideoSyncAtRef.current = performance.now();
     let last = performance.now();
+    let lastUiPublish = 0;
     const tick = (now: number) => {
       raf.current = requestAnimationFrame(tick);
       playbackDebugInc('rafTicks');
@@ -198,7 +199,11 @@ export function usePlaybackController(
         setPlaying(false);
       }
       positionRef.current = next;
-      setPositionSec(next);
+      // B05: throttle React publish (~10Hz) while keeping ref current every frame.
+      if (now - lastUiPublish >= 100 || upper != null && next >= upper) {
+        lastUiPublish = now;
+        setPositionSec(next);
+      }
       playbackDebugInc('rafAdvanced');
     };
     raf.current = requestAnimationFrame(tick);

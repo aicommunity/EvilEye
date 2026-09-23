@@ -55,7 +55,14 @@ def test_json_with_cache_sets_stale_header():
     assert resp_hit.headers["X-Playback-Cache"] == "hit"
 
 
-def test_second_recall_faster_than_cold_remember():
+def test_memory_cache_evicts_when_over_max_keys(monkeypatch):
+    playback_routes._memory_cache.clear()
+    monkeypatch.setattr(playback_routes, "_MEMORY_CACHE_MAX_KEYS", 8)
+    for i in range(12):
+        playback_routes._remember(f"k{i}", {"i": i}, ttl_sec=60.0)
+    assert playback_routes.memory_cache_stats()["keys"] <= 8
+    # Most recent keys should survive.
+    assert playback_routes._recall("k11", require_fresh=True)["i"] == 11
     """Simulate warm memory path: recall after remember is instant."""
     playback_routes._memory_cache.clear()
     key = "playback:cameras:None:2026-08-19"

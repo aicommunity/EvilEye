@@ -104,15 +104,17 @@ export function useDetectionIndex({
   const cameraKey = cameras.join(',');
   const queryKey = `${date}:${runId ?? 'none'}:${cameraKey}`;
 
-  // Prefer day-wide ticks; fall back to viewport window if day bounds missing.
-  const ticksFromSec = backgroundFromSec ?? priorityFromSec;
-  const ticksToSec = backgroundToSec ?? priorityToSec;
+  // Prefer viewport (priority) first for time-to-first-marker; day-wide as background (B02).
+  const useViewportFirst = priorityFromSec != null && priorityToSec != null;
+  const ticksFromSec = useViewportFirst ? priorityFromSec : backgroundFromSec ?? priorityFromSec;
+  const ticksToSec = useViewportFirst ? priorityToSec : backgroundToSec ?? priorityToSec;
+  // True when the primary fetch already covers the full day (skip duplicate enrich).
   const dayWideTicks =
+    !useViewportFirst &&
     backgroundFromSec != null &&
     backgroundToSec != null &&
-    (priorityFromSec == null ||
-      priorityToSec == null ||
-      (backgroundFromSec <= priorityFromSec && backgroundToSec >= priorityToSec));
+    ticksFromSec === backgroundFromSec &&
+    ticksToSec === backgroundToSec;
 
   useEffect(() => {
     if (!enabled || !cameras.length) {

@@ -87,7 +87,14 @@ function MobileEventsInner() {
         </ul>
       )}
       {feed.hasMore ? (
-        <Button variant="outline" style={{ minHeight: 44, width: '100%' }} onClick={() => void feed.loadMore()}>
+        <Button
+          variant="outline"
+          style={{ minHeight: 44, width: '100%' }}
+          disabled={feed.loading}
+          onClick={() => {
+            if (!feed.loading) void feed.loadMore();
+          }}
+        >
           {t('mobile.more')}
         </Button>
       ) : null}

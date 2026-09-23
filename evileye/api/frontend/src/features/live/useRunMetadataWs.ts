@@ -240,23 +240,39 @@ export class RunMetadataStore {
     this._notifyFreshness();
   }
 
+  private restInFlight = false;
+  private restAbort: AbortController | null = null;
+
   private startRestFallback() {
     if (this.restTimer != null) window.clearInterval(this.restTimer);
     const pollRest = async () => {
-      if (this.cancelled || this.wsOpen) return;
+      if (this.cancelled || this.wsOpen || this.restInFlight) return;
       const sourceKeys = [...this.listenersBySource.entries()]
         .filter(([, subs]) => subs.size > 0)
         .map(([sourceId]) => sourceId);
       if (!sourceKeys.length) return;
 
-      for (const sourceId of sourceKeys) {
-        try {
-          const qs = sourceId != null ? `?source_id=${sourceId}` : '';
-          const payload = await request<StreamMetadata>(`/runs/${this.rid}/metadata${qs}`);
-          if (!this.cancelled) this.pushPayload(payload);
-        } catch {
-          /* ignore */
+      this.restInFlight = true;
+      this.restAbort?.abort();
+      const ac = new AbortController();
+      this.restAbort = ac;
+      const deadline = window.setTimeout(() => ac.abort(), 8000);
+      try {
+        for (const sourceId of sourceKeys) {
+          if (ac.signal.aborted || this.cancelled || this.wsOpen) break;
+          try {
+            const qs = sourceId != null ? `?source_id=${sourceId}` : '';
+            const payload = await request<StreamMetadata>(`/runs/${this.rid}/metadata${qs}`, {
+              signal: ac.signal,
+            });
+            if (!this.cancelled && !ac.signal.aborted) this.pushPayload(payload);
+          } catch {
+            /* ignore */
+          }
         }
+      } finally {
+        window.clearTimeout(deadline);
+        this.restInFlight = false;
       }
     };
     void pollRest();
@@ -268,6 +284,9 @@ export class RunMetadataStore {
       window.clearInterval(this.restTimer);
       this.restTimer = null;
     }
+    this.restAbort?.abort();
+    this.restAbort = null;
+    this.restInFlight = false;
   }
 
   private scheduleReconnect() {

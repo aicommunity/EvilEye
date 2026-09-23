@@ -132,21 +132,27 @@ export function LivePage() {
     return () => window.clearInterval(id);
   }, []);
 
-  const previewByRun = useMemo(() => {
-    const m = new Map<number, number[]>();
-    for (const c of cameras) {
-      if (!Number.isFinite(c.run_id) || c.source_id == null) continue;
-      const list = m.get(c.run_id) ?? [];
-      list.push(c.source_id);
-      m.set(c.run_id, list);
-    }
-    return m;
-  }, [cameras]);
-
-  const previewWs = useLiveGridPreviewWs(previewByRun);
   const [activeSources, setActiveSources] = useState<Array<{ runId: number; sourceId: number | null }>>([]);
   const activeSourcesRef = useRef(activeSources);
   activeSourcesRef.current = activeSources;
+
+  // B01: subscribe only visible/active tiles (fallback to all until IO reports).
+  const previewByRun = useMemo(() => {
+    const m = new Map<number, number[]>();
+    const source =
+      activeSources.length > 0
+        ? activeSources
+        : cameras.map((c) => ({ runId: c.run_id, sourceId: c.source_id ?? null }));
+    for (const { runId, sourceId } of source) {
+      if (!Number.isFinite(runId) || sourceId == null) continue;
+      const list = m.get(runId) ?? [];
+      if (!list.includes(sourceId)) list.push(sourceId);
+      m.set(runId, list);
+    }
+    return m;
+  }, [cameras, activeSources]);
+
+  const previewWs = useLiveGridPreviewWs(previewByRun);
 
   useEffect(() => {
     cancelPreviewDemandGrace();

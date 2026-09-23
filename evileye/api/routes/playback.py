@@ -31,6 +31,7 @@ router = APIRouter(prefix="/api/v1/playback", tags=["playback"])
 _memory_lock = threading.Lock()
 # key -> (expires_at_or_None, value). expires_at None = sticky timeout fallback only.
 _memory_cache: dict[str, tuple[float | None, Any]] = {}
+_MEMORY_CACHE_MAX_KEYS = 256
 _TIMELINE_HAPPY_TTL_SEC = 45.0
 _TIMELINE_SLOT_WAIT_SEC = 15.0
 _METADATA_HAPPY_TTL_SEC = 10.0
@@ -83,8 +84,22 @@ def media_inflight_count() -> int:
 
 def _remember(key: str, value: Any, *, ttl_sec: float | None = None) -> None:
     expires_at = (time.time() + float(ttl_sec)) if ttl_sec is not None else None
+    # Copy outside the lock to reduce contention (A12).
+    stored = deepcopy(value)
     with _memory_lock:
-        _memory_cache[key] = (expires_at, deepcopy(value))
+        now = time.time()
+        # Drop expired entries opportunistically.
+        expired = [k for k, (exp, _) in _memory_cache.items() if exp is not None and exp <= now]
+        for k in expired:
+            _memory_cache.pop(k, None)
+        _memory_cache[key] = (expires_at, stored)
+        # LRU-ish: dict preserves insertion order; move key to end by reinsert.
+        while len(_memory_cache) > _MEMORY_CACHE_MAX_KEYS:
+            oldest = next(iter(_memory_cache))
+            if oldest == key:
+                # Only this key left over cap somehow — break.
+                break
+            _memory_cache.pop(oldest, None)
 
 
 def _recall(key: str, *, require_fresh: bool = False) -> Any | None:
@@ -95,8 +110,13 @@ def _recall(key: str, *, require_fresh: bool = False) -> Any | None:
         expires_at, cached = entry
         if require_fresh:
             if expires_at is None or expires_at <= time.time():
+                _memory_cache.pop(key, None)
                 return None
-        return deepcopy(cached)
+        # Refresh LRU order.
+        _memory_cache.pop(key, None)
+        _memory_cache[key] = (expires_at, cached)
+        snapshot = cached
+    return deepcopy(snapshot)
 
 
 def memory_cache_stats() -> dict[str, int]:

@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import {
   journalsApi,
   type JournalDateFilters,
@@ -29,10 +29,16 @@ export function useJournalFeed(tab: JournalType, filters: JournalDateFilters) {
     initial && !initial.available ? String(initial.message ?? null) : null,
   );
   const [loading, setLoading] = useState(() => !initial);
+  const generationRef = useRef(0);
+  const loadAbortRef = useRef<AbortController | null>(null);
 
   const load = useCallback(
     async (append = false) => {
+      if (append && loading) return;
+      loadAbortRef.current?.abort();
       const ac = new AbortController();
+      loadAbortRef.current = ac;
+      const gen = ++generationRef.current;
       const timeoutId = window.setTimeout(() => ac.abort(), GROUPED_LOAD_TIMEOUT_MS);
       setLoading(true);
       try {
@@ -41,6 +47,7 @@ export function useJournalFeed(tab: JournalType, filters: JournalDateFilters) {
           tab === 'events'
             ? await journalsApi.eventsGrouped(nextPage, 30, filters, { signal: ac.signal })
             : await journalsApi.objectsGrouped(nextPage, 30, filters, { signal: ac.signal });
+        if (gen !== generationRef.current || ac.signal.aborted) return;
         if (!append) cacheSet(groupedCacheKey(tab, filters, 0), res, GROUPED_TTL_MS);
         if (!res.available) {
           setRows([]);
@@ -53,7 +60,7 @@ export function useJournalFeed(tab: JournalType, filters: JournalDateFilters) {
         setPage(nextPage);
         setHasMore(res.items.length >= 30);
       } catch (e) {
-        if (isAbortError(e)) {
+        if (isAbortError(e) || ac.signal.aborted || gen !== generationRef.current) {
           if (!append && !rows.length) setMessage(t('journals.loadError'));
           return;
         }
@@ -62,78 +69,84 @@ export function useJournalFeed(tab: JournalType, filters: JournalDateFilters) {
         }
       } finally {
         window.clearTimeout(timeoutId);
-        setLoading(false);
+        if (gen === generationRef.current) setLoading(false);
       }
     },
-    [tab, filters, page, rows.length, t],
+    [tab, filters, page, rows.length, t, loading],
   );
 
-  const reload = useCallback(async (signal?: AbortSignal) => {
-    setPage(0);
-    const cached = cacheGet<{ items: JournalGroupedRow[]; available: boolean; message?: string }>(
-      groupedCacheKey(tab, filters, 0),
-    );
-    if (cached) {
-      if (!cached.available) {
-        setRows([]);
-        setMessage(String(cached.message ?? t('journals.unavailable')));
-        setHasMore(false);
-      } else {
-        setMessage(null);
-        setRows(cached.items);
-        setHasMore(cached.items.length >= 30);
-      }
-      setLoading(false);
-    } else {
-      setLoading(true);
-    }
-    const localAc = signal ? null : new AbortController();
-    const effective = signal ?? localAc!.signal;
-    const timeoutId = window.setTimeout(() => {
-      if (!signal) localAc?.abort();
-    }, GROUPED_LOAD_TIMEOUT_MS);
-    try {
-      const res =
-        tab === 'events'
-          ? await journalsApi.eventsGrouped(0, 30, filters, { signal: effective })
-          : await journalsApi.objectsGrouped(0, 30, filters, { signal: effective });
-      if (effective.aborted) return;
-      cacheSet(groupedCacheKey(tab, filters, 0), res, GROUPED_TTL_MS);
-      if (!res.available) {
-        setRows([]);
-        setMessage(String(res.message ?? t('journals.unavailable')));
-        setHasMore(false);
-        return;
-      }
-      setMessage(null);
-      setRows(res.items);
+  const reload = useCallback(
+    async (signal?: AbortSignal) => {
+      generationRef.current += 1;
+      const gen = generationRef.current;
       setPage(0);
-      setHasMore(res.items.length >= 30);
-    } catch (e) {
-      if (isAbortError(e) || effective.aborted) {
-        if (!cached?.available && !(cached?.items?.length)) {
+      const cached = cacheGet<{ items: JournalGroupedRow[]; available: boolean; message?: string }>(
+        groupedCacheKey(tab, filters, 0),
+      );
+      if (cached) {
+        if (!cached.available) {
+          setRows([]);
+          setMessage(String(cached.message ?? t('journals.unavailable')));
+          setHasMore(false);
+        } else {
+          setMessage(null);
+          setRows(cached.items);
+          setHasMore(cached.items.length >= 30);
+        }
+        setLoading(false);
+      } else {
+        setLoading(true);
+      }
+      const localAc = signal ? null : new AbortController();
+      const effective = signal ?? localAc!.signal;
+      const timeoutId = window.setTimeout(() => {
+        if (!signal) localAc?.abort();
+      }, GROUPED_LOAD_TIMEOUT_MS);
+      try {
+        const res =
+          tab === 'events'
+            ? await journalsApi.eventsGrouped(0, 30, filters, { signal: effective })
+            : await journalsApi.objectsGrouped(0, 30, filters, { signal: effective });
+        if (effective.aborted || gen !== generationRef.current) return;
+        cacheSet(groupedCacheKey(tab, filters, 0), res, GROUPED_TTL_MS);
+        if (!res.available) {
+          setRows([]);
+          setMessage(String(res.message ?? t('journals.unavailable')));
+          setHasMore(false);
+          return;
+        }
+        setMessage(null);
+        setRows(res.items);
+        setPage(0);
+        setHasMore(res.items.length >= 30);
+      } catch (e) {
+        if (isAbortError(e) || effective.aborted || gen !== generationRef.current) {
+          if (!cached?.available && !(cached?.items?.length)) {
+            setMessage(t('journals.loadError'));
+          }
+          return;
+        }
+        if (!cached?.items?.length) {
+          setMessage(formatApiError(e, t));
+        } else {
           setMessage(t('journals.loadError'));
         }
-        return;
+      } finally {
+        window.clearTimeout(timeoutId);
+        if (gen === generationRef.current && !effective.aborted) setLoading(false);
       }
-      // Keep cached rows; surface a friendly message.
-      if (!cached?.items?.length) {
-        setMessage(formatApiError(e, t));
-      } else {
-        setMessage(t('journals.loadError'));
-      }
-    } finally {
-      window.clearTimeout(timeoutId);
-      if (!effective.aborted) setLoading(false);
-    }
-  }, [tab, filters, t]);
+    },
+    [tab, filters, t],
+  );
 
   const poll = useCallback(async () => {
+    const gen = generationRef.current;
     try {
       const res =
         tab === 'events'
           ? await journalsApi.eventsGrouped(0, 30, filters)
           : await journalsApi.objectsGrouped(0, 30, filters);
+      if (gen !== generationRef.current) return;
       if (!res.available) return;
       cacheSet(groupedCacheKey(tab, filters, 0), res, GROUPED_TTL_MS);
       setRows((prev) => mergePrependRows(prev, res.items).rows);
@@ -145,7 +158,11 @@ export function useJournalFeed(tab: JournalType, filters: JournalDateFilters) {
   useEffect(() => {
     const ac = new AbortController();
     void reload(ac.signal);
-    return () => ac.abort();
+    return () => {
+      ac.abort();
+      loadAbortRef.current?.abort();
+      generationRef.current += 1;
+    };
   }, [tab, filters.source_name, filters.event_type, filters.date, filters.date_from, filters.date_to]); // eslint-disable-line react-hooks/exhaustive-deps
 
   return { rows, hasMore, message, loading, loadMore: () => void load(true), reload: () => void reload(), poll };

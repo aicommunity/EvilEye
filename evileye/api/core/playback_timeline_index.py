@@ -169,12 +169,20 @@ def _index_fresh(path: Path, source_mtime: float, date_folder: str) -> dict[str,
     return data
 
 
+_REFRESH_SLOTS = threading.Semaphore(2)
+
+
 def _schedule_refresh(name: str, key: str, fn) -> None:
     def _job() -> None:
+        if not _REFRESH_SLOTS.acquire(blocking=False):
+            logger.debug("background %s refresh skipped (in-flight cap)", name)
+            return
         try:
             singleflight(key, fn)
         except Exception as exc:
             logger.debug("background %s refresh failed: %s", name, exc)
+        finally:
+            _REFRESH_SLOTS.release()
 
     threading.Thread(target=_job, name=name, daemon=True).start()
 
