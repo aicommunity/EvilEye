@@ -21,6 +21,12 @@ from evileye.api.core.camera_access import (
     resolve_camera_access,
 )
 from evileye.api.core.media_access import assert_media_path_allowed, cameras_from_media_path
+from evileye.api.core.playback_cache import (
+    clear_memory_cache,
+    memory_cache_stats as _cache_stats_base,
+    recall as _recall,
+    remember as _remember,
+)
 from evileye.api.core.playback_metadata_service import DEFAULT_MATCH_SEC
 from evileye.api.core.route_timeouts import playback_detections_timeout_sec, playback_route_timeout_sec
 from evileye.api.core.singleflight import singleflight
@@ -29,14 +35,6 @@ logger = logging.getLogger("evileye.api.playback")
 
 router = APIRouter(prefix="/api/v1/playback", tags=["playback"])
 
-_memory_lock = threading.Lock()
-# key -> (expires_at_or_None, value). expires_at None = sticky timeout fallback only.
-_memory_cache: dict[str, tuple[float | None, Any]] = {}
-_MEMORY_CACHE_MAX_KEYS = 256
-_MEMORY_CACHE_MAX_BYTES = 64 * 1024 * 1024  # soft budget (A12)
-_memory_cache_bytes_est = 0
-_copy_ms_total = 0.0
-_copy_count = 0
 _thread_timeouts = 0
 _thread_503s = 0
 _thread_inflight: set[asyncio.Future] = set()
@@ -62,9 +60,8 @@ _detections_inflight_lock = asyncio.Lock()
 _detections_inflight_count = 0
 _detections_inflight_count_lock = threading.Lock()
 
+
 # Observability only: never block /playback/media on a semaphore.
-# Hard caps + wait caused click lag (up to wait_sec) and black tiles (503) under
-# normal multi-cam Range traffic; the browser already limits connections per host.
 def _media_inflight_warn_at() -> int:
     import os
 
@@ -90,123 +87,14 @@ def media_inflight_count() -> int:
         return _media_inflight
 
 
-def _estimate_cache_bytes(value: Any) -> int:
-    """Soft size estimate for byte-budget eviction (JSON length preferred)."""
-    import json
-    import sys
-
-    try:
-        return len(json.dumps(value, default=str))
-    except Exception:
-        try:
-            return int(sys.getsizeof(value))
-        except Exception:
-            return 0
-
-
-def _remember(key: str, value: Any, *, ttl_sec: float | None = None) -> None:
-    global _memory_cache_bytes_est, _copy_ms_total, _copy_count
-    expires_at = (time.time() + float(ttl_sec)) if ttl_sec is not None else None
-    # Copy outside the lock to reduce contention (A12).
-    t0 = time.perf_counter()
-    stored = deepcopy(value)
-    copy_ms = (time.perf_counter() - t0) * 1000.0
-    est = _estimate_cache_bytes(stored)
-    with _memory_lock:
-        _copy_ms_total += copy_ms
-        _copy_count += 1
-        now = time.time()
-        # Drop expired entries opportunistically.
-        expired = [k for k, (exp, _) in _memory_cache.items() if exp is not None and exp <= now]
-        for k in expired:
-            old = _memory_cache.pop(k, None)
-            if old is not None:
-                _memory_cache_bytes_est = max(0, _memory_cache_bytes_est - _estimate_cache_bytes(old[1]))
-        old_entry = _memory_cache.pop(key, None)
-        if old_entry is not None:
-            _memory_cache_bytes_est = max(0, _memory_cache_bytes_est - _estimate_cache_bytes(old_entry[1]))
-        _memory_cache[key] = (expires_at, stored)
-        _memory_cache_bytes_est += est
-        # Evict by key count and soft byte budget (oldest first).
-        while _memory_cache and (
-            len(_memory_cache) > _MEMORY_CACHE_MAX_KEYS or _memory_cache_bytes_est > _MEMORY_CACHE_MAX_BYTES
-        ):
-            oldest = next(iter(_memory_cache))
-            if oldest == key and len(_memory_cache) == 1:
-                break
-            if oldest == key:
-                # Rotate: move current key to end, evict next.
-                cur = _memory_cache.pop(key)
-                _memory_cache[key] = cur
-                oldest = next(iter(_memory_cache))
-                if oldest == key:
-                    break
-            evicted = _memory_cache.pop(oldest, None)
-            if evicted is not None:
-                _memory_cache_bytes_est = max(0, _memory_cache_bytes_est - _estimate_cache_bytes(evicted[1]))
-
-
-def _recall(key: str, *, require_fresh: bool = False) -> Any | None:
-    global _memory_cache_bytes_est
-    with _memory_lock:
-        entry = _memory_cache.get(key)
-        if entry is None:
-            return None
-        expires_at, cached = entry
-        if require_fresh:
-            if expires_at is None or expires_at <= time.time():
-                popped = _memory_cache.pop(key, None)
-                if popped is not None:
-                    _memory_cache_bytes_est = max(0, _memory_cache_bytes_est - _estimate_cache_bytes(popped[1]))
-                return None
-        # Refresh LRU order.
-        _memory_cache.pop(key, None)
-        _memory_cache[key] = (expires_at, cached)
-        snapshot = cached
-    return deepcopy(snapshot)
-
-
 def memory_cache_stats() -> dict[str, int | float]:
-    """Observability: in-process playback memory cache size and freshness."""
-    now = time.time()
-    with _memory_lock:
-        keys = len(_memory_cache)
-        fresh = 0
-        expired = 0
-        sticky = 0
-        for expires_at, _ in _memory_cache.values():
-            if expires_at is None:
-                sticky += 1
-            elif expires_at > now:
-                fresh += 1
-            else:
-                expired += 1
-        bytes_est = int(_memory_cache_bytes_est)
-        copy_ms = float(_copy_ms_total)
-        copies = int(_copy_count)
-    return {
-        "keys": keys,
-        "fresh": fresh,
-        "expired": expired,
-        "sticky": sticky,
-        "bytes_est": bytes_est,
-        "max_bytes": int(_MEMORY_CACHE_MAX_BYTES),
-        "copy_ms": round(copy_ms, 3),
-        "copy_count": copies,
-        "thread_inflight": len(_thread_inflight),
-        "thread_timeouts": int(_thread_timeouts),
-        "thread_503s": int(_thread_503s),
-    }
-
-
-def clear_memory_cache() -> int:
-    """Clear in-process playback memory cache (diagnostics / cold-server simulation)."""
-    global _memory_cache_bytes_est
-    with _memory_lock:
-        cleared = len(_memory_cache)
-        _memory_cache.clear()
-        _memory_cache_bytes_est = 0
-    return cleared
+    return _cache_stats_base(
+        extra={
+            "thread_inflight": len(_thread_inflight),
+            "thread_timeouts": int(_thread_timeouts),
+            "thread_503s": int(_thread_503s),
+        }
+    )
 
 
 def _json_with_cache(payload: Any, cache_status: str | None = None) -> JSONResponse:

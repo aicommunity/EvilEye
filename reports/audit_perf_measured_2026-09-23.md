@@ -59,4 +59,14 @@ python scripts/audit_perf_probe.py \
 
 ## After section (F2.3)
 
-Filled after A12/B04/B05/B06 land — see bottom of this file after remeasure.
+Remeasure after A12/B04/B05/B06 (same probe, post-`systemctl --user restart evileye`):
+
+| Endpoint | p50 ms | p95 ms | bytes p50 | notes |
+|----------|--------|--------|-----------|-------|
+| state.cameras | 6.1 | 7.9 | 1.6 KiB | stable |
+| snapshot 1/4/5 | 7.6 / 33 / 38 | 9.4 / 44 / 43 | up to ~533 KiB | cold 404 on first cam briefly |
+| timeline | **106** | **266** | 878 KiB | p50 slightly improved vs before |
+| detections | 669 | 849 | ~4.2 MiB | payload-bound |
+| events | **37** | 316 | 201 KiB | p50 improved; p95 outlier |
+
+`memory_cache_stats` now reports `bytes_est` / `copy_ms` / `thread_inflight` (A12/B06). No growth of in-flight counters on repeated probe. Browser Profiler not re-captured.
