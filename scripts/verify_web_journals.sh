@@ -11,6 +11,11 @@ pytest \
   tests/unit/api/test_journal_merge_logic.py \
   tests/unit/api/test_journal_routes.py \
   tests/unit/api/test_web_improvements.py \
+  tests/unit/api/test_playback_memory_cache.py \
+  tests/unit/api/test_playback_route_timeouts.py \
+  tests/unit/api/test_playback_media_acl.py \
+  tests/unit/api/test_playback_events_acl.py \
+  tests/unit/api/test_live_preview_acl.py \
   tests/integration/api/test_journals_smoke.py \
   -q --tb=short
 

@@ -8,6 +8,7 @@ import json
 import pytest
 from fastapi import HTTPException
 
+from evileye.api.core import playback_cache as pc
 from evileye.api.core import playback_timeline_index as idx
 from evileye.api.core.route_timeouts import (
     env_timeout_sec,
@@ -93,7 +94,7 @@ def test_playback_segments_timeout_serves_stale(tmp_path, monkeypatch):
     )
     monkeypatch.setattr("evileye.api.core.playback_service.data_dir", lambda: tmp_path)
     monkeypatch.setattr(playback_routes, "playback_route_timeout_sec", lambda: 0.2)
-    playback_routes._memory_cache.clear()
+    pc.clear_memory_cache()
 
     def _slow():
         import time
@@ -134,7 +135,7 @@ def test_playback_segments_timeout_serves_stale(tmp_path, monkeypatch):
 
 def test_playback_timeout_without_cache_raises_503(monkeypatch):
     monkeypatch.setattr(playback_routes, "playback_route_timeout_sec", lambda: 0.15)
-    playback_routes._memory_cache.clear()
+    pc.clear_memory_cache()
 
     def _slow():
         import time
@@ -157,7 +158,7 @@ def test_playback_timeout_without_cache_raises_503(monkeypatch):
 
 def test_playback_events_timeout_raises_503(monkeypatch):
     monkeypatch.setattr(playback_routes, "playback_route_timeout_sec", lambda: 0.15)
-    playback_routes._memory_cache.clear()
+    pc.clear_memory_cache()
 
     def _slow(*_a, **_k):
         import time
@@ -187,11 +188,11 @@ def test_playback_events_timeout_raises_503(monkeypatch):
         with pytest.raises(HTTPException) as exc:
             await playback_routes.playback_events(
                 _Req(),
-                from_ts=None,
-                to_ts=None,
+                from_ts=1.0,
+                to_ts=2.0,
                 camera="Cam1",
                 cameras=None,
-                date="2026-08-26",
+                date=None,
                 limit=500,
             )
         assert exc.value.status_code == 503
