@@ -33,6 +33,7 @@ export function Timeline({
   viewFrom,
   viewTo,
   position,
+  getPosition,
   markers,
   segments = [],
   segmentsByCamera,
@@ -51,6 +52,8 @@ export function Timeline({
   viewFrom: number | null;
   viewTo: number | null;
   position: number;
+  /** Optional live playhead reader — updates DOM via rAF without React (B05). */
+  getPosition?: () => number;
   markers: PlaybackEventMarker[];
   segments?: PlaybackSegment[];
   segmentsByCamera?: Record<string, PlaybackSegment[]>;
@@ -85,8 +88,33 @@ export function Timeline({
   const pendingViewRef = useRef<ViewWindow | null>(null);
   const paintRafRef = useRef<number | null>(null);
   const zoomCommitTimerRef = useRef<number | null>(null);
+  const playheadElRef = useRef<HTMLDivElement>(null);
   const onViewChangeRef = useRef(onViewChange);
   onViewChangeRef.current = onViewChange;
+  const getPositionRef = useRef(getPosition);
+  getPositionRef.current = getPosition;
+
+  // B05: drive playhead left% from getPosition() each frame without React state.
+  useEffect(() => {
+    if (!getPosition) return;
+    let raf = 0;
+    const tick = () => {
+      raf = requestAnimationFrame(tick);
+      const el = playheadElRef.current;
+      const root = rootRef.current;
+      if (!el || !root) return;
+      const cur = viewRef.current;
+      const from = cur.viewFrom;
+      const to = cur.viewTo;
+      if (from == null || to == null || !(to > from)) return;
+      const pos = getPositionRef.current?.() ?? cur.position;
+      const pct = Math.max(0, Math.min(100, ((pos - from) / (to - from)) * 100));
+      el.style.left = `${pct}%`;
+      root.style.setProperty('--playhead-pct', `${pct}%`);
+    };
+    raf = requestAnimationFrame(tick);
+    return () => cancelAnimationFrame(raf);
+  }, [getPosition]);
 
   const schedulePaint = (next: ViewWindow) => {
     pendingViewRef.current = next;
@@ -505,6 +533,7 @@ export function Timeline({
             />
           ) : null}
           <div
+            ref={playheadElRef}
             className={`timeline-playhead${playheadInGap ? ' timeline-playhead--gap' : ''}`}
             style={{
               position: 'absolute',

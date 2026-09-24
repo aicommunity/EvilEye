@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 import { request, streamMetadataWsUrl, type StreamMetadata } from '../../api';
+import { registerAuthScopeCleanup } from '../../auth/authScope';
 
 const REST_FALLBACK_MS = 1500;
 export const METADATA_TTL_MS = 4000;
@@ -133,6 +134,15 @@ export class RunMetadataStore {
     this._notifyFreshness();
   }
 
+  /** F06: clear cached metadata and tear down transport for auth scope change. */
+  resetAuthScope(): void {
+    this.latestBySource.clear();
+    this.latestAtBySource.clear();
+    this.pendingEmptyBySource.clear();
+    this.close();
+    this.cancelled = false;
+  }
+
   private _ensureFreshnessTimer() {
     if (this.freshnessTimer != null) return;
     this.freshnessTimer = window.setInterval(() => this._notifyFreshness(), 500);
@@ -240,22 +250,69 @@ export class RunMetadataStore {
     this._notifyFreshness();
   }
 
+  private restInFlight = false;
+  private restAbort: AbortController | null = null;
+  private restCursor = 0;
+
   private startRestFallback() {
     if (this.restTimer != null) window.clearInterval(this.restTimer);
     const pollRest = async () => {
-      if (this.cancelled || this.wsOpen) return;
+      if (this.cancelled || this.wsOpen || this.restInFlight) return;
       const sourceKeys = [...this.listenersBySource.entries()]
         .filter(([, subs]) => subs.size > 0)
         .map(([sourceId]) => sourceId);
       if (!sourceKeys.length) return;
 
-      for (const sourceId of sourceKeys) {
-        try {
-          const qs = sourceId != null ? `?source_id=${sourceId}` : '';
-          const payload = await request<StreamMetadata>(`/runs/${this.rid}/metadata${qs}`);
-          if (!this.cancelled) this.pushPayload(payload);
-        } catch {
-          /* ignore */
+      this.restInFlight = true;
+      this.restAbort?.abort();
+      const cycleAbort = new AbortController();
+      this.restAbort = cycleAbort;
+      const cycleDeadline = window.setTimeout(() => cycleAbort.abort(), 8000);
+      const concurrency = 2;
+      const perRequestMs = 2000;
+      try {
+        // Round-robin from cursor so starved sources get a turn (R12).
+        const start = this.restCursor % sourceKeys.length;
+        const ordered = [
+          ...sourceKeys.slice(start),
+          ...sourceKeys.slice(0, start),
+        ];
+        let idx = 0;
+        const workers = Array.from({ length: Math.min(concurrency, ordered.length) }, async () => {
+          while (idx < ordered.length) {
+            if (cycleAbort.signal.aborted || this.cancelled || this.wsOpen) return;
+            const myIdx = idx++;
+            const sourceId = ordered[myIdx];
+            const reqAbort = new AbortController();
+            const onCycleAbort = () => reqAbort.abort();
+            cycleAbort.signal.addEventListener('abort', onCycleAbort);
+            const reqTimer = window.setTimeout(() => reqAbort.abort(), perRequestMs);
+            try {
+              const qs = sourceId != null ? `?source_id=${sourceId}` : '';
+              const payload = await request<StreamMetadata>(`/runs/${this.rid}/metadata${qs}`, {
+                signal: reqAbort.signal,
+              });
+              if (!this.cancelled && !cycleAbort.signal.aborted) this.pushPayload(payload);
+            } catch {
+              /* ignore */
+            } finally {
+              window.clearTimeout(reqTimer);
+              cycleAbort.signal.removeEventListener('abort', onCycleAbort);
+            }
+          }
+        });
+        await Promise.all(workers);
+        // F07: advance from last assigned index, not ordered.length (which resets to start).
+        const assigned = Math.min(idx, ordered.length);
+        if (assigned > 0) {
+          const lastKey = ordered[assigned - 1];
+          const lastPos = sourceKeys.indexOf(lastKey);
+          this.restCursor = (Math.max(0, lastPos) + 1) % Math.max(1, sourceKeys.length);
+        }
+      } finally {
+        window.clearTimeout(cycleDeadline);
+        if (this.restAbort === cycleAbort) {
+          this.restInFlight = false;
         }
       }
     };
@@ -268,6 +325,9 @@ export class RunMetadataStore {
       window.clearInterval(this.restTimer);
       this.restTimer = null;
     }
+    this.restAbort?.abort();
+    this.restAbort = null;
+    this.restInFlight = false;
   }
 
   private scheduleReconnect() {
@@ -329,11 +389,13 @@ export class RunMetadataStore {
   private close() {
     this.cancelled = true;
     this._stopFreshnessTimer();
+    this.stopRestFallback();
     for (const timer of this.emptyHoldTimerBySource.values()) {
       window.clearTimeout(timer);
     }
     this.emptyHoldTimerBySource.clear();
     this.pendingEmptyBySource.clear();
+    this.latestBySource.clear();
     if (this.retryTimer != null) window.clearTimeout(this.retryTimer);
     if (this.restTimer != null) window.clearInterval(this.restTimer);
     this.retryTimer = null;
@@ -355,6 +417,18 @@ function getRunStore(rid: number) {
     runStores.set(rid, store);
   }
   return store;
+}
+
+/** F06: drop all run metadata stores on auth scope change. */
+export function clearAllRunMetadataStores() {
+  for (const [, store] of [...runStores.entries()]) {
+    try {
+      store.resetAuthScope();
+    } catch {
+      /* ignore */
+    }
+  }
+  runStores.clear();
 }
 
 export function useRunMetadataWs(rid: number | null, sourceId: number | null | undefined) {
@@ -394,3 +468,5 @@ export function useMetadataFreshness(
   }, [rid, sourceId, ttlMs]);
   return fresh;
 }
+
+registerAuthScopeCleanup(clearAllRunMetadataStores);

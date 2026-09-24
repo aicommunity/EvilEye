@@ -57,6 +57,12 @@ def test_internal_relay_target_url_without_socket_file(tmp_path, monkeypatch):
 
 
 def test_frame_relay_jpeg_and_metadata_header():
+    import socket
+
+    import pytest
+
+    if not hasattr(socket, "AF_UNIX"):
+        pytest.skip("AF_UNIX not available on this platform")
     from evileye.api.core.internal_unix import (
         internal_socket_path,
         start_internal_unix_server,

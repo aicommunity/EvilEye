@@ -218,8 +218,6 @@ async def _snapshot_impl(
         # No full frame yet — do not fall back to cropped (would confuse split editor).
         _log(404)
         raise HTTPException(status_code=404, detail="No full frame available")
-    if not payload and source_id is not None:
-        payload = broker.latest_payload(run_id_str)
     if not payload or not payload.data:
         _log(404)
         raise HTTPException(status_code=404, detail="No frame available")
@@ -283,6 +281,8 @@ async def _mjpeg_generator(
         demand_queue=None,
         rid: int | None = None,
         full: bool = False,
+        cancel_event: threading.Event | None = None,
+        mjpeg_client_id: int | None = None,
 ) -> AsyncGenerator[bytes, None]:
     boundary = b"--frame"
     delay = 1.0 / max(1, fps)
@@ -292,6 +292,8 @@ async def _mjpeg_generator(
 
     try:
         while not stop_event.is_set():
+            if cancel_event is not None and cancel_event.is_set():
+                break
             data = _load_latest_frame(run_info, source_id=source_id, full=full)
             if data:
                 no_frame_since = time.monotonic()
@@ -311,9 +313,20 @@ async def _mjpeg_generator(
             elapsed = 0.0
             check_interval = 0.1
             while elapsed < delay and not stop_event.is_set():
+                if cancel_event is not None and cancel_event.is_set():
+                    break
                 await asyncio.sleep(min(check_interval, delay - elapsed))
                 elapsed += check_interval
+            if cancel_event is not None and cancel_event.is_set():
+                break
     finally:
+        if mjpeg_client_id is not None:
+            try:
+                from evileye.api.core.transport_revoke import unregister_mjpeg_client
+
+                unregister_mjpeg_client(mjpeg_client_id)
+            except Exception:
+                pass
         _release_mjpeg_slot()
         try:
             broker.release_stream(stream_key)
@@ -362,6 +375,12 @@ async def _mjpeg_stream_impl(
             status_code=503,
             detail=f"Too many MJPEG clients (limit={_max_mjpeg_clients()})",
         )
+    from evileye.api.core.transport_revoke import register_mjpeg_client
+    from evileye.api.security import current_user
+
+    mjpeg_user = current_user(request)
+    mjpeg_username = str((mjpeg_user or {}).get("username") or "") or None
+    mjpeg_client_id, mjpeg_cancel = register_mjpeg_client(mjpeg_username)
     run_id_str = str(run_info["id"])
     if full and source_id is not None:
         stream_key = f"{run_id_str}:full:{source_id}"
@@ -384,6 +403,8 @@ async def _mjpeg_stream_impl(
                 demand_queue=demand_queue,
                 rid=rid,
                 full=full,
+                cancel_event=mjpeg_cancel,
+                mjpeg_client_id=mjpeg_client_id,
             ),
             media_type="multipart/x-mixed-replace; boundary=frame",
             headers={
@@ -397,6 +418,12 @@ async def _mjpeg_stream_impl(
         return response
     except BaseException:
         if not handed_off:
+            try:
+                from evileye.api.core.transport_revoke import unregister_mjpeg_client
+
+                unregister_mjpeg_client(mjpeg_client_id)
+            except Exception:
+                pass
             _release_mjpeg_slot()
             if stop_event is not None:
                 try:

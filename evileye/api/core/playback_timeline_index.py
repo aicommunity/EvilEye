@@ -10,16 +10,21 @@ import time
 from pathlib import Path
 from typing import Any, Optional
 
+from evileye.api.core.cache_policy import DEFAULT_CACHE_POLICY
+from evileye.api.core.index_repository import project_event_items
 from evileye.api.core.singleflight import singleflight
 
 logger = logging.getLogger(__name__)
 
-INDEX_VERSION = 2
+INDEX_VERSION = 3
 # Soft TTL for "today" when source mtime keeps drifting under live capture.
 TODAY_REBUILD_SEC = 300.0
 # Video continuing this long after the last detection tick ⇒ journal likely stalled.
 # Short/medium quiet (empty scene) is normal and must not be painted as a fault.
 INFERENCE_STALL_AFTER_LAST_TICK_SEC = 3 * 3600.0
+
+# Re-export policy for diagnostics / tests (T19).
+CACHE_POLICY = DEFAULT_CACHE_POLICY
 
 
 def _merge_intervals(intervals: list[tuple[float, float]]) -> list[tuple[float, float]]:
@@ -104,13 +109,21 @@ def _read_json(path: Path) -> dict[str, Any] | None:
         return None
 
 
-def _dir_mtime_sig(root: Path, patterns: tuple[str, ...]) -> float:
+def _dir_mtime_sig(
+    root: Path,
+    patterns: tuple[str, ...],
+    *,
+    exclude_names: frozenset[str] | None = None,
+) -> float:
     if not root.is_dir():
         return 0.0
+    skip = exclude_names or frozenset()
     total = 0.0
     try:
         for pattern in patterns:
             for path in root.glob(pattern):
+                if path.name in skip:
+                    continue
                 try:
                     total += path.stat().st_mtime
                 except OSError:
@@ -118,6 +131,15 @@ def _dir_mtime_sig(root: Path, patterns: tuple[str, ...]) -> float:
     except OSError:
         return total
     return total
+
+
+_GENERATED_INDEX_NAMES = frozenset(
+    {
+        "detection_ticks.json",
+        "event_intervals.json",
+        "_timeline_segments.json",
+    }
+)
 
 
 def _is_today(date_folder: str) -> bool:
@@ -152,13 +174,22 @@ def _index_fresh(path: Path, source_mtime: float, date_folder: str) -> dict[str,
     return data
 
 
+_REFRESH_SLOTS = threading.Semaphore(2)
+
+
 def _schedule_refresh(name: str, key: str, fn) -> None:
     def _job() -> None:
         try:
             singleflight(key, fn)
         except Exception as exc:
             logger.debug("background %s refresh failed: %s", name, exc)
+        finally:
+            _REFRESH_SLOTS.release()
 
+    # F10: acquire permit before spawning the daemon thread.
+    if not _REFRESH_SLOTS.acquire(blocking=False):
+        logger.debug("background %s refresh skipped (in-flight cap)", name)
+        return
     threading.Thread(target=_job, name=name, daemon=True).start()
 
 
@@ -360,6 +391,23 @@ def _ticks_from_payload(data: dict[str, Any], cameras: list[str]) -> dict[str, l
     return out
 
 
+def _payload_covers_cameras(data: dict[str, Any], cameras: list[str]) -> bool:
+    """True when on-disk index has an entry for every requested camera."""
+    if not cameras:
+        return True
+    raw_by = data.get("by_camera")
+    if not isinstance(raw_by, dict):
+        # event_intervals: prefer explicit covered_cameras (includes empty cams).
+        covered = data.get("covered_cameras")
+        if not isinstance(covered, list) or not covered:
+            covered = data.get("cameras")
+        if isinstance(covered, list) and covered:
+            have = {str(c) for c in covered}
+            return all(c in have for c in cameras)
+        return False
+    return all(cam in raw_by for cam in cameras)
+
+
 def read_detection_ticks_stale(
     date_folder: str,
     cameras: list[str],
@@ -398,7 +446,7 @@ def _rebuild_detection_ticks(
     cameras: list[str],
     run_id: int | None = None,
 ) -> dict[str, list[dict[str, Any]]]:
-    """Rebuild compact ticks only (no full bbox index payload on disk)."""
+    """Rebuild compact ticks; reload when source_mtime changes (R04)."""
     from evileye.api.core import playback_metadata_service as meta
 
     params = meta._load_params_for_run(run_id)
@@ -411,32 +459,48 @@ def _rebuild_detection_ticks(
     )
     cam_list = [c for c in cameras if c]
 
-    # Compact: one day parse via day cache, store only tick triples.
-    full = meta._load_day_index_by_camera(
-        base=base,
-        date_folder=date_folder,
-        run_id=run_id,
-        params=params,
-        cameras=cam_list,
-    )
-    compact: dict[str, list[list[Any]]] = {}
-    result: dict[str, list[dict[str, Any]]] = {}
-    for cam in cam_list:
-        items = full.get(cam) or []
-        compact[cam] = [_compact_tick_row(it) for it in items]
-        result[cam] = [meta._tick_only_item(it) for it in items]
+    existing = _read_json(index_path) or {}
+    prev_raw = existing.get("by_camera") if isinstance(existing.get("by_camera"), dict) else {}
+    compact: dict[str, list[list[Any]]] = {
+        str(k): list(v or []) for k, v in prev_raw.items()
+    }
+
+    prev_mtime = existing.get("source_mtime")
+    version_ok = int(existing.get("version") or 0) == INDEX_VERSION
+    if (not version_ok) or (prev_mtime != source_mtime):
+        reload_cams = sorted(set(cam_list) | set(compact.keys()))
+    else:
+        reload_cams = [c for c in cam_list if c not in compact]
+
+    if reload_cams:
+        full = meta._load_day_index_by_camera(
+            base=base,
+            date_folder=date_folder,
+            run_id=run_id,
+            params=params,
+            cameras=reload_cams,
+        )
+        for cam in reload_cams:
+            items = full.get(cam) or []
+            compact[cam] = [_compact_tick_row(it) for it in items]
 
     payload = {
         "version": INDEX_VERSION,
         "date": date_folder,
         "built_at": time.time(),
         "source_mtime": source_mtime,
+        "cameras": sorted(compact.keys()),
         "by_camera": compact,
     }
     try:
         _atomic_write_json(index_path, payload)
     except Exception as exc:
         logger.debug("failed to write detection ticks %s: %s", index_path, exc)
+
+    # F08: return full day compact→items for all cams in the file (not leader projection).
+    result: dict[str, list[dict[str, Any]]] = {}
+    for cam, rows in compact.items():
+        result[str(cam)] = [_tick_row_to_item(row) for row in (rows or [])]
     return result
 
 
@@ -459,18 +523,30 @@ def ensure_detection_ticks(
     )
     cam_list = [c for c in cameras if c]
     cached = _index_fresh(index_path, source_mtime, date_folder)
-    if cached is not None:
+    if cached is not None and _payload_covers_cameras(cached, cam_list):
         return _ticks_from_payload(cached, cam_list)
+    if cached is not None and not _payload_covers_cameras(cached, cam_list):
+        # Partial index: merge missing cameras without discarding coverage.
+        full = singleflight(
+            f"ensure_detection_ticks:{date_folder}:{run_id}:{base}",
+            lambda: _rebuild_detection_ticks(date_folder=date_folder, cameras=cam_list, run_id=run_id),
+        )
+        # After shared build, project this caller's cameras (F08).
+        return {c: list(full.get(c) or []) for c in cam_list}
 
     stale = read_detection_ticks_stale(date_folder, cam_list, run_id=run_id)
     if stale is not None:
-        schedule_detection_ticks_refresh(date_folder, cam_list, run_id=run_id)
-        return stale
+        # Only serve stale if it covers requested cams; else rebuild sync.
+        stale_path = _read_json(index_path)
+        if stale_path is not None and _payload_covers_cameras(stale_path, cam_list):
+            schedule_detection_ticks_refresh(date_folder, cam_list, run_id=run_id)
+            return stale
 
-    return singleflight(
-        f"ensure_detection_ticks:{date_folder}:{run_id}",
+    full = singleflight(
+        f"ensure_detection_ticks:{date_folder}:{run_id}:{base}",
         lambda: _rebuild_detection_ticks(date_folder=date_folder, cameras=cam_list, run_id=run_id),
     )
+    return {c: list(full.get(c) or []) for c in cam_list}
 
 
 def _compact_tick_row(item: dict[str, Any]) -> list[Any]:
@@ -553,33 +629,66 @@ def _rebuild_event_intervals(
     cameras: list[str] | None = None,
     limit: int = 2000,
 ) -> list[dict[str, Any]]:
+    """Build full-day event index. Always returns the complete item list (R03/R05)."""
     from evileye.api.core import playback_service as svc
 
     events_dir = svc.data_dir() / "Events" / date_folder / "Metadata"
     index_path = event_intervals_path(events_dir)
-    source_mtime = _dir_mtime_sig(events_dir, ("*.json",))
+    # A10: exclude generated index from signature so write does not invalidate itself.
+    source_mtime = _dir_mtime_sig(
+        events_dir,
+        ("*.json",),
+        exclude_names=_GENERATED_INDEX_NAMES,
+    )
+    # Uncapped build: presentation limit applies only on HTTP paths.
     items = svc.load_event_intervals(
         None,
         None,
         None,
-        cameras,
+        None,
         date=date_folder,
-        limit=limit,
+        limit=max(int(limit or 2000), 2000),
+        presentation_cap=None,
     )
+    cam_names = sorted(
+        {
+            str(it.get("camera") or "").strip()
+            for it in items
+            if str(it.get("camera") or "").strip()
+        }
+    )
+    requested = {c for c in (cameras or []) if c}
+    # F09: persist previous negative coverage for the same source version.
+    prev = _read_json(index_path) or {}
+    prev_covered = prev.get("covered_cameras") if isinstance(prev.get("covered_cameras"), list) else []
+    prev_mtime = prev.get("source_mtime")
+    same_version = (
+        int(prev.get("version") or 0) == INDEX_VERSION
+        and prev_mtime is not None
+        and abs(float(prev_mtime) - float(source_mtime)) <= 1e-3
+    )
+    covered_set = set(cam_names) | requested
+    if same_version:
+        covered_set |= {str(c) for c in prev_covered if c}
+    # System rows are frequently injected for restricted queries.
+    if "System" in requested or any(str(it.get("camera") or "") == "System" for it in items):
+        covered_set.add("System")
+    covered = sorted(covered_set)
     payload = {
         "version": INDEX_VERSION,
         "date": date_folder,
         "built_at": time.time(),
         "source_mtime": source_mtime,
+        "cameras": cam_names,
+        "covered_cameras": covered,
+        "complete": True,
         "items": items,
     }
     try:
         _atomic_write_json(index_path, payload)
     except Exception as exc:
         logger.debug("failed to write event intervals %s: %s", index_path, exc)
-    if cameras:
-        cam_set = set(cameras)
-        return [it for it in items if not it.get("camera") or it.get("camera") in cam_set]
+    # Never project by caller cameras here — singleflight followers need the full day.
     return list(items)
 
 
@@ -594,25 +703,41 @@ def ensure_event_intervals(
 
     events_dir = svc.data_dir() / "Events" / date_folder / "Metadata"
     index_path = event_intervals_path(events_dir)
-    source_mtime = _dir_mtime_sig(events_dir, ("*.json",))
+    source_mtime = _dir_mtime_sig(
+        events_dir,
+        ("*.json",),
+        exclude_names=_GENERATED_INDEX_NAMES,
+    )
+    cam_list = [c for c in (cameras or []) if c]
+
+    def _rebuild_full() -> list[dict[str, Any]]:
+        # Pass requested cams only for covered_cameras bookkeeping, not return filter.
+        return _rebuild_event_intervals(
+            date_folder=date_folder, cameras=cam_list or None, limit=limit
+        )
+
     cached = _index_fresh(index_path, source_mtime, date_folder)
     if cached is not None:
         items = cached.get("items") or []
         if isinstance(items, list):
-            if cameras:
-                cam_set = set(cameras)
-                return [it for it in items if not it.get("camera") or it.get("camera") in cam_set]
-            return list(items)
+            if cam_list and not _payload_covers_cameras(cached, cam_list):
+                full = singleflight(
+                    f"ensure_event_intervals:{date_folder}",
+                    _rebuild_full,
+                )
+                return project_event_items(full, cam_list)
+            return project_event_items(items, cam_list)
 
     stale = read_event_intervals_stale(date_folder, cameras)
     if stale is not None:
         schedule_event_intervals_refresh(date_folder, cameras, limit=limit)
         return stale
 
-    return singleflight(
+    full = singleflight(
         f"ensure_event_intervals:{date_folder}",
-        lambda: _rebuild_event_intervals(date_folder=date_folder, cameras=cameras, limit=limit),
+        _rebuild_full,
     )
+    return project_event_items(full, cam_list)
 
 
 def build_timeline(

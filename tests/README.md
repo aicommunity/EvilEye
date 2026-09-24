@@ -184,7 +184,7 @@ python3 tests/generate_tests_docs.py
 
 ## Требования
 
-- Python 3.8+
+- Python 3.10+ (matches `requires-python` in `pyproject.toml`)
 - pytest
 - pytest-xdist (опционально, для параллельного запуска)
 - pytest-cov (опционально, для покрытия кода)

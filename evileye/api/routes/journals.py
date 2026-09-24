@@ -8,6 +8,8 @@ import os
 import time
 
 from evileye.core.logger import get_module_logger
+from pathlib import Path
+
 from evileye.api.core.camera_access import (
     list_effective_names,
     name_allowed_hard,
@@ -32,6 +34,8 @@ from evileye.api.core.journal_service import (
     resolve_secured_journal_file,
     restore_config_history,
 )
+from evileye.api.core.archive_media_resolver import ArchiveMediaResolver
+from evileye.api.core.playback_service import data_dir as playback_data_dir
 
 router = APIRouter(prefix="/api/v1/journals", tags=["journals"])
 diag_logger = get_module_logger("api.diag")
@@ -93,16 +97,51 @@ def _media_type_for_path(path: str, fallback: str) -> str:
     return guessed or fallback
 
 
+_PRIVATE_NO_STORE = {"Accept-Ranges": "bytes", "Cache-Control": "private, no-store"}
+
+
 def _file_response(path: str, *, media_type: str | None = None) -> FileResponse:
     mt = media_type or _media_type_for_path(path, "application/octet-stream")
     return FileResponse(
         path,
         media_type=mt,
-        headers={
-            "Accept-Ranges": "bytes",
-            "Cache-Control": "public, max-age=3600",
-        },
+        headers=dict(_PRIVATE_NO_STORE),
     )
+
+
+def _authorize_journal_media(request: Request, secured: str, *, allow_kinds: frozenset[str]):
+    """Camera/kind ACL on canonical journal file (R02/F02)."""
+    access = resolve_camera_access(request)
+    secured_path = Path(secured)
+    roots: list[Path] = []
+    try:
+        from evileye.api.core.journal_service import _image_base_dir
+
+        roots.append(Path(_image_base_dir()))
+    except Exception:
+        pass
+    try:
+        roots.append(Path(playback_data_dir()))
+    except Exception:
+        pass
+    last_exc: Exception | None = None
+    for root in roots:
+        try:
+            return ArchiveMediaResolver(root).authorize_existing(
+                access,
+                secured_path,
+                allow_kinds=allow_kinds,
+            )
+        except HTTPException as exc:
+            last_exc = exc
+            continue
+        except Exception as exc:
+            last_exc = exc
+            continue
+    if isinstance(last_exc, HTTPException):
+        raise last_exc
+    raise HTTPException(status_code=403, detail="Camera access denied")
+
 
 
 def _resize_jpeg(path: str, width: int) -> bytes | None:
@@ -285,6 +324,7 @@ async def journal_row_meta(
 
 @router.get("/preview")
 async def journal_preview(
+        request: Request,
         path: str = Query(..., min_length=1),
         date: str | None = None,
         journal_type: str = Query("events", pattern="^(events|objects)$"),
@@ -298,6 +338,7 @@ async def journal_preview(
                 path=path, date=date, journal_type=journal_type, mode=mode,
             ),
         )
+        _authorize_journal_media(request, secured, allow_kinds=frozenset({"image"}))
     except JournalPathForbidden:
         raise HTTPException(status_code=403, detail="Path outside data directory")
     except JournalPathNotFound:
@@ -310,7 +351,7 @@ async def journal_preview(
             return Response(
                 content=thumb,
                 media_type="image/jpeg",
-                headers={"Cache-Control": "public, max-age=3600"},
+                headers={"Cache-Control": "private, no-store"},
             )
     return _file_response(secured, media_type=_media_type_for_path(secured, "image/jpeg"))
 
@@ -336,6 +377,7 @@ async def journal_frame(
                 path=path, date=date, journal_type=journal_type, mode=mode,
             ),
         )
+        _authorize_journal_media(request, secured, allow_kinds=frozenset({"image"}))
     except JournalPathForbidden:
         diag_logger.info(
             "journal_frame user=%s status=403 path_hash=%s ms=%.1f",
@@ -353,6 +395,15 @@ async def journal_frame(
             (time.perf_counter() - t0) * 1000.0,
         )
         raise HTTPException(status_code=404, detail="Frame image not found")
+    except HTTPException as exc:
+        if exc.status_code == 403:
+            diag_logger.info(
+                "journal_frame user=%s status=403 path_hash=%s ms=%.1f",
+                username,
+                path_hash,
+                (time.perf_counter() - t0) * 1000.0,
+            )
+        raise
     diag_logger.info(
         "journal_frame user=%s status=200 path_hash=%s ms=%.1f",
         username,
@@ -363,12 +414,13 @@ async def journal_frame(
 
 
 @router.get("/video")
-async def journal_video(path: str = Query(..., min_length=1)):
+async def journal_video(request: Request, path: str = Query(..., min_length=1)):
     try:
         secured = await asyncio.to_thread(
             resolve_secured_journal_file,
             resolver=lambda: resolve_journal_video_path(path=path),
         )
+        _authorize_journal_media(request, secured, allow_kinds=frozenset({"video"}))
     except JournalPathForbidden:
         raise HTTPException(status_code=403, detail="Path outside data directory")
     except JournalPathNotFound:

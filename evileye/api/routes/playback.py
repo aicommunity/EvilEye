@@ -20,6 +20,17 @@ from evileye.api.core.camera_access import (
     intersect_camera_query,
     resolve_camera_access,
 )
+from evileye.api.core.archive_media_resolver import ArchiveMediaResolver
+from evileye.api.core.media_access import (
+    assert_media_path_allowed,
+    cameras_from_media_path,
+)
+from evileye.api.core.playback_cache import (
+    clear_memory_cache,
+    memory_cache_stats as _cache_stats_base,
+    recall as _recall,
+    remember as _remember,
+)
 from evileye.api.core.playback_metadata_service import DEFAULT_MATCH_SEC
 from evileye.api.core.route_timeouts import playback_detections_timeout_sec, playback_route_timeout_sec
 from evileye.api.core.singleflight import singleflight
@@ -28,9 +39,9 @@ logger = logging.getLogger("evileye.api.playback")
 
 router = APIRouter(prefix="/api/v1/playback", tags=["playback"])
 
-_memory_lock = threading.Lock()
-# key -> (expires_at_or_None, value). expires_at None = sticky timeout fallback only.
-_memory_cache: dict[str, tuple[float | None, Any]] = {}
+_thread_timeouts = 0
+_thread_503s = 0
+_thread_inflight: set[asyncio.Future] = set()
 _TIMELINE_HAPPY_TTL_SEC = 45.0
 _TIMELINE_SLOT_WAIT_SEC = 15.0
 _METADATA_HAPPY_TTL_SEC = 10.0
@@ -53,9 +64,8 @@ _detections_inflight_lock = asyncio.Lock()
 _detections_inflight_count = 0
 _detections_inflight_count_lock = threading.Lock()
 
+
 # Observability only: never block /playback/media on a semaphore.
-# Hard caps + wait caused click lag (up to wait_sec) and black tiles (503) under
-# normal multi-cam Range traffic; the browser already limits connections per host.
 def _media_inflight_warn_at() -> int:
     import os
 
@@ -81,53 +91,14 @@ def media_inflight_count() -> int:
         return _media_inflight
 
 
-def _remember(key: str, value: Any, *, ttl_sec: float | None = None) -> None:
-    expires_at = (time.time() + float(ttl_sec)) if ttl_sec is not None else None
-    with _memory_lock:
-        _memory_cache[key] = (expires_at, deepcopy(value))
-
-
-def _recall(key: str, *, require_fresh: bool = False) -> Any | None:
-    with _memory_lock:
-        entry = _memory_cache.get(key)
-        if entry is None:
-            return None
-        expires_at, cached = entry
-        if require_fresh:
-            if expires_at is None or expires_at <= time.time():
-                return None
-        return deepcopy(cached)
-
-
-def memory_cache_stats() -> dict[str, int]:
-    """Observability: in-process playback memory cache size and freshness."""
-    now = time.time()
-    with _memory_lock:
-        keys = len(_memory_cache)
-        fresh = 0
-        expired = 0
-        sticky = 0
-        for expires_at, _ in _memory_cache.values():
-            if expires_at is None:
-                sticky += 1
-            elif expires_at > now:
-                fresh += 1
-            else:
-                expired += 1
-    return {
-        "keys": keys,
-        "fresh": fresh,
-        "expired": expired,
-        "sticky": sticky,
-    }
-
-
-def clear_memory_cache() -> int:
-    """Clear in-process playback memory cache (diagnostics / cold-server simulation)."""
-    with _memory_lock:
-        cleared = len(_memory_cache)
-        _memory_cache.clear()
-    return cleared
+def memory_cache_stats() -> dict[str, int | float]:
+    return _cache_stats_base(
+        extra={
+            "thread_inflight": len(_thread_inflight),
+            "thread_timeouts": int(_thread_timeouts),
+            "thread_503s": int(_thread_503s),
+        }
+    )
 
 
 def _json_with_cache(payload: Any, cache_status: str | None = None) -> JSONResponse:
@@ -148,17 +119,51 @@ async def _to_thread_with_timeout_or_cached(
     on_timeout: Callable[[], None] | None = None,
     executor: ThreadPoolExecutor | None = None,
     log_ctx: dict[str, Any] | None = None,
+    slot_sem: asyncio.Semaphore | None = None,
+    release_sem_on_done: asyncio.Semaphore | None = None,
 ):
+    global _thread_timeouts, _thread_503s
     timeout = playback_route_timeout_sec()
+    loop = asyncio.get_running_loop()
+    deadline = loop.time() + float(timeout)
+    if slot_sem is not None:
+        remaining = max(0.0, deadline - loop.time())
+        try:
+            await asyncio.wait_for(slot_sem.acquire(), timeout=remaining)
+        except asyncio.TimeoutError:
+            _thread_timeouts += 1
+            cached = cached_fn()
+            if cached is not None:
+                return cached
+            _thread_503s += 1
+            raise HTTPException(status_code=503, detail=err_detail)
+    held_sem = slot_sem or release_sem_on_done
+    if executor is not None:
+        fut = loop.run_in_executor(executor, value_fn)
+    else:
+        fut = loop.run_in_executor(None, value_fn)
+    _thread_inflight.add(fut)
+    released = False
+
+    def _done(f: asyncio.Future) -> None:
+        nonlocal released
+        _thread_inflight.discard(f)
+        if held_sem is not None and not released:
+            released = True
+            try:
+                held_sem.release()
+            except Exception:
+                pass
+
+    fut.add_done_callback(_done)
+    remaining = max(0.001, deadline - loop.time())
     try:
-        if executor is not None:
-            loop = asyncio.get_running_loop()
-            fut = loop.run_in_executor(executor, value_fn)
-            return await asyncio.wait_for(fut, timeout=timeout)
-        return await asyncio.wait_for(asyncio.to_thread(value_fn), timeout=timeout)
+        # shield: timeout must not cancel the worker; slot tracking keeps fut in _thread_inflight.
+        return await asyncio.wait_for(asyncio.shield(fut), timeout=remaining)
     except asyncio.TimeoutError:
+        _thread_timeouts += 1
         logger.warning(
-            "playback route timeout detail=%s timeout_sec=%s executor=%s %s",
+            "playback route timeout detail=%s timeout_sec=%s executor=%s inflight=%s %s",
             err_detail,
             timeout,
             (
@@ -174,6 +179,7 @@ async def _to_thread_with_timeout_or_cached(
                 if executor is _detections_pool
                 else "default"
             ),
+            len(_thread_inflight),
             " ".join(f"{k}={v}" for k, v in (log_ctx or {}).items()),
         )
         if on_timeout is not None:
@@ -184,6 +190,7 @@ async def _to_thread_with_timeout_or_cached(
         cached = cached_fn()
         if cached is not None:
             return cached
+        _thread_503s += 1
         raise HTTPException(status_code=503, detail=err_detail)
 
 
@@ -200,21 +207,14 @@ def _require_cameras(access, names: list[str], *, single: bool) -> list[str]:
 
 
 def _camera_name_from_media_path(path: str) -> str | None:
-    """Best-effort: Streams/YYYY-MM-DD/<folder>/file.mp4 → folder or split part."""
-    from pathlib import Path
+    """Best-effort first camera from Streams/.../<folder>/file."""
+    cams = cameras_from_media_path(path)
+    return cams[0] if cams else None
 
-    try:
-        parts = Path(path).parts
-    except Exception:
-        return None
-    for i, part in enumerate(parts):
-        if part == "Streams" and i + 2 < len(parts):
-            folder = parts[i + 2]
-            if "-" in folder:
-                # composite split folder — cannot map to single logical without more context
-                return folder.split("-")[0]
-            return folder
-    return None
+
+def _assert_media_cameras_allowed(access, path: str) -> None:
+    """Delegate to shared media_access (audit A03 / Stage 3)."""
+    assert_media_path_allowed(access, path)
 
 
 def _stale_segments_by_camera(
@@ -282,14 +282,32 @@ async def playback_cameras(
         filtered = filter_by_source_name(cached_fresh or [], access, key="id", use_visible=True)
         return _json_with_cache({"items": filtered}, "hit")
 
+    served_from_stale = False
+    loaded_fresh = [False]
+
+    def _load_tracked():
+        loaded_fresh[0] = True
+        return _load()
+
+    def _cached_cameras():
+        nonlocal served_from_stale
+        mem = _recall(cache_key, require_fresh=False)
+        if mem is not None:
+            served_from_stale = True
+            return mem
+        return None
+
     items = await _to_thread_with_timeout_or_cached(
-        _load,
-        lambda: _recall(cache_key),
+        _load_tracked,
+        _cached_cameras,
         err_detail="playback_cameras timeout",
         executor=_light_pool,
     )
-    cache_status = "miss" if items is not None else "stale"
-    _remember(cache_key, items)
+    if loaded_fresh[0]:
+        cache_status = "miss"
+        _remember(cache_key, items)
+    else:
+        cache_status = "stale"
     access = resolve_camera_access(request)
     filtered = filter_by_source_name(items or [], access, key="id", use_visible=True)
     return _json_with_cache({"items": filtered}, cache_status)
@@ -331,15 +349,23 @@ async def playback_segments(
                 schedule_detection_ticks_refresh(date, cam_list, run_id=run_id)
                 schedule_event_intervals_refresh(date, cam_list)
 
+        loaded_fresh = [False]
+
+        def _load_tracked():
+            result = _load()
+            loaded_fresh[0] = True
+            return result
+
         by_camera = await _to_thread_with_timeout_or_cached(
-            _load,
+            _load_tracked,
             _cached,
             err_detail="playback_segments timeout",
             on_timeout=_on_timeout,
             executor=_light_pool,
             log_ctx={"route": "segments", "n_cameras": len(cam_list), "date": date},
         )
-        _remember(mem_key, by_camera)
+        if loaded_fresh[0]:
+            _remember(mem_key, by_camera)
         return {"by_camera": by_camera, "items": [item for items in by_camera.values() for item in items]}
     if not camera:
         raise HTTPException(status_code=400, detail="camera or cameras query required")
@@ -440,40 +466,21 @@ async def playback_timeline(
         schedule_detection_ticks_refresh(date, cam_list, run_id=run_id)
         schedule_event_intervals_refresh(date, cam_list)
 
-    # Cap concurrent timeline rebuilds so the default thread pool stays responsive.
-    try:
-        await asyncio.wait_for(_timeline_slots.acquire(), timeout=0.05)
-    except asyncio.TimeoutError:
-        cached = _cached()
-        if cached is not None:
-            _on_timeout()
-            return _json_with_cache(cached, "stale")
-        try:
-            await asyncio.wait_for(_timeline_slots.acquire(), timeout=_TIMELINE_SLOT_WAIT_SEC)
-        except asyncio.TimeoutError:
-            logger.warning(
-                "playback route timeout detail=playback_timeline slot_busy date=%s n_cameras=%s",
-                date,
-                len(cam_list),
-            )
-            stale = _cached()
-            if stale is not None:
-                _on_timeout()
-                return _json_with_cache(stale, "stale")
-            raise HTTPException(status_code=503, detail="playback_timeline slot busy")
-    try:
-        payload = await _to_thread_with_timeout_or_cached(
-            _load,
-            _cached,
-            err_detail="playback_timeline timeout",
-            on_timeout=_on_timeout,
-            executor=_timeline_pool,
-            log_ctx={"date": date, "n_cameras": len(cam_list), "route": "timeline"},
-        )
-    finally:
-        _timeline_slots.release()
-    cache_status = "stale" if isinstance(payload, dict) and payload.get("stale") else "miss"
-    _remember(mem_key, payload, ttl_sec=_TIMELINE_HAPPY_TTL_SEC)
+    # F10: slot wait is inside the same route deadline (like state routes).
+    payload = await _to_thread_with_timeout_or_cached(
+        _load,
+        _cached,
+        err_detail="playback_timeline timeout",
+        on_timeout=_on_timeout,
+        executor=_timeline_pool,
+        log_ctx={"date": date, "n_cameras": len(cam_list), "route": "timeline"},
+        slot_sem=_timeline_slots,
+    )
+    is_stale = isinstance(payload, dict) and bool(payload.get("stale"))
+    cache_status = "stale" if is_stale else "miss"
+    # Do not re-remember stale fallback as freshly computed (F10).
+    if not is_stale:
+        _remember(mem_key, payload, ttl_sec=_TIMELINE_HAPPY_TTL_SEC)
     return _json_with_cache(payload, cache_status)
 
 
@@ -494,12 +501,24 @@ async def playback_events(
     if cam_list:
         cam_list = _require_cameras(access, cam_list, single=False)
     effective_cams = cam_list or ([camera] if camera else None)
+    # Audit A04: without camera filter, inject hard ACL (like journals).
+    if effective_cams is None and not access.unrestricted:
+        from evileye.api.core.camera_access import list_effective_names
+
+        effective = list_effective_names(access)
+        if effective is not None:
+            if not effective:
+                raise HTTPException(status_code=403, detail="Camera access denied")
+            # Keep System rows visible for restricted users (journals parity).
+            effective_cams = sorted(set(effective) | {"System"})
+            cam_list = list(effective_cams)
 
     def _load():
         from evileye.api.core.playback_timeline_index import (
             ensure_event_intervals,
             filter_event_intervals_window,
         )
+        from evileye.api.core.index_repository import project_event_items
 
         if date:
             items = ensure_event_intervals(
@@ -508,6 +527,7 @@ async def playback_events(
                 limit=limit,
             )
             items = filter_event_intervals_window(items, from_ts, to_ts)
+            items = project_event_items(items, effective_cams)
             if len(items) > limit:
                 items = items[:limit]
         else:
@@ -519,6 +539,7 @@ async def playback_events(
                 date=date,
                 limit=limit,
             )
+            items = project_event_items(items, effective_cams)
         legacy_markers = svc.load_event_markers(
             from_ts,
             to_ts,
@@ -535,6 +556,7 @@ async def playback_events(
             read_event_intervals_stale,
             schedule_event_intervals_refresh,
         )
+        from evileye.api.core.index_repository import project_event_items
 
         if not date:
             return None
@@ -543,6 +565,7 @@ async def playback_events(
             return None
         schedule_event_intervals_refresh(date, effective_cams, limit=limit)
         items = filter_event_intervals_window(stale, from_ts, to_ts)
+        items = project_event_items(items, effective_cams)
         if len(items) > limit:
             items = items[:limit]
         return {"items": items, "legacy_markers": []}
@@ -587,9 +610,10 @@ async def playback_metadata(
     if cameras:
         cam_list = _require_cameras(access, [c.strip() for c in cameras.split(",") if c.strip()], single=False)
         cams_key = ",".join(cam_list)
+        ts_key = f"{round(effective_ts, 3):.3f}"
         mem_key = (
             f"playback:metadata:{int(static_only)}:{date}:{run_id}:{window}:"
-            f"{frame_w}x{frame_h}:{int(effective_ts)}:{cams_key}"
+            f"{frame_w}x{frame_h}:{ts_key}:{cams_key}"
         )
         fresh = _recall(mem_key, require_fresh=True)
         if fresh is not None:
@@ -624,9 +648,10 @@ async def playback_metadata(
     if not camera:
         raise HTTPException(status_code=400, detail="camera or cameras query required")
     _require_cameras(access, [camera], single=True)
+    ts_key = f"{round(effective_ts, 3):.3f}"
     mem_key = (
         f"playback:metadata:{int(static_only)}:{date}:{run_id}:{window}:"
-        f"{frame_w}x{frame_h}:{int(effective_ts)}:{camera}:{source_id}"
+        f"{frame_w}x{frame_h}:{ts_key}:{camera}:{source_id}"
     )
     fresh = _recall(mem_key, require_fresh=True)
     if fresh is not None:
@@ -1002,30 +1027,6 @@ async def playback_detections(
 @router.get("/media")
 async def playback_media(request: Request, path: str = Query(...)):
     access = resolve_camera_access(request)
-    cam_name = _camera_name_from_media_path(path)
-    if cam_name:
-        # Composite folders may contain multiple logical cams; check first part hard ACL.
-        # If folder is Cam2-Cam3, allow if user has any part — stricter: require first part.
-        parts = cam_name.split("-") if "-" in str(path) else [cam_name]
-        folder = None
-        try:
-            from pathlib import Path as P
-
-            pparts = P(path).parts
-            for i, part in enumerate(pparts):
-                if part == "Streams" and i + 2 < len(pparts):
-                    folder = pparts[i + 2]
-                    break
-        except Exception:
-            folder = cam_name
-        if folder and "-" in folder:
-            allowed_any = access.unrestricted or any(
-                p in access.allowed_names for p in folder.split("-") if p
-            )
-            if not allowed_any:
-                raise HTTPException(status_code=403, detail="Camera access denied")
-        else:
-            assert_name_allowed(access, cam_name)
 
     global _media_inflight, _media_inflight_last_warn_at
     warn_at = _media_inflight_warn_at()
@@ -1087,13 +1088,16 @@ async def playback_media(request: Request, path: str = Query(...)):
         try:
             loop = asyncio.get_running_loop()
 
-            def _resolve_and_stat():
-                resolved = svc.resolve_media_path(path)
-                if not resolved.is_file():
+            def _resolve_authorize_and_stat():
+                # ACL after canonicalize (R01): never trust raw path owners.
+                media = ArchiveMediaResolver(svc.data_dir()).resolve(access, path)
+                if not media.path.is_file():
                     return None
-                return resolved, resolved.stat()
+                return media.path, media.path.stat()
 
-            pair = await loop.run_in_executor(_media_pool, _resolve_and_stat)
+            pair = await loop.run_in_executor(_media_pool, _resolve_authorize_and_stat)
+        except HTTPException:
+            raise
         except PermissionError as exc:
             raise HTTPException(status_code=403, detail=str(exc)) from exc
         if pair is None:
@@ -1107,7 +1111,10 @@ async def playback_media(request: Request, path: str = Query(...)):
             str(resolved),
             media_type=media_type,
             stat_result=st,
-            headers={"Accept-Ranges": "bytes", "Cache-Control": "public, max-age=3600"},
+            headers={
+                "Accept-Ranges": "bytes",
+                "Cache-Control": "private, no-store",
+            },
         )
     except BaseException:
         if not handed_off:

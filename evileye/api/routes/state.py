@@ -27,19 +27,70 @@ from evileye.api.core.server_state import (
 router = APIRouter(prefix="/api/v1/state", tags=["state"])
 
 _STATE_HEAVY_ROUTE_SEMAPHORE = asyncio.Semaphore(3)
+_state_thread_inflight: set[asyncio.Future] = set()
+_state_thread_timeouts = 0
+_state_thread_503s = 0
 
 
 def _state_timeout() -> float:
     return state_route_timeout_sec()
 
 
-async def _to_thread_with_timeout_or_cached(value_fn, cached_fn, *, timeout_sec: float, err_detail: str):
+def state_thread_stats() -> dict[str, int]:
+    return {
+        "inflight": len(_state_thread_inflight),
+        "timeouts": int(_state_thread_timeouts),
+        "http_503s": int(_state_thread_503s),
+    }
+
+
+async def _to_thread_with_timeout_or_cached(
+    value_fn,
+    cached_fn,
+    *,
+    timeout_sec: float,
+    err_detail: str,
+    slot_sem: asyncio.Semaphore | None = None,
+):
+    """Run value_fn in a thread; on timeout keep the future tracked until complete (B06).
+
+    When ``slot_sem`` is provided, the slot wait is included in the overall deadline (R07).
+    The slot is held until the worker finishes (not merely until wait_for times out).
+    """
+    global _state_thread_timeouts, _state_thread_503s
+    loop = asyncio.get_running_loop()
+    deadline = loop.time() + float(timeout_sec)
+    if slot_sem is not None:
+        remaining = max(0.0, deadline - loop.time())
+        try:
+            await asyncio.wait_for(slot_sem.acquire(), timeout=remaining)
+        except asyncio.TimeoutError:
+            cached = cached_fn()
+            if cached is not None:
+                return cached
+            _state_thread_503s += 1
+            raise HTTPException(status_code=503, detail=err_detail)
+    fut = loop.run_in_executor(None, value_fn)
+    _state_thread_inflight.add(fut)
+    released = False
+
+    def _done(f: asyncio.Future) -> None:
+        nonlocal released
+        _state_thread_inflight.discard(f)
+        if slot_sem is not None and not released:
+            released = True
+            slot_sem.release()
+
+    fut.add_done_callback(_done)
+    remaining = max(0.001, deadline - loop.time())
     try:
-        return await asyncio.wait_for(asyncio.to_thread(value_fn), timeout=timeout_sec)
+        return await asyncio.wait_for(asyncio.shield(fut), timeout=remaining)
     except asyncio.TimeoutError:
+        _state_thread_timeouts += 1
         cached = cached_fn()
         if cached is not None:
             return cached
+        _state_thread_503s += 1
         raise HTTPException(status_code=503, detail=err_detail)
 
 
@@ -71,13 +122,13 @@ def _filter_overview(payload: dict, access) -> dict:
 
 @router.get("/overview")
 async def state_overview(request: Request) -> dict:
-    async with _STATE_HEAVY_ROUTE_SEMAPHORE:
-        payload = await _to_thread_with_timeout_or_cached(
-            build_overview,
-            get_cached_overview,
-            timeout_sec=_state_timeout(),
-            err_detail="state_overview timeout",
-        )
+    payload = await _to_thread_with_timeout_or_cached(
+        build_overview,
+        get_cached_overview,
+        timeout_sec=_state_timeout(),
+        err_detail="state_overview timeout",
+        slot_sem=_STATE_HEAVY_ROUTE_SEMAPHORE,
+    )
     return _filter_overview(payload, resolve_camera_access(request))
 
 
@@ -124,13 +175,13 @@ async def state_runs(
             "items": list_run_list_items(discover=False),
         }
 
-    async with _STATE_HEAVY_ROUTE_SEMAPHORE:
-        payload = await _to_thread_with_timeout_or_cached(
-            _load,
-            _cached,
-            timeout_sec=_state_timeout(),
-            err_detail=f"state_runs({scope}) timeout",
-        )
+    payload = await _to_thread_with_timeout_or_cached(
+        _load,
+        _cached,
+        timeout_sec=_state_timeout(),
+        err_detail=f"state_runs({scope}) timeout",
+        slot_sem=_STATE_HEAVY_ROUTE_SEMAPHORE,
+    )
     access = resolve_camera_access(request)
     current = _filter_run_summary(payload.get("current_run"), access)
     items = payload.get("items") or []
@@ -150,13 +201,13 @@ async def state_history(request: Request) -> dict:
             return None
         return {"current_run": current, "active_runs": active_items, "items": []}
 
-    async with _STATE_HEAVY_ROUTE_SEMAPHORE:
-        payload = await _to_thread_with_timeout_or_cached(
-            _load,
-            _cached,
-            timeout_sec=_state_timeout(),
-            err_detail="state_history timeout",
-        )
+    payload = await _to_thread_with_timeout_or_cached(
+        _load,
+        _cached,
+        timeout_sec=_state_timeout(),
+        err_detail="state_history timeout",
+        slot_sem=_STATE_HEAVY_ROUTE_SEMAPHORE,
+    )
     access = resolve_camera_access(request)
     out = dict(payload) if isinstance(payload, dict) else {}
     out["current_run"] = _filter_run_summary(out.get("current_run"), access)
@@ -180,13 +231,13 @@ async def state_run(rid: int, request: Request) -> dict:
                     return item
         return None
 
-    async with _STATE_HEAVY_ROUTE_SEMAPHORE:
-        item = await _to_thread_with_timeout_or_cached(
-            lambda: get_run_summary(rid),
-            _cached_run,
-            timeout_sec=_state_timeout(),
-            err_detail="state_run timeout",
-        )
+    item = await _to_thread_with_timeout_or_cached(
+        lambda: get_run_summary(rid),
+        _cached_run,
+        timeout_sec=_state_timeout(),
+        err_detail="state_run timeout",
+        slot_sem=_STATE_HEAVY_ROUTE_SEMAPHORE,
+    )
     if item is None:
         raise HTTPException(status_code=404, detail="Run not found")
     return _filter_run_summary(item, resolve_camera_access(request)) or item
@@ -203,13 +254,13 @@ async def state_cameras(
     def _cached():
         return get_cached_camera_summaries(scope)
 
-    async with _STATE_HEAVY_ROUTE_SEMAPHORE:
-        items = await _to_thread_with_timeout_or_cached(
-            _load,
-            _cached,
-            timeout_sec=_state_timeout(),
-            err_detail="state_cameras timeout",
-        )
+    items = await _to_thread_with_timeout_or_cached(
+        _load,
+        _cached,
+        timeout_sec=_state_timeout(),
+        err_detail="state_cameras timeout",
+        slot_sem=_STATE_HEAVY_ROUTE_SEMAPHORE,
+    )
     access = resolve_camera_access(request)
     filtered = filter_by_source_name(items or [], access, key="source_name", use_visible=True)
     return {"items": filtered}

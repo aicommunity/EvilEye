@@ -1,0 +1,48 @@
+{
+  "day_enrichment": {
+    "request_count": 2,
+    "day_aborted": true,
+    "loading_stuck": true
+  },
+  "cross_source_notify": {
+    "aborted_source_0": true,
+    "applied_keys": [
+      "7:1"
+    ]
+  },
+  "auth_late_frame": {
+    "fetch_aborted_on_scope_change": false,
+    "restored_old_scope_frame": true
+  },
+  "metadata_fairness": {
+    "requested_sources": [
+      0,
+      1,
+      2,
+      3,
+      4,
+      5,
+      6,
+      7,
+      0,
+      1,
+      2,
+      3,
+      4,
+      5,
+      6,
+      7,
+      0,
+      1
+    ],
+    "cursor": 0,
+    "source_15_visited": false
+  },
+  "metadata_auth_scope": {
+    "old_object_delivered_to_new_subscription": 12345
+  },
+  "journal_auth_scope": {
+    "old_rows_remain": true,
+    "requests": 1
+  }
+}

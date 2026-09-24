@@ -1,0 +1,326 @@
+{
+  "revision": "dcfc98dd0247a651ea8135a861d87378ddb5089e",
+  "environment": {
+    "platform": "win32",
+    "python": "3.13.7",
+    "node": "24.19.0",
+    "npm": "10.9.4",
+    "python_packages": {
+      "pytest": "9.0.2",
+      "pytest-asyncio": "1.4.0",
+      "itsdangerous": "2.2.0",
+      "fastapi": "0.120.1",
+      "starlette": "0.48.0",
+      "httpx": "0.28.1"
+    },
+    "dependency_restore": {
+      "npm_ci_exit_code": 0,
+      "renderer_removed": true,
+      "manifests_unchanged": true,
+      "note": "A first approval attempt failed due to approval-service quota; retry after user continuation succeeded. No dependency manifests were modified."
+    }
+  },
+  "api_tests": {
+    "command": "python -m pytest tests/unit/api tests/unit/meta/test_pytest_exit_status.py tests/unit/visualization/test_journal_media_resolver.py tests/integration/api/test_journals_smoke.py --basetemp=.audit_validation/pytest --junitxml=.audit_validation/api-tests.xml -q --tb=short",
+    "exit_code": 1,
+    "total": 368,
+    "failed": 14,
+    "passed": 354,
+    "seconds": 222.124,
+    "failures": [
+      {
+        "test": "tests.unit.api.test_internal_frame_metadata::test_frame_relay_jpeg_and_metadata_header",
+        "message": "AttributeError: module 'socket' has no attribute 'AF_UNIX'"
+      },
+      {
+        "test": "tests.unit.api.test_journal_routes::test_preview_serves_jpeg",
+        "message": "assert 403 == 200\n +  where 403 = <Response [403 Forbidden]>.status_code"
+      },
+      {
+        "test": "tests.unit.api.test_journal_routes::test_preview_mode_lost_prefers_lost_previews",
+        "message": "assert 403 == 200\n +  where 403 = <Response [403 Forbidden]>.status_code"
+      },
+      {
+        "test": "tests.unit.api.test_journal_routes::test_preview_cache_control_header",
+        "message": "assert 403 == 200\n +  where 403 = <Response [403 Forbidden]>.status_code"
+      },
+      {
+        "test": "tests.unit.api.test_playback_media_inflight::test_media_inflight_released_when_resolve_cancelled",
+        "message": "TimeoutError"
+      },
+      {
+        "test": "tests.unit.api.test_playback_route_timeouts::test_playback_segments_timeout_serves_stale",
+        "message": "IndexError: list index out of range"
+      },
+      {
+        "test": "tests.unit.api.test_playback_service::test_load_segments_skips_files_outside_window_before_mvhd",
+        "message": "assert 19 < 10"
+      },
+      {
+        "test": "tests.unit.api.test_runtime_registry_prune::test_get_current_run_summary_hydrates_one",
+        "message": "TypeError: test_get_current_run_summary_hydrates_one.<locals>.tracked() got an unexpected keyword argument 'include_logs'"
+      },
+      {
+        "test": "tests.unit.api.test_setup_basic_merge::test_split_sources_preserved_on_basic_roundtrip",
+        "message": "AssertionError: assert {'ScheduleAla... {'0': True}}} == {'ZoneEventsD... {'0': True}}}\n  \n  Omitting 1 identical items, use -vv to show\n  Left contains 1 more item:\n  {'ScheduleAlarmEventsDetector': {'camera_cooldown_sec': 0,\n                                   'default_schedule': {'class_ids': [],\n                                                        'enabled': False,\n                                                        'periods': [],...\n  \n  ...Full output truncated (28 lines hidden), use '-vv' to show"
+      },
+      {
+        "test": "tests.unit.api.test_web_improvements::test_auth_register_and_users_flow",
+        "message": "assert 422 == 200\n +  where 422 = <Response [422 Unprocessable Entity]>.status_code"
+      },
+      {
+        "test": "tests.unit.api.test_web_improvements::test_admin_create_user_approved_and_login",
+        "message": "AssertionError: assert 401 == 200\n +  where 401 = <Response [401 Unauthorized]>.status_code\n +    where <Response [401 Unauthorized]> = post('/api/v1/auth/login', json={'password': 'admin', 'username': 'admin'})\n +      where post = <starlette.testclient.TestClient object at 0x000002435EC8C9F0>.post"
+      },
+      {
+        "test": "tests.unit.visualization.test_journal_media_resolver::test_resolve_event_video_from_db_path",
+        "message": "AssertionError: assert 'E:\\\\Work\\\\St...13_120000.mp4' == 'E:\\\\Work\\\\St...13_120000.mp4'\n  \n  Skipping 85 identical leading characters in diff, use -v to show\n  - ata\\Events\\2026-06-13\\Videos\\Cam1\\Cam1_ZoneEvent_1_20260613_120000.mp4\n  ?           ^          ^      ^    ^\n  + ata\\Events/2026-06-13/Videos/Cam1/Cam1_ZoneEvent_1_20260613_120000.mp4\n  ?           ^          ^      ^    ^"
+      },
+      {
+        "test": "tests.unit.visualization.test_journal_media_resolver::test_resolve_event_video_mkv_extension",
+        "message": "AssertionError: assert 'E:\\\\Work\\\\St...13_120000.mkv' == 'E:\\\\Work\\\\St...13_120000.mkv'\n  \n  Skipping 85 identical leading characters in diff, use -v to show\n  - ata\\Events\\2026-06-13\\Videos\\Cam1\\Cam1_ZoneEvent_1_20260613_120000.mkv\n  ?           ^          ^      ^    ^\n  + ata\\Events/2026-06-13/Videos/Cam1/Cam1_ZoneEvent_1_20260613_120000.mkv\n  ?           ^          ^      ^    ^"
+      },
+      {
+        "test": "tests.integration.api.test_journals_smoke::test_journals_smoke_flow",
+        "message": "assert 403 == 200\n +  where 403 = <Response [403 Forbidden]>.status_code"
+      }
+    ]
+  },
+  "frontend_tests": {
+    "command": "node node_modules/vitest/vitest.mjs run",
+    "exit_code": 0,
+    "files_passed": 24,
+    "tests_passed": 180,
+    "note": "Repeated after restoring dependencies with npm ci: 24 files / 180 passed, 9.30 s. Initial run also passed.",
+    "seconds": 9.3
+  },
+  "typecheck": {
+    "command": "node node_modules/typescript/bin/tsc --noEmit",
+    "exit_code": 0,
+    "note": "Repeated successfully after npm ci."
+  },
+  "build": {
+    "command": "node node_modules/vite/bin/vite.js build --outDir E:/Work/Stu/EvilEye/.audit_validation/spa-final",
+    "exit_code": 0,
+    "assets": [
+      {
+        "path": "assets/BansPage-Ck1nUepm.js",
+        "bytes": 4120,
+        "sha256": "63787175f34667e88015e978c831df6cf0043b1015e84c9653d6b640304ffab5",
+        "matches_git_blob": true
+      },
+      {
+        "path": "assets/CameraAclEditor-DBFJ1J1Z.js",
+        "bytes": 4553,
+        "sha256": "feab2dbd517dd238499c79d4ae2ffc3a30d8057afe47b3b486831c806cc78a00",
+        "matches_git_blob": true
+      },
+      {
+        "path": "assets/ConfigFilePage-Dd-6ebv3.js",
+        "bytes": 483,
+        "sha256": "caaae7adeb09d3dd270d999a1668ee138beac46d03cf11e6383052a115c6e2bb",
+        "matches_git_blob": true
+      },
+      {
+        "path": "assets/ConfigsListPage-DloVIex6.js",
+        "bytes": 3764,
+        "sha256": "73d49521c849b4096003cb7a4095456a4584aa3c81be1afade81540cb35d022a",
+        "matches_git_blob": true
+      },
+      {
+        "path": "assets/ConfigStudio-D7H5AGo_.js",
+        "bytes": 89747,
+        "sha256": "77ac920d75b78c4080c0e6b8d8405e68d978a1749ebb45e258dee78e0f1432b8",
+        "matches_git_blob": true
+      },
+      {
+        "path": "assets/ConfigurePage-cuZ9h1rY.js",
+        "bytes": 1219,
+        "sha256": "1a4180a79c15e5811e9970ffbeb9426ab5d37e50e344c962c30156cb65689cc0",
+        "matches_git_blob": true
+      },
+      {
+        "path": "assets/EventsPage-_qVzOngh.js",
+        "bytes": 7627,
+        "sha256": "90a4eacc19ce5050e71316101e70988ce60b03dc8be7229ee6975b3508795c12",
+        "matches_git_blob": true
+      },
+      {
+        "path": "assets/fitGrid-N9i7lFdX.js",
+        "bytes": 124,
+        "sha256": "248048aa8161cc8b154f0d615d0451d3e956af86d26206fddaa85d4d70331031",
+        "matches_git_blob": true
+      },
+      {
+        "path": "assets/formatApiError-BRn6fFEn.js",
+        "bytes": 346,
+        "sha256": "386aba2656635a087393ee9728bceb2c36e5aacc3666329520f6382e40240ca0",
+        "matches_git_blob": true
+      },
+      {
+        "path": "assets/index-C_EU4yNc.css",
+        "bytes": 46656,
+        "sha256": "3ebedcb681fecf10020a777cfdebbb24153c7acdcf1db73406205d15915ad982",
+        "matches_git_blob": true
+      },
+      {
+        "path": "assets/index-DTcsP0d0.js",
+        "bytes": 245019,
+        "sha256": "3dc3f76f03459b3b75cc052e6a91cb9550e9a2393aee98134fa234a1abe10d6b",
+        "matches_git_blob": true
+      },
+      {
+        "path": "assets/journals-DAS7c6oe.js",
+        "bytes": 2402,
+        "sha256": "66d0008ebff67ad14b4fd14b547b9e4dfe9c5d6e1fbcd15ea777a7ca58587a3a",
+        "matches_git_blob": true
+      },
+      {
+        "path": "assets/LivePage-BXl8kwWd.js",
+        "bytes": 22047,
+        "sha256": "2e404a1b30b01f67c99a73632911a3efb4fc19a1841291e713c63a61bbe9d6c5",
+        "matches_git_blob": true
+      },
+      {
+        "path": "assets/LogsPage-CX6akpI-.js",
+        "bytes": 3498,
+        "sha256": "ce368a93737e61f8272d0b4d2cc556a16f297398887492b0f901aaa111c34677",
+        "matches_git_blob": true
+      },
+      {
+        "path": "assets/mergeLiveCameraPoll-2ZuuKsMV.js",
+        "bytes": 12786,
+        "sha256": "1e861f67d4515d77b4f7554373f02c799f8fb7b292da57fdd16c8858b99dec50",
+        "matches_git_blob": true
+      },
+      {
+        "path": "assets/MetadataOverlayLayer-DTDgEMkw.js",
+        "bytes": 258,
+        "sha256": "daa8723eee290a28819738c4608b69140edd54d5a51c30679a3f6b9b888e5222",
+        "matches_git_blob": true
+      },
+      {
+        "path": "assets/MobileEventsPage-D3V1cEEL.js",
+        "bytes": 2559,
+        "sha256": "2fde4b4f80faaf68de4021e99012292f4f3165891b3942c5043f17affd8fa13b",
+        "matches_git_blob": true
+      },
+      {
+        "path": "assets/MobileLivePage-SvLGriPL.js",
+        "bytes": 4470,
+        "sha256": "a7abc415a596befcbea00141764df2da860342415211642ffc124a91605a6a21",
+        "matches_git_blob": true
+      },
+      {
+        "path": "assets/OverlayCanvas-1RT97jjT.js",
+        "bytes": 5312,
+        "sha256": "0541449517fa41253bd71eb2ab39910f996600dc3a92880aaa86a8efa8fa9755",
+        "matches_git_blob": true
+      },
+      {
+        "path": "assets/PlaybackPage-7nvNLIXN.js",
+        "bytes": 101001,
+        "sha256": "8706a42f7f2ce564ab8660472f002484bbae2b67f5d7496bba6132705c446e78",
+        "matches_git_blob": true
+      },
+      {
+        "path": "assets/restartConfigRun-BvWPLNrs.js",
+        "bytes": 2350,
+        "sha256": "3a202f832f3101c7ba3dc718bdffdd8605d8c8b317d53ba7e8dade236041d758",
+        "matches_git_blob": true
+      },
+      {
+        "path": "assets/runLinks-DIgFYakK.js",
+        "bytes": 1233,
+        "sha256": "baff5536c91a48c351c71cd146210c73b6a6b6d279dc9a231e2a9750e56a2e04",
+        "matches_git_blob": true
+      },
+      {
+        "path": "assets/runs-D035LbZg.js",
+        "bytes": 380,
+        "sha256": "b0da992de114699f90b518a940d4b8c483f1fcb0c524105dcd4c1b4829615b77",
+        "matches_git_blob": true
+      },
+      {
+        "path": "assets/RunsPage-BXCjcNIF.js",
+        "bytes": 9364,
+        "sha256": "d12b34a8edc4b83e73dc0e1c274a695173c6f66c7a10400e52802c0e01d4a9a6",
+        "matches_git_blob": true
+      },
+      {
+        "path": "assets/SettingsPage-D2igFpI5.js",
+        "bytes": 7141,
+        "sha256": "719d097229508750f5ec8500f6b5fbd50a5a0eb0df62118a5d968d896038e1ac",
+        "matches_git_blob": true
+      },
+      {
+        "path": "assets/setup-DVBlpPvl.js",
+        "bytes": 507,
+        "sha256": "cd840fe13085cba483f3ee8181809ff9f5c79ffc92f851e57f77658b04cf2e31",
+        "matches_git_blob": true
+      },
+      {
+        "path": "assets/state-CcUkNL-y.js",
+        "bytes": 272,
+        "sha256": "4c5c28a009c56a6b74a6359def1c277535223053a80b8ffe01f8af29d7dd3921",
+        "matches_git_blob": true
+      },
+      {
+        "path": "assets/streaming-wnFsBHh9.js",
+        "bytes": 820,
+        "sha256": "b03bb0492909c2c8bc44034fdd20c66e45b0d55d3e2e2e50ad7d187d733f4e92",
+        "matches_git_blob": true
+      },
+      {
+        "path": "assets/studioTabs-BcwiRMfb.js",
+        "bytes": 667,
+        "sha256": "ace46d444cd465bb14cdabc13ceeaefbc039299f1fb4bc34c72246bce7f4117c",
+        "matches_git_blob": true
+      },
+      {
+        "path": "assets/useJournalFeed-fJ9PZq1d.js",
+        "bytes": 5865,
+        "sha256": "7b8aed4f83a275da755a98d25f690214822e3a883dfdd94bd088ec130db9f33a",
+        "matches_git_blob": true
+      },
+      {
+        "path": "assets/useMediaLetterbox-BTNd7dDh.js",
+        "bytes": 2189,
+        "sha256": "d7059b5fe9025fc221720ec4639b86265ac14cb49a3ac1e6743b0f53e7d5c88f",
+        "matches_git_blob": true
+      },
+      {
+        "path": "assets/UsersPage-ClWRyjdV.js",
+        "bytes": 8085,
+        "sha256": "38b48112847ff3d39ab2047151a5b05e1bd2b45e7a96fc57bd833e24ae5bb591",
+        "matches_git_blob": true
+      },
+      {
+        "path": "assets/useRunConfigFlags-Vv0fK4Ny.js",
+        "bytes": 4282,
+        "sha256": "a96040ad261470ce114f4798069266bdaeb9b4fa1f462ffa8eeff493ff4bc6ee",
+        "matches_git_blob": true
+      },
+      {
+        "path": "assets/useVisibilityPolling-C1nMedwf.js",
+        "bytes": 617,
+        "sha256": "6d6d3f7afea0670c954d09c05b9c9c91eb6822d1df860384b61a449f1c74b522",
+        "matches_git_blob": true
+      },
+      {
+        "path": "index.html",
+        "bytes": 700,
+        "sha256": "a0f380dbef8c51d3d96fd43f42486549990fb3b247ed0cf806b5dcd42f759cd3",
+        "matches_git_blob": false
+      }
+    ],
+    "note": "Final build after npm ci; 34 JS/CSS files match Git blobs byte-for-byte. Generated index.html adds one blank line before </body>."
+  },
+  "audit_probes": {
+    "backend_exit_code": 0,
+    "frontend_exit_code": 0,
+    "frontend_tests_passed": 6,
+    "meaning": "Assertions describe reproduced defects, not release acceptance. Synthetic HTTP data; mocked WS handshake/run discovery; real React effects with mocked network/timers; no browser performance claims.",
+    "renderer": "react-test-renderer@18.3.1 installed transiently --no-save --package-lock=false; package manifests unchanged."
+  }
+}

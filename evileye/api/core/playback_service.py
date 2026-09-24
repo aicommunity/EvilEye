@@ -1359,12 +1359,12 @@ def load_event_intervals(
     date: Optional[str] = None,
     limit: int = 500,
     default_event_duration_sec: float = 2.0,
+    presentation_cap: bool | int | None = True,
 ) -> list[dict[str, Any]]:
     camera_filters = [c for c in (cameras or []) if c]
     if camera and not camera_filters:
         camera_filters = [camera]
     rows = _iter_event_rows(from_ts=from_ts, to_ts=to_ts, cameras=camera_filters, date=date)
-    cap = max(1, min(int(limit or 500), 2000))
     out: list[dict[str, Any]] = []
     # pair enter/left and found/finished per (camera, zone/name)
     pending: dict[tuple[str | None, str, str | None], dict[str, Any]] = {}
@@ -1434,6 +1434,13 @@ def load_event_intervals(
     if to_ts is not None:
         out = [it for it in out if float(it["start_ts"]) <= to_ts]
     out.sort(key=lambda it: (float(it["start_ts"]), float(it["end_ts"])))
+    # presentation_cap=None/False → full list for on-disk index builders (R05).
+    if presentation_cap is None or presentation_cap is False:
+        return out
+    if presentation_cap is True:
+        cap = max(1, min(int(limit or 500), 2000))
+    else:
+        cap = max(1, int(presentation_cap))
     return out[:cap]
 
 
@@ -1441,4 +1448,13 @@ def resolve_media_path(path: str) -> Path:
     candidate = Path(path)
     if not candidate.is_absolute():
         candidate = data_dir() / path
-    return _secure_under(data_dir(), candidate)
+    resolved = _secure_under(data_dir(), candidate)
+    # Audit A03/F02: Streams/Events/Detections archives are serveable.
+    try:
+        rel = resolved.relative_to(data_dir().resolve())
+    except ValueError as exc:
+        raise PermissionError(f"Path outside data dir: {path}") from exc
+    parts = rel.parts
+    if not parts or parts[0] not in {"Streams", "Events", "Detections"}:
+        raise PermissionError(f"Media path not under Streams/Events/Detections: {path}")
+    return resolved

@@ -216,78 +216,6 @@ def _disable_qt_multimedia_for_tests():
     yield
 
 
-def pytest_sessionfinish(session, exitstatus):
-    """
-    Workaround for rare native segfaults during interpreter shutdown.
-
-    Even when all tests pass, the process can segfault while finalizing native
-    modules (Qt/Torch/GStreamer). For test runs we prefer a clean exit status.
-    Disable by setting EVILEYE_PYTEST_NO_FORCE_EXIT=1.
-    """
-    import os
-
-    if os.environ.get("EVILEYE_PYTEST_NO_FORCE_EXIT", "").strip().lower() in {"1", "true", "yes", "on"}:
-        return
-    os._exit(int(exitstatus))
-
-
-def pytest_unconfigure(config):
-    """
-    Extra safety net: ensure process exits cleanly.
-    Some native crashes can happen after normal pytest shutdown; force-exit unless disabled.
-    """
-    import os
-
-    if os.environ.get("EVILEYE_PYTEST_NO_FORCE_EXIT", "").strip().lower() in {"1", "true", "yes", "on"}:
-        return
-    # If pytest_sessionfinish didn't run for any reason, exit here.
-    os._exit(0)
-    # Stop DB writer threads
-    try:
-        from evileye.database_controller.database_controller_base import DatabaseControllerBase
-
-        try:
-            DatabaseControllerBase.shutdown_all()
-        except Exception:
-            pass
-    except Exception:
-        pass
-    # Stop detection threads
-    try:
-        from evileye.object_detector.detection_thread_base import DetectionThreadBase
-
-        try:
-            DetectionThreadBase.shutdown_all()
-        except Exception:
-            pass
-    except Exception:
-        pass
-
-    # Final Qt cleanup to avoid shutdown segfaults
-    try:
-        try:
-            from PyQt6.QtWidgets import QApplication
-        except ImportError:
-            from PyQt5.QtWidgets import QApplication
-
-        app = QApplication.instance()
-        if app is not None:
-            try:
-                app.closeAllWindows()
-            except Exception:
-                pass
-            try:
-                app.processEvents()
-            except Exception:
-                pass
-            try:
-                app.quit()
-            except Exception:
-                pass
-    except Exception:
-        pass
-
-
 @pytest.fixture(autouse=True)
 def _cleanup_after_each_test():
     """
@@ -399,7 +327,12 @@ def cleanup_qapplication():
     _cleanup_qapplication_at_exit()
 
 def pytest_sessionfinish(session, exitstatus):
-    """Хук pytest для завершения сессии тестов."""
-    # Безопасно завершаем QApplication после завершения всех тестов
+    """Session cleanup. Opt-in force exit preserves real exitstatus (avoids native segfault on shutdown)."""
+    import os
+
     _cleanup_qapplication_at_exit()
+    # Opt-in only: default must leave pytest's real exit code intact (audit A05).
+    # EVILEYE_PYTEST_NO_FORCE_EXIT remains a no-op alias for older docs/scripts.
+    if os.environ.get("EVILEYE_PYTEST_FORCE_EXIT", "").strip().lower() in {"1", "true", "yes", "on"}:
+        os._exit(int(exitstatus))
 

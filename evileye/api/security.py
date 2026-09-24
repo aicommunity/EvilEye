@@ -200,14 +200,66 @@ def authenticate_user(username: str, password: str, auth: WebAuthConfig) -> Opti
     return None
 
 
+def resolve_session_principal(session_user: Optional[dict[str, Any]]) -> Optional[dict[str, Any]]:
+    """Validate cookie/session user against the live credentials/web store (F01).
+
+    Returns a principal dict with username, role, permissions from the store record,
+    or None when the session must be treated as unauthenticated.
+    """
+    if not isinstance(session_user, dict):
+        return None
+    username = str(session_user.get("username") or "").strip()
+    if not username:
+        return None
+    try:
+        from evileye.api.core.camera_access import lookup_user_record
+
+        record = lookup_user_record(username)
+    except Exception:
+        record = None
+    if record is None:
+        return None
+    if bool(record.get("disabled", False)):
+        return None
+    status = str(record.get("status") or "").strip().lower()
+    # Credentials users have no status field (treated as approved when not disabled).
+    if status and status in {"rejected", "disabled", "pending"}:
+        return None
+    # Prefer store identity keys.
+    record_name = str(record.get("username") or record.get("email") or "").strip()
+    if record_name and record_name.lower() != username.lower():
+        return None
+    role = normalize_role(str(record.get("role") or "user"))
+    return {
+        "username": record_name or username,
+        "role": role,
+        "permissions": permissions_for_role(role),
+    }
+
+
 def current_user(request: Request) -> Optional[dict[str, Any]]:
     user = request.session.get("user")
     if not isinstance(user, dict):
         return None
-    if "role" in user:
-        user["role"] = normalize_role(str(user.get("role") or "user"))
-        user["permissions"] = permissions_for_role(user["role"])
-    return user
+    principal = resolve_session_principal(user)
+    if principal is None:
+        try:
+            request.session.clear()
+        except Exception:
+            try:
+                request.session.pop("user", None)
+            except Exception:
+                pass
+        return None
+    # Refresh session role/permissions from the live record (demote/ACL).
+    try:
+        request.session["user"] = {
+            "username": principal["username"],
+            "role": principal["role"],
+        }
+    except Exception:
+        pass
+    return principal
 
 
 def require_authenticated(request: Request) -> dict[str, Any]:

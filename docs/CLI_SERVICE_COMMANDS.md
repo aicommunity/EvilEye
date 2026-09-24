@@ -35,6 +35,13 @@ evileye service uninstall
 evileye service install --dry-run --no-tls
 ```
 
-После включения HTTPS перезапустите web-слой: `evileye service restart` или `evileye reload web`.
+**Site note (this deploy):** when the working directory is `/home/user/EvilEye` (dev tree) but the unit’s `WorkingDirectory` is `/home/user/EvilEyeDeploy`, `evileye service status` may report **not installed** because it looks for `.evileye_service.json` in the current site. Prefer:
+
+```bash
+systemctl --user status evileye
+systemctl --user restart evileye
+```
+
+После включения HTTPS перезапустите web-слой: `evileye service restart` / `systemctl --user restart evileye` или `evileye reload web`.
 
 Watchdog — отдельно: `monitor/scripts/install_timer.sh` или `evileye watchdog-install`.

@@ -1,0 +1,60 @@
+{
+  "media_acl": {
+    "direct_denied": {
+      "status": 403,
+      "body": "{\"detail\":\"Camera access denied\"}"
+    },
+    "traversal_camera": {
+      "status": 200,
+      "body": "forbidden-camera"
+    },
+    "traversal_metadata": {
+      "status": 200,
+      "body": "{\"camera\":\"Cam9\"}"
+    },
+    "journal_camera": {
+      "status": 200,
+      "body": "forbidden-event"
+    },
+    "journal_metadata": {
+      "status": 200,
+      "body": "{\"camera\":\"Cam9\"}"
+    }
+  },
+  "frozen_detection_ticks": {
+    "first_ticks": 1,
+    "source_ticks_after_append": 2,
+    "second_ticks": 1,
+    "source_loader_calls": 1,
+    "stale_data_marked_current": true
+  },
+  "event_index": {
+    "input_rows": 2001,
+    "indexed_rows": 2000,
+    "empty_camera_rebuilds_for_two_requests": 2
+  },
+  "singleflight_camera_isolation": {
+    "leader_requested": "Cam1",
+    "follower_requested": "Cam2",
+    "leader_received": [
+      "Cam1"
+    ],
+    "follower_received": [
+      "Cam1"
+    ]
+  },
+  "stale_cache": {
+    "before": {
+      "items": [
+        1
+      ]
+    },
+    "fresh_lookup": null,
+    "fallback_after_fresh_lookup": null
+  },
+  "state_queue_deadline": {
+    "configured_timeout_ms": 10,
+    "outer_cancel_ms": 103.6,
+    "helper_returned_stale_or_503": false
+  }
+}

@@ -125,6 +125,31 @@ class LivePreviewHub:
         client.pending.clear()
         self._clients = [c for c in self._clients if c is not client]
 
+    def unregister_username(self, username: str) -> int:
+        """Close all live preview WS clients for a username (R08 revoke)."""
+        name = str(username or "").strip()
+        if not name:
+            return 0
+        closed = 0
+        for client in list(self._clients):
+            if str(client.username or "") != name:
+                continue
+            try:
+                # Best-effort sync close; sender cleanup happens in unregister.
+                close = getattr(client.websocket, "close", None)
+                if close is not None:
+                    result = close(code=4403)
+                    # Starlette close may return a coroutine.
+                    if hasattr(result, "close") or hasattr(result, "__await__"):
+                        loop = self._loop
+                        if loop is not None and getattr(loop, "is_running", lambda: False)():
+                            loop.create_task(result)  # type: ignore[arg-type]
+            except Exception:
+                pass
+            self.unregister(client)
+            closed += 1
+        return closed
+
     def on_broker_publish(self, pipeline_id: str, payload: bytes, metadata: dict[str, Any]) -> None:
         if not payload or ":" not in pipeline_id:
             return
@@ -177,7 +202,10 @@ class LivePreviewHub:
                 while client.pending and not client.closed:
                     batch = dict(client.pending)
                     client.pending.clear()
-                    for _source_id, (header, payload) in batch.items():
+                    for source_id, (header, payload) in batch.items():
+                        # Re-check ACL/subscribe set before send (R08).
+                        if source_id not in client.source_ids:
+                            continue
                         try:
                             await asyncio.wait_for(client.websocket.send_json(header), timeout=timeout)
                             if payload is not None:
@@ -253,7 +281,8 @@ class LivePreviewHub:
             for client in list(self._clients):
                 if client.closed or client.run_id != run_id:
                     continue
-                if client.source_ids and source_id not in client.source_ids:
+                # Empty source_ids means none (not all) — audit A01.
+                if source_id not in client.source_ids:
                     continue
                 if etag and client.last_etag.get(source_id) == etag:
                     continue
@@ -266,8 +295,11 @@ class LivePreviewHub:
                     pass
 
     def set_client_sources(self, client: LivePreviewClient, source_ids: list[int]) -> None:
-        client.source_ids = {int(s) for s in source_ids}
+        new_ids = {int(s) for s in source_ids}
+        client.source_ids = new_ids
         client.last_etag.clear()
+        # Drop frames for unsubscribed sources immediately (R08).
+        client.pending.clear()
 
 
 _hub: Optional[LivePreviewHub] = None

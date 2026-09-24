@@ -1,10 +1,32 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { Link } from 'react-router-dom';
-import { stateApi, streamSnapshotUrl, streamStatus, type StateCamera, cacheGet, cacheSet, isAbortError } from '../../api';
+import {
+  stateApi,
+  streamSnapshotUrl,
+  streamStatus,
+  type StateCamera,
+  cacheGet,
+  cacheSet,
+  cacheInvalidate,
+  isAbortError,
+} from '../../api';
+import { useAuth } from '../../auth/AuthContext';
 import { Badge, Button } from '../../components/ui';
 import { useVisibilityPolling } from '../../hooks/useVisibilityPolling';
 import { StreamOverlay } from '../../components/StreamOverlay';
 import { useI18n } from '../../i18n';
+import {
+  liveCamerasCacheKey,
+  mergeLiveCameraPoll,
+  resetLiveCameraCache,
+} from './mergeLiveCameraPoll';
+
+const EMPTY_CAMERA_GRACE_POLLS = 2;
+const CAMERAS_TTL_MS = 12_000;
+
+let lastGoodMobileCameras: StateCamera[] = [];
+let emptyMobilePollStreak = 0;
+let lastMobileUsername: string | null = null;
 
 export function MobileLivePage() {
   return <MobileLiveInner />;
@@ -12,7 +34,9 @@ export function MobileLivePage() {
 
 function MobileLiveInner() {
   const { t, lang, setLang } = useI18n();
-  const cached = cacheGet<{ items: StateCamera[] }>('state:cameras:current');
+  const { user } = useAuth();
+  const username = user?.username ?? null;
+  const cached = cacheGet<{ items: StateCamera[] }>(liveCamerasCacheKey());
   const [cameras, setCameras] = useState<StateCamera[]>(() => cached?.items ?? []);
   const [camerasLoading, setCamerasLoading] = useState(() => !(cached?.items?.length));
   const [idx, setIdx] = useState(0);
@@ -20,6 +44,18 @@ function MobileLiveInner() {
   const [snapTs, setSnapTs] = useState(Date.now());
   const abortRef = useRef<AbortController | null>(null);
   const camerasLoadingTimerRef = useRef<number | null>(null);
+  const camerasRef = useRef(cameras);
+  camerasRef.current = cameras;
+
+  useEffect(() => {
+    if (username !== lastMobileUsername) {
+      lastMobileUsername = username;
+      const reset = resetLiveCameraCache(cacheInvalidate);
+      lastGoodMobileCameras = reset.lastGood;
+      emptyMobilePollStreak = reset.emptyStreak;
+      setCameras([]);
+    }
+  }, [username]);
 
   const load = useCallback(async () => {
     abortRef.current?.abort();
@@ -39,10 +75,19 @@ function MobileLiveInner() {
       const res = await stateApi.cameras('current', { signal: ac.signal });
       if (ac.signal.aborted) return;
       const items = res.items ?? [];
-      if (items.length) {
-        cacheSet('state:cameras:current', res, 12_000);
-        setCameras(items);
+      const decision = mergeLiveCameraPoll(
+        items,
+        camerasRef.current,
+        lastGoodMobileCameras,
+        emptyMobilePollStreak,
+        EMPTY_CAMERA_GRACE_POLLS,
+      );
+      emptyMobilePollStreak = decision.emptyStreak;
+      lastGoodMobileCameras = decision.lastGood;
+      if (decision.cleared || items.length) {
+        cacheSet(liveCamerasCacheKey(), { items: decision.cameras }, CAMERAS_TTL_MS);
       }
+      setCameras(decision.cameras);
     } catch (e) {
       if (isAbortError(e)) return;
     } finally {

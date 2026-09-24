@@ -28,7 +28,7 @@ python3 scripts/ensure_playback_test_user.py
 |------|-------------|-----------|-----------|-----|----------------------------|
 | SPA in-memory | `evileye/api/frontend/src/api/dataCache.ts` | **Да** (per-browser) | `playback:segments:…`, `playback:detections:…` | 30–90 с | Только тот же браузер |
 | Static metadata | `usePlaybackStaticMetadata` module Map | **Да** | camera+date+ts | session | Тот же браузер |
-| Server memory | `evileye/api/routes/playback.py` `_memory_cache` | **Нет** | `playback:timeline:{mode}:{date}:{run_id}:{from}:{to}:{cam_list}` (`mode`=`segments`\|`full`) | 45 с | Разный `cam_list` после ACL → разные ключи |
+| Server memory | `evileye/api/routes/playback.py` `_memory_cache` | **Нет** | `playback:timeline:…` / `playback:metadata:…:{ts:.3f}:…` | 45 с / 10 с; **LRU cap 256 keys** | Разный `cam_list` после ACL → разные ключи |
 | Detections memory | `_memory_cache` | **Нет** | `playback:detections:scan:{date}:{run_id}:{ticks\|full}` (**без** `cam_list`; ACL режется при slice) | 30 с | Admin warm обслуживает restricted user |
 | Cameras memory | `_memory_cache` | **Нет** (до ACL) | `playback:cameras:{run_id}:{date}` | sticky | Общий для всех |
 | On-disk segment index | `Streams/{date}/_timeline_segments.json` | **Общий** | по дате | до rebuild | Admin открыл день → user быстрее |
