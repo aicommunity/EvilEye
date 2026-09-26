@@ -10,7 +10,14 @@ DEFAULT_EXECUTION_MODE = EXEC_MODE_PROCESS
 
 
 class ProcessorBase(ABC):
-    def __init__(self, processor_name, class_name, num_processors: int, order: int):
+    def __init__(
+        self,
+        processor_name,
+        class_name,
+        num_processors: int,
+        order: int,
+        class_names: list[str] | None = None,
+    ):
         # Используем get_module_logger(), т.к. ProcessorBase не наследуется от EvilEyeBase
         # и не имеет lifecycle (init/release). Это контейнер для процессоров, а не компонент с lifecycle.
         self.logger = get_module_logger("processor_base")
@@ -19,14 +26,17 @@ class ProcessorBase(ABC):
         self.params = None
         self.num_processors = num_processors
         self.order = order
-        # Создание процессоров вынесено в отдельный метод для снижения связности
-        self.dummy_processor = self._create_processor_instance(class_name)
+        # Per-item types (mixed YOLO+RT-DETR in one section). Falls back to class_name.
+        if class_names is not None and len(class_names) == num_processors:
+            self._class_names = list(class_names)
+        else:
+            self._class_names = [class_name] * num_processors
+        self.dummy_processor = self._create_processor_instance(self._class_names[0])
         self.execution_mode = DEFAULT_EXECUTION_MODE
         self.ipc_mode = "standard"
-        self.dummy_processor = self._create_processor_instance(class_name)
         self.processors = []
         for i in range(0, num_processors):
-            processor = self._create_processor_instance(class_name)
+            processor = self._create_processor_instance(self._class_names[i])
             processor.set_id(i)
             self.processors.append(processor)
 

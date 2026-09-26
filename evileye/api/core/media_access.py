@@ -59,7 +59,7 @@ def _catalog_names() -> set[str]:
 
 
 def _split_stream_folder(folder: str) -> list[str] | None:
-    """Resolve Streams/.../<folder> owners; keep Cam-2 intact when in catalog."""
+    """Resolve Streams/.../<folder> owners; keep Cam-2 intact when not a composite."""
     if not folder or folder in {".", ".."}:
         return None
     catalog = _catalog_names()
@@ -72,27 +72,153 @@ def _split_stream_folder(folder: str) -> list[str] | None:
             return None
         if catalog and all(p in catalog for p in parts):
             return parts
-        if catalog and folder not in catalog:
-            # Hyphenated name not in catalog and parts aren't all cameras — still
-            # treat whole folder as one owner when any catalog cam equals folder
-            # (already handled) or when no catalog at all.
-            return parts
-        return parts
+        # Hyphenated name not fully resolvable as composite (e.g. Cam-2 when
+        # "Cam"/"2" are not catalog cameras) — treat whole folder as one owner.
+        return [folder]
     return [folder]
 
 
+def _read_owner_sidecar(abs_file: Path) -> str | None:
+    """Explicit writer manifest: `<file>.owner` contains a single camera name."""
+    try:
+        sidecar = Path(str(abs_file) + ".owner")
+        if not sidecar.is_file():
+            return None
+        name = sidecar.read_text(encoding="utf-8").strip().splitlines()[0].strip()
+        return name or None
+    except Exception:
+        return None
+
+
+def _owner_from_image_filename(filename: str) -> str | None:
+    """Parse source from detection/event image names.
+
+    Detection: ``{ts}_{source_name}_{preview|frame}.jpeg``
+    Zone/attr events: ``{ts}_src{id}_...`` — returns None (id only; use sidecar).
+    """
+    stem = Path(filename).stem
+    parts = stem.split("_")
+    if len(parts) < 3:
+        return None
+    # Last token is image_type (preview/frame); source is everything between ts and type.
+    # Timestamp forms: YYYY-MM-DD_HH-MM-SS.ffffff or YYYY-MM-DD_HH-MM-SS-ffffff
+    # Practical: drop trailing type, take last remaining segment that is not srcN.
+    tail = parts[-1].lower()
+    if tail not in {"preview", "frame", "image"}:
+        return None
+    mid = parts[2:-1] if len(parts) > 3 else []
+    # Common layout: date, time, source..., type  → source may contain hyphens as one token
+    # after split on '_': e.g. 2026-01-01_12-00-00.1_Cam-2_preview → ['2026-01-01','12-00-00.1','Cam-2','preview']
+    if len(parts) >= 4:
+        candidate = parts[-2]
+        if candidate.startswith("src") and candidate[3:].isdigit():
+            return None
+        if candidate and candidate not in {".", ".."}:
+            return candidate
+    return None
+
+
+def _owners_from_image_file(
+    parts: tuple[str, ...] | list[str],
+    *,
+    data_root_hint: Path | None = None,
+) -> list[str] | None:
+    """Resolve image owners: sidecar → filename → metadata journal join."""
+    if not parts:
+        return None
+    filename = parts[-1]
+    # Sidecar next to file under data root when we can resolve it.
+    if data_root_hint is not None:
+        try:
+            abs_file = data_root_hint.joinpath(*parts)
+            owner = _read_owner_sidecar(abs_file)
+            if owner:
+                return [owner]
+        except Exception:
+            pass
+    parsed = _owner_from_image_filename(filename)
+    if parsed:
+        return [parsed]
+    # Fall back to Detections day metadata join when path looks like Detections/...
+    try:
+        di = list(parts).index("Detections")
+        return _owners_from_detection_images(parts, di)
+    except ValueError:
+        pass
+    # Events day metadata: best-effort same journal fields if present under Events
+    try:
+        ei = list(parts).index("Events")
+        date_folder = parts[ei + 1] if ei + 1 < len(parts) else ""
+        owner = _lookup_event_image_owner(date_folder, filename)
+        if owner:
+            return [owner]
+    except Exception:
+        pass
+    return None
+
+
 def _owners_from_detection_images(parts: tuple[str, ...] | list[str], start: int) -> list[str] | None:
-    """Detections/<date>/Images/<subdir>/file — owner via journal metadata join."""
+    """Detections/<date>/Images/<subdir>/file — owner via sidecar/filename/journal."""
     # parts[start]=Detections, start+1=date, start+2=Images, start+3=subdir, start+4=file
     if start + 4 >= len(parts):
         return None
     if parts[start + 2] != "Images":
         return None
-    date_folder = parts[start + 1]
     filename = parts[-1]
+    # Prefer filename parse (writer embeds source_name).
+    parsed = _owner_from_image_filename(filename)
+    if parsed:
+        return [parsed]
+    date_folder = parts[start + 1]
     owner = _lookup_detection_image_owner(date_folder, filename)
     if owner:
         return [owner]
+    return None
+
+
+def _lookup_event_image_owner(date_folder: str, filename: str) -> str | None:
+    """Best-effort: match preview/frame path basename in Events day JSON journals."""
+    try:
+        from evileye.api.core import playback_metadata_service as meta
+
+        params = meta._load_params_for_run(None)
+        base = meta._playback_data_dir(params)
+        meta_dir = base / "Events" / date_folder / "Metadata"
+        basename = Path(filename).name
+        if not meta_dir.is_dir():
+            return None
+        for path in meta_dir.glob("*.json"):
+            try:
+                import json
+
+                data = json.loads(path.read_text(encoding="utf-8"))
+            except Exception:
+                continue
+            items = data if isinstance(data, list) else data.get("events") or data.get("items") or []
+            if not isinstance(items, list):
+                continue
+            for raw in items:
+                if not isinstance(raw, dict):
+                    continue
+                candidates = [
+                    raw.get("preview_path"),
+                    raw.get("frame_path"),
+                    raw.get("image_filename"),
+                ]
+                for c in candidates:
+                    if not c:
+                        continue
+                    if Path(str(c)).name == basename or str(c).endswith(basename):
+                        name = str(
+                            raw.get("source_name")
+                            or raw.get("source")
+                            or (raw.get("source_names") or [None])[0]
+                            or ""
+                        ).strip()
+                        if name:
+                            return name
+    except Exception:
+        return None
     return None
 
 
@@ -140,7 +266,11 @@ def _lookup_detection_image_owner(date_folder: str, filename: str) -> str | None
     return None
 
 
-def _cameras_from_parts(parts: tuple[str, ...] | list[str]) -> list[str] | None:
+def _cameras_from_parts(
+    parts: tuple[str, ...] | list[str],
+    *,
+    data_root: Path | None = None,
+) -> list[str] | None:
     for i, part in enumerate(parts):
         if part == "Streams" and i + 2 < len(parts):
             return _split_stream_folder(parts[i + 2])
@@ -156,12 +286,8 @@ def _cameras_from_parts(parts: tuple[str, ...] | list[str]) -> list[str] | None:
             if folder == "Images" and i + 3 < len(parts):
                 cam_or_subdir = parts[i + 3]
                 if cam_or_subdir in _IMAGE_SUBDIRS:
-                    # Flat image dump — try metadata join via date
-                    date_folder = parts[i + 1] if i + 1 < len(parts) else ""
-                    return _owners_from_detection_images(
-                        ("Detections", date_folder, "Images") + tuple(parts[i + 3 :]),
-                        0,
-                    )
+                    # Flat image dump — sidecar / filename / Events metadata (not Detections).
+                    return _owners_from_image_file(parts, data_root_hint=data_root)
                 if cam_or_subdir and cam_or_subdir not in {".", "..", "Metadata"}:
                     return [cam_or_subdir]
                 return None
@@ -171,7 +297,10 @@ def _cameras_from_parts(parts: tuple[str, ...] | list[str]) -> list[str] | None:
         if part == "Detections" and i + 2 < len(parts):
             # Detections/<date>/Images/...
             if parts[i + 2] == "Images":
-                return _owners_from_detection_images(parts, i)
+                owners = _owners_from_detection_images(parts, i)
+                if owners:
+                    return owners
+                return _owners_from_image_file(parts, data_root_hint=data_root)
             # Detections/<date>/Metadata → forbidden via kind, not owners
             return None
     return None
@@ -183,7 +312,7 @@ def cameras_from_canonical(resolved: Path, data_root: Path) -> list[str] | None:
         rel = resolved.resolve().relative_to(data_root.resolve())
     except Exception:
         return None
-    return _cameras_from_parts(rel.parts)
+    return _cameras_from_parts(rel.parts, data_root=data_root.resolve())
 
 
 def classify_media_kind(resolved: Path, rel_parts: tuple[str, ...]) -> str:

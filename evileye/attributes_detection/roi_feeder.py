@@ -6,6 +6,7 @@ from queue import Queue, Full, Empty
 from typing import Any, Dict, List, Tuple
 
 from ..core.base_class import EvilEyeBase
+from ..core.dual_mode_processor import DualModeProcessor
 from ..core.frame import Frame
 from ..core.tracking_dto import ensure_tracking_result_list
 
@@ -17,11 +18,12 @@ from ..core.processor_base import (
 
 
 @EvilEyeBase.register("RoiFeeder")
-class RoiFeeder(EvilEyeBase):
-    """Lightweight processor that extracts ROI crops from tracked objects
+class RoiFeeder(DualModeProcessor):
+    """Lightweight processor that extracts ROI bbox coords from tracked objects.
 
-    Supports both thread and process execution modes via the
-    ``execution_mode`` configuration parameter
+    DualModeProcessor adoption (S1): process mode is forced to thread because
+    this stage only computes bounding boxes (no YOLO) — pickling full frames
+    would be pure RAM waste.
     """
 
     ResultType = Frame
@@ -76,8 +78,19 @@ class RoiFeeder(EvilEyeBase):
 
     def init_impl(self, **kwargs):
         if self.execution_mode == EXEC_MODE_PROCESS:
-            self._init_process_mode()
+            self.logger.warning(
+                "RoiFeeder: execution_mode=process ignored (bbox-only stage); using thread"
+            )
+            self.execution_mode = EXEC_MODE_THREAD
+        return self._init_thread_mode(**kwargs)
+
+    def _init_thread_mode(self, **kwargs):
+        self.processing_thread = threading.Thread(target=self._process_impl)
         return True
+
+    def _init_process_mode(self, **kwargs):
+        # Not used — process forced to thread in init_impl.
+        return self._init_thread_mode(**kwargs)
 
     def _init_process_mode(self):
         from ..core.mp_control import MpControl, parse_mp_restart_policy

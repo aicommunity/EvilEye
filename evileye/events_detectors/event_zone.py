@@ -4,11 +4,55 @@ from evileye.core.event_time import datetime_from_ts
 
 
 def _copy_frame_image(frame):
+    """Snapshot frame pixels for zone enter/exit.
+
+    Stores a compact JPEG buffer on the copy and lazily decodes ``.image`` so
+    long-lived sticky zone events do not retain full BGR copies (audit A5).
+    """
     if frame is None:
         return None
     if not hasattr(frame, "image") or frame.image is None:
         return frame
     copied = copy.copy(frame)
+    try:
+        import cv2
+        import numpy as np
+
+        ok, buf = cv2.imencode(
+            ".jpg",
+            frame.image,
+            [int(cv2.IMWRITE_JPEG_QUALITY), 85],
+        )
+        if ok:
+            jpeg = np.asarray(buf).tobytes()
+            copied._zone_jpeg_bytes = jpeg
+            copied.image = None  # lazy via property helper below
+
+            class _LazyJpegFrame:
+                __slots__ = ("_jpeg", "_decoded", "_proxy")
+
+                def __init__(self, proxy, jpeg_bytes):
+                    self._proxy = proxy
+                    self._jpeg = jpeg_bytes
+                    self._decoded = None
+
+                def __getattr__(self, name):
+                    return getattr(self._proxy, name)
+
+                @property
+                def image(self):
+                    if self._decoded is None:
+                        arr = np.frombuffer(self._jpeg, dtype=np.uint8)
+                        self._decoded = cv2.imdecode(arr, cv2.IMREAD_COLOR)
+                    return self._decoded
+
+                @image.setter
+                def image(self, value):
+                    self._decoded = value
+
+            return _LazyJpegFrame(copied, jpeg)
+    except Exception:
+        pass
     copied.image = frame.image.copy()
     return copied
 
@@ -49,7 +93,7 @@ class ZoneEvent(Event):
             self.time_left = None
             self.video_path_entered = None
             self.video_path_left = None
-            # Sticky copy for later exit if last_image is cleared before UPDATE.
+            # Sticky compact snapshot for later exit if last_image is cleared before UPDATE.
             if self.img_entered is not None:
                 try:
                     obj._zone_event_sticky_image = self.img_entered
@@ -67,7 +111,12 @@ class ZoneEvent(Event):
             if self.img_left is None:
                 sticky = getattr(obj, "_zone_event_sticky_image", None)
                 if sticky is not None and getattr(sticky, "image", None) is not None:
-                    self.img_left = _copy_frame_image(sticky)
+                    self.img_left = sticky
+            # Release sticky after exit snapshot is taken.
+            try:
+                obj._zone_event_sticky_image = None
+            except Exception:
+                pass
 
         self.long_term = True
 

@@ -8,8 +8,17 @@ from collections import defaultdict
 
 
 class ProcessorStep(ProcessorBase):
-    def __init__(self, processor_name, class_name, num_processors: int, order: int):
-        super().__init__(processor_name, class_name, num_processors, order)
+    def __init__(
+        self,
+        processor_name,
+        class_name,
+        num_processors: int,
+        order: int,
+        class_names: list[str] | None = None,
+    ):
+        super().__init__(
+            processor_name, class_name, num_processors, order, class_names=class_names
+        )
         # Diagnostics for output freshness at stage level.
         # We only need trackers->(mt trackers) freshness, so keep it gated by processor_name.
         self._perf_diag_env = os.getenv("EVILEYE_PERF_DIAG", "").strip().lower() in {"1", "true", "yes", "on"}
@@ -177,7 +186,10 @@ class ProcessorStep(ProcessorBase):
                 return input_item
             from .frame_transport import SharedFrameTransport
             transport = SharedFrameTransport()
-            frame.image = transport.consume_frame(frame_handle)
+            materialized = transport.consume_frame(frame_handle)
+            if materialized is None or getattr(materialized, "size", 0) == 0:
+                return input_item
+            frame.image = materialized
             try:
                 setattr(frame, "frame_handle", None)
                 setattr(frame, "frame_ref", None)

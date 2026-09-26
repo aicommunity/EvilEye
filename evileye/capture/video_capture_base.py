@@ -460,7 +460,7 @@ class VideoCaptureBase(EvilEyeBase):
                     return None
                 meta = payload.get("frame_meta", {}) or {}
                 image = self._frame_transport.consume_frame(handle)
-                if image is None:
+                if image is None or getattr(image, "size", 0) == 0:
                     return None
                 if meta.get("kind") == "full_frame":
                     self._latest_full_frame = image

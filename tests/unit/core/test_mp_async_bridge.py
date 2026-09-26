@@ -68,6 +68,31 @@ def test_cap_evict_calls_release_on_drop():
     assert bridge.diag_pending_evict() == 1
     assert released == ["cap0"]
     assert bridge.depth() == 2
+    # FIFO parity: queue depth must match pending after cap-evict.
+    assert ctrl.input_queue.qsize() == bridge.depth()
+    assert list(ctrl.input_queue.queue) == ["p1", "p2"]
+
+
+def test_cap_evict_queue_depth_matches_pending():
+    """Regression C1: 3 enqueue / cap=2 → queue depth == pending depth."""
+    released: list[str] = []
+
+    def release(job: DetectorPendingJob) -> None:
+        released.append(job.capture_image)
+
+    ctrl = _FakeMpControl()
+    bridge = MpAsyncBridge(
+        pending_cap=2,
+        mp_control=ctrl,
+        release_on_drop=release,
+        logger=MagicMock(),
+    )
+    for i in range(3):
+        assert bridge.enqueue(f"p{i}", DetectorPendingJob([], f"cap{i}", [])) is True
+    assert ctrl.input_queue.qsize() == bridge.depth() == 2
+    assert "cap0" in released
+    # Released handle must not remain readable by a worker.
+    assert "p0" not in list(ctrl.input_queue.queue)
 
 
 def test_put_dropped_releases_job():
@@ -107,3 +132,26 @@ def test_clear_releases_all():
     bridge.clear()
     assert bridge.depth() == 0
     assert set(released) == {"a", "b"}
+
+
+def test_overflow_evict_keeps_queue_pending_parity():
+    released: list[str] = []
+
+    def release(job: DetectorPendingJob) -> None:
+        released.append(job.capture_image)
+
+    ctrl = _FakeMpControl(input_maxsize=2)
+    bridge = MpAsyncBridge(
+        pending_cap=0,
+        mp_control=ctrl,
+        release_on_drop=release,
+        logger=MagicMock(),
+    )
+    assert bridge.enqueue("p0", DetectorPendingJob([], "cap0", [])) is True
+    assert bridge.enqueue("p1", DetectorPendingJob([], "cap1", [])) is True
+    # Third put hits Full → drop queue head + pending head, then accept p2.
+    assert bridge.enqueue("p2", DetectorPendingJob([], "cap2", [])) is True
+    assert bridge.depth() == 2
+    assert ctrl.input_queue.qsize() == 2
+    assert list(ctrl.input_queue.queue) == ["p1", "p2"]
+    assert "cap0" in released

@@ -293,21 +293,15 @@ class VideoThread(QThread):
             except Exception:
                 return 0
 
-            # Create a shallow copy of frame and copy only the image array (numpy array)
-            # This is much more memory-efficient than deepcopy
+            # Create a shallow copy of frame and clone pixels before overlay so
+            # burn-in drawing cannot mutate the pipeline / clean frame (audit A4).
             from ..capture.video_capture_base import CaptureImage
-            display_frame = CaptureImage()
-            display_frame.source_id = frame.source_id
-            display_frame.time_stamp = frame.time_stamp
-            display_frame.frame_id = frame.frame_id
-            display_frame.current_video_frame = frame.current_video_frame
-            display_frame.current_video_position = frame.current_video_position
-            # IMPORTANT: frame.image is already an owning numpy array (copied in capture).
-            # Avoid extra copies here to reduce RSS spikes when streams connect / restart.
-            display_frame.image = frame.image
+            from .preview_render import clone_capture_image
+
+            display_frame = clone_capture_image(frame)
 
             # Store clean image in thread-safe storage (before any drawing)
-            # Avoid copying: keep a reference to the latest clean frame.
+            # Keep a reference to the original (non-overlay) frame pixels.
             self.clean_image_mutex.lock()
             self.last_clean_image = frame.image
             self.clean_image_mutex.unlock()

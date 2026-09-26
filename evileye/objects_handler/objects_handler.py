@@ -620,7 +620,8 @@ class ObjectsHandler(EvilEyeBase):
         if track_id is None:
             return
         try:
-            self.attr_manager.remove_track(int(track_id))
+            source_id = int(obj.source_id) if getattr(obj, "source_id", None) is not None else None
+            self.attr_manager.remove_track(int(track_id), source_id=source_id)
         except Exception:
             pass
 
@@ -684,8 +685,9 @@ class ObjectsHandler(EvilEyeBase):
                 self.logger.error(f"Labeling data saving error for lost object: {e}")
 
         self._remove_track_attributes(active_obj)
-        # Keep last_image until pool release / lost-list drop so zone exit events
-        # and DB adapters can still snapshot pixels (Image is None regress).
+        # Drop full-res last_image after persist; zone sticky keeps its own
+        # compact JPEG snapshot if an enter event is still open (audit A6).
+        active_obj.last_image = None
         self.lost_objs.objects.append(active_obj)
 
     def _expire_stale_source_objects(self, now: float, *, exclude_source_id: int | None = None) -> None:
@@ -730,17 +732,22 @@ class ObjectsHandler(EvilEyeBase):
                 attr_results_source = tracking_results.attr_results
 
             if attr_results_source:
+                source_id = int(image.source_id) if getattr(image, "source_id", None) is not None else None
                 for track_id, attr_results in attr_results_source.items():
                     if self.attr_manager:
                         for attr_name, attr_info in attr_results.items():
                             detected_now = attr_info.get('detected_now', False)
                             confidence = attr_info.get('confidence', 0.0)
-                            self.attr_manager.update(track_id, attr_name, detected_now, confidence, current_ts, dt_ms)
+                            self.attr_manager.update(
+                                track_id, attr_name, detected_now, confidence, current_ts, dt_ms,
+                                source_id=source_id,
+                            )
 
             for active_obj in self.active_objs.objects:
                 # Update attributes for active objects
                 if self.attr_manager:
-                    attr_states = self.attr_manager.get_states(active_obj.track.track_id)
+                    sid = int(active_obj.source_id) if active_obj.source_id is not None else None
+                    attr_states = self.attr_manager.get_states(active_obj.track.track_id, source_id=sid)
                     active_obj.attributes = {name: state.__dict__ for name, state in attr_states.items()}
 
                 # Ensure all attributes are present for primary objects
@@ -915,11 +922,19 @@ class ObjectsHandler(EvilEyeBase):
 
             # Process attribute results from AttributeClassifier
             if hasattr(tracking_results, 'attr_results') and tracking_results.attr_results:
+                source_id = (
+                    int(tracking_results.source_id)
+                    if getattr(tracking_results, "source_id", None) is not None
+                    else None
+                )
                 for track_id, attr_results in tracking_results.attr_results.items():
                     for attr_name, attr_info in attr_results.items():
                         detected_now = attr_info.get('detected_now', False)
                         confidence = attr_info.get('confidence', 0.0)
-                        self.attr_manager.update(track_id, attr_name, detected_now, confidence, now_ts, dt_ms)
+                        self.attr_manager.update(
+                            track_id, attr_name, detected_now, confidence, now_ts, dt_ms,
+                            source_id=source_id,
+                        )
 
             # Сохранить снимок состояний атрибутов в объекты
             for obj in self.active_objs.objects:
@@ -927,7 +942,8 @@ class ObjectsHandler(EvilEyeBase):
                     continue
 
                 # Сохранить снимок состояний в объект
-                attr_states = self.attr_manager.get_states(obj.track.track_id)
+                sid = int(obj.source_id) if obj.source_id is not None else None
+                attr_states = self.attr_manager.get_states(obj.track.track_id, source_id=sid)
                 obj.attributes = {k: vars(v) for k, v in attr_states.items()}
 
                 # Убедиться, что все настроенные атрибуты присутствуют в объекте
@@ -1072,7 +1088,7 @@ class ObjectsHandler(EvilEyeBase):
                 preview_width = int(self.db_params.get('preview_width', 300))
                 preview_height = int(self.db_params.get('preview_height', 150))
                 preview = ImageStorageService.resize_preserving_aspect(
-                    image.image.copy(),
+                    image.image,
                     preview_width,
                     preview_height,
                 )
@@ -1083,6 +1099,20 @@ class ObjectsHandler(EvilEyeBase):
 
             if not saved:
                 self.logger.error(f'ERROR: Failed to save image file {full_img_path}')
+            else:
+                # Explicit ACL manifest for media_access (H4).
+                try:
+                    source_name = ''
+                    for camera in self.cameras_params or []:
+                        if obj.source_id in camera.get('source_ids', []):
+                            id_idx = camera['source_ids'].index(obj.source_id)
+                            source_name = camera['source_names'][id_idx]
+                            break
+                    if source_name:
+                        with open(full_img_path + ".owner", "w", encoding="utf-8") as fh:
+                            fh.write(source_name + "\n")
+                except Exception:
+                    pass
 
         except Exception as e:
             # Keep as error (should be rare after guards), but avoid cascading failures.

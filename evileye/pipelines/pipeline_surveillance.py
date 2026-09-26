@@ -111,12 +111,18 @@ class PipelineSurveillance(PipelineProcessors):
         num_sources = len(params)
         # Get class_name from config, default to VideoCaptureOpencv
         class_name = params[0].get("type", "VideoCaptureOpencv") if params else "VideoCaptureOpencv"
+        class_names = [p.get("type", class_name) if isinstance(p, dict) else class_name for p in params]
         if not any(param.get("type") for param in params):
             self.logger.warning(
                 f"Warning: 'type' parameter not found in sources configuration. Using default: {class_name}")
 
-        sources_proc = ProcessorSource(processor_name="sources", class_name=class_name, num_processors=num_sources,
-                                       order=0)
+        sources_proc = ProcessorSource(
+            processor_name="sources",
+            class_name=class_name,
+            num_processors=num_sources,
+            order=0,
+            class_names=class_names,
+        )
 
         # Merge credentials if available
         if credentials and isinstance(credentials, dict):
@@ -163,12 +169,18 @@ class PipelineSurveillance(PipelineProcessors):
         num_det = len(params)
         # Get class_name from config, default to ObjectDetectorYolo
         class_name = params[0].get("type", "ObjectDetectorYolo") if params else "ObjectDetectorYolo"
+        class_names = [p.get("type", class_name) if isinstance(p, dict) else class_name for p in params]
         if not any(param.get("type") for param in params):
             self.logger.warning(
                 f"Warning: 'type' parameter not found in detectors configuration. Using default: {class_name}")
 
-        detectors_proc = ProcessorStep(processor_name="detectors", class_name=class_name, num_processors=num_det,
-                                       order=2)
+        detectors_proc = ProcessorStep(
+            processor_name="detectors",
+            class_name=class_name,
+            num_processors=num_det,
+            order=2,
+            class_names=class_names,
+        )
         detectors_proc.set_params(params)
         detectors_proc.init()
         self._add_processor(detectors_proc)
@@ -187,12 +199,18 @@ class PipelineSurveillance(PipelineProcessors):
         num_trackers = len(params)
         # Get class_name from config, default to ObjectTrackingBotsort
         class_name = params[0].get("type", "ObjectTrackingBotsort") if params else "ObjectTrackingBotsort"
+        class_names = [p.get("type", class_name) if isinstance(p, dict) else class_name for p in params]
         if not any(param.get("type") for param in params):
             self.logger.warning(
                 f"Warning: 'type' parameter not found in trackers configuration. Using default: {class_name}")
 
-        trackers_proc = ProcessorStep(processor_name="trackers", class_name=class_name, num_processors=num_trackers,
-                                      order=3)
+        trackers_proc = ProcessorStep(
+            processor_name="trackers",
+            class_name=class_name,
+            num_processors=num_trackers,
+            order=3,
+            class_names=class_names,
+        )
         trackers_proc.set_params(params)
         trackers_proc.init(encoders=self.encoders)
         self._add_processor(trackers_proc)

@@ -9,6 +9,7 @@ Last reviewed: doc audit + MP refactor, 2026-05-22
 | TD-MP-401 | Capture triple-buffer reduction spike | capture | R4 | Deferred | P2 |
 | TD-MP-501 | module_capabilities JSON S4 | configs | — | Deferred | P3 |
 | TD-DOC-001 | `DualModeProcessor` adoption by all modules (S1) | core/dual_mode_processor.py | doc audit | Backlog | P3 |
+| TD-DOC-001b | RoiFeeder adopts DualModeProcessor (reference) | attributes_detection/roi_feeder.py | audit 2026-09-26 | Done | P3 |
 | TD-DOC-002 | `validate_config` JSON `stage_kind` (S6) | scripts/validate_config.py | doc audit | Backlog | P3 |
 
 ## In progress

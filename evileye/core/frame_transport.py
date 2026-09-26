@@ -69,12 +69,16 @@ class SharedFrameTransport:
         except Exception:
             pass
 
-    def consume_frame(self, handle: FrameHandle) -> np.ndarray:
-        """Copy pixels from a foreign handle and unlink the segment (IPC consumer)."""
+    def consume_frame(self, handle: FrameHandle) -> Optional[np.ndarray]:
+        """Copy pixels from a foreign handle and unlink the segment (IPC consumer).
+
+        Returns ``None`` when the SHM segment is missing or empty so callers can
+        drop the frame instead of feeding a zero-size array into OpenCV/YOLO.
+        """
         try:
             shm = shared_memory.SharedMemory(name=handle.shm_name)
         except FileNotFoundError:
-            return np.array([])
+            return None
         try:
             view = np.ndarray(
                 handle.shape, dtype=np.dtype(handle.dtype), buffer=shm.buf
@@ -89,6 +93,8 @@ class SharedFrameTransport:
                 shm.close()
             except Exception:
                 pass
+        if image is None or getattr(image, "size", 0) == 0:
+            return None
         return image
 
     def release_frame(self, handle: FrameHandle) -> None:

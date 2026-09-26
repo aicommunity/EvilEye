@@ -33,6 +33,7 @@ class MpControl:
             no_restart_exit_codes=None,
             fatal_exit_codes=None,
             on_worker_fatal_exit: Optional[Callable[[int, int, str], None]] = None,
+            on_before_worker_restart: Optional[Callable[[int, int | None, str], None]] = None,
     ):
         self.name = name
         self.logger = get_module_logger(f"mp_control.{name}")
@@ -41,6 +42,7 @@ class MpControl:
         self.no_restart_exit_codes = set(no_restart_exit_codes or {-15})
         self.fatal_exit_codes = set(fatal_exit_codes or {MP_EXIT_CUDA_OOM})
         self.on_worker_fatal_exit = on_worker_fatal_exit
+        self.on_before_worker_restart = on_before_worker_restart
         self._fatal_shutdown = False
         self._mp_ctx = get_spawn_context()
 
@@ -146,6 +148,28 @@ class MpControl:
 
     def output_empty(self):
         return self.output_queue.empty()
+
+    @staticmethod
+    def _drain_queue(q) -> int:
+        """Drop all items from a multiprocessing/queue.Queue. Returns count dropped."""
+        dropped = 0
+        while True:
+            try:
+                q.get_nowait()
+                dropped += 1
+            except Exception:
+                break
+        return dropped
+
+    def drain_ipc_queues(self) -> tuple[int, int]:
+        """Clear input/output queues (used before worker restart to reset FIFO)."""
+        inn = self._drain_queue(self.input_queue)
+        out = self._drain_queue(self.output_queue)
+        if inn or out:
+            self.logger.warning(
+                "Drained IPC queues before restart: input=%s output=%s", inn, out
+            )
+        return inn, out
 
     # -- Lifecycle -------------------------------------------------------
 
@@ -292,6 +316,27 @@ class MpControl:
                         f"restarting"
                     )
                     try:
+                        # Reset FIFO pairing before a new worker reads orphaned
+                        # payloads or drain pairs results with stale pending jobs.
+                        self.drain_ipc_queues()
+                        # Clear stop_event so a reused worker Event does not
+                        # immediately halt the replacement process.
+                        try:
+                            w = self.workers_list[i]
+                            if hasattr(w, "_stop_event") and w._stop_event.is_set():
+                                w._stop_event.clear()
+                        except Exception:
+                            pass
+                        callback = self.on_before_worker_restart
+                        if callback is not None:
+                            try:
+                                callback(i, p.exitcode, self.name)
+                            except Exception as cb_exc:
+                                self.logger.error(
+                                    "on_before_worker_restart failed: %s",
+                                    cb_exc,
+                                    exc_info=True,
+                                )
                         w = self.workers_list[i]
                         new_p = self._mp_ctx.Process(
                             target=run_mp_worker_entry,

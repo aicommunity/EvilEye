@@ -1,20 +1,26 @@
 from __future__ import annotations
 
-from typing import Dict, Optional
+from typing import Dict, Optional, Tuple
 
 from .attribute_state import AttributeState
+
+# Key: (source_id, track_id). source_id may be None for legacy single-camera callers.
+AttrKey = Tuple[Optional[int], int]
 
 
 class AttributeManager:
     """
-    Агрегирует атрибуты для первичных объектов по track_id.
+    Агрегирует атрибуты для первичных объектов по (source_id, track_id).
     Реализует FSM: none -> exists -> lost -> none.
     Порогирование по confidence и суммарному времени (min/confirm).
+
+    BoT-SORT track_id is per-camera; without source_id, multi-camera setups
+    collide attribute state across sources.
     """
 
     def __init__(self, thresholds_conf: Dict[str, float] = None, thresholds_time: Dict[str, Dict[str, int]] = None,
                  ema_alpha: float = 0.6):
-        self._attr_by_track: Dict[int, Dict[str, AttributeState]] = {}
+        self._attr_by_track: Dict[AttrKey, Dict[str, AttributeState]] = {}
         self._thr_conf = thresholds_conf or {}
         self._thr_time = thresholds_time or {}  # {attr: {min_time_ms, confirm_time_ms}}
         self._ema_alpha = ema_alpha
@@ -22,11 +28,26 @@ class AttributeManager:
         self._primary_by_id = []
         self._configured_attrs = []
 
-    def get_states(self, track_id: int) -> Dict[str, AttributeState]:
-        return self._attr_by_track.get(track_id, {})
+    @staticmethod
+    def _key(track_id: int, source_id: Optional[int] = None) -> AttrKey:
+        sid = int(source_id) if source_id is not None else None
+        return (sid, int(track_id))
 
-    def update(self, track_id: int, attr_name: str, detected: bool, confidence: float, now_ts: float, dt_ms: int):
-        states = self._attr_by_track.setdefault(track_id, {})
+    def get_states(self, track_id: int, source_id: Optional[int] = None) -> Dict[str, AttributeState]:
+        return self._attr_by_track.get(self._key(track_id, source_id), {})
+
+    def update(
+        self,
+        track_id: int,
+        attr_name: str,
+        detected: bool,
+        confidence: float,
+        now_ts: float,
+        dt_ms: int,
+        source_id: Optional[int] = None,
+    ):
+        key = self._key(track_id, source_id)
+        states = self._attr_by_track.setdefault(key, {})
         state = states.get(attr_name)
         if state is None:
             state = states[attr_name] = AttributeState(name=attr_name)
@@ -73,9 +94,10 @@ class AttributeManager:
             elif decision_state == 'none' and old_state != 'none':
                 state.reset_presence()
 
-    def remove_track(self, track_id: int):
-        if track_id in self._attr_by_track:
-            del self._attr_by_track[track_id]
+    def remove_track(self, track_id: int, source_id: Optional[int] = None):
+        key = self._key(track_id, source_id)
+        if key in self._attr_by_track:
+            del self._attr_by_track[key]
 
     def _ema(self, new_value: float, prev_value: float) -> float:
         return self._ema_alpha * new_value + (1.0 - self._ema_alpha) * prev_value

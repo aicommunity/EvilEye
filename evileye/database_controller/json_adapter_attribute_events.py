@@ -2,7 +2,7 @@ import os
 from evileye.core.event_time import date_folder_from_ts, require_datetime
 from .db_adapter import DatabaseAdapterBase
 from .json_event_io import append_json_record
-from .event_image_paths import ensure_event_image_dirs
+from .event_image_paths import ensure_event_image_dirs, owner_from_event, write_owner_sidecar
 import copy
 import cv2
 
@@ -140,6 +140,9 @@ class JsonAdapterAttributeEvents(DatabaseAdapterBase):
                 preview = ImageStorageService.resize_preserving_aspect(image_wrap.image.copy(), 320, 240)
                 cv2.imwrite(preview_abs, preview)
                 cv2.imwrite(frame_abs, image_wrap.image)
+            owner = owner_from_event(event)
+            write_owner_sidecar(preview_abs, owner)
+            write_owner_sidecar(frame_abs, owner)
             # Пути относительно image_dir
             return preview_rel, frame_rel
         except Exception:
