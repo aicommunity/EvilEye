@@ -24,7 +24,11 @@ def reload_web_cmd(
     force_build: bool = typer.Option(False, "--force-build", help="Force SPA rebuild"),
     with_pipeline: bool = typer.Option(False, "--with-pipeline", help="Restart pipeline after web reload"),
     config: Optional[str] = typer.Option(None, "--config", help="Pipeline config for restart"),
-    release: bool = typer.Option(True, "--release/--no-release", help="Clear watchdog hold after pipeline start"),
+    release: bool = typer.Option(
+        True,
+        "--release/--no-release",
+        help="Clear watchdog manual stop hold after pipeline start (default: clear)",
+    ),
 ) -> None:
     from evileye.stack_control import reload_web
 
@@ -63,28 +67,41 @@ def reload_pipeline_cmd(
         None,
         help="Config path/name (optional: unique running pipeline or site profile)",
     ),
-    detach: bool = typer.Option(True, "--detach/--foreground"),
+    detach: bool = typer.Option(
+        True,
+        "--detach/--foreground",
+        help="Detach after restart (default). --foreground waits for pipeline exit.",
+    ),
+    hold: bool = typer.Option(
+        True,
+        "--hold/--no-hold",
+        help="Set restart grace during stop/start (not a 1h manual stop). Default: on.",
+    ),
+    gui: Optional[bool] = typer.Option(None, "--gui/--no-gui"),
 ) -> None:
-    """Restart pipeline only. CONFIG optional when one run is active or profile is set."""
-    from evileye.stack_control import (
-        AmbiguousPipelineConfigError,
-        pipeline_restart,
-        require_pipeline_config,
-    )
+    """Restart pipeline only (alias of `evileye pipeline restart`)."""
+    from evileye.cli_commands.pipeline_common import resolve_and_restart_pipeline
+    from evileye.stack_control import AmbiguousPipelineConfigError
 
     try:
-        resolved = require_pipeline_config(
-            Path.cwd(),
-            explicit=config,
-            allow_running=True,
+        spawn = resolve_and_restart_pipeline(
+            explicit_config=config,
+            site_dir=Path.cwd(),
+            hold=hold,
+            detach=detach,
+            gui=gui,
         )
-        spawn = pipeline_restart(resolved, site_dir=Path.cwd(), hold=True, detach=detach)
     except AmbiguousPipelineConfigError as exc:
         console.print(f"[red]{exc}[/red]")
         raise typer.Exit(1)
     except Exception as exc:
         console.print(f"[red]{exc}[/red]")
         raise typer.Exit(1)
+
+    if spawn.mode == "direct-foreground":
+        code = 0 if spawn.exit_code is None else int(spawn.exit_code)
+        raise typer.Exit(code)
+
     console.print(
         f"[green]Pipeline reloaded[/green] pid={spawn.pid} mode={spawn.mode} config={spawn.config_path}"
     )

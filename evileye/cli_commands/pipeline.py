@@ -43,7 +43,7 @@ def pipeline_status() -> None:
 def pipeline_stop(
     config: Optional[str] = typer.Option(None, "--config", help="Stop only this config"),
     all_runs: bool = typer.Option(False, "--all", help="Stop all pipeline runs"),
-    hold: bool = typer.Option(False, "--hold", help="Suppress watchdog auto-restart"),
+    hold: bool = typer.Option(False, "--hold", help="Suppress watchdog auto-restart (~1h manual stop)"),
     hold_seconds: int = typer.Option(3600, "--hold-seconds", help="Manual stop cooldown"),
 ) -> None:
     """Stop pipeline runs. Requires --config or --all."""
@@ -78,7 +78,11 @@ def pipeline_start_cmd(
         help="Config path/name (optional: uses production_config from site profile)",
     ),
     gui: Optional[bool] = typer.Option(None, "--gui/--no-gui", help="GUI mode for direct launch"),
-    detach: bool = typer.Option(False, "--detach", help="Launch in background scope (direct mode)"),
+    detach: bool = typer.Option(
+        False,
+        "--detach",
+        help="Launch in background (direct mode). Managed launches are always background.",
+    ),
     release: bool = typer.Option(False, "--release", help="Clear watchdog manual stop hold"),
     replace: bool = typer.Option(False, "--replace", help="Stop existing run for this config, then start"),
 ) -> None:
@@ -117,6 +121,13 @@ def pipeline_start_cmd(
     except Exception as exc:
         console.print(f"[red]Pipeline start failed: {exc}[/red]")
         raise typer.Exit(1)
+
+    if spawn.mode == "direct-foreground":
+        code = 0 if spawn.exit_code is None else int(spawn.exit_code)
+        if code != 0:
+            console.print(f"[red]Pipeline exited with code {code}[/red]")
+        raise typer.Exit(code)
+
     mode_hint = "managed" if should_use_managed_launch(Path.cwd()) else "direct"
     console.print(
         f"[green]Pipeline started[/green] mode={spawn.mode} ({mode_hint}) pid={spawn.pid} config={spawn.config_path}"
@@ -130,28 +141,28 @@ def pipeline_restart_cmd(
         help="Config path/name (optional: unique running pipeline or site profile)",
     ),
     gui: Optional[bool] = typer.Option(None, "--gui/--no-gui"),
-    detach: bool = typer.Option(True, "--detach/--foreground", help="Detach after restart"),
-    hold: bool = typer.Option(True, "--hold/--no-hold", help="Hold watchdog during restart"),
+    detach: bool = typer.Option(
+        True,
+        "--detach/--foreground",
+        help="Detach after restart (default). --foreground waits for pipeline exit.",
+    ),
+    hold: bool = typer.Option(
+        True,
+        "--hold/--no-hold",
+        help="Set restart grace during stop/start (not a 1h manual stop). Default: on.",
+    ),
 ) -> None:
     """Restart pipeline. CONFIG optional when one run is active or profile has production_config."""
-    from evileye.stack_control import (
-        AmbiguousPipelineConfigError,
-        pipeline_restart,
-        require_pipeline_config,
-    )
+    from evileye.cli_commands.pipeline_common import resolve_and_restart_pipeline
+    from evileye.stack_control import AmbiguousPipelineConfigError
 
     try:
-        resolved = require_pipeline_config(
-            Path.cwd(),
-            explicit=config,
-            allow_running=True,
-        )
-        spawn = pipeline_restart(
-            resolved,
+        spawn = resolve_and_restart_pipeline(
+            explicit_config=config,
             site_dir=Path.cwd(),
             hold=hold,
-            gui=gui,
             detach=detach,
+            gui=gui,
         )
     except AmbiguousPipelineConfigError as exc:
         console.print(f"[red]{exc}[/red]")
@@ -162,6 +173,13 @@ def pipeline_restart_cmd(
     except Exception as exc:
         console.print(f"[red]Pipeline restart failed: {exc}[/red]")
         raise typer.Exit(1)
+
+    if spawn.mode == "direct-foreground":
+        code = 0 if spawn.exit_code is None else int(spawn.exit_code)
+        if code != 0:
+            console.print(f"[red]Pipeline exited with code {code}[/red]")
+        raise typer.Exit(code)
+
     console.print(
         f"[green]Pipeline restarted[/green] mode={spawn.mode} pid={spawn.pid} config={spawn.config_path}"
     )

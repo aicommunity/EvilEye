@@ -931,11 +931,10 @@ def _deploy_monitor_assets(site_dir: Path) -> None:
             "Monitor scripts were deployed by `evileye deploy`.\n"
             "They are NOT started automatically.\n\n"
             "To enable the user systemd watchdog on this machine:\n"
-            f"  DEPLOY_DIR={site_dir} {scripts_dst / 'install_timer.sh'}\n\n"
+            f"  evileye watchdog-install --config configs/<your>.json\n"
+            f"  # or: DEPLOY_DIR={site_dir} {scripts_dst / 'install_timer.sh'}\n\n"
             "Manual health check:\n"
-            f"  DEPLOY_DIR={site_dir} {scripts_dst / 'health_check.sh'}\n\n"
-            "Cross-platform native watchdog (also works on Linux):\n"
-            "  evileye watchdog-install --config configs/single_video.json\n",
+            f"  DEPLOY_DIR={site_dir} {scripts_dst / 'health_check.sh'}\n",
             encoding="utf-8",
         )
 

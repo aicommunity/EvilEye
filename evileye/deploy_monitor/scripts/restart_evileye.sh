@@ -155,11 +155,13 @@ launch_evileye() {
     fi
 
     if command -v systemd-run >/dev/null 2>&1; then
-        # Transient scope survives watchdog oneshot exit even if KillMode regresses.
+        # Transient per-config scope survives watchdog oneshot exit even if KillMode regresses.
+        systemctl --user stop "${SCOPE_UNIT}.scope" 2>/dev/null || true
+        systemctl --user reset-failed "${SCOPE_UNIT}.scope" 2>/dev/null || true
+        # Also clear legacy global unit if present.
         systemctl --user stop evileye-run.scope 2>/dev/null || true
-        # Discard stale failed unit state if any.
         systemctl --user reset-failed evileye-run.scope 2>/dev/null || true
-        systemd-run --user --scope --unit=evileye-run \
+        systemd-run --user --scope --unit="$SCOPE_UNIT" --no-block --collect \
             --working-directory="$DEPLOY_DIR" \
             --setenv="DISPLAY=${DISPLAY:-}" \
             --setenv="XAUTHORITY=${XAUTHORITY:-}" \

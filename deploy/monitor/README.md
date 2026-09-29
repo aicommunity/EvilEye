@@ -24,7 +24,7 @@ deploy/monitor/                 # in the EvilEye git repo (source of truth)
 
 | Path | How to enable |
 |------|----------------|
-| Linux | `install_timer.sh` (systemd user timers) |
+| Linux | `evileye watchdog-install --config …` or `install_timer.sh` (systemd user timers) |
 | Windows native pip | `evileye watchdog-install` — see [WINDOWS_NATIVE.md](../../docs/WINDOWS_NATIVE.md) |
 | Windows Docker | `docker/windows/Install-Watchdog.ps1` — see [WINDOWS_DOCKER_DEPLOYMENT.md](../../docs/WINDOWS_DOCKER_DEPLOYMENT.md) |
 
@@ -76,7 +76,8 @@ systemctl --user status evileye-watchdog.timer
 
 1. **`KillMode=process`** on the watchdog oneshot — default `control-group` caused a
    multi-week restart storm (process started, service exited, systemd killed EvilEye).
-2. **`restart_evileye.sh`** launches via `systemd-run --user --scope` when available,
+2. **`restart_evileye.sh`** launches via `systemd-run --user --scope --unit=evileye-run-<stem>
+   --no-block` when available (per-config scope; legacy `evileye-run.scope` cleared on restart),
    and requires a boot marker (`GUI shown` / `Starting main application loop`) before
    declaring Restart OK.
 3. Paths are env-driven (`DEPLOY_DIR`, `MONITOR_DIR`, `CONFIG_NAME`) — no hardcoded
@@ -84,6 +85,8 @@ systemctl --user status evileye-watchdog.timer
 4. **`health_check.sh`** appends a memory snapshot to `monitor/memory_journal.jsonl`
    (RSS/PSS for parent, det-mp, tracker, host swap). Use it to distinguish leak vs
    high steady-state after config changes.
+5. Direct CLI detach (`evileye pipeline start --detach` / `pipeline restart`) uses the same
+   per-config scope naming so stop/restart of one config does not tear down another.
 
 ## Memory budget (≈62 GB hosts / poly-cameras)
 
