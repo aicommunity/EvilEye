@@ -4,7 +4,7 @@ from .database_controller_pg import DatabaseControllerPg
 from .db_adapter import DatabaseAdapterBase
 from .constants import QueryType, EventType
 import json
-from ..utils.utils import ObjectResultEncoder
+from ..utils.utils import dumps_object_data
 import copy
 import datetime
 import os
@@ -118,7 +118,7 @@ class DatabaseAdapterObjects(DatabaseAdapterBase):
                                'time_lost': obj.time_lost,
                                'lost_preview_path': '',
                                'lost_frame_path': '',
-                               'object_data': json.dumps(obj.__dict__, cls=ObjectResultEncoder)}
+                               'object_data': dumps_object_data(obj)}
 
         src_name = ''
         for camera in self.cameras_params:
@@ -157,7 +157,7 @@ class DatabaseAdapterObjects(DatabaseAdapterBase):
                              'lost_preview_path': None,
                              'frame_path': '',
                              'lost_frame_path': None,
-                             'object_data': json.dumps(obj.__dict__, cls=ObjectResultEncoder),
+                             'object_data': dumps_object_data(obj),
                              'project_id': self.db_controller.get_project_id(),
                              'job_id': self.db_controller.get_job_id(),
                              'camera_full_address': ''}

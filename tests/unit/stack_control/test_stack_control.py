@@ -274,6 +274,9 @@ def test_spawn_direct_systemd_run_includes_no_block(tmp_path: Path):
     assert "--no-block" in argv
     assert "--collect" in argv
     assert any(a.startswith("--unit=evileye-run-cam") for a in argv)
+    assert "-p" in argv
+    assert "MemoryMax=45G" in argv
+    assert "MemoryHigh=35G" in argv
 
 
 def test_spawn_direct_foreground_waits(tmp_path: Path):

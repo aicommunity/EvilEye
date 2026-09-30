@@ -560,6 +560,22 @@ def draw_debug_info(image: CaptureImage, debug_info: dict):
                                   (int(roi[0] + roi[2]), int(roi[1] + roi[3])), (255, 0, 0), thickness=9)
 
 
+# Keys that must never enter object_data JSON (images / zone sticky snapshots).
+OBJECT_DATA_EXCLUDE_KEYS = frozenset({
+    "_zone_event_sticky_image",
+    "_zone_jpeg_bytes",
+})
+
+
+def object_data_as_dict(obj) -> dict:
+    """Build a JSON-safe dict from an ObjectResult-like ``__dict__``.
+
+    Drops image/sticky keys so LazyJpegFrame / Frame never hit the encoder.
+    """
+    raw = getattr(obj, "__dict__", None) or {}
+    return {k: v for k, v in raw.items() if k not in OBJECT_DATA_EXCLUDE_KEYS}
+
+
 class ObjectResultEncoder(json.JSONEncoder):
     def default(self, obj):
         if isinstance(obj, (datetime.datetime, datetime.date, datetime.time)):
@@ -575,12 +591,25 @@ class ObjectResultEncoder(json.JSONEncoder):
             if isinstance(obj, ObjectResultHistory):
                 return obj.__dict__
         # Frame is the canonical type; CaptureImage is a backward-compat alias.
-        if type(obj).__name__ in ("CaptureImage", "Frame"):
+        # LazyJpegFrame is the zone sticky JPEG proxy (must not fail DB inserts).
+        if type(obj).__name__ in ("CaptureImage", "Frame", "LazyJpegFrame", "_LazyJpegFrame"):
             return None
         if type(obj).__name__ == "SCTrack":
             return None
+        try:
+            from evileye.events_detectors.event_zone import LazyJpegFrame
+
+            if isinstance(obj, LazyJpegFrame):
+                return None
+        except Exception:
+            pass
 
         return super().default(obj)
+
+
+def dumps_object_data(obj) -> str:
+    """Serialize object metadata for DB ``object_data`` column."""
+    return json.dumps(object_data_as_dict(obj), cls=ObjectResultEncoder)
 
 
 from evileye.utils.config_paths import normalize_config_path  # noqa: F401 — backward compat

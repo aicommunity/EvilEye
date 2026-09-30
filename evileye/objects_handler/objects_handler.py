@@ -9,7 +9,7 @@ from ..core.base_class import EvilEyeBase
 from ..core.interfaces import IObjectHandler, IDatabaseAdapter
 from ..capture.video_capture_base import CaptureImage
 from ..utils import threading_events
-from ..utils.utils import ObjectResultEncoder
+from ..utils.utils import dumps_object_data
 from queue import Queue
 from threading import Thread
 from threading import Condition, Lock
@@ -259,6 +259,23 @@ class ObjectsHandler(EvilEyeBase):
             queue_size = self.objs_queue.qsize()
         except Exception:
             queue_size = None
+        sticky_count = 0
+        sticky_jpeg_bytes = 0
+        sticky_decoded_bytes = 0
+        for obj in list(self.active_objs.objects) + list(self.lost_objs.objects):
+            sticky = getattr(obj, "_zone_event_sticky_image", None)
+            if sticky is None:
+                continue
+            sticky_count += 1
+            jpeg = getattr(sticky, "_jpeg", None) or getattr(obj, "_zone_jpeg_bytes", None)
+            if isinstance(jpeg, (bytes, bytearray)):
+                sticky_jpeg_bytes += len(jpeg)
+            try:
+                decoded = getattr(sticky, "_decoded", None)
+                if decoded is not None:
+                    sticky_decoded_bytes += int(decoded.nbytes)
+            except Exception:
+                pass
         now = time.time()
         stale_sources = [
             src for src, last_ts in self._last_frame_ts_by_source.items()
@@ -282,8 +299,14 @@ class ObjectsHandler(EvilEyeBase):
             "active_last_image_bytes": active_last_image_bytes,
             "lost_with_last_image": lost_with_last_image,
             "lost_last_image_bytes": lost_last_image_bytes,
+            "zone_sticky_count": sticky_count,
+            "zone_sticky_jpeg_bytes": sticky_jpeg_bytes,
+            "zone_sticky_decoded_bytes": sticky_decoded_bytes,
             "stale_source_ids": stale_sources,
             "source_stale_sec": self.source_stale_sec,
+            "alert": bool(stale_sources) or (
+                queue_pressure is not None and queue_pressure >= 0.9
+            ),
         }
 
     def set_params_impl(self):
@@ -996,7 +1019,7 @@ class ObjectsHandler(EvilEyeBase):
                              'lost_preview_path': None,
                              'frame_path': self._get_img_path('frame', 'detected', obj),
                              'lost_frame_path': None,
-                             'object_data': json.dumps(obj.__dict__, cls=ObjectResultEncoder),
+                             'object_data': dumps_object_data(obj),
                              'project_id': self.db_controller.get_project_id() if self.db_controller is not None else 0,
                              'job_id': self.db_controller.get_job_id() if self.db_controller is not None else 0,
                              'camera_full_address': ''}
@@ -1026,7 +1049,7 @@ class ObjectsHandler(EvilEyeBase):
                                'time_lost': obj.time_lost,
                                'lost_preview_path': self._get_img_path('preview', 'lost', obj),
                                'lost_frame_path': self._get_img_path('frame', 'lost', obj),
-                               'object_data': json.dumps(obj.__dict__, cls=ObjectResultEncoder)}
+                               'object_data': dumps_object_data(obj)}
 
         # Use list() instead of deepcopy for bounding box (list of numbers)
         fields_for_updating['lost_bounding_box'] = list(fields_for_updating['lost_bounding_box'])

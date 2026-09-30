@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+import shlex
 import shutil
 import subprocess
 import sys
@@ -545,8 +546,90 @@ def spawn_managed_pipeline(
         "--no-gui",
         "--no-autoclose",
     ]
+
+    # Prefer a per-config systemd scope so MemoryMax/MemoryHigh apply to managed runs too.
+    if sys.platform.startswith("linux") and shutil.which("systemd-run"):
+        from evileye.watchdog_native import (
+            pipeline_stdout_log_path,
+            scope_unit_name_for_config,
+            stop_evileye_run_scope,
+        )
+
+        stop_evileye_run_scope(config=config_path)
+        unit = scope_unit_name_for_config(config_path)
+        log_path = pipeline_stdout_log_path(root, config_path)
+        log_path.parent.mkdir(parents=True, exist_ok=True)
+        # Quote argv for bash -c; env is passed via --setenv.
+        quoted = " ".join(shlex.quote(a) for a in cmd)
+        bash_cmd = f"exec {quoted} >>{shlex.quote(str(log_path))} 2>&1"
+        sd_argv = [
+            "systemd-run",
+            "--user",
+            "--scope",
+            f"--unit={unit}",
+            "--no-block",
+            "--collect",
+            f"--working-directory={root}",
+            *_pipeline_scope_memory_props(),
+            *_pipeline_scope_setenv(root, env),
+        ]
+        for key, val in env.items():
+            if key.startswith("EVILEYE_") or key in {"PYTHONUNBUFFERED", "DISPLAY", "XAUTHORITY"}:
+                # Avoid duplicating keys already added by _pipeline_scope_setenv.
+                if any(a == f"--setenv={key}={val}" or a.startswith(f"--setenv={key}=") for a in sd_argv):
+                    continue
+                sd_argv.append(f"--setenv={key}={val}")
+        sd_argv.extend(["bash", "-c", bash_cmd])
+        proc = subprocess.run(sd_argv, check=False, capture_output=True, text=True)
+        if proc.returncode != 0:
+            raise RuntimeError((proc.stderr or proc.stdout or "systemd-run managed spawn failed").strip())
+        pid = _poll_cli_or_child_pid(str(config_path), root=root, timeout=8.0)
+        return SpawnResult(pid=int(pid or 0), mode="managed", config_path=str(config_path))
+
     proc = subprocess.Popen(cmd, cwd=str(root), env=env, start_new_session=True)
     return SpawnResult(pid=proc.pid, mode="managed", config_path=str(config_path))
+
+
+def _pipeline_scope_memory_props() -> list[str]:
+    """systemd-run -p MemoryMax/MemoryHigh for pipeline scopes (env-overridable)."""
+    props: list[str] = []
+    memory_max = (os.environ.get("EVILEYE_PIPELINE_MEMORY_MAX") or "45G").strip()
+    memory_high = (os.environ.get("EVILEYE_PIPELINE_MEMORY_HIGH") or "35G").strip()
+    if memory_max and memory_max.lower() not in {"0", "off", "none"}:
+        props.extend(["-p", f"MemoryMax={memory_max}"])
+    if memory_high and memory_high.lower() not in {"0", "off", "none"}:
+        props.extend(["-p", f"MemoryHigh={memory_high}"])
+    return props
+
+
+def _pipeline_scope_setenv(root: Path, env: dict[str, str] | None = None) -> list[str]:
+    """Forward selected EVILEYE_* into systemd-run --setenv."""
+    src = env if env is not None else os.environ
+    keys = (
+        "EVILEYE_SITE_DIR",
+        "EVILEYE_PERF_DIAG",
+        "EVILEYE_PERF_DIAG_EVERY",
+        "EVILEYE_TRACEMALLOC",
+        "EVILEYE_RESOURCE_STATS_EVERY_SEC",
+        "EVILEYE_EVENT_BUFFER_MAX_MB",
+        "EVILEYE_EVENT_BUFFER_FPS_MAX",
+        "EVILEYE_MP_PENDING_CAP",
+        "EVILEYE_MP_PENDING_CAP_TRACKER",
+        "DISPLAY",
+        "XAUTHORITY",
+        "DBUS_SESSION_BUS_ADDRESS",
+    )
+    out = [f"--setenv=EVILEYE_SITE_DIR={root}"]
+    seen = {"EVILEYE_SITE_DIR"}
+    for key in keys:
+        if key in seen:
+            continue
+        val = src.get(key)
+        if val is None or val == "":
+            continue
+        out.append(f"--setenv={key}={val}")
+        seen.add(key)
+    return out
 
 
 def spawn_direct_pipeline(
@@ -597,7 +680,8 @@ def spawn_direct_pipeline(
             "--no-block",
             "--collect",
             f"--working-directory={root}",
-            f"--setenv=EVILEYE_SITE_DIR={root}",
+            *_pipeline_scope_memory_props(),
+            *_pipeline_scope_setenv(root, env),
             "bash",
             "-c",
             bash_cmd,

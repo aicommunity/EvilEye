@@ -163,12 +163,17 @@ launch_evileye() {
         systemctl --user reset-failed evileye-run.scope 2>/dev/null || true
         systemd-run --user --scope --unit="$SCOPE_UNIT" --no-block --collect \
             --working-directory="$DEPLOY_DIR" \
+            -p "MemoryMax=${EVILEYE_PIPELINE_MEMORY_MAX:-45G}" \
+            -p "MemoryHigh=${EVILEYE_PIPELINE_MEMORY_HIGH:-35G}" \
             --setenv="DISPLAY=${DISPLAY:-}" \
             --setenv="XAUTHORITY=${XAUTHORITY:-}" \
             --setenv="DBUS_SESSION_BUS_ADDRESS=${DBUS_SESSION_BUS_ADDRESS:-}" \
             --setenv="EVILEYE_SCHEDULER_GPU_SETTLE_SEC=${EVILEYE_SCHEDULER_GPU_SETTLE_SEC}" \
             --setenv="EVILEYE_CLI_LAUNCHED=1" \
             --setenv="EVILEYE_SITE_DIR=${EVILEYE_SITE_DIR}" \
+            --setenv="EVILEYE_PERF_DIAG=${EVILEYE_PERF_DIAG:-}" \
+            --setenv="EVILEYE_PERF_DIAG_EVERY=${EVILEYE_PERF_DIAG_EVERY:-}" \
+            --setenv="EVILEYE_TRACEMALLOC=${EVILEYE_TRACEMALLOC:-}" \
             bash -c 'if [[ "$2" == 1 ]]; then exec evileye run "$0" --no-gui >>"$1" 2>&1; else exec evileye run "$0" >>"$1" 2>&1; fi' \
             "$CONFIG_NAME" "$MONITOR_DIR/watchdog_stdout.log" "$USE_NO_GUI" &
         echo $!

@@ -198,3 +198,13 @@ Compose по-прежнему запускает `evileye server` и `evileye ru
 - [CLI_DEPLOY_COMMAND.md](CLI_DEPLOY_COMMAND.md)
 - [WEB_UI_GUIDE.md](WEB_UI_GUIDE.md)
 - [DOCKER_DEPLOYMENT.md](DOCKER_DEPLOYMENT.md)
+
+
+## Pipeline memory guards
+
+Direct detach (`pipeline start --detach` / watchdog `systemd-run` scope) applies:
+
+- `MemoryHigh=35G` / `MemoryMax=45G` (override via `EVILEYE_PIPELINE_MEMORY_HIGH` / `EVILEYE_PIPELINE_MEMORY_MAX`)
+- Watchdog high-water: tree RSS ≥ `EVILEYE_MEMORY_RSS_GB_LIMIT` (default 28) for `EVILEYE_MEMORY_STREAK` (default 3) consecutive health checks → `memory_high_water` restart
+
+Leak diagnosis: `EVILEYE_PERF_DIAG=1` (and optionally `EVILEYE_TRACEMALLOC=1`) then inspect `MemoryAttr` lines in the main log or `python scripts/dump_main_memory_attrs.py`.

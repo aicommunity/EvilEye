@@ -429,10 +429,14 @@ def create_app() -> FastAPI:
                                 pass
                         last_img = int(oh_stats.get("active_last_image_bytes") or 0)
                         oh_stats["alert"] = bool(
-                            (pressure is not None and pressure >= 0.9)
+                            oh_stats.get("alert")
+                            or (pressure is not None and pressure >= 0.9)
                             or last_img > 100_000_000
                         )
                         payload["objects_handler"] = oh_stats
+                    mem_resp = send_control_command({"cmd": "get_memory_attribution"}, timeout=1.5)
+                    if isinstance(mem_resp, dict) and mem_resp.get("ok") and isinstance(mem_resp.get("stats"), dict):
+                        payload["memory_attribution"] = mem_resp["stats"]
             except Exception:
                 pass
         except Exception:

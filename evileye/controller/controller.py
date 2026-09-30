@@ -791,6 +791,11 @@ class Controller(ControllerProcessingMixin):
     def _log_resource_stats(self, context: str) -> None:
         """Log lightweight RSS/threads/FD metrics for the current process."""
         from evileye.utils.resource_stats import collect_process_resource_stats, format_resource_stats_line
+        from evileye.utils.memory_attribution import (
+            collect_memory_attribution,
+            ensure_tracemalloc_started,
+            format_memory_attribution_line,
+        )
 
         try:
             pid = os.getpid()
@@ -801,6 +806,7 @@ class Controller(ControllerProcessingMixin):
             return
 
         try:
+            ensure_tracemalloc_started()
             extra_parts: list[str] = []
             if self.visualizer and hasattr(self.visualizer, "get_runtime_stats"):
                 try:
@@ -847,6 +853,21 @@ class Controller(ControllerProcessingMixin):
                 self._format_source_restart_counters(),
                 "".join(extra_parts),
             )
+            try:
+                attrs = collect_memory_attribution(self)
+                # Always INFO for attribution so leak hunts work without raising log level.
+                self.logger.info("%s", format_memory_attribution_line(attrs))
+                tm = attrs.get("tracemalloc")
+                if isinstance(tm, dict) and tm.get("top"):
+                    top3 = tm["top"][:3]
+                    self.logger.info(
+                        "MemoryAttr(tracemalloc) current_mb=%.1f peak_mb=%.1f top=%s",
+                        float(tm.get("current_bytes") or 0) / (1024 * 1024),
+                        float(tm.get("peak_bytes") or 0) / (1024 * 1024),
+                        top3,
+                    )
+            except Exception:
+                pass
         except Exception:
             pass
 
@@ -1064,6 +1085,8 @@ class Controller(ControllerProcessingMixin):
             return self._control_apply_roi(command)
         if cmd == "get_objects_handler_stats":
             return self._control_get_objects_handler_stats()
+        if cmd == "get_memory_attribution":
+            return self._control_get_memory_attribution()
         return {"ok": False, "error": "unknown_command"}
 
     def _control_get_objects_handler_stats(self) -> dict:
@@ -1072,6 +1095,14 @@ class Controller(ControllerProcessingMixin):
             return {"ok": False, "error": "objects_handler_unavailable"}
         try:
             return {"ok": True, "stats": handler.get_runtime_stats()}
+        except Exception as exc:
+            return {"ok": False, "error": str(exc)}
+
+    def _control_get_memory_attribution(self) -> dict:
+        try:
+            from evileye.utils.memory_attribution import collect_memory_attribution
+
+            return {"ok": True, "stats": collect_memory_attribution(self)}
         except Exception as exc:
             return {"ok": False, "error": str(exc)}
 
