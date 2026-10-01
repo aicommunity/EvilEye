@@ -50,13 +50,25 @@ evileye web check
 
 Run EvilEye in a container based on the official Ultralytics image (PyTorch + CUDA + YOLO). Data directories stay on the host by default. This path does **not** replace `pip install`.
 
+**From repository (build):**
+
 ```bash
 ./docker/prepare-host-dirs.sh
-# Edit credentials.json: set database.host_name to "db" for Compose Postgres
-docker compose -f docker/docker-compose.yml up --build
+make docker-up
+# or: docker compose --project-directory . -f docker/docker-compose.yml up -d --build
 
 # Optional: install host CLI wrappers (evileye → docker run)
 ./docker/install-host-cli.sh
+```
+
+**Empty folder (Docker Hub image):**
+
+```bash
+mkdir mysite && cd mysite
+docker pull evileye/app:latest
+docker run --rm -v "$PWD":/site -e EVILEYE_BOOTSTRAP_IMAGE=evileye/app:latest evileye/app:latest bootstrap
+docker compose up -d
+export PATH="$PWD/bin:$PATH"
 ```
 
 Full guide: [docs/DOCKER_DEPLOYMENT.md](docs/DOCKER_DEPLOYMENT.md). On Windows use [docs/WINDOWS_DOCKER_DEPLOYMENT.md](docs/WINDOWS_DOCKER_DEPLOYMENT.md) (`docker/windows/*.ps1`); bash host-cli is Linux/WSL-only.

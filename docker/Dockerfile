@@ -2,6 +2,7 @@
 ARG ULTRALYTICS_TAG=8.4.115
 FROM ultralytics/ultralytics:${ULTRALYTICS_TAG}
 
+ARG EVILEYE_VERSION=
 LABEL org.opencontainers.image.title="EvilEye" \
       org.opencontainers.image.description="Intelligence video surveillance (GPU) from PyPI" \
       org.opencontainers.image.source="https://github.com/aicommunity/EvilEye"
@@ -36,7 +37,11 @@ COPY docker/host-cli /opt/evileye/docker/host-cli
 
 RUN chmod +x /tmp/install_pypi_deps.py /usr/local/bin/evileye-entrypoint /opt/evileye/docker/bootstrap_site.py \
     && pip install --no-cache-dir --upgrade pip setuptools wheel \
-    && pip install --no-cache-dir --no-deps evileye \
+    && if [ -n "$EVILEYE_VERSION" ]; then \
+         pip install --no-cache-dir --no-deps "evileye==${EVILEYE_VERSION}"; \
+       else \
+         pip install --no-cache-dir --no-deps evileye; \
+       fi \
     && python /tmp/install_pypi_deps.py --package evileye --skip torch,torchvision,torchaudio,ultralytics \
     && rm -f /tmp/install_pypi_deps.py \
     && python -c "import evileye, torch, ultralytics; print('evileye ok', evileye.__version__)"

@@ -12,7 +12,13 @@ param(
 )
 
 $ErrorActionPreference = "Continue"
-if (-not $ComposeFile) { $ComposeFile = Join-Path $Root "docker\docker-compose.yml" }
+. (Join-Path $PSScriptRoot "EvilEye-DockerCommon.ps1")
+try {
+    $ComposeFile = Get-EvilEyeComposeFile -Root $Root -ComposeFile $ComposeFile
+} catch {
+    Write-Host "status=incident reason=compose_missing"
+    exit 1
+}
 
 $monitor = Join-Path $Root "monitor"
 New-Item -ItemType Directory -Force -Path (Join-Path $monitor "incidents") | Out-Null
@@ -27,27 +33,9 @@ function Write-Watch([string]$msg) {
     Add-Content -Path $watchLog -Value "$ts $msg" -Encoding UTF8
 }
 
-# Container checks
-$psOut = docker compose -f $ComposeFile ps --format json 2>$null
-$appOk = $false
-$webOk = $false
-if ($LASTEXITCODE -eq 0 -and $psOut) {
-    try {
-        $rows = $psOut | ConvertFrom-Json
-        if ($rows -isnot [System.Array]) { $rows = @($rows) }
-        foreach ($row in $rows) {
-            $name = [string]$row.Name
-            $state = [string]$row.State
-            if ($name -eq "evileye_app" -and $state -match "running") { $appOk = $true }
-            if ($name -eq "evileye_web" -and $state -match "running") { $webOk = $true }
-        }
-    } catch {
-        # older compose may not support --format json
-        $plain = docker compose -f $ComposeFile ps 2>$null | Out-String
-        if ($plain -match "evileye_app" -and $plain -match "running") { $appOk = $true }
-        if ($plain -match "evileye_web" -and $plain -match "running") { $webOk = $true }
-    }
-}
+# Container checks by compose service name (works with or without container_name)
+$appOk = Test-EvilEyeComposeServiceRunning -ComposeFile $ComposeFile -Service "app"
+$webOk = Test-EvilEyeComposeServiceRunning -ComposeFile $ComposeFile -Service "web"
 if (-not $appOk) { $reasons += "container_missing_app" }
 if (-not $webOk) { $reasons += "container_missing_web" }
 

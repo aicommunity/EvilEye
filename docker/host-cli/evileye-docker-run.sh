@@ -8,6 +8,20 @@ EVILEYE_DOCKER_GPU_MODE="${EVILEYE_DOCKER_GPU_MODE:-gpus}" # gpus | cdi | none
 SITE_DIR="${EVILEYE_DOCKER_SITE_DIR:-}"
 LAUNCHER_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
+is_cpu_image() {
+  local image="$1"
+  local tag="${image##*/}"
+  tag="${tag#*:}"
+  [[ "$tag" == "cpu" || "$tag" == *-cpu ]]
+}
+
+# Auto CPU mode when image tag looks like CPU and user did not override
+if [[ -z "${EVILEYE_DOCKER_GPU_MODE_SET:-}" ]] && is_cpu_image "$EVILEYE_DOCKER_IMAGE"; then
+  if [[ "${EVILEYE_DOCKER_GPU_MODE}" == "gpus" ]]; then
+    EVILEYE_DOCKER_GPU_MODE="none"
+  fi
+fi
+
 if ! command -v docker >/dev/null 2>&1; then
   echo "error: docker not found in PATH" >&2
   exit 127
@@ -36,10 +50,15 @@ fi
 DOCKER_ARGS=(
   --rm
   --ipc=host
-  -e NVIDIA_VISIBLE_DEVICES="${NVIDIA_VISIBLE_DEVICES:-all}"
-  -e NVIDIA_DRIVER_CAPABILITIES="${NVIDIA_DRIVER_CAPABILITIES:-compute,utility,video}"
   -e PYTHONUNBUFFERED=1
 )
+
+if [[ "$EVILEYE_DOCKER_GPU_MODE" != "none" ]]; then
+  DOCKER_ARGS+=(
+    -e NVIDIA_VISIBLE_DEVICES="${NVIDIA_VISIBLE_DEVICES:-all}"
+    -e NVIDIA_DRIVER_CAPABILITIES="${NVIDIA_DRIVER_CAPABILITIES:-compute,utility,video}"
+  )
+fi
 
 if [[ -n "$SITE_DIR" ]]; then
   SITE_DIR="$(cd "$SITE_DIR" && pwd)"

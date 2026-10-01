@@ -4,7 +4,12 @@ param(
     [string]$ComposeFile = ""
 )
 $ErrorActionPreference = "Stop"
-if (-not $ComposeFile) { $ComposeFile = Join-Path $Root "docker\docker-compose.yml" }
+. (Join-Path $PSScriptRoot "EvilEye-DockerCommon.ps1")
+$ComposeFile = Get-EvilEyeComposeFile -Root $Root -ComposeFile $ComposeFile
 Set-Location $Root
-docker compose -f $ComposeFile down
+
+$composeDir = Split-Path -Parent $ComposeFile
+$projectDir = if ((Split-Path -Leaf $composeDir) -ieq "docker") { $Root } else { $composeDir }
+
+docker compose --project-directory $projectDir -f $ComposeFile down
 Write-Host "EvilEye stack stopped."

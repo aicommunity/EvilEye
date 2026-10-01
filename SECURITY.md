@@ -27,3 +27,13 @@ See `web_auth.protection` in [CONFIGURATION_GUIDE.md](docs/CONFIGURATION_GUIDE.m
 
 - [CONFIGURATION_GUIDE.md](docs/CONFIGURATION_GUIDE.md) — `web_auth`, `protection`
 - [WEB_UI_GUIDE.md](docs/WEB_UI_GUIDE.md) — routes and permissions
+
+## Docker
+
+See [DOCKER_DEPLOYMENT.md](docs/DOCKER_DEPLOYMENT.md) and [WINDOWS_DOCKER_DEPLOYMENT.md](docs/WINDOWS_DOCKER_DEPLOYMENT.md).
+
+1. Change the default Postgres password (`POSTGRES_PASSWORD` in `.env` / `credentials.json`) before exposing a site; bootstrap generates a random password for empty-folder installs.
+2. Prefer not publishing host port `5432` in production (repo compose publishes it for local convenience; site bootstrap templates do not).
+3. Keep `web_auth` enabled and use HTTPS / reverse proxy as for native installs.
+4. GPU image is based on `ultralytics/ultralytics` (AGPL) — review license implications for commercial use.
+5. Do not bake production secrets into image layers; site bind-mounts (`credentials.json`, `.env`) hold runtime secrets.

@@ -61,6 +61,24 @@ evileye --help
 
 After bootstrap, `bin\` contains `evileye.cmd` / `evileye.ps1` and `EvilEye-DockerRun.ps1`. Site data (including `postgres_data\`) stays in the folder.
 
+`Start-EvilEye.ps1` / `Watch-EvilEye.ps1` auto-detect site-root `docker-compose.yml` (bootstrap) or `docker\docker-compose.yml` (repo). Watchdog matches compose **service** names `app`/`web` (not only fixed `evileye_*` container names).
+
+From a bootstrap site:
+
+```powershell
+# copy or point Root at the site folder; scripts live in a full checkout:
+#   C:\EvilEye\repo\docker\windows\Start-EvilEye.ps1 -Root C:\path\to\mysite
+# Or use docker compose directly in the site folder (above).
+```
+
+Optional watchdog on a bootstrap site (requires the PS1 scripts from the repo/image tooling):
+
+```powershell
+.\docker\windows\Install-Watchdog.ps1 -Root (Get-Location)
+```
+
+Task names are unique per site path (`EvilEyeDockerWatchdog-<hash>`).
+
 CPU image:
 
 ```powershell
@@ -113,8 +131,9 @@ Pins host-cli to the repo root (`-SiteDir $Root`).
 ### GPU / CPU
 
 - GPU image (`evileye/app:latest`): default `EVILEYE_DOCKER_GPU_MODE=gpus` (`--gpus all`).
-- CPU image (`evileye/app:cpu`): wrappers default `EVILEYE_DOCKER_GPU_MODE=none`.
+- CPU image (`evileye/app:cpu` or `evileye/app:<ver>-cpu`): wrappers / launcher default `EVILEYE_DOCKER_GPU_MODE=none`.
 - No NVIDIA on a GPU image: `$env:EVILEYE_DOCKER_GPU_MODE = 'none'`.
+- When mode is `none`, NVIDIA_* env vars are not passed into `docker run`.
 
 ### Conflict with pip / native install
 
