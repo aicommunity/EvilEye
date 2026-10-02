@@ -42,7 +42,8 @@ class DetectionThreadBase:
 
         self.prev_time = 0  # For time-based stride parameter; time tracking
         self.stride = stride  # Frame stride parameter
-        self.stride_cnt = self.stride  # Counter for frames to skip
+        # 0 => next frame is eligible for inference (see consume_stride_slot).
+        self.stride_cnt = 0
         self.classes = classes
         self.roi = roi  # [[]]
         self.inf_params = inf_params
@@ -158,6 +159,23 @@ class DetectionThreadBase:
                 image, self.roi, self.roi_coords_per_camera
             )
 
+            if not self.consume_stride_slot():
+                # Keep per-frame contract for tracker/OH without paying for YOLO.
+                detection_result_list = self._detection_result_from_predict(
+                    split_image,
+                    [None] * len(split_image) if split_image else None,
+                )
+                if detection_result_list is not None:
+                    try:
+                        self.queue_out.put_nowait([detection_result_list, image])
+                    except Exception:
+                        try:
+                            _ = self.queue_out.get_nowait()
+                            self.queue_out.put_nowait([detection_result_list, image])
+                        except Exception:
+                            pass
+                continue
+
             detection_result_list = self.process_stride(split_image)
             if detection_result_list is not None:
                 try:
@@ -172,6 +190,26 @@ class DetectionThreadBase:
                         self.logger.warning(
                             f"Output queue full, dropping detection result for {image.source_id}:{image.frame_id}"
                         )
+
+    def consume_stride_slot(self) -> bool:
+        """
+        Return True when this frame should run model inference.
+
+        ``vid_stride`` N means roughly 1 of every N frames is predicted; skipped
+        frames still emit empty DetectionResultList so downstream stays in sync.
+        """
+        try:
+            stride = max(1, int(self.stride or 1))
+        except (TypeError, ValueError):
+            stride = 1
+        self.stride = stride
+        if stride <= 1:
+            return True
+        if self.stride_cnt <= 0:
+            self.stride_cnt = stride - 1
+            return True
+        self.stride_cnt -= 1
+        return False
 
     def process_stride(self, split_image: list) -> Optional[DetectionResultList]:
         """

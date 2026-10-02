@@ -224,7 +224,7 @@ export function CameraTile({
     ? `${snapBase}${snapBase.includes('?') ? '&' : '?'}t=${snapTs}`
     : '';
   const imgSrc = useMjpeg
-    ? `/api/v1/runs/${camera.run_id}/stream.mjpg?fps=8${camera.source_id != null ? `&source_id=${camera.source_id}` : ''}`
+    ? `/api/v1/runs/${camera.run_id}/stream.mjpg?fps=5${camera.source_id != null ? `&source_id=${camera.source_id}` : ''}`
     : wantWsPreview
       ? previewBlobUrl!
       : snapshotSrc;

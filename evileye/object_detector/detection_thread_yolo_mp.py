@@ -298,6 +298,9 @@ class DetectionThreadYoloMp(DetectionThreadBase):
             )
             if not split_image:
                 continue
+            if not self.consume_stride_slot():
+                self._put_empty_detection_for_capture(image)
+                continue
             if self._gpu_disabled or (self.mp_control is not None and not self.mp_control.is_operational()):
                 self._put_empty_detection_for_capture(image)
                 continue

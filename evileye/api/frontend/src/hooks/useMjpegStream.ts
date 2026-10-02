@@ -32,7 +32,7 @@ export function useMjpegStream(opts: {
   onImgLoad: () => void;
   attempt: number;
 } {
-  const { rid, sourceId, fps = 8, enabled } = opts;
+  const { rid, sourceId, fps = 5, enabled } = opts;
   const [phase, setPhase] = useState<MjpegPhase>('idle');
   const [src, setSrc] = useState('');
   const [error, setError] = useState<string | null>(null);

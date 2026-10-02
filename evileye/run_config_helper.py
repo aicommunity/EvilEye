@@ -98,6 +98,22 @@ def run_config(config_path: str, gui: bool = True, autoclose: bool = False) -> i
     gui_mode = determine_gui_mode(config_data, cli_gui=gui if gui is not None else None)
     logger.info(f"GUI mode determined: {gui_mode.value}")
 
+    try:
+        from evileye.controller.fps_policy import apply_controller_fps_policy
+
+        effective_fps = apply_controller_fps_policy(controller_cfg, gui_mode)
+        configured_fps = controller_cfg.get("fps_configured", controller_cfg.get("fps"))
+        if effective_fps != configured_fps:
+            logger.info(
+                "controller fps policy: configured=%s effective=%s fps_headless=%s gui_mode=%s",
+                configured_fps,
+                effective_fps,
+                controller_cfg.get("fps_headless"),
+                gui_mode.value,
+            )
+    except Exception as exc:
+        logger.warning("controller fps policy skipped: %s", exc)
+
     if autoclose:
         # Disable looping for all sources so that video files actually finish
         sources = config_data.get("pipeline", {}).get("sources", [])

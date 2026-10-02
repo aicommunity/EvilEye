@@ -116,6 +116,8 @@ class Controller(ControllerProcessingMixin):
         self.pyqt_slots = None
         self.pyqt_signals = None
         self.fps = 30
+        self._fps_configured = 30.0
+        self.fps_headless = None
         self.show_main_gui = True
         self.show_journal = False
         self.enable_close_from_gui = True
@@ -1394,6 +1396,14 @@ class Controller(ControllerProcessingMixin):
         if 'controller' in self.params.keys():
             self.autoclose = self.params['controller'].get("autoclose", self.autoclose)
             self.fps = self.params['controller'].get("fps", self.fps)
+            # Preserve GUI-oriented fps for config save when headless policy rewrote runtime fps.
+            try:
+                self._fps_configured = float(
+                    self.params['controller'].get("fps_configured", self.fps) or self.fps
+                )
+            except (TypeError, ValueError):
+                self._fps_configured = float(self.fps or 30)
+            self.fps_headless = self.params['controller'].get("fps_headless", None)
             self.show_main_gui = self.params['controller'].get("show_main_gui", self.show_main_gui)
             self.gui_enabled = self.params['controller'].get("gui_enabled", self.gui_enabled)
             self.skip_objects_handler = self.params['controller'].get("skip_objects_handler", self.skip_objects_handler)
@@ -1652,7 +1662,25 @@ class Controller(ControllerProcessingMixin):
     def update_params(self):
         self.params['controller'] = dict()
         self.params['controller']["autoclose"] = self.autoclose
-        self.params['controller']["fps"] = self.fps
+        # Persist GUI-oriented fps, not the headless-effective runtime value.
+        fps_to_save = getattr(self, "_fps_configured", None)
+        if fps_to_save is None:
+            try:
+                fps_to_save = (self.loaded_config or {}).get("controller", {}).get("fps_configured")
+            except Exception:
+                fps_to_save = None
+        if fps_to_save is None:
+            fps_to_save = self.fps
+        self.params['controller']["fps"] = fps_to_save
+        if getattr(self, "fps_headless", None) is not None:
+            self.params['controller']["fps_headless"] = self.fps_headless
+        else:
+            try:
+                orig_hl = (self.loaded_config or {}).get("controller", {}).get("fps_headless")
+            except Exception:
+                orig_hl = None
+            if orig_hl is not None:
+                self.params['controller']["fps_headless"] = orig_hl
         self.params['controller']["show_main_gui"] = self.show_main_gui
         self.params['controller']["gui_enabled"] = self.gui_enabled
         self.params['controller']["show_journal"] = self.show_journal

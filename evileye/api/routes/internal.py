@@ -121,4 +121,69 @@ def ingest_frame_bytes(
         "source_id": sid,
         "has_objects": bool(metadata.get("objects")),
         "has_zones": bool(metadata.get("zones")),
+        "preview_demand": preview_demand_active(rid),
+    }
+
+
+def preview_demand_active(rid: int | str | None = None) -> bool:
+    """True when Live MJPEG/WS (or broker stream) currently wants frames."""
+    try:
+        from evileye.api.routes.streaming import mjpeg_clients_count
+
+        if int(mjpeg_clients_count() or 0) > 0:
+            return True
+    except Exception:
+        pass
+    try:
+        broker = get_frame_broker()
+        if rid is not None and broker.is_stream_active(str(rid)):
+            return True
+        stats = broker.get_runtime_stats() if hasattr(broker, "get_runtime_stats") else {}
+        if int(stats.get("active_streams") or 0) > 0:
+            return True
+    except Exception:
+        pass
+    try:
+        from evileye.api.core.live_preview_hub import get_live_preview_hub
+
+        hub = get_live_preview_hub()
+        # Hub may expose different counters depending on build; treat any subscribers as demand.
+        for attr in ("subscriber_count", "client_count", "ws_client_count"):
+            fn = getattr(hub, attr, None)
+            if callable(fn) and int(fn() or 0) > 0:
+                return True
+            val = getattr(hub, attr, None)
+            if isinstance(val, int) and val > 0:
+                return True
+        subs = getattr(hub, "_subscribers", None)
+        if isinstance(subs, dict) and len(subs) > 0:
+            return True
+    except Exception:
+        pass
+    return False
+
+
+@router.get("/preview_demand")
+async def get_preview_demand(rid: int | None = Query(None)) -> dict:
+    """Pipeline-side poll: whether separate web clients currently need JPEG frames."""
+    active = preview_demand_active(rid)
+    mjpeg = None
+    streams = None
+    try:
+        from evileye.api.routes.streaming import mjpeg_clients_count
+
+        mjpeg = int(mjpeg_clients_count() or 0)
+    except Exception:
+        pass
+    try:
+        stats = get_frame_broker().get_runtime_stats()
+        streams = int(stats.get("active_streams") or 0)
+    except Exception:
+        pass
+    return {
+        "ok": True,
+        "active": bool(active),
+        "mjpeg_clients": mjpeg,
+        "active_streams": streams,
+        "rid": rid,
     }
