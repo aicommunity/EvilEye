@@ -147,20 +147,44 @@ def preview_demand_active(rid: int | str | None = None) -> bool:
         from evileye.api.core.live_preview_hub import get_live_preview_hub
 
         hub = get_live_preview_hub()
-        # Hub may expose different counters depending on build; treat any subscribers as demand.
-        for attr in ("subscriber_count", "client_count", "ws_client_count"):
-            fn = getattr(hub, attr, None)
-            if callable(fn) and int(fn() or 0) > 0:
+        clients = list(getattr(hub, "_clients", None) or [])
+        rid_i: int | None = None
+        if rid is not None:
+            try:
+                rid_i = int(rid)
+            except (TypeError, ValueError):
+                rid_i = None
+        for client in clients:
+            if getattr(client, "closed", False):
+                continue
+            if rid_i is None or int(getattr(client, "run_id", -1)) == rid_i:
                 return True
-            val = getattr(hub, attr, None)
-            if isinstance(val, int) and val > 0:
-                return True
-        subs = getattr(hub, "_subscribers", None)
-        if isinstance(subs, dict) and len(subs) > 0:
-            return True
     except Exception:
         pass
     return False
+
+
+def preview_demand_hub_clients(rid: int | str | None = None) -> int:
+    try:
+        from evileye.api.core.live_preview_hub import get_live_preview_hub
+
+        hub = get_live_preview_hub()
+        clients = list(getattr(hub, "_clients", None) or [])
+        rid_i: int | None = None
+        if rid is not None:
+            try:
+                rid_i = int(rid)
+            except (TypeError, ValueError):
+                rid_i = None
+        n = 0
+        for client in clients:
+            if getattr(client, "closed", False):
+                continue
+            if rid_i is None or int(getattr(client, "run_id", -1)) == rid_i:
+                n += 1
+        return n
+    except Exception:
+        return 0
 
 
 @router.get("/preview_demand")
@@ -185,5 +209,6 @@ async def get_preview_demand(rid: int | None = Query(None)) -> dict:
         "active": bool(active),
         "mjpeg_clients": mjpeg,
         "active_streams": streams,
+        "hub_clients": preview_demand_hub_clients(rid),
         "rid": rid,
     }
