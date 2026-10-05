@@ -115,12 +115,43 @@ evileye/
 │   └── pipeline_processors.py    # PipelineProcessors
 ├── pipelines/
 │   ├── pipeline_surveillance.py  # PipelineSurveillance
+│   ├── pipeline_declarative.py   # PipelineDeclarative (JSON stages[])
 │   └── pipeline_capture.py       # PipelineCapture
 └── samples_configs/
     └── pipeline_capture.json     # Конфигурация для PipelineCapture
 ```
 
+## Touch matrix (расширение)
+
+| Задача | Что трогать | Пример |
+|--------|-------------|--------|
+| Новый detector/tracker того же слота | `@EvilEyeBase.register` + JSON `type` (per-item) | mixed YOLO+RT-DETR в `detectors[]` |
+| Новая стадия в графе | `PipelineDeclarative` + `stages[]` **или** форк Surveillance | [examples/custom_pipeline_stage](../examples/custom_pipeline_stage/) |
+| Dual-mode (thread/process) | `DualModeProcessor` + `MpWorker` | [developing_dual_mode_modules.md](developing_dual_mode_modules.md); RoiFeeder adopted |
+| Event detector (dry-run) | `@register_event_detector` + `events_detectors.enabled` | [examples/custom_event_detector](../examples/custom_event_detector/) |
+| Event + DB/GUI/journals | + JSON/DB adapters + GUI/web | см. README примера |
+
+**DI / DualMode:** `DIContainer` — roadmap (не product path). `DualModeProcessor` — base ready; RoiFeeder — reference adoption (S1 Partial→improving).
+
 ## Создание новых pipeline
+
+### PipelineDeclarative
+
+Конфиг без форка Surveillance:
+
+```json
+{
+  "pipeline_class": "PipelineDeclarative",
+  "stages": [
+    {"name": "sources", "kind": "source", "items": [{"type": "VideoCaptureOpencv", "...": "..."}]},
+    {"name": "detectors", "kind": "step", "items": [{"type": "ObjectDetectorYolo", "...": "..."}]},
+    {"name": "my_stage", "kind": "step", "items": [{"type": "IdentityPass", "source_ids": [0]}]}
+  ],
+  "final_results": "my_stage"
+}
+```
+
+Каждый элемент `items[]` может иметь свой `type` (не только `params[0].type`).
 
 ### Простая pipeline
 

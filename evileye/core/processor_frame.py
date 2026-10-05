@@ -2,8 +2,17 @@ from .processor_base import ProcessorBase
 
 
 class ProcessorFrame(ProcessorBase):
-    def __init__(self, processor_name, class_name, num_processors: int, order: int):
-        super().__init__(processor_name, class_name, num_processors, order)
+    def __init__(
+        self,
+        processor_name,
+        class_name,
+        num_processors: int,
+        order: int,
+        class_names: list[str] | None = None,
+    ):
+        super().__init__(
+            processor_name, class_name, num_processors, order, class_names=class_names
+        )
 
     def process(self, frames_list=None):
         processing_results = []

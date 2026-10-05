@@ -2,10 +2,18 @@
 
 Этот гайд описывает Docker Hub-образы EvilEye и сценарий «пустая папка».
 
-- GPU-образ: `evileye/app:latest`
-- CPU-образ: `evileye/app:cpu`
+## Теги образов
 
-Оба образа ставят приложение через `pip install evileye` (без пина версии).
+| Тег | Назначение |
+|-----|------------|
+| `evileye/app:latest` | GPU (CUDA), последний релиз |
+| `evileye/app:cpu` | CPU-only, последний релиз |
+| `evileye/app:<version>` | GPU, конкретная версия (например `0.0.15`) |
+| `evileye/app:<version>-cpu` | CPU, конкретная версия |
+
+Образы ставят приложение через `pip install evileye==<version>` на момент сборки (см. build-arg `EVILEYE_VERSION`).
+
+CI: `.github/workflows/docker-publish.yml` пушит теги на Docker Hub при GitHub Release (или `workflow_dispatch`). Нужны secrets репозитория: `DOCKERHUB_USERNAME`, `DOCKERHUB_TOKEN`.
 
 ## Быстрый старт: пустая папка
 
@@ -24,8 +32,9 @@ evileye --help
 
 После bootstrap в папке появятся:
 
-- `docker-compose.yml`
-- `credentials.json`
+- `docker-compose.yml` (шаблон с `image: ${EVILEYE_IMAGE:-…}`)
+- `.env` (`EVILEYE_IMAGE`, `POSTGRES_PASSWORD`, порты)
+- `credentials.json` (пароль БД совпадает с `POSTGRES_PASSWORD`)
 - `configs/single_video.json`
 - `EvilEyeData/`, `videos/`, `models/`, `logs/`
 - `postgres_data/`
@@ -33,9 +42,22 @@ evileye --help
 
 Web UI: `http://127.0.0.1:8181`
 
-## Важно про свежесть PyPI
+Повторный `bootstrap` **не** затирает существующие `docker-compose.yml` / `.env`. Чтобы перезаписать: `EVILEYE_BOOTSTRAP_FORCE=1` или `bootstrap --force` (создаётся `*.bak`).
 
-Образы берут пакет из PyPI на момент сборки. Если в PyPI ещё старая версия, сборка может пройти, но поведение будет старым (например, без последних web-правок).
+Смена `POSTGRES_PASSWORD` в `.env` **не** меняет пароль уже инициализированного Postgres volume — нужен `ALTER USER` или удаление `postgres_data/`.
+
+## Repo layout (из исходников)
+
+Из корня репозитория:
+
+```bash
+./docker/prepare-host-dirs.sh
+make docker-up
+# эквивалент:
+# docker compose --project-directory . -f docker/docker-compose.yml up -d --build
+```
+
+`make docker-up` задаёт `EVILEYE_SITE_DIR` на корень репо (compose-файл лежит в `docker/`).
 
 ## Управление через CLI (native vs Docker)
 
@@ -52,7 +74,7 @@ Web UI: `http://127.0.0.1:8181`
 
 Bootstrap-шаблон поднимает 3 сервиса:
 
-- `db` — Postgres
+- `db` — Postgres (`healthcheck` + `depends_on: service_healthy`)
 - `web` — `evileye server`
 - `app` — `evileye run ... --no-gui`
 
@@ -73,7 +95,7 @@ docker run --rm -v "$PWD":/site -e EVILEYE_BOOTSTRAP_IMAGE=evileye/app:cpu evile
 docker compose up -d
 ```
 
-Или в уже bootstrap-папке:
+Или в уже bootstrap-папке (image берётся из `.env` / переменной):
 
 ```bash
 EVILEYE_IMAGE=evileye/app:cpu docker compose up -d
@@ -87,6 +109,8 @@ EVILEYE_IMAGE=evileye/app:cpu docker compose up -d
 - Windows-обёртки (`evileye.cmd`, `evileye.ps1`, `EvilEye-DockerRun.ps1`) — PowerShell / cmd
 
 Site-dir резолвится как родитель `bin/` (не путь `/site` из контейнера).
+
+Без NVIDIA на хосте используйте CPU-образ или `EVILEYE_DOCKER_GPU_MODE=none` (иначе `--gpus all` упадёт).
 
 Пример (Linux):
 
@@ -117,11 +141,21 @@ ACL и prefs сохраняются в site-файлах (`credentials.json`, `w
 Из корня репозитория:
 
 ```bash
-docker build -f docker/Dockerfile -t evileye/app:latest .
-docker build -f docker/Dockerfile.cpu -t evileye/app:cpu .
+make docker-build        # evileye/app:<version> + :latest
+make docker-build-cpu    # evileye/app:<version>-cpu + :cpu
+make docker-push
+```
 
-docker push evileye/app:latest
-docker push evileye/app:cpu
+Вручную:
+
+```bash
+VERSION=$(python3 -c "import re; print(re.search(r'^version\s*=\s*\"([^\"]+)\"', open('pyproject.toml', encoding='utf-8').read(), re.M).group(1))")
+docker build -f docker/Dockerfile --build-arg EVILEYE_VERSION=$VERSION \
+  -t evileye/app:$VERSION -t evileye/app:latest .
+docker build -f docker/Dockerfile.cpu --build-arg EVILEYE_VERSION=$VERSION \
+  -t evileye/app:$VERSION-cpu -t evileye/app:cpu .
+docker push evileye/app:$VERSION && docker push evileye/app:latest
+docker push evileye/app:$VERSION-cpu && docker push evileye/app:cpu
 ```
 
 ## Лицензия

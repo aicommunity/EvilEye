@@ -9,10 +9,18 @@ param(
 )
 
 $ErrorActionPreference = "Stop"
-if (-not $ComposeFile) {
-    $ComposeFile = Join-Path $Root "docker\docker-compose.yml"
-}
+. (Join-Path $PSScriptRoot "EvilEye-DockerCommon.ps1")
+$ComposeFile = Get-EvilEyeComposeFile -Root $Root -ComposeFile $ComposeFile
 Set-Location $Root
 
-docker compose -f $ComposeFile up -d --build
+$env:EVILEYE_SITE_DIR = $Root
+if (-not $env:EVILEYE_PG_DATA) {
+    $env:EVILEYE_PG_DATA = Join-Path $Root "postgres_data"
+}
+
+$composeDir = Split-Path -Parent $ComposeFile
+$projectDir = if ((Split-Path -Leaf $composeDir) -ieq "docker") { $Root } else { $composeDir }
+
+docker compose --project-directory $projectDir -f $ComposeFile up -d --build
 Write-Host "EvilEye stack starting. UI: http://127.0.0.1:8181"
+Write-Host "Compose: $ComposeFile"

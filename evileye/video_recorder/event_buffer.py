@@ -44,11 +44,16 @@ class EventBuffer:
         estimated_capacity = max(1, int(float(effective_fps) * float(max_duration_seconds) * 1.2))
         self.buffer: deque[Tuple[np.ndarray, float]] = deque(maxlen=estimated_capacity)
         self.lock = threading.Lock()
+        try:
+            self._max_bytes = int(float(os.environ.get("EVILEYE_EVENT_BUFFER_MAX_MB", "256") or 256) * 1024 * 1024)
+        except (TypeError, ValueError):
+            self._max_bytes = 256 * 1024 * 1024
         self.logger.debug(
-            "EventBuffer initialized with capacity ~%s frames (fps=%s, duration=%ss)",
+            "EventBuffer initialized with capacity ~%s frames (fps=%s, duration=%ss, max_mb=%s)",
             estimated_capacity,
             effective_fps,
             max_duration_seconds,
+            int(self._max_bytes / (1024 * 1024)),
         )
 
     @staticmethod
@@ -96,6 +101,7 @@ class EventBuffer:
             self.buffer.append((frame_copy, timestamp))
             self._last_added_ts = timestamp
             self._cleanup_old_frames()
+            self._enforce_byte_budget()
 
     def get_frames_before(self, timestamp: float, seconds: float) -> List[Tuple[np.ndarray, float]]:
         """
@@ -205,6 +211,23 @@ class EventBuffer:
 
         if removed_count > 0:
             self.logger.debug(f"Cleaned up {removed_count} old frames from buffer (cutoff_time={cutoff_time:.3f})")
+
+    def _enforce_byte_budget(self) -> None:
+        """Drop oldest frames until estimated bytes fit under EVILEYE_EVENT_BUFFER_MAX_MB."""
+        if not self.buffer or self._max_bytes <= 0:
+            return
+        while len(self.buffer) > 1:
+            total = 0
+            for frame, _ in self.buffer:
+                try:
+                    total += int(frame.nbytes)
+                except Exception:
+                    pass
+            if total <= self._max_bytes:
+                break
+            old_frame, _ = self.buffer.popleft()
+            if old_frame is not None:
+                del old_frame
 
     def clear(self) -> None:
         """Clear all frames from the buffer."""

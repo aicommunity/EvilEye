@@ -1,7 +1,7 @@
 import os
 from evileye.core.event_time import date_folder_from_ts, require_datetime
 from .json_event_io import append_json_record
-from .event_image_paths import ensure_event_image_dirs
+from .event_image_paths import ensure_event_image_dirs, owner_from_event, write_owner_sidecar
 import copy
 import cv2
 from .db_adapter import DatabaseAdapterBase
@@ -77,6 +77,7 @@ class JsonAdapterZoneEvents(DatabaseAdapterBase):
             'event_id': event.event_id,
             'ts': ts.isoformat(),
             'source_id': event.source_id,
+            'source_name': owner_from_event(event),
             'object_id': event.object_id,
             'zone_id': event.zone.get_zone_id() if hasattr(event, 'zone') else None,
             'box': box,
@@ -110,4 +111,7 @@ class JsonAdapterZoneEvents(DatabaseAdapterBase):
             preview = ImageStorageService.resize_preserving_aspect(image.image.copy(), 320, 240)
             cv2.imwrite(preview_abs, preview)
             cv2.imwrite(frame_abs, image.image)
+        owner = owner_from_event(event)
+        write_owner_sidecar(preview_abs, owner)
+        write_owner_sidecar(frame_abs, owner)
         return preview_rel, frame_rel

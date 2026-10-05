@@ -156,3 +156,36 @@ def test_pipeline_restart_resolves_unique_run(tmp_path: Path):
     assert require.call_args.kwargs.get("allow_running") is True
     restart.assert_called_once()
     assert restart.call_args.args[0] == "configs/a.json"
+
+
+def test_reload_pipeline_matches_pipeline_restart_kwargs(tmp_path: Path):
+    from typer.testing import CliRunner
+
+    from evileye.cli_commands.pipeline import app as pipeline_app
+    from evileye.cli_commands.reload import app as reload_app
+    from evileye.stack_control import SpawnResult
+
+    spawn = SpawnResult(pid=7, mode="managed", config_path="configs/a.json")
+    runner = CliRunner()
+    with patch(
+        "evileye.stack_control.require_pipeline_config", return_value="configs/a.json"
+    ), patch("evileye.stack_control.pipeline_restart", return_value=spawn) as restart:
+        r1 = runner.invoke(
+            pipeline_app,
+            ["restart", "--no-hold", "--foreground", "--no-gui"],
+            catch_exceptions=False,
+        )
+        kwargs1 = dict(restart.call_args.kwargs)
+        restart.reset_mock()
+        r2 = runner.invoke(
+            reload_app,
+            ["pipeline", "--no-hold", "--foreground", "--no-gui"],
+            catch_exceptions=False,
+        )
+        kwargs2 = dict(restart.call_args.kwargs)
+    assert r1.exit_code == 0
+    assert r2.exit_code == 0
+    assert kwargs1 == kwargs2
+    assert kwargs1.get("hold") is False
+    assert kwargs1.get("detach") is False
+    assert kwargs1.get("gui") is False

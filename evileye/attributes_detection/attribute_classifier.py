@@ -220,6 +220,29 @@ class AttributeClassifier(EvilEyeBase):
 
     # -- Process mode dispatch -------------------------------------------
 
+    def _pack_attr_job(self, detections):
+        """Send ROI crops only — avoid pickling the full BGR frame (audit A3)."""
+        tracking_data, frame = detections
+        tracking_data = ensure_tracking_result_list(tracking_data)
+        crops: list[dict] = []
+        if hasattr(tracking_data, "roi_data") and tracking_data.roi_data and frame is not None:
+            image = getattr(frame, "image", None)
+            for roi_info in tracking_data.roi_data:
+                track_id = roi_info.get("track_id")
+                roi_bbox = roi_info.get("roi_bbox")
+                roi_image = self._crop_roi(image, roi_bbox) if image is not None and roi_bbox is not None else None
+                if roi_image is not None and track_id is not None:
+                    # Contiguous copy so child does not share parent memory views.
+                    crops.append({
+                        "track_id": track_id,
+                        "crop": np.ascontiguousarray(roi_image),
+                    })
+        meta = {
+            "source_id": getattr(frame, "source_id", None),
+            "frame_id": getattr(frame, "frame_id", None),
+        }
+        return {"tracking_data": tracking_data, "crops": crops, "meta": meta, "frame": frame}
+
     def _process_dispatch_loop(self):
         while self.run_flag:
             if self._mp_control is None:
@@ -231,9 +254,17 @@ class AttributeClassifier(EvilEyeBase):
             if detections is None:
                 continue
             try:
-                self._mp_control.put(detections)
+                packed = self._pack_attr_job(detections)
+                # Drop full-frame pixels from the IPC payload; keep local frame for output.
+                frame = packed.pop("frame", None)
+                self._mp_control.put(packed)
                 result = self._mp_control.get(timeout=10.0)
-                self._put_out_drop_oldest(result)
+                if isinstance(result, dict) and "tracking_data" in result:
+                    tracking_data = result["tracking_data"]
+                    out_frame = frame if frame is not None else detections[1]
+                    self._put_out_drop_oldest((tracking_data, out_frame))
+                else:
+                    self._put_out_drop_oldest(result if result is not None else detections)
             except Empty:
                 continue
             except Exception as e:

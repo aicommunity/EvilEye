@@ -13,16 +13,16 @@ from evileye.database_controller.json_adapter_system_events import JsonAdapterSy
 from evileye.database_controller.json_adapter_zone_events import JsonAdapterZoneEvents
 from evileye.events_control.events_controller import EventsDetectorsController
 from evileye.events_control.events_processor import EventsProcessor
-from evileye.events_detectors.attribute_events_detector import AttributeEventsDetector
-from evileye.events_detectors.cam_events_detector import CamEventsDetector
-from evileye.events_detectors.schedule_alarm_events_detector import ScheduleAlarmEventsDetector
+from evileye.events_detectors.event_registry import (
+    create_event_detector,
+    list_event_detectors,
+    register_builtins,
+)
 from evileye.events_detectors.schedule_alarm_logic import (
     DETECTOR_CONFIG_KEY,
     LEGACY_DETECTOR_CONFIG_KEY,
     resolve_detector_section,
 )
-from evileye.events_detectors.system_events_detector import SystemEventsDetector
-from evileye.events_detectors.zone_events_detector import ZoneEventsDetector
 
 JSON_EVENT_ADAPTER_CLASSES = (
     JsonAdapterAttributeEvents,
@@ -30,6 +30,15 @@ JSON_EVENT_ADAPTER_CLASSES = (
     JsonAdapterZoneEvents,
     JsonAdapterCamEvents,
     JsonAdapterSystemEvents,
+)
+
+# Default bootstrap order when config omits events_detectors.enabled
+_DEFAULT_ENABLED = (
+    "CamEventsDetector",
+    DETECTOR_CONFIG_KEY,
+    "ZoneEventsDetector",
+    "AttributeEventsDetector",
+    "SystemEventsDetector",
 )
 
 
@@ -50,52 +59,108 @@ class EventsService:
             objects_handler: IObjectHandler,
             use_database: bool = True,
     ) -> None:
-        """Инициализировать детекторы событий."""
+        """Инициализировать детекторы событий через plugin registry."""
+        register_builtins()
         sources = pipeline.get_sources()
-        self._detectors["CamEventsDetector"] = CamEventsDetector(sources)
-        self._detectors["CamEventsDetector"].set_params(**params.get("CamEventsDetector", {}))
-        self._detectors["CamEventsDetector"].init()
-
         pipeline_source_ids = list(range(len(sources)))
-        schedule_params = resolve_detector_section(params)
-        schedule_detector = ScheduleAlarmEventsDetector(
-            objects_handler,
-            pipeline_source_ids=pipeline_source_ids,
-        )
-        schedule_detector.set_params(**schedule_params)
-        schedule_detector.init()
-        self._detectors[DETECTOR_CONFIG_KEY] = schedule_detector
-        self._detectors[LEGACY_DETECTOR_CONFIG_KEY] = schedule_detector
 
-        self._detectors["ZoneEventsDetector"] = ZoneEventsDetector(objects_handler)
-        self._detectors["ZoneEventsDetector"].set_params(**params.get("ZoneEventsDetector", {}))
-        self._detectors["ZoneEventsDetector"].init()
+        enabled = params.get("enabled")
+        if enabled is None:
+            enabled_list = list(_DEFAULT_ENABLED)
+        elif isinstance(enabled, list):
+            enabled_list = [str(x) for x in enabled]
+        else:
+            enabled_list = list(_DEFAULT_ENABLED)
 
-        self._detectors["AttributeEventsDetector"] = AttributeEventsDetector(objects_handler)
-        self._detectors["AttributeEventsDetector"].set_params(
-            **params.get("AttributeEventsDetector", {})
-        )
-        self._detectors["AttributeEventsDetector"].init()
-
-        self._detectors["SystemEventsDetector"] = SystemEventsDetector()
-        self._detectors["SystemEventsDetector"].set_params(**params.get("SystemEventsDetector", {}))
-        self._detectors["SystemEventsDetector"].init()
-
-        objects_handler.subscribe(
-            self._detectors[DETECTOR_CONFIG_KEY],
-            self._detectors["ZoneEventsDetector"],
-            self._detectors["AttributeEventsDetector"],
+        self.logger.info(
+            "Event detectors enabled=%s (registered=%s)",
+            enabled_list,
+            list_event_detectors(),
         )
 
-        for source in sources:
-            if hasattr(source, "subscribe"):
-                source.subscribe(self._detectors["CamEventsDetector"])
+        for name in enabled_list:
+            if name in self._detectors:
+                continue
+            try:
+                detector = self._instantiate_detector(
+                    name,
+                    sources=sources,
+                    objects_handler=objects_handler,
+                    pipeline_source_ids=pipeline_source_ids,
+                    params=params,
+                )
+            except KeyError:
+                self.logger.warning("Unknown event detector '%s' — skip", name)
+                continue
+            except Exception as exc:
+                self.logger.error("Failed to create event detector %s: %s", name, exc, exc_info=True)
+                continue
+            section = params.get(name, {}) if name not in {DETECTOR_CONFIG_KEY, LEGACY_DETECTOR_CONFIG_KEY} else resolve_detector_section(params)
+            if name in {DETECTOR_CONFIG_KEY, LEGACY_DETECTOR_CONFIG_KEY}:
+                section = resolve_detector_section(params)
+            detector.set_params(**(section or {}))
+            detector.init()
+            self._detectors[name] = detector
+            if name == DETECTOR_CONFIG_KEY:
+                self._detectors[LEGACY_DETECTOR_CONFIG_KEY] = detector
+            elif name == LEGACY_DETECTOR_CONFIG_KEY:
+                self._detectors[DETECTOR_CONFIG_KEY] = detector
+
+        # Cam sources subscribe to cam detector when present
+        cam = self._detectors.get("CamEventsDetector")
+        if cam is not None:
+            try:
+                for source in sources:
+                    if hasattr(source, "subscribe"):
+                        source.subscribe(cam)
+            except Exception:
+                pass
+
+        # ObjectsHandler subscribers (schedule/zone/attr) when present
+        oh_subs = [
+            self._detectors.get(DETECTOR_CONFIG_KEY),
+            self._detectors.get("ZoneEventsDetector"),
+            self._detectors.get("AttributeEventsDetector"),
+        ]
+        oh_subs = [d for d in oh_subs if d is not None]
+        if oh_subs:
+            try:
+                objects_handler.subscribe(*oh_subs)
+            except Exception as exc:
+                self.logger.warning("objects_handler.subscribe failed: %s", exc)
 
         self.logger.info(
             "Initialized %s event detectors (use_database=%s)",
             len(self._detectors),
             use_database,
         )
+
+    def _instantiate_detector(
+        self,
+        name: str,
+        *,
+        sources,
+        objects_handler,
+        pipeline_source_ids,
+        params: Dict[str, Any],
+    ):
+        if name == "CamEventsDetector":
+            return create_event_detector(name, sources)
+        if name in {DETECTOR_CONFIG_KEY, LEGACY_DETECTOR_CONFIG_KEY}:
+            return create_event_detector(
+                DETECTOR_CONFIG_KEY,
+                objects_handler,
+                pipeline_source_ids=pipeline_source_ids,
+            )
+        if name in {"ZoneEventsDetector", "AttributeEventsDetector"}:
+            return create_event_detector(name, objects_handler)
+        if name == "SystemEventsDetector":
+            return create_event_detector(name)
+        # Custom detectors: try (objects_handler) then no-arg
+        try:
+            return create_event_detector(name, objects_handler)
+        except TypeError:
+            return create_event_detector(name)
 
     def initialize_attribute_processors(
             self,
@@ -122,15 +187,27 @@ class EventsService:
 
     def initialize_controller(self, params: Dict[str, Any]) -> None:
         """Инициализировать контроллер детекторов."""
-        detectors_list = [
-            self._detectors.get("CamEventsDetector"),
-            self._detectors.get(DETECTOR_CONFIG_KEY),
-            self._detectors.get("ZoneEventsDetector"),
+        # Preserve order; skip missing; dedupe aliases (ScheduleAlarm / FOV).
+        preferred = [
+            "CamEventsDetector",
+            DETECTOR_CONFIG_KEY,
+            "ZoneEventsDetector",
+            "AttributeEventsDetector",
+            "SystemEventsDetector",
         ]
-        if self._detectors.get("AttributeEventsDetector"):
-            detectors_list.append(self._detectors["AttributeEventsDetector"])
-        if self._detectors.get("SystemEventsDetector"):
-            detectors_list.append(self._detectors["SystemEventsDetector"])
+        seen: set[int] = set()
+        detectors_list = []
+        for name in preferred:
+            det = self._detectors.get(name)
+            if det is None or id(det) in seen:
+                continue
+            seen.add(id(det))
+            detectors_list.append(det)
+        for name, det in self._detectors.items():
+            if id(det) in seen:
+                continue
+            seen.add(id(det))
+            detectors_list.append(det)
 
         self._detectors_controller = EventsDetectorsController(detectors_list)
         self._detectors_controller.set_params(**params)

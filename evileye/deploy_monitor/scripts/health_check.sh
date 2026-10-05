@@ -159,16 +159,78 @@ if pipeline_child_healthy && [[ -n "$CHILD_PID" ]] && (( LOG_AGE <= LOG_STALE_SE
     fi
 fi
 
+# After child-healthy override: recording can stay up while detection journal freezes.
+DETECTION_STALE_REASON=""
+if DETECTION_STALE_REASON="$(check_detection_journal_stale)"; then
+    INCIDENT=true
+    DO_RESTART=true
+    STATUS="incident"
+    REASONS=("$DETECTION_STALE_REASON")
+    log_msg "Detection journal stale while Streams fresh: $DETECTION_STALE_REASON"
+fi
+
+# Memory telemetry + high-water (before journal entry so reason is recorded).
+MEMORY_STREAK_FILE="${MEMORY_STREAK_FILE:-$MONITOR_DIR/.memory_high_water_streak}"
+MEMORY_JOURNAL_FILE="${MEMORY_JOURNAL:-$MONITOR_DIR/memory_journal.jsonl}"
+EVILEYE_MEMORY_RSS_GB_LIMIT="${EVILEYE_MEMORY_RSS_GB_LIMIT:-28}"
+EVILEYE_MEMORY_STREAK="${EVILEYE_MEMORY_STREAK:-3}"
+if [[ -x "$SCRIPT_DIR/collect_memory_snapshot.sh" ]]; then
+    "$SCRIPT_DIR/collect_memory_snapshot.sh" >>"$WATCHDOG_LOG" 2>&1 || true
+fi
+
+# Memory high-water: restart before host-wide OOM when tree RSS stays elevated.
+if [[ -f "$MEMORY_JOURNAL_FILE" ]]; then
+    tree_rss_gb="$(
+        python3 - "$MEMORY_JOURNAL_FILE" <<'PY' 2>/dev/null || true
+import json, sys
+from pathlib import Path
+p = Path(sys.argv[1])
+if not p.is_file():
+    print("")
+    raise SystemExit(0)
+lines = p.read_text(encoding="utf-8", errors="replace").splitlines()
+if not lines:
+    print("")
+    raise SystemExit(0)
+try:
+    entry = json.loads(lines[-1])
+    print(entry.get("tree", {}).get("rss_gb", ""))
+except Exception:
+    print("")
+PY
+    )"
+    streak=0
+    if [[ -f "$MEMORY_STREAK_FILE" ]]; then
+        streak="$(tr -dc '0-9' <"$MEMORY_STREAK_FILE" 2>/dev/null || echo 0)"
+        streak="${streak:-0}"
+    fi
+    if [[ -n "$tree_rss_gb" ]]; then
+        over="$(
+            python3 -c "import sys; print(1 if float(sys.argv[1]) >= float(sys.argv[2]) else 0)" \
+                "$tree_rss_gb" "$EVILEYE_MEMORY_RSS_GB_LIMIT" 2>/dev/null || echo 0
+        )"
+        if [[ "$over" == "1" ]]; then
+            streak=$((streak + 1))
+            echo "$streak" >"$MEMORY_STREAK_FILE"
+            log_msg "Memory high-water streak=$streak/${EVILEYE_MEMORY_STREAK} tree_rss_gb=$tree_rss_gb limit=${EVILEYE_MEMORY_RSS_GB_LIMIT}"
+            if (( streak >= EVILEYE_MEMORY_STREAK )); then
+                INCIDENT=true
+                DO_RESTART=true
+                STATUS="incident"
+                REASONS+=("memory_high_water")
+                echo 0 >"$MEMORY_STREAK_FILE"
+            fi
+        else
+            echo 0 >"$MEMORY_STREAK_FILE"
+        fi
+    fi
+fi
+
 REASON_STR="$(IFS=';'; echo "${REASONS[*]}")"
 
 ENTRY="$(append_journal "$STATUS" "$REASON_STR" "$CLI_PID" "$CHILD_PID" "$MAIN_LOG" "$LOG_AGE")"
 echo "$ENTRY" >>"$JOURNAL_FILE"
 update_state "$CLI_PID" "$CHILD_PID" "$MAIN_LOG" "$NEXT_RUN"
-
-# Memory telemetry (best-effort; never fail the health check).
-if [[ -x "$SCRIPT_DIR/collect_memory_snapshot.sh" ]]; then
-    "$SCRIPT_DIR/collect_memory_snapshot.sh" >>"$WATCHDOG_LOG" 2>&1 || true
-fi
 
 if $INCIDENT; then
     INCIDENT_ID="$(incident_id_now)"

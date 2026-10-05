@@ -93,30 +93,48 @@
 | `status` | Активные runs |
 | `stop --config CONFIG` / `stop --all` | Остановка; **обязателен** `--config` или `--all` |
 | `start [CONFIG] [--gui] [--detach] [--release] [--replace]` | managed (если web active) или direct; CONFIG optional из профиля |
-| `restart [CONFIG]` | stop + start; CONFIG optional (unique run или профиль) |
+| `restart [CONFIG] [--detach/--foreground] [--hold/--no-hold]` | stop + start; CONFIG optional (unique run или профиль) |
+
+**Режимы запуска (managed vs direct):**
+
+| Условие | Режим | `--detach` |
+|---------|-------|------------|
+| Web OS service / порт API активен, или `pipeline_launch=managed` | **managed** (`process.py`) | Игнорируется (уже background) |
+| Иначе | **direct** (`evileye run`) | `--detach` → фон (systemd scope / Popen); без флага / `--foreground` → CLI ждёт exit |
+
+**Hold / grace / manual stop:**
+
+| Флаг / команда | Что делает |
+|----------------|------------|
+| `pipeline stop --hold` / `prod down` | Пишет `monitor/.manual_stop_until` (~1ч) — watchdog **не** поднимает pipeline |
+| `pipeline restart --hold` (default) | Только **restart grace** (`monitor/.restart_grace_until`) на окно stop→start; **не** 1h manual stop |
+| `pipeline start --release` | Снимает manual stop hold |
+| `reload web --with-pipeline --no-release` | Не сбрасывает manual stop после старта pipeline |
 
 **Singleton policy (per-site):** без `--replace` команды `pipeline start`, `evileye run` и API start завершаются с ошибкой, если для того же config уже есть живой `process.py`. `evileye prod up` идемпотентен. Явный перезапуск: `pipeline restart` или `pipeline start --replace`.
 
-`--hold` пишет `monitor/.manual_stop_until` (watchdog не перезапустит pipeline ~1ч).
+На Linux direct+detach использует user scope `evileye-run-<config-stem>.scope` (`systemd-run --no-block`), поэтому CLI сразу возвращает prompt. Stop/restart одного config не останавливает scope другого config.
 
 Примеры:
 
 ```bash
-evileye pipeline restart                          # один живой run
+evileye pipeline restart                          # один живой run; detach; grace only
 evileye pipeline restart configs/poly-cameras-gst.json
-evileye pipeline stop --all --hold
-evileye pipeline start --release                  # из production_config
+evileye pipeline restart --foreground             # ждёт exit pipeline (direct)
+evileye pipeline stop --all --hold                # 1h manual stop
+evileye pipeline start --release --detach         # из production_config, фон
 ```
 
 ## `evileye reload`
 
 | Подкоманда | Описание |
 |------------|----------|
-| `web [--force-build] [--with-pipeline] [--config CONFIG]` | Build → service restart → (опционально) pipeline |
+| `web [--force-build] [--with-pipeline] [--config CONFIG] [--release/--no-release]` | Build → service restart → (опционально) pipeline |
 | `backend` | Только restart OS web service |
-| `pipeline [CONFIG]` | Только pipeline (как `pipeline restart`) |
+| `pipeline [CONFIG]` | Alias `pipeline restart` (те же флаги: `--detach/--foreground`, `--hold/--no-hold`, `--gui`) |
 
-**`reload web` без `--with-pipeline` не трогает pipeline.**
+**`reload web` без `--with-pipeline` не трогает pipeline.**  
+При `--with-pipeline` stop phase ставит только grace (не 1h manual stop).
 
 ```bash
 evileye reload web
@@ -138,10 +156,12 @@ evileye reload pipeline
 |------------|----------|
 | `init CONFIG` | `deploy` + `service install` + watchdog + site profile |
 | `up` | `service start` + pipeline (profile / unique running); idempotent |
-| `down [--stop-service]` | stop all pipelines + hold |
+| `down [--stop-service]` | stop all pipelines + **manual** hold (~1ч) |
 | `restart [--with-pipeline/--web-only] [--config]` | Ordered reload; default **with pipeline** |
 
 Профиль сайта: `.evileye_service.json` (`production_config`, `pipeline_launch: auto`, `gui_default: false`).
+
+На Linux `prod init --watchdog` / `evileye watchdog-install` вызывает `monitor/scripts/install_timer.sh` (systemd user timers). На Windows — Scheduled Tasks.
 
 ## `evileye dev server`
 
@@ -178,3 +198,13 @@ Compose по-прежнему запускает `evileye server` и `evileye ru
 - [CLI_DEPLOY_COMMAND.md](CLI_DEPLOY_COMMAND.md)
 - [WEB_UI_GUIDE.md](WEB_UI_GUIDE.md)
 - [DOCKER_DEPLOYMENT.md](DOCKER_DEPLOYMENT.md)
+
+
+## Pipeline memory guards
+
+Direct detach (`pipeline start --detach` / watchdog `systemd-run` scope) applies:
+
+- `MemoryHigh=35G` / `MemoryMax=45G` (override via `EVILEYE_PIPELINE_MEMORY_HIGH` / `EVILEYE_PIPELINE_MEMORY_MAX`)
+- Watchdog high-water: tree RSS ≥ `EVILEYE_MEMORY_RSS_GB_LIMIT` (default 28) for `EVILEYE_MEMORY_STREAK` (default 3) consecutive health checks → `memory_high_water` restart
+
+Leak diagnosis: `EVILEYE_PERF_DIAG=1` (and optionally `EVILEYE_TRACEMALLOC=1`) then inspect `MemoryAttr` lines in the main log or `python scripts/dump_main_memory_attrs.py`.

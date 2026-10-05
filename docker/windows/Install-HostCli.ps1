@@ -45,7 +45,13 @@ if (-not (Test-Path -LiteralPath $launcherSrc)) {
 New-Item -ItemType Directory -Force -Path $Prefix | Out-Null
 Copy-Item -LiteralPath $launcherSrc -Destination (Join-Path $Prefix 'EvilEye-DockerRun.ps1') -Force
 
-$cpuImage = $Image.EndsWith(':cpu')
+function Test-EvilEyeCpuImageTag {
+    param([string]$ImageName)
+    $tag = ($ImageName -split '/')[-1]
+    if ($tag -match ':') { $tag = ($tag -split ':', 2)[1] }
+    return ($tag -eq 'cpu' -or $tag -like '*-cpu')
+}
+$cpuImage = Test-EvilEyeCpuImageTag -ImageName $Image
 $sitePin = ''
 if ($SiteDir -and $SiteDir.Trim()) {
     $sitePin = [System.IO.Path]::GetFullPath($SiteDir.Trim())

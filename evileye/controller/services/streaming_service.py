@@ -299,6 +299,8 @@ class StreamingService:
         self._server_process_manager = None
         self._frame_relay: FrameRelayClient | None = None
         self._relay_token: str | None = None
+        self._relay_demand_cache_ts = 0.0
+        self._relay_demand_cache_active = True  # fail-open until first successful probe
         self._encoder: JpegEncoderBackend = create_jpeg_encoder()
         self._worker_count = 1
         self._preview_max_edge = 960
@@ -497,9 +499,12 @@ class StreamingService:
         if has_server_preview_demand:
             level = self._get_preview_demand_level(throttle_key)
             return self._fps_for_demand_level(level) > 0.0
-        # External OS Web UI (evileye service install): no ServerProcessManager demand queue —
-        # keep publishing over HTTPS relay so Live preview works.
+        # Separate OS Web UI + FrameRelay: honor demand probe when enabled.
         if has_relay and self._publish_fps > 0.0:
+            if self._relay_demand_aware_enabled():
+                if self._cached_relay_preview_demand():
+                    return True
+                return self._get_heartbeat_fps() > 0.0
             return True
         heartbeat_fps = self._get_heartbeat_fps()
         if has_server_process and heartbeat_fps > 0.0:
@@ -585,6 +590,13 @@ class StreamingService:
             return self._throttle_ok(throttle_key, fps_override=fps)
 
         if has_relay and self._publish_fps > 0.0:
+            if self._relay_demand_aware_enabled():
+                if self._cached_relay_preview_demand():
+                    return self._throttle_ok(throttle_key, fps_override=self._publish_fps)
+                heartbeat_fps = self._get_heartbeat_fps()
+                if heartbeat_fps > 0.0:
+                    return self._throttle_ok(throttle_key, fps_override=heartbeat_fps)
+                return False
             return self._throttle_ok(throttle_key, fps_override=self._publish_fps)
 
         heartbeat_fps = self._get_heartbeat_fps()
@@ -592,6 +604,60 @@ class StreamingService:
             return self._throttle_ok(throttle_key, fps_override=heartbeat_fps)
 
         return False
+
+    @staticmethod
+    def _relay_demand_aware_enabled() -> bool:
+        raw = os.getenv("EVILEYE_RELAY_DEMAND_AWARE", "1").strip().lower()
+        return raw not in {"0", "false", "no", "off"}
+
+    def _cached_relay_preview_demand(self) -> bool:
+        """Poll web internal preview_demand with a short TTL cache (fail-open)."""
+        now = time.time()
+        try:
+            ttl_pos = max(0.2, float(os.getenv("EVILEYE_RELAY_DEMAND_TTL_SEC", "1.0") or 1.0))
+        except Exception:
+            ttl_pos = 1.0
+        # Negative cache must be short so MJPEG/WS connect quickly starts frames.
+        ttl_neg = min(0.35, ttl_pos)
+        ttl = ttl_pos if self._relay_demand_cache_active else ttl_neg
+        if (now - self._relay_demand_cache_ts) < ttl:
+            return bool(self._relay_demand_cache_active)
+        active = self._probe_relay_preview_demand()
+        self._relay_demand_cache_ts = now
+        self._relay_demand_cache_active = active
+        return active
+
+    def _probe_relay_preview_demand(self) -> bool:
+        base = (os.environ.get("EVILEYE_WEB_API_BASE") or "").rstrip("/")
+        token = self._relay_token or os.environ.get("EVILEYE_INTERNAL_TOKEN") or ""
+        if not base:
+            # No side-channel configured: keep publishing (legacy always-on).
+            return True
+        try:
+            parsed = urlparse(base if "://" in base else f"http://{base}")
+            host = parsed.hostname or "127.0.0.1"
+            port = parsed.port or 80
+            path = (parsed.path or "/api/v1").rstrip("/") + "/internal/preview_demand"
+            if self._pipeline_id and self._pipeline_id != "default":
+                path = f"{path}?rid={self._pipeline_id}"
+            conn = http.client.HTTPConnection(host, port, timeout=0.35)
+            try:
+                headers = {}
+                if token:
+                    headers["X-EvilEye-Internal-Token"] = token
+                conn.request("GET", path, headers=headers)
+                resp = conn.getresponse()
+                body = resp.read(4096)
+                if resp.status != 200:
+                    return True  # fail-open
+                data = json.loads(body.decode("utf-8", errors="ignore") or "{}")
+                if isinstance(data, dict) and "active" in data:
+                    return bool(data.get("active"))
+                return True
+            finally:
+                conn.close()
+        except Exception:
+            return True
 
     def _get_preview_demand_level(self, throttle_key: str) -> str:
         if self._server_process_manager is None:

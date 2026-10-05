@@ -9,6 +9,17 @@ $CommandArgs = @($args)
 $Image = if ($env:EVILEYE_DOCKER_IMAGE) { $env:EVILEYE_DOCKER_IMAGE } else { 'evileye/app:latest' }
 $GpuMode = if ($env:EVILEYE_DOCKER_GPU_MODE) { $env:EVILEYE_DOCKER_GPU_MODE } else { 'gpus' }
 
+function Test-EvilEyeCpuImage {
+    param([string]$ImageName)
+    $tag = ($ImageName -split '/')[-1]
+    if ($tag -match ':') { $tag = ($tag -split ':', 2)[1] }
+    return ($tag -eq 'cpu' -or $tag -like '*-cpu')
+}
+
+if (-not $env:EVILEYE_DOCKER_GPU_MODE -and (Test-EvilEyeCpuImage -ImageName $Image) -and $GpuMode -eq 'gpus') {
+    $GpuMode = 'none'
+}
+
 if (-not (Get-Command docker -ErrorAction SilentlyContinue)) {
     [Console]::Error.WriteLine('error: docker not found in PATH')
     exit 127
@@ -48,16 +59,18 @@ function Resolve-SiteDir {
     return $null
 }
 
-$nvDevices = if ($env:NVIDIA_VISIBLE_DEVICES) { $env:NVIDIA_VISIBLE_DEVICES } else { 'all' }
-$nvCaps = if ($env:NVIDIA_DRIVER_CAPABILITIES) { $env:NVIDIA_DRIVER_CAPABILITIES } else { 'compute,utility,video' }
-
 $dockerArgs = @(
     '--rm',
     '--ipc=host',
-    '-e', "NVIDIA_VISIBLE_DEVICES=$nvDevices",
-    '-e', "NVIDIA_DRIVER_CAPABILITIES=$nvCaps",
     '-e', 'PYTHONUNBUFFERED=1'
 )
+
+if ($GpuMode -ne 'none') {
+    $nvDevices = if ($env:NVIDIA_VISIBLE_DEVICES) { $env:NVIDIA_VISIBLE_DEVICES } else { 'all' }
+    $nvCaps = if ($env:NVIDIA_DRIVER_CAPABILITIES) { $env:NVIDIA_DRIVER_CAPABILITIES } else { 'compute,utility,video' }
+    $dockerArgs += @('-e', "NVIDIA_VISIBLE_DEVICES=$nvDevices")
+    $dockerArgs += @('-e', "NVIDIA_DRIVER_CAPABILITIES=$nvCaps")
+}
 
 $site = Resolve-SiteDir -BinDir $LauncherRoot
 if ($site) {

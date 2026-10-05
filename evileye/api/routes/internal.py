@@ -121,4 +121,94 @@ def ingest_frame_bytes(
         "source_id": sid,
         "has_objects": bool(metadata.get("objects")),
         "has_zones": bool(metadata.get("zones")),
+        "preview_demand": preview_demand_active(rid),
+    }
+
+
+def preview_demand_active(rid: int | str | None = None) -> bool:
+    """True when Live MJPEG/WS (or broker stream) currently wants frames."""
+    try:
+        from evileye.api.routes.streaming import mjpeg_clients_count
+
+        if int(mjpeg_clients_count() or 0) > 0:
+            return True
+    except Exception:
+        pass
+    try:
+        broker = get_frame_broker()
+        if rid is not None and broker.is_stream_active(str(rid)):
+            return True
+        stats = broker.get_runtime_stats() if hasattr(broker, "get_runtime_stats") else {}
+        if int(stats.get("active_streams") or 0) > 0:
+            return True
+    except Exception:
+        pass
+    try:
+        from evileye.api.core.live_preview_hub import get_live_preview_hub
+
+        hub = get_live_preview_hub()
+        clients = list(getattr(hub, "_clients", None) or [])
+        rid_i: int | None = None
+        if rid is not None:
+            try:
+                rid_i = int(rid)
+            except (TypeError, ValueError):
+                rid_i = None
+        for client in clients:
+            if getattr(client, "closed", False):
+                continue
+            if rid_i is None or int(getattr(client, "run_id", -1)) == rid_i:
+                return True
+    except Exception:
+        pass
+    return False
+
+
+def preview_demand_hub_clients(rid: int | str | None = None) -> int:
+    try:
+        from evileye.api.core.live_preview_hub import get_live_preview_hub
+
+        hub = get_live_preview_hub()
+        clients = list(getattr(hub, "_clients", None) or [])
+        rid_i: int | None = None
+        if rid is not None:
+            try:
+                rid_i = int(rid)
+            except (TypeError, ValueError):
+                rid_i = None
+        n = 0
+        for client in clients:
+            if getattr(client, "closed", False):
+                continue
+            if rid_i is None or int(getattr(client, "run_id", -1)) == rid_i:
+                n += 1
+        return n
+    except Exception:
+        return 0
+
+
+@router.get("/preview_demand")
+async def get_preview_demand(rid: int | None = Query(None)) -> dict:
+    """Pipeline-side poll: whether separate web clients currently need JPEG frames."""
+    active = preview_demand_active(rid)
+    mjpeg = None
+    streams = None
+    try:
+        from evileye.api.routes.streaming import mjpeg_clients_count
+
+        mjpeg = int(mjpeg_clients_count() or 0)
+    except Exception:
+        pass
+    try:
+        stats = get_frame_broker().get_runtime_stats()
+        streams = int(stats.get("active_streams") or 0)
+    except Exception:
+        pass
+    return {
+        "ok": True,
+        "active": bool(active),
+        "mjpeg_clients": mjpeg,
+        "active_streams": streams,
+        "hub_clients": preview_demand_hub_clients(rid),
+        "rid": rid,
     }

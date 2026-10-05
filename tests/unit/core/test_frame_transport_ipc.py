@@ -32,3 +32,19 @@ def test_alloc_relinquish_consume_cycle_releases_all():
         consumer.release_frame(handle)
     assert len(producer._segments) == 0
     assert len(consumer._segments) == 0
+
+
+def test_consume_missing_shm_returns_none():
+    """H1: missing SHM must not yield an empty ndarray for the pipeline."""
+    from evileye.core.frame_transport import FrameHandle
+
+    consumer = SharedFrameTransport()
+    handle = FrameHandle(
+        frame_id=1,
+        shm_name="nonexistent_psm_audit_h1",
+        shape=(2, 2, 3),
+        dtype="uint8",
+        stride=(6, 3, 1),
+        timestamp=0.0,
+    )
+    assert consumer.consume_frame(handle) is None

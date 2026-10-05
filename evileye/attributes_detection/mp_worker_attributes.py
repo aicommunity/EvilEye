@@ -128,6 +128,22 @@ class MpWorkerAttributeClassifier(MpWorker):
         self._yolo_runtime.load()
 
     def worker_impl(self, data):
+        # New crops-only IPC: {"tracking_data", "crops", "meta"}
+        if isinstance(data, dict) and "crops" in data:
+            tracking_data = ensure_tracking_result_list(data.get("tracking_data"))
+            if self._yolo_runtime.model is None:
+                return {"tracking_data": tracking_data, "meta": data.get("meta")}
+            for item in data.get("crops") or []:
+                track_id = item.get("track_id")
+                roi_image = item.get("crop")
+                if roi_image is not None and track_id is not None:
+                    attr_results = self._classify_roi(roi_image)
+                    if not hasattr(tracking_data, "attr_results"):
+                        tracking_data.attr_results = {}
+                    tracking_data.attr_results[track_id] = attr_results
+            return {"tracking_data": tracking_data, "meta": data.get("meta")}
+
+        # Legacy full-frame payload (compat)
         tracking_data, frame = data
         tracking_data = ensure_tracking_result_list(tracking_data)
         if self._yolo_runtime.model is None:

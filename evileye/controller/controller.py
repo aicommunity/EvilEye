@@ -116,6 +116,8 @@ class Controller(ControllerProcessingMixin):
         self.pyqt_slots = None
         self.pyqt_signals = None
         self.fps = 30
+        self._fps_configured = 30.0
+        self.fps_headless = None
         self.show_main_gui = True
         self.show_journal = False
         self.enable_close_from_gui = True
@@ -791,6 +793,11 @@ class Controller(ControllerProcessingMixin):
     def _log_resource_stats(self, context: str) -> None:
         """Log lightweight RSS/threads/FD metrics for the current process."""
         from evileye.utils.resource_stats import collect_process_resource_stats, format_resource_stats_line
+        from evileye.utils.memory_attribution import (
+            collect_memory_attribution,
+            ensure_tracemalloc_started,
+            format_memory_attribution_line,
+        )
 
         try:
             pid = os.getpid()
@@ -801,6 +808,7 @@ class Controller(ControllerProcessingMixin):
             return
 
         try:
+            ensure_tracemalloc_started()
             extra_parts: list[str] = []
             if self.visualizer and hasattr(self.visualizer, "get_runtime_stats"):
                 try:
@@ -847,6 +855,21 @@ class Controller(ControllerProcessingMixin):
                 self._format_source_restart_counters(),
                 "".join(extra_parts),
             )
+            try:
+                attrs = collect_memory_attribution(self)
+                # Always INFO for attribution so leak hunts work without raising log level.
+                self.logger.info("%s", format_memory_attribution_line(attrs))
+                tm = attrs.get("tracemalloc")
+                if isinstance(tm, dict) and tm.get("top"):
+                    top3 = tm["top"][:3]
+                    self.logger.info(
+                        "MemoryAttr(tracemalloc) current_mb=%.1f peak_mb=%.1f top=%s",
+                        float(tm.get("current_bytes") or 0) / (1024 * 1024),
+                        float(tm.get("peak_bytes") or 0) / (1024 * 1024),
+                        top3,
+                    )
+            except Exception:
+                pass
         except Exception:
             pass
 
@@ -1064,6 +1087,8 @@ class Controller(ControllerProcessingMixin):
             return self._control_apply_roi(command)
         if cmd == "get_objects_handler_stats":
             return self._control_get_objects_handler_stats()
+        if cmd == "get_memory_attribution":
+            return self._control_get_memory_attribution()
         return {"ok": False, "error": "unknown_command"}
 
     def _control_get_objects_handler_stats(self) -> dict:
@@ -1072,6 +1097,14 @@ class Controller(ControllerProcessingMixin):
             return {"ok": False, "error": "objects_handler_unavailable"}
         try:
             return {"ok": True, "stats": handler.get_runtime_stats()}
+        except Exception as exc:
+            return {"ok": False, "error": str(exc)}
+
+    def _control_get_memory_attribution(self) -> dict:
+        try:
+            from evileye.utils.memory_attribution import collect_memory_attribution
+
+            return {"ok": True, "stats": collect_memory_attribution(self)}
         except Exception as exc:
             return {"ok": False, "error": str(exc)}
 
@@ -1363,6 +1396,14 @@ class Controller(ControllerProcessingMixin):
         if 'controller' in self.params.keys():
             self.autoclose = self.params['controller'].get("autoclose", self.autoclose)
             self.fps = self.params['controller'].get("fps", self.fps)
+            # Preserve GUI-oriented fps for config save when headless policy rewrote runtime fps.
+            try:
+                self._fps_configured = float(
+                    self.params['controller'].get("fps_configured", self.fps) or self.fps
+                )
+            except (TypeError, ValueError):
+                self._fps_configured = float(self.fps or 30)
+            self.fps_headless = self.params['controller'].get("fps_headless", None)
             self.show_main_gui = self.params['controller'].get("show_main_gui", self.show_main_gui)
             self.gui_enabled = self.params['controller'].get("gui_enabled", self.gui_enabled)
             self.skip_objects_handler = self.params['controller'].get("skip_objects_handler", self.skip_objects_handler)
@@ -1621,7 +1662,25 @@ class Controller(ControllerProcessingMixin):
     def update_params(self):
         self.params['controller'] = dict()
         self.params['controller']["autoclose"] = self.autoclose
-        self.params['controller']["fps"] = self.fps
+        # Persist GUI-oriented fps, not the headless-effective runtime value.
+        fps_to_save = getattr(self, "_fps_configured", None)
+        if fps_to_save is None:
+            try:
+                fps_to_save = (self.loaded_config or {}).get("controller", {}).get("fps_configured")
+            except Exception:
+                fps_to_save = None
+        if fps_to_save is None:
+            fps_to_save = self.fps
+        self.params['controller']["fps"] = fps_to_save
+        if getattr(self, "fps_headless", None) is not None:
+            self.params['controller']["fps_headless"] = self.fps_headless
+        else:
+            try:
+                orig_hl = (self.loaded_config or {}).get("controller", {}).get("fps_headless")
+            except Exception:
+                orig_hl = None
+            if orig_hl is not None:
+                self.params['controller']["fps_headless"] = orig_hl
         self.params['controller']["show_main_gui"] = self.show_main_gui
         self.params['controller']["gui_enabled"] = self.gui_enabled
         self.params['controller']["show_journal"] = self.show_journal

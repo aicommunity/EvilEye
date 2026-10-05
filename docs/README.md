@@ -11,7 +11,7 @@
 - **[Управление стеком (status, web, service, pipeline, reload, prod)](CLI_STACK_COMMANDS.md)** — основной гайд CLI
 - **[Команда service](CLI_SERVICE_COMMANDS.md)** - OS-сервис Web UI и HTTPS
 - **[Команда web](CLI_SETUP_WEB.md)** - Сборка и зависимости Web UI
-- **[Docker-деплой (GPU)](DOCKER_DEPLOYMENT.md)** - Контейнер на Ultralytics/PyTorch/CUDA, данные на хосте, host-CLI обёртки
+- **[Docker-деплой (GPU + CPU)](DOCKER_DEPLOYMENT.md)** - Hub-образы, empty-folder bootstrap, host-CLI, версионные теги
 - **[Windows: native pip](WINDOWS_NATIVE.md)** - Установка и watchdog без Docker
 - **[Windows: Docker Desktop](WINDOWS_DOCKER_DEPLOYMENT.md)** - Compose + PowerShell + Docker watchdog
 - **[Web UI](WEB_UI_GUIDE.md)** - React SPA, first-run, API

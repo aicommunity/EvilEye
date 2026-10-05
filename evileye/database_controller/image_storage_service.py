@@ -89,8 +89,8 @@ class ImageStorageService:
         # Сохраняем полный кадр (без изменений)
         frame_saved = cv2.imwrite(frame_save_dir, image.image)
 
-        # Создаем и сохраняем превью с сохранением пропорций
-        preview = self.resize_preserving_aspect(image.image.copy(), self.preview_width, self.preview_height)
+        # Создаем и сохраняем превью с сохранением пропорций (no extra full-frame copy)
+        preview = self.resize_preserving_aspect(image.image, self.preview_width, self.preview_height)
         preview_h, preview_w = preview.shape[:2]
 
         if draw_boxes and box is not None:

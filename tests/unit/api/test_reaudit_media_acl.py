@@ -60,6 +60,55 @@ def test_cameras_from_canonical_after_traversal(tmp_path):
     assert cameras_from_canonical(resolved, data) == ["Cam9"]
 
 
+def test_hyphenated_camera_cam2_not_split(tmp_path, monkeypatch):
+    """H2: Cam-2 must stay a single owner when not a catalog composite."""
+    data = tmp_path / "data"
+    target = data / "Streams" / "2026-01-01" / "Cam-2" / "seg.mp4"
+    target.parent.mkdir(parents=True)
+    target.write_bytes(b"x")
+
+    def _fake_catalog(**kwargs):
+        return {"Cam1", "Cam-2", "Cam3"}
+
+    monkeypatch.setattr(
+        "evileye.api.core.camera_access.catalog_source_names",
+        _fake_catalog,
+    )
+    resolved = resolve_under_data_root("Streams/2026-01-01/Cam-2/seg.mp4", data)
+    assert cameras_from_canonical(resolved, data) == ["Cam-2"]
+
+    access = CameraAccess(
+        unrestricted=False,
+        allowed_names=frozenset({"Cam-2"}),
+        visible_names=None,
+    )
+    media = resolve_authorized_media(
+        access, "Streams/2026-01-01/Cam-2/seg.mp4", data_root=data
+    )
+    assert media.owners == ["Cam-2"]
+
+
+def test_detection_image_owner_from_filename(tmp_path):
+    """H4: detection image filename embeds source_name."""
+    data = tmp_path / "data"
+    img = (
+        data
+        / "Detections"
+        / "2026-01-01"
+        / "Images"
+        / "FoundPreviews"
+        / "2026-01-01_12-00-00.1_Cam-2_preview.jpeg"
+    )
+    img.parent.mkdir(parents=True)
+    img.write_bytes(b"jpeg")
+    (Path(str(img) + ".owner")).write_text("Cam-2\n", encoding="utf-8")
+    resolved = resolve_under_data_root(
+        "Detections/2026-01-01/Images/FoundPreviews/2026-01-01_12-00-00.1_Cam-2_preview.jpeg",
+        data,
+    )
+    assert cameras_from_canonical(resolved, data) == ["Cam-2"]
+
+
 def test_resolve_authorized_denies_traversal_to_denied_cam(tmp_path):
     data = tmp_path / "data"
     target = data / "Streams" / "2026-01-01" / "Cam9" / "seg.mp4"

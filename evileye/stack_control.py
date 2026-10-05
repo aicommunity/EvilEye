@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+import shlex
 import shutil
 import subprocess
 import sys
@@ -11,9 +12,9 @@ import urllib.error
 import urllib.request
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Callable, Optional
+from typing import Any, Callable, Literal, Optional
 
-from evileye.core.paths import monitor_dir, site_root
+from evileye.core.paths import site_root
 from evileye.core.process_control import find_pids_by_cmdline_regex, pid_exists, terminate_tree
 from evileye.site_profile import (
     gui_default,
@@ -28,13 +29,15 @@ class ContainerOperationError(RuntimeError):
     """Raised when an OS-service operation is requested inside Docker."""
 
 
+WatchdogSuppress = Literal["none", "grace", "manual"]
+
 COMMAND_CATALOG: list[tuple[str, str]] = [
     ("status", "Show this overview"),
     ("prod up / down", "Start/stop production stack"),
     ("service start|stop|restart", "Manage OS web service"),
     ("pipeline start|stop|restart [CONFIG]", "Pipeline lifecycle (CONFIG optional when unique)"),
     ("reload web [--with-pipeline]", "Rebuild/restart web; optional pipeline restart"),
-    ("reload pipeline [CONFIG]", "Restart pipeline only"),
+    ("reload pipeline [CONFIG]", "Alias of pipeline restart"),
     ("web build|check", "Frontend/deps"),
     ("run CONFIG", "Direct pipeline (dev)"),
 ]
@@ -83,6 +86,7 @@ class SpawnResult:
     pid: int
     mode: str
     config_path: str
+    exit_code: Optional[int] = None
 
 
 @dataclass
@@ -387,6 +391,7 @@ def stop_pipelines(
     stop_all: bool = False,
     hold: bool = False,
     hold_seconds: int = 3600,
+    watchdog_suppress: WatchdogSuppress | None = None,
 ) -> StopResult:
     from evileye.api.core.process_restart import find_matching_runtime
     from evileye.api.core.runtime_registry import list_runtime_records, mark_runtime_stopped
@@ -399,8 +404,12 @@ def stop_pipelines(
 
     root = _resolve_site(site_dir)
     result = StopResult()
-    if hold:
+    suppress: WatchdogSuppress = watchdog_suppress or ("manual" if hold else "none")
+    if suppress == "manual":
         set_manual_stop_cooldown(seconds=hold_seconds, root=root)
+        set_restart_grace(root=root)
+        result.hold_applied = True
+    elif suppress == "grace":
         set_restart_grace(root=root)
         result.hold_applied = True
 
@@ -447,7 +456,10 @@ def stop_pipelines(
                 except Exception:
                     pass
 
-    stop_evileye_run_scope()
+    if stop_all or not config:
+        stop_evileye_run_scope(stop_all=True)
+    elif config:
+        stop_evileye_run_scope(config=config)
     _cleanup_mp_sessions(session_ids)
     result.stopped_pids = sorted(set(result.stopped_pids))
     return result
@@ -534,8 +546,90 @@ def spawn_managed_pipeline(
         "--no-gui",
         "--no-autoclose",
     ]
+
+    # Prefer a per-config systemd scope so MemoryMax/MemoryHigh apply to managed runs too.
+    if sys.platform.startswith("linux") and shutil.which("systemd-run"):
+        from evileye.watchdog_native import (
+            pipeline_stdout_log_path,
+            scope_unit_name_for_config,
+            stop_evileye_run_scope,
+        )
+
+        stop_evileye_run_scope(config=config_path)
+        unit = scope_unit_name_for_config(config_path)
+        log_path = pipeline_stdout_log_path(root, config_path)
+        log_path.parent.mkdir(parents=True, exist_ok=True)
+        # Quote argv for bash -c; env is passed via --setenv.
+        quoted = " ".join(shlex.quote(a) for a in cmd)
+        bash_cmd = f"exec {quoted} >>{shlex.quote(str(log_path))} 2>&1"
+        sd_argv = [
+            "systemd-run",
+            "--user",
+            "--scope",
+            f"--unit={unit}",
+            "--no-block",
+            "--collect",
+            f"--working-directory={root}",
+            *_pipeline_scope_memory_props(),
+            *_pipeline_scope_setenv(root, env),
+        ]
+        for key, val in env.items():
+            if key.startswith("EVILEYE_") or key in {"PYTHONUNBUFFERED", "DISPLAY", "XAUTHORITY"}:
+                # Avoid duplicating keys already added by _pipeline_scope_setenv.
+                if any(a == f"--setenv={key}={val}" or a.startswith(f"--setenv={key}=") for a in sd_argv):
+                    continue
+                sd_argv.append(f"--setenv={key}={val}")
+        sd_argv.extend(["bash", "-c", bash_cmd])
+        proc = subprocess.run(sd_argv, check=False, capture_output=True, text=True)
+        if proc.returncode != 0:
+            raise RuntimeError((proc.stderr or proc.stdout or "systemd-run managed spawn failed").strip())
+        pid = _poll_cli_or_child_pid(str(config_path), root=root, timeout=8.0)
+        return SpawnResult(pid=int(pid or 0), mode="managed", config_path=str(config_path))
+
     proc = subprocess.Popen(cmd, cwd=str(root), env=env, start_new_session=True)
     return SpawnResult(pid=proc.pid, mode="managed", config_path=str(config_path))
+
+
+def _pipeline_scope_memory_props() -> list[str]:
+    """systemd-run -p MemoryMax/MemoryHigh for pipeline scopes (env-overridable)."""
+    props: list[str] = []
+    memory_max = (os.environ.get("EVILEYE_PIPELINE_MEMORY_MAX") or "45G").strip()
+    memory_high = (os.environ.get("EVILEYE_PIPELINE_MEMORY_HIGH") or "35G").strip()
+    if memory_max and memory_max.lower() not in {"0", "off", "none"}:
+        props.extend(["-p", f"MemoryMax={memory_max}"])
+    if memory_high and memory_high.lower() not in {"0", "off", "none"}:
+        props.extend(["-p", f"MemoryHigh={memory_high}"])
+    return props
+
+
+def _pipeline_scope_setenv(root: Path, env: dict[str, str] | None = None) -> list[str]:
+    """Forward selected EVILEYE_* into systemd-run --setenv."""
+    src = env if env is not None else os.environ
+    keys = (
+        "EVILEYE_SITE_DIR",
+        "EVILEYE_PERF_DIAG",
+        "EVILEYE_PERF_DIAG_EVERY",
+        "EVILEYE_TRACEMALLOC",
+        "EVILEYE_RESOURCE_STATS_EVERY_SEC",
+        "EVILEYE_EVENT_BUFFER_MAX_MB",
+        "EVILEYE_EVENT_BUFFER_FPS_MAX",
+        "EVILEYE_MP_PENDING_CAP",
+        "EVILEYE_MP_PENDING_CAP_TRACKER",
+        "DISPLAY",
+        "XAUTHORITY",
+        "DBUS_SESSION_BUS_ADDRESS",
+    )
+    out = [f"--setenv=EVILEYE_SITE_DIR={root}"]
+    seen = {"EVILEYE_SITE_DIR"}
+    for key in keys:
+        if key in seen:
+            continue
+        val = src.get(key)
+        if val is None or val == "":
+            continue
+        out.append(f"--setenv={key}={val}")
+        seen.add(key)
+    return out
 
 
 def spawn_direct_pipeline(
@@ -545,6 +639,12 @@ def spawn_direct_pipeline(
     gui: Optional[bool] = None,
     detach: bool = False,
 ) -> SpawnResult:
+    from evileye.watchdog_native import (
+        pipeline_stdout_log_path,
+        scope_unit_name_for_config,
+        stop_evileye_run_scope,
+    )
+
     root = _resolve_site(site_dir)
     config_path = _resolve_config_path(config, root)
     use_gui = gui_default(root) if gui is None else gui
@@ -552,47 +652,77 @@ def spawn_direct_pipeline(
     env["EVILEYE_SITE_DIR"] = str(root)
     env["EVILEYE_CLI_LAUNCHED"] = "1"
     env.setdefault("EVILEYE_SCHEDULER_GPU_SETTLE_SEC", "15")
+    gui_flag = "--gui" if use_gui else "--no-gui"
+    run_cmd = [sys.executable, "-m", "evileye.cli_wrapper", "run", str(config_path), gui_flag]
 
-    if detach and sys.platform.startswith("linux") and shutil.which("systemd-run"):
-        from evileye.watchdog_native import stop_evileye_run_scope
+    if not detach:
+        proc = subprocess.run(run_cmd, cwd=str(root), env=env, check=False)
+        return SpawnResult(
+            pid=0,
+            mode="direct-foreground",
+            config_path=str(config_path),
+            exit_code=int(proc.returncode),
+        )
 
-        stop_evileye_run_scope()
-        log_path = monitor_dir(root) / "pipeline_stdout.log"
-        log_path.parent.mkdir(parents=True, exist_ok=True)
-        gui_flag = "--gui" if use_gui else "--no-gui"
-        cmd = (
-            f"exec {shutil.which('evileye') or sys.executable + ' -m evileye.cli_wrapper'} "
-            f"run {config_path} {gui_flag} >>{log_path} 2>&1"
-        )
-        proc = subprocess.run(
-            [
-                "systemd-run",
-                "--user",
-                "--scope",
-                "--unit=evileye-run",
-                f"--working-directory={root}",
-                f"--setenv=EVILEYE_SITE_DIR={root}",
-                "bash",
-                "-c",
-                cmd,
-            ],
-            check=False,
-            capture_output=True,
-            text=True,
-        )
+    log_path = pipeline_stdout_log_path(root, config_path)
+    log_path.parent.mkdir(parents=True, exist_ok=True)
+
+    if sys.platform.startswith("linux") and shutil.which("systemd-run"):
+        stop_evileye_run_scope(config=config_path)
+        unit = scope_unit_name_for_config(config_path)
+        launcher = shutil.which("evileye") or f"{sys.executable} -m evileye.cli_wrapper"
+        bash_cmd = f"exec {launcher} run {config_path} {gui_flag} >>{log_path} 2>&1"
+        sd_argv = [
+            "systemd-run",
+            "--user",
+            "--scope",
+            f"--unit={unit}",
+            "--no-block",
+            "--collect",
+            f"--working-directory={root}",
+            *_pipeline_scope_memory_props(),
+            *_pipeline_scope_setenv(root, env),
+            "bash",
+            "-c",
+            bash_cmd,
+        ]
+        proc = subprocess.run(sd_argv, check=False, capture_output=True, text=True)
         if proc.returncode != 0:
             raise RuntimeError((proc.stderr or proc.stdout or "systemd-run failed").strip())
-        time.sleep(1.0)
-        from evileye.watchdog_native import find_cli_and_child
-
-        cli_pid, child_pid = find_cli_and_child(str(config_path), root=root)
-        pid = child_pid or cli_pid or 0
+        pid = _poll_cli_or_child_pid(str(config_path), root=root, timeout=5.0)
         return SpawnResult(pid=int(pid or 0), mode="direct-detach", config_path=str(config_path))
 
-    cmd = [sys.executable, "-m", "evileye.cli_wrapper", "run", str(config_path)]
-    cmd.append("--gui" if use_gui else "--no-gui")
-    proc = subprocess.Popen(cmd, cwd=str(root), env=env, start_new_session=detach)
-    return SpawnResult(pid=proc.pid, mode="direct", config_path=str(config_path))
+    log_fh = open(log_path, "a", encoding="utf-8")
+    try:
+        proc = subprocess.Popen(
+            run_cmd,
+            cwd=str(root),
+            env=env,
+            stdin=subprocess.DEVNULL,
+            stdout=log_fh,
+            stderr=subprocess.STDOUT,
+            start_new_session=True,
+            close_fds=True,
+        )
+    finally:
+        log_fh.close()
+    return SpawnResult(pid=proc.pid, mode="direct-detach", config_path=str(config_path))
+
+
+def _poll_cli_or_child_pid(config: str, *, root: Path, timeout: float = 5.0) -> int:
+    from evileye.watchdog_native import find_cli_and_child
+
+    deadline = time.time() + max(0.5, float(timeout))
+    last_pid = 0
+    while time.time() < deadline:
+        cli_pid, child_pid = find_cli_and_child(config, root=root)
+        pid = child_pid or cli_pid or 0
+        if pid:
+            last_pid = int(pid)
+            if child_pid:
+                return int(child_pid)
+        time.sleep(0.2)
+    return int(last_pid)
 
 
 def _wait_pipeline_alive(pid: int, *, timeout: float = 5.0) -> None:
@@ -655,18 +785,29 @@ def pipeline_restart(
     detach: bool = False,
     api_base_url: Optional[str] = None,
 ) -> SpawnResult:
-    stop_pipelines(site_dir=site_dir, config=config, stop_all=False, hold=hold)
+    from evileye.watchdog_native import clear_manual_stop_cooldown
+
+    root = _resolve_site(site_dir)
+    stop_pipelines(
+        site_dir=root,
+        config=config,
+        stop_all=False,
+        watchdog_suppress="grace" if hold else "none",
+    )
     time.sleep(1.0)
     result = pipeline_start(
         config,
-        site_dir=site_dir,
+        site_dir=root,
         gui=gui,
         detach=detach,
-        release_hold=not hold,
+        release_hold=True,
         replace=True,
         api_base_url=api_base_url,
     )
-    _wait_pipeline_alive(result.pid)
+    # Successful restart always clears a leftover manual-stop marker.
+    clear_manual_stop_cooldown(root)
+    if result.mode != "direct-foreground":
+        _wait_pipeline_alive(result.pid)
     return result
 
 
@@ -760,7 +901,7 @@ def reload_web(
 
     try:
         if with_pipeline:
-            stop_pipelines(site_dir=root, stop_all=True, hold=True)
+            stop_pipelines(site_dir=root, stop_all=True, watchdog_suppress="grace")
         restart_web_layer(site_dir=root, force_build=force_build, log=log)
         if not wait_web_ready(port=state.port, timeout=60.0):
             return ReloadResult(ok=False, message=f"Web server not ready on port {state.port}")
@@ -778,7 +919,7 @@ def reload_web(
                 site_dir=root,
                 detach=True,
                 gui=False,
-                release_hold=release_hold or True,
+                release_hold=release_hold,
                 replace=True,
             )
             return ReloadResult(
