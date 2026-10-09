@@ -162,6 +162,7 @@ class DatabaseJournalDataSource(EventJournalDataSource):
             'FOVEvent': 'schedule_alarm_found',
             'CameraEvent': 'cam',
             'SystemEvent': 'sys',
+            'AlarmEvent': 'alarm',
         }
         return mapping.get(db_type, db_type.lower())
 

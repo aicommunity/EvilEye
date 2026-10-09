@@ -837,6 +837,11 @@ class Controller(ControllerProcessingMixin):
                     extra_parts.append(f" events={self.events_detectors_controller.get_runtime_stats()}")
                 except Exception:
                     pass
+            if self.events_processor and hasattr(self.events_processor, "get_runtime_stats"):
+                try:
+                    extra_parts.append(f" event_processor={self.events_processor.get_runtime_stats()}")
+                except Exception:
+                    pass
             if self.event_buffers:
                 try:
                     buf_stats = {sid: buf.get_runtime_stats() for sid, buf in self.event_buffers.items()}
@@ -1458,7 +1463,11 @@ class Controller(ControllerProcessingMixin):
         pipeline_class_name = pipeline_params.get("pipeline_class")
         self.logger.info(f"Using EVILEYE_PIPELINE_ID for streaming: {self.stream_pipeline_id}")
 
-        self.pipeline = self._pipeline_service.create_pipeline(pipeline_class_name)
+        self.pipeline = self._pipeline_service.create_pipeline(
+            pipeline_class_name,
+            pipeline_params=pipeline_params,
+            credentials=self.credentials,
+        )
         self.pipeline = self._pipeline_service.initialize_pipeline(
             pipeline=self.pipeline,
             pipeline_params=pipeline_params,
@@ -2172,63 +2181,20 @@ class Controller(ControllerProcessingMixin):
             pass
 
     def _discover_pipeline_classes(self):
-        """Discover all pipeline classes from packages and current directory"""
-        pipeline_classes = {}
-
-        # Search in evileye.pipelines package
-        try:
-            pipelines_module = importlib.import_module('evileye.pipelines')
-            for name, obj in inspect.getmembers(pipelines_module):
-                # __bases__ - встроенный атрибут всех классов Python, getattr безопаснее и быстрее inspect.getmro
-                bases = getattr(obj, '__bases__', None)
-                if (inspect.isclass(obj) and
-                        bases and
-                        any('Pipeline' in base.__name__ for base in bases)):
-                    pipeline_classes[name] = obj
-        except ImportError as e:
-            self.logger.warning(f"Failed to import evileye.pipelines: {e}")
-
-        # Search in current working directory pipelines folder
-        current_dir = Path.cwd()
-        pipelines_dir = current_dir / "pipelines"
-        if pipelines_dir.exists() and pipelines_dir.is_dir():
-            try:
-                # Add current directory to Python path
-                import sys
-                sys.path.insert(0, str(current_dir))
-
-                # Try to import pipelines module from current directory
-                pipelines_module = importlib.import_module('pipelines')
-                for name, obj in inspect.getmembers(pipelines_module):
-                    # __bases__ - встроенный атрибут всех классов Python, getattr безопаснее и быстрее inspect.getmro
-                    bases = getattr(obj, '__bases__', None)
-                    if (inspect.isclass(obj) and
-                            bases and
-                            any('Pipeline' in base.__name__ for base in bases)):
-                        pipeline_classes[name] = obj
-
-                # Remove from path
-                sys.path.pop(0)
-            except ImportError as e:
-                self.logger.warning(f"Failed to import local pipelines: {e}")
-
-        return pipeline_classes
+        """Return pipelines exposed by the startup plugin registry."""
+        return self._pipeline_service._discover_pipeline_classes()
 
     def _create_pipeline_instance(self, pipeline_class_name: str):
-        """Create pipeline instance by class name"""
-        pipeline_classes = self._discover_pipeline_classes()
-
-        if pipeline_class_name not in pipeline_classes:
-            available_classes = list(pipeline_classes.keys())
-            raise ValueError(
-                f"Pipeline class '{pipeline_class_name}' not found. Available classes: {available_classes}")
-
-        pipeline_class = pipeline_classes[pipeline_class_name]
-        return pipeline_class()
+        """Create a pipeline through the shared plugin registry."""
+        return self._pipeline_service._create_pipeline_instance(
+            pipeline_class_name,
+            pipeline_params=(self.params or {}).get("pipeline", {}),
+            credentials=self.credentials,
+        )
 
     def get_available_pipeline_classes(self):
         """Get list of available pipeline classes"""
-        return list(self._discover_pipeline_classes().keys())
+        return self._pipeline_service.get_available_pipeline_classes()
 
     def get_class_name(self, class_id: int) -> str:
         """Get class name from class ID using class_mapping"""
@@ -2381,13 +2347,8 @@ class Controller(ControllerProcessingMixin):
 
         # Create pipeline instance if class name is provided
         if pipeline_class:
-            try:
-                self.pipeline = self._create_pipeline_instance(pipeline_class)
-                self.logger.info(f"Created pipeline instance: {pipeline_class}")
-            except Exception as e:
-                self.logger.warning(f"Failed to create pipeline '{pipeline_class}': {e}")
-                self.logger.info("Using default pipeline")
-                self.pipeline = PipelineSurveillance()
+            self.pipeline = self._create_pipeline_instance(pipeline_class)
+            self.logger.info(f"Created pipeline instance: {pipeline_class}")
         else:
             # Use default pipeline
             self.pipeline = PipelineSurveillance()

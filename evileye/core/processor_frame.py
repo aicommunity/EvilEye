@@ -35,12 +35,12 @@ class ProcessorFrame(ProcessorBase):
                 is_processor_found = False
                 for processor in self.processors:
                     source_ids = processor.get_source_ids()
-                    if hasattr(frame_to_process, 'source_id') and frame_to_process.source_id in source_ids:
+                    if (
+                        hasattr(frame_to_process, 'source_id')
+                        and (source_ids is None or frame_to_process.source_id in source_ids)
+                    ):
                         processor.put(frame_to_process)
                         is_processor_found = True
-
-                    if is_processor_found:
-                        break
 
                 if not is_processor_found:
                     processing_results.append(item)

@@ -1,5 +1,5 @@
 import time
-from queue import Queue
+from queue import Full, Queue
 from threading import Thread
 from ..core.base_class import EvilEyeBase
 from psycopg2 import sql
@@ -11,7 +11,8 @@ class EventsProcessor(EvilEyeBase):
         super().__init__()
         self.id_counter = 0
 
-        self.queue = Queue()
+        self.queue_maxsize = 256
+        self.queue = Queue(maxsize=self.queue_maxsize)
         self.processing_thread = Thread(target=self.process)
         self.run_flag = False
         self.db_adapters = db_adapters
@@ -24,6 +25,9 @@ class EventsProcessor(EvilEyeBase):
         self.finished_events = {}
         self.ui_callback = None  # callback: (source_id, event_name, is_on, bbox_norm)
         self.event_recording_callback = None  # callback: (event_id, event_name, event_timestamp, source_id, is_on, bbox)
+        self.degraded = False
+        self.queue_rejections = 0
+        self.adapter_failures = 0
 
     def set_params_impl(self):
         pass
@@ -127,7 +131,49 @@ class EventsProcessor(EvilEyeBase):
         pass
 
     def put(self, events):
-        self.queue.put(events)
+        try:
+            self.queue.put_nowait(events)
+            return True
+        except Full:
+            self.degraded = True
+            self.queue_rejections += 1
+            self.logger.critical(
+                "Event processor queue is full; event batch rejected (rejections=%d)",
+                self.queue_rejections,
+            )
+            return False
+
+    def get_runtime_stats(self):
+        try:
+            queue_size = self.queue.qsize()
+        except Exception:
+            queue_size = None
+        return {
+            "queue_size": queue_size,
+            "queue_maxsize": self.queue_maxsize,
+            "queue_rejections": self.queue_rejections,
+            "adapter_failures": self.adapter_failures,
+            "degraded": self.degraded,
+        }
+
+    def _adapter_call(self, event, method_name: str, target=None):
+        event_name = event.get_name()
+        for adapter in self.events_adapters.get(event_name, []):
+            for attempt in range(3):
+                try:
+                    getattr(adapter, method_name)(target if target is not None else event)
+                    break
+                except Exception as exc:
+                    if attempt < 2:
+                        time.sleep(0.05 * (attempt + 1))
+                        continue
+                self.degraded = True
+                self.adapter_failures += 1
+                self.logger.error(
+                    "Event adapter %s.%s failed for %s: %s",
+                    adapter.__class__.__name__, method_name, event_name, exc,
+                    exc_info=True,
+                )
 
     def start(self):
         self.id_counter = self.get_last_id()
@@ -149,7 +195,17 @@ class EventsProcessor(EvilEyeBase):
         # Signal processing thread to exit
         self.run_flag = False
         try:
-            self.queue.put(None)
+            self.queue.put_nowait(None)
+        except Full:
+            self.degraded = True
+            try:
+                pending = self.queue.qsize()
+            except Exception:
+                pending = "unknown"
+            self.logger.error(
+                "Event processor stopped with pending batches that could not be drained: %s",
+                pending,
+            )
         except Exception:
             pass
 
@@ -180,14 +236,7 @@ class EventsProcessor(EvilEyeBase):
                                 if event.is_finished():  # Обновляем запись о долгосрочном событии, если оно закончилось
                                     long_term[i].update_on_finished(
                                         event)  # Обновляем информацию о событии по его завершении
-                                if event.get_name() in self.events_adapters:
-                                    # Call update on all adapters for this event name
-                                    for adapter in self.events_adapters[event.get_name()]:
-                                        try:
-                                            adapter.update(long_term[i])
-                                        except Exception as e:
-                                            self.logger.error(
-                                                f"Error updating event in adapter {adapter.__class__.__name__}: {e}")
+                                self._adapter_call(event, "update", long_term[i])
                                 # Notify UI: event OFF (независимо от наличия адаптера)
                                 try:
                                     if self.ui_callback:
@@ -252,14 +301,8 @@ class EventsProcessor(EvilEyeBase):
                                 except Exception:
                                     pass
 
-                            if event.get_name() in self.events_adapters:
-                                # Call insert on all adapters for this event name (after callback, so video path is available)
-                                for adapter in self.events_adapters[event.get_name()]:
-                                    try:
-                                        adapter.insert(event)
-                                    except Exception as e:
-                                        self.logger.error(
-                                            f"Error inserting event in adapter {adapter.__class__.__name__}: {e}")
+                            # Persist after recording callback so any video path is available.
+                            self._adapter_call(event, "insert")
                             # UI: ON для нового долгосрочного события в уже активной группе
                             try:
                                 if self.ui_callback and not event.is_finished():
@@ -280,14 +323,7 @@ class EventsProcessor(EvilEyeBase):
                                 if events not in self.finished_events:
                                     self.finished_events[events] = []
                                 self.finished_events[events].append(event)
-                                if event.get_name() in self.events_adapters:
-                                    # Call insert on all adapters for this event name
-                                    for adapter in self.events_adapters[event.get_name()]:
-                                        try:
-                                            adapter.insert(event)
-                                        except Exception as e:
-                                            self.logger.error(
-                                                f"Error inserting event in adapter {adapter.__class__.__name__}: {e}")
+                                self._adapter_call(event, "insert")
                                 # Для long_term события, пришедшего уже завершённым, не шлём ON, только OFF
                                 try:
                                     if self.ui_callback:
@@ -332,14 +368,7 @@ class EventsProcessor(EvilEyeBase):
                             if events not in self.finished_events:
                                 self.finished_events[events] = []
                             self.finished_events[events].append(event)
-                            if event.get_name() in self.events_adapters:
-                                # Call insert on all adapters for this event name
-                                for adapter in self.events_adapters[event.get_name()]:
-                                    try:
-                                        adapter.insert(event)
-                                    except Exception as e:
-                                        self.logger.error(
-                                            f"Error inserting event in adapter {adapter.__class__.__name__}: {e}")
+                            self._adapter_call(event, "insert")
                             # Notify UI for non-long events: ON then OFF
                             try:
                                 if self.ui_callback and not event.is_long_term():

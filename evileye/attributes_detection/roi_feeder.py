@@ -17,7 +17,7 @@ from ..core.processor_base import (
 )
 
 
-@EvilEyeBase.register("RoiFeeder")
+@EvilEyeBase.register("RoiFeeder", kind="attribute", execution_modes=("thread",))
 class RoiFeeder(DualModeProcessor):
     """Lightweight processor that extracts ROI bbox coords from tracked objects.
 

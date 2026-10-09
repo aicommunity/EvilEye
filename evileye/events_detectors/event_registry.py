@@ -18,6 +18,8 @@ from __future__ import annotations
 
 from typing import Any, Callable, Dict, List, Optional, Type
 
+from evileye.core.plugins import plugin_manager, plugin_registry
+
 _EVENT_DETECTOR_REGISTRY: Dict[str, Type] = {}
 
 
@@ -25,21 +27,43 @@ def register_event_detector(name: str) -> Callable[[Type], Type]:
     """Decorator: register an event detector class under ``name``."""
 
     def _wrap(cls: Type) -> Type:
-        _EVENT_DETECTOR_REGISTRY[str(name)] = cls
+        name_value = str(name)
+        existing = _EVENT_DETECTOR_REGISTRY.get(name_value)
+        if existing is not None and existing is not cls:
+            raise ValueError(f"Event detector id already registered: {name_value}")
+        _EVENT_DETECTOR_REGISTRY[name_value] = cls
+        plugin_registry.register_builtin_module(
+            name_value,
+            cls,
+            kind="event_detector",
+            execution_modes=("thread",),
+            legacy_ids=(name_value,),
+        )
         return cls
 
     return _wrap
 
 
 def list_event_detectors() -> List[str]:
-    return sorted(_EVENT_DETECTOR_REGISTRY.keys())
+    plugin_manager.load()
+    names = set(_EVENT_DETECTOR_REGISTRY)
+    names.update(plugin_registry.list_modules("event_detector"))
+    for module_id in plugin_registry.list_modules("event_detector"):
+        registered = plugin_registry.get_module(module_id)
+        if registered is not None:
+            names.update(registered.spec.legacy_ids)
+    return sorted(names)
 
 
 def get_event_detector_class(name: str) -> Optional[Type]:
+    registered = plugin_registry.get_module(str(name))
+    if registered is not None and registered.spec.kind == "event_detector":
+        return registered.spec.factory
     return _EVENT_DETECTOR_REGISTRY.get(str(name))
 
 
 def create_event_detector(name: str, *args: Any, **kwargs: Any) -> Any:
+    plugin_manager.load()
     cls = get_event_detector_class(name)
     if cls is None:
         raise KeyError(f"Event detector not registered: {name}")
@@ -48,8 +72,7 @@ def create_event_detector(name: str, *args: Any, **kwargs: Any) -> Any:
 
 def register_builtins() -> None:
     """Idempotent registration of stock detectors."""
-    if _EVENT_DETECTOR_REGISTRY:
-        return
+    plugin_manager.load()
     from evileye.events_detectors.attribute_events_detector import AttributeEventsDetector
     from evileye.events_detectors.cam_events_detector import CamEventsDetector
     from evileye.events_detectors.schedule_alarm_events_detector import ScheduleAlarmEventsDetector
@@ -60,9 +83,25 @@ def register_builtins() -> None:
         LEGACY_DETECTOR_CONFIG_KEY,
     )
 
-    _EVENT_DETECTOR_REGISTRY["CamEventsDetector"] = CamEventsDetector
-    _EVENT_DETECTOR_REGISTRY["ZoneEventsDetector"] = ZoneEventsDetector
-    _EVENT_DETECTOR_REGISTRY["AttributeEventsDetector"] = AttributeEventsDetector
-    _EVENT_DETECTOR_REGISTRY["SystemEventsDetector"] = SystemEventsDetector
-    _EVENT_DETECTOR_REGISTRY[DETECTOR_CONFIG_KEY] = ScheduleAlarmEventsDetector
-    _EVENT_DETECTOR_REGISTRY[LEGACY_DETECTOR_CONFIG_KEY] = ScheduleAlarmEventsDetector
+    builtin_detectors = {
+        "CamEventsDetector": CamEventsDetector,
+        "ZoneEventsDetector": ZoneEventsDetector,
+        "AttributeEventsDetector": AttributeEventsDetector,
+        "SystemEventsDetector": SystemEventsDetector,
+        DETECTOR_CONFIG_KEY: ScheduleAlarmEventsDetector,
+        LEGACY_DETECTOR_CONFIG_KEY: ScheduleAlarmEventsDetector,
+    }
+    for name, detector_class in builtin_detectors.items():
+        existing = _EVENT_DETECTOR_REGISTRY.get(name)
+        if existing is not None and existing is not detector_class:
+            raise ValueError(f"Event detector id already registered: {name}")
+        _EVENT_DETECTOR_REGISTRY[name] = detector_class
+        # Register each builtin in the shared SPI while retaining its legacy key.
+        if plugin_registry.get_module(f"evileye/{name}") is None:
+            plugin_registry.register_builtin_module(
+                name,
+                detector_class,
+                kind="event_detector",
+                execution_modes=("thread",),
+                legacy_ids=(name,),
+            )

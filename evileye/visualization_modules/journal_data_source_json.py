@@ -123,6 +123,7 @@ class JsonLabelJournalDataSource(EventJournalDataSource):
             (os.path.join(events_metadata, 'zone_events_left.json'), 'zone_left', date_folder),
             (os.path.join(events_metadata, 'camera_events.json'), 'cam', date_folder),
             (os.path.join(events_metadata, 'system_events.json'), 'sys', date_folder),
+            (os.path.join(events_metadata, 'alarm_events.json'), 'alarm', date_folder),
         ]
         for found_name in JSON_FOUND_FILENAMES:
             files.append((os.path.join(events_metadata, found_name), 'schedule_alarm_found', date_folder))
@@ -383,6 +384,20 @@ class JsonLabelJournalDataSource(EventJournalDataSource):
                     'source_name': None,
                     'video_path': None,  # System events don't have video
                     'video_path_lost': None,
+                    'date_folder': date_folder,
+                }
+            elif event_type == 'alarm':
+                return {
+                    'event_id': event_id_str,
+                    'event_id_numeric': event_id_numeric,
+                    'event_type': 'alarm',
+                    'ts': timestamp,
+                    'alarm_id': item.get('alarm_id'),
+                    'alarm_type': item.get('alarm_type', 'Alarm'),
+                    'severity': item.get('severity', 'warning'),
+                    'details': item.get('details') or {},
+                    'source_id': item.get('source_id'),
+                    'source_name': item.get('source_name'),
                     'date_folder': date_folder,
                 }
         except Exception as e:

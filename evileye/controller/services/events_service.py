@@ -7,6 +7,7 @@ from typing import Any, Dict, List, Optional
 from evileye.core.interfaces import IEventDetector, IObjectHandler, IPipeline
 from evileye.core.logger import get_module_logger
 from evileye.database_controller.json_adapter_attribute_events import JsonAdapterAttributeEvents
+from evileye.database_controller.json_adapter_alarm_events import JsonAdapterAlarmEvents
 from evileye.database_controller.json_adapter_cam_events import JsonAdapterCamEvents
 from evileye.database_controller.json_adapter_schedule_alarm_events import JsonAdapterScheduleAlarmEvents
 from evileye.database_controller.json_adapter_system_events import JsonAdapterSystemEvents
@@ -23,8 +24,10 @@ from evileye.events_detectors.schedule_alarm_logic import (
     LEGACY_DETECTOR_CONFIG_KEY,
     resolve_detector_section,
 )
+from evileye.core.plugins import plugin_registry
 
 JSON_EVENT_ADAPTER_CLASSES = (
+    JsonAdapterAlarmEvents,
     JsonAdapterAttributeEvents,
     JsonAdapterScheduleAlarmEvents,
     JsonAdapterZoneEvents,
@@ -51,6 +54,7 @@ class EventsService:
         self._detectors: Dict[str, IEventDetector] = {}
         self._detectors_controller: Optional[EventsDetectorsController] = None
         self._events_processor: Optional[EventsProcessor] = None
+        self._adapters: List[Any] = []
 
     def initialize_detectors(
             self,
@@ -90,15 +94,18 @@ class EventsService:
                     params=params,
                 )
             except KeyError:
-                self.logger.warning("Unknown event detector '%s' — skip", name)
-                continue
+                raise ValueError(f"Unknown event detector '{name}'")
             except Exception as exc:
                 self.logger.error("Failed to create event detector %s: %s", name, exc, exc_info=True)
-                continue
+                raise RuntimeError(f"Failed to create event detector '{name}'") from exc
             section = params.get(name, {}) if name not in {DETECTOR_CONFIG_KEY, LEGACY_DETECTOR_CONFIG_KEY} else resolve_detector_section(params)
             if name in {DETECTOR_CONFIG_KEY, LEGACY_DETECTOR_CONFIG_KEY}:
                 section = resolve_detector_section(params)
-            detector.set_params(**(section or {}))
+            detector_config = section or {}
+            registered = plugin_registry.get_module(name)
+            if registered is not None and registered.spec.config_schema is not None:
+                detector_config = plugin_registry.validate_module_config(name, detector_config)
+            detector.set_params(**detector_config)
             detector.init()
             self._detectors[name] = detector
             if name == DETECTOR_CONFIG_KEY:
@@ -122,7 +129,23 @@ class EventsService:
             self._detectors.get("ZoneEventsDetector"),
             self._detectors.get("AttributeEventsDetector"),
         ]
-        oh_subs = [d for d in oh_subs if d is not None]
+        for name in enabled_list:
+            registered = plugin_registry.get_module(name)
+            detector = self._detectors.get(name)
+            if (
+                registered is not None
+                and registered.spec.kind == "event_detector"
+                and "object_handler" in registered.spec.capabilities
+                and detector is not None
+            ):
+                oh_subs.append(detector)
+        unique_subscribers = []
+        seen_subscribers: set[int] = set()
+        for detector in oh_subs:
+            if detector is not None and id(detector) not in seen_subscribers:
+                unique_subscribers.append(detector)
+                seen_subscribers.add(id(detector))
+        oh_subs = unique_subscribers
         if oh_subs:
             try:
                 objects_handler.subscribe(*oh_subs)
@@ -228,6 +251,7 @@ class EventsService:
     ) -> List[Any]:
         """Собрать DB и JSON адаптеры для EventsProcessor."""
         adapters: List[Any] = []
+        alarm_db_adapter = None
 
         if use_database and db_controller and db_controller.is_connected():
             adapters.extend(
@@ -241,6 +265,16 @@ class EventsService:
                 adapters.append(db_adapter_attr_events)
             if db_adapter_system_events:
                 adapters.append(db_adapter_system_events)
+            try:
+                from evileye.database_controller.db_adapter_alarm_events import DatabaseAdapterAlarmEvents
+
+                alarm_db_adapter = DatabaseAdapterAlarmEvents(db_controller)
+                alarm_db_adapter.set_params(table_name="alarm_events")
+                alarm_db_adapter.init()
+                alarm_db_adapter.start()
+                adapters.append(alarm_db_adapter)
+            except Exception as exc:
+                self.logger.error("Failed to initialize alarm database adapter: %s", exc)
             try:
                 self.logger.info(
                     "DB adapters: %s",
@@ -283,6 +317,13 @@ class EventsService:
                     self.logger.error("Failed to start JSON adapter %s: %s", adapter_cls.__name__, e)
                 except Exception:
                     pass
+                if adapter_cls is JsonAdapterAlarmEvents:
+                    if alarm_db_adapter is not None:
+                        try:
+                            alarm_db_adapter.stop()
+                        except Exception:
+                            pass
+                    raise RuntimeError("Generic alarm persistence is unavailable") from e
 
         return adapters
 
@@ -356,6 +397,7 @@ class EventsService:
             ui_callback: Optional[callable] = None,
     ) -> None:
         """Инициализировать процессор событий."""
+        self._adapters = list(adapters)
         self._events_processor = EventsProcessor(adapters, db_controller)
         self._events_processor.set_params(**params)
         self._events_processor.init()
@@ -408,7 +450,22 @@ class EventsService:
 
     def release(self) -> None:
         self.stop_detectors()
+        if self._events_processor is not None:
+            try:
+                self._events_processor.stop()
+            except Exception:
+                pass
+        seen: set[int] = set()
+        for adapter in self._adapters:
+            if adapter is None or id(adapter) in seen:
+                continue
+            seen.add(id(adapter))
+            try:
+                adapter.stop()
+            except Exception:
+                pass
         self._detectors.clear()
         self._detectors_controller = None
         self._events_processor = None
+        self._adapters.clear()
         self.logger.info("Events service released")

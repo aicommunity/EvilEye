@@ -1,0 +1,16 @@
+[build-system]
+requires = ["setuptools>=61", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "evileye-example-plugin"
+version = "0.1.0"
+requires-python = ">=3.10"
+dependencies = ["evileye>=0.0.16"]
+
+[project.entry-points."evileye.plugins"]
+example = "evileye_example_plugin:load_plugin"
+
+[tool.setuptools]
+py-modules = ["evileye_example_plugin"]
+

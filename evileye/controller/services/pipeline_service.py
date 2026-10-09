@@ -2,14 +2,12 @@
 
 from __future__ import annotations
 
-import importlib
-import inspect
-from pathlib import Path
 from typing import Any, Dict, Optional
 
+from evileye.core.contracts import PipelineConfig, PipelineDependencies
 from evileye.core.interfaces import IPipeline
 from evileye.core.logger import get_module_logger
-from evileye.pipelines import PipelineSurveillance
+from evileye.core.plugins import plugin_manager, plugin_registry
 
 
 class PipelineService:
@@ -25,7 +23,12 @@ class PipelineService:
         self.class_manager = class_manager
         self._pipeline: Optional[IPipeline] = None
 
-    def create_pipeline(self, pipeline_class_name: Optional[str] = None) -> IPipeline:
+    def create_pipeline(
+        self,
+        pipeline_class_name: Optional[str] = None,
+        pipeline_params: Optional[Dict[str, Any]] = None,
+        credentials: Optional[Dict[str, Any]] = None,
+    ) -> IPipeline:
         """Создать экземпляр pipeline.
 
         Args:
@@ -37,17 +40,13 @@ class PipelineService:
         Raises:
             ValueError: Если класс pipeline не найден
         """
-        if pipeline_class_name:
-            try:
-                self._pipeline = self._create_pipeline_instance(pipeline_class_name)
-                self.logger.info(f"Created pipeline: {pipeline_class_name}")
-            except Exception as e:
-                self.logger.warning(f"Failed to create pipeline '{pipeline_class_name}': {e}")
-                self.logger.info("Falling back to default PipelineSurveillance")
-                self._pipeline = PipelineSurveillance()
-        else:
-            self.logger.info("Using default PipelineSurveillance")
-            self._pipeline = PipelineSurveillance()
+        selected = pipeline_class_name or "PipelineSurveillance"
+        self._pipeline = self._create_pipeline_instance(
+            selected,
+            pipeline_params=pipeline_params or {},
+            credentials=credentials,
+        )
+        self.logger.info("Created pipeline: %s", selected)
 
         return self._pipeline
 
@@ -118,7 +117,13 @@ class PipelineService:
             return self._pipeline.get_sources()
         return []
 
-    def _create_pipeline_instance(self, pipeline_class_name: str) -> IPipeline:
+    def _create_pipeline_instance(
+        self,
+        pipeline_class_name: str,
+        *,
+        pipeline_params: Optional[Dict[str, Any]] = None,
+        credentials: Optional[Dict[str, Any]] = None,
+    ) -> IPipeline:
         """Создать экземпляр pipeline по имени класса.
 
         Args:
@@ -130,57 +135,49 @@ class PipelineService:
         Raises:
             ValueError: Если класс не найден
         """
-        pipeline_classes = self._discover_pipeline_classes()
-
-        if pipeline_class_name not in pipeline_classes:
-            available_classes = list(pipeline_classes.keys())
+        self._register_builtin_pipelines()
+        plugin_manager.load()
+        registered = plugin_registry.get_pipeline(pipeline_class_name)
+        if registered is None:
+            available_classes = self.get_available_pipeline_classes()
             raise ValueError(
                 f"Pipeline class '{pipeline_class_name}' not found. "
                 f"Available classes: {available_classes}"
             )
 
-        pipeline_class = pipeline_classes[pipeline_class_name]
-        return pipeline_class()
+        dependencies = PipelineDependencies(
+            config=PipelineConfig(
+                raw_config=dict(pipeline_params or {}),
+                credentials=dict(credentials or {}) if credentials is not None else None,
+            )
+        )
+        pipeline = registered.spec.factory(dependencies)
+        required_methods = (
+            "init", "start", "stop", "reset", "set_params", "get_params",
+            "set_credentials", "get_credentials", "process", "get_sources",
+            "get_results_list", "get_current_results",
+        )
+        missing = [method for method in required_methods if not callable(getattr(pipeline, method, None))]
+        if missing:
+            raise TypeError(
+                f"Pipeline '{pipeline_class_name}' does not implement IPipeline; "
+                f"missing methods: {', '.join(missing)}"
+            )
+        return pipeline
 
-    def _discover_pipeline_classes(self) -> Dict[str, type]:
-        """Обнаружить все доступные классы pipeline.
+    @staticmethod
+    def _register_builtin_pipelines() -> None:
+        from evileye.pipelines.pipeline_capture import PipelineCapture
+        from evileye.pipelines.pipeline_declarative import PipelineDeclarative
+        from evileye.pipelines.pipeline_surveillance import PipelineSurveillance
 
-        Returns:
-            Словарь {имя_класса: класс}
-        """
-        pipeline_classes = {}
-
-        # Поиск в пакете evileye.pipelines
-        try:
-            pipelines_module = importlib.import_module('evileye.pipelines')
-            for name, obj in inspect.getmembers(pipelines_module):
-                if (inspect.isclass(obj) and
-                        hasattr(obj, '__bases__') and
-                        any('Pipeline' in base.__name__ for base in obj.__bases__)):
-                    pipeline_classes[name] = obj
-        except ImportError as e:
-            self.logger.warning(f"Failed to import evileye.pipelines: {e}")
-
-        # Поиск в локальной директории pipelines
-        current_dir = Path.cwd()
-        pipelines_dir = current_dir / "pipelines"
-        if pipelines_dir.exists() and pipelines_dir.is_dir():
-            try:
-                import sys
-                sys.path.insert(0, str(current_dir))
-
-                pipelines_module = importlib.import_module('pipelines')
-                for name, obj in inspect.getmembers(pipelines_module):
-                    if (inspect.isclass(obj) and
-                            hasattr(obj, '__bases__') and
-                            any('Pipeline' in base.__name__ for base in obj.__bases__)):
-                        pipeline_classes[name] = obj
-
-                sys.path.pop(0)
-            except ImportError as e:
-                self.logger.warning(f"Failed to import local pipelines: {e}")
-
-        return pipeline_classes
+        for pipeline_class in (PipelineSurveillance, PipelineCapture, PipelineDeclarative):
+            canonical = f"evileye/{pipeline_class.__name__}"
+            if plugin_registry.get_pipeline(canonical) is None:
+                plugin_registry.register_builtin_pipeline(
+                    pipeline_class.__name__,
+                    lambda _dependencies, cls=pipeline_class: cls(),
+                )
 
     def _set_class_manager_for_detectors(self, pipeline: IPipeline) -> None:
         """Установить ClassManager для всех детекторов в pipeline.
@@ -204,4 +201,16 @@ class PipelineService:
         Returns:
             Список имен классов
         """
-        return list(self._discover_pipeline_classes().keys())
+        self._register_builtin_pipelines()
+        plugin_manager.load()
+        return plugin_registry.list_pipeline_names()
+
+    def _discover_pipeline_classes(self) -> Dict[str, type]:
+        """Compatibility helper returning registered pipeline factories."""
+        self._register_builtin_pipelines()
+        plugin_manager.load()
+        return {
+            name: registered.spec.factory
+            for name in plugin_registry.list_pipeline_names()
+            if (registered := plugin_registry.get_pipeline(name)) is not None
+        }

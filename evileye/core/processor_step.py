@@ -1,5 +1,6 @@
 from typing import Any
 import time
+import copy
 
 from .processor_base import ProcessorBase
 from .frame import Frame
@@ -46,6 +47,52 @@ class ProcessorStep(ProcessorBase):
         if normalized is None:
             return
         processing_results.append(normalized)
+
+    @staticmethod
+    def _merge_detector_fanout(results: list) -> list:
+        """Merge compatible detector result lists for the same source/frame."""
+        merged_results = []
+        by_frame: dict[tuple[int, int], int] = {}
+        for result in results:
+            if not isinstance(result, (list, tuple)) or len(result) < 2:
+                merged_results.append(result)
+                continue
+            data, frame = result[0], result[1]
+            source_id = getattr(frame, "source_id", None)
+            frame_id = getattr(frame, "frame_id", None)
+            if source_id is None or frame_id is None:
+                merged_results.append(result)
+                continue
+            try:
+                key = (int(source_id), int(frame_id))
+            except (TypeError, ValueError):
+                merged_results.append(result)
+                continue
+            detections = data.get("detections") if isinstance(data, dict) else getattr(data, "detections", None)
+            if not isinstance(detections, list):
+                merged_results.append(result)
+                continue
+            existing_idx = by_frame.get(key)
+            if existing_idx is None:
+                try:
+                    data_copy = dict(data) if isinstance(data, dict) else copy.copy(data)
+                    copied_detections = list(detections)
+                    if isinstance(data_copy, dict):
+                        data_copy["detections"] = copied_detections
+                    else:
+                        data_copy.detections = copied_detections
+                except Exception:
+                    merged_results.append(result)
+                    continue
+                by_frame[key] = len(merged_results)
+                merged_results.append([data_copy, frame])
+                continue
+            base_data = merged_results[existing_idx][0]
+            if isinstance(base_data, dict):
+                base_data["detections"].extend(detections)
+            else:
+                base_data.detections.extend(detections)
+        return merged_results
 
     def _sync_mp_mode(self) -> str:
         return os.getenv("EVILEYE_PIPELINE_SYNC_MP", "").strip().lower()
@@ -331,17 +378,30 @@ class ProcessorStep(ProcessorBase):
 
                 for processor in self.processors:
                     source_ids = processor.get_source_ids()
-                    if source_id is not None and source_id in source_ids:
+                    if source_id is not None and (source_ids is None or source_id in source_ids):
                         processor.put(self._adapt_input_for_processor(input, processor))
                         is_processor_found = True
                         had_puts = True
                         put_count += 1
 
-                    if is_processor_found:
-                        break
-
                 if not is_processor_found:
-                    res = self.dummy_processor.ResultType()
+                    result_type = getattr(self.dummy_processor, "ResultType", None)
+                    if callable(result_type):
+                        res = result_type()
+                    elif self.processor_name == "detectors":
+                        from evileye.object_detector.object_detection_base import DetectionResultList
+
+                        res = DetectionResultList()
+                    elif self.processor_name in {"trackers", "mc_trackers"}:
+                        from evileye.object_tracker.tracking_results import TrackingResultList
+
+                        res = TrackingResultList()
+                    else:
+                        # A generic plugin may not expose the legacy ResultType
+                        # class. Preserve the upstream item when this plugin is
+                        # not assigned to the current source.
+                        processing_results.append(input)
+                        continue
                     if res is not None:
                         if hasattr(res, "source_id"):
                             setattr(res, "source_id", frame.source_id)
@@ -376,6 +436,8 @@ class ProcessorStep(ProcessorBase):
             max_items_per_processor=self._drain_max_items(),
         )
         post_drain_added += self._sync_mp_drain_after_put(processing_results)
+        if self.processor_name == "detectors":
+            processing_results = self._merge_detector_fanout(processing_results)
         t_after_drain = time.monotonic()
         drain_imm_count = len(processing_results)
         t_stage_end = time.monotonic()

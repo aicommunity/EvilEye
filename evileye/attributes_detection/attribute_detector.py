@@ -6,7 +6,7 @@ from typing import Dict, Any, List
 import numpy as np
 
 
-@EvilEyeBase.register("AttributeDetector")
+@EvilEyeBase.register("AttributeDetector", kind="detector")
 class AttributeDetector(ObjectDetectorBase):
     """Attribute detector for ROI images using YOLO model"""
 

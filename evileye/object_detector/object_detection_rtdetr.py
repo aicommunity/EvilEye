@@ -2,7 +2,7 @@ from .object_detection_base import ModelBasedDetectorBase
 from ..core.base_class import EvilEyeBase
 
 
-@EvilEyeBase.register("ObjectDetectorRtdetr")
+@EvilEyeBase.register("ObjectDetectorRtdetr", kind="detector")
 class ObjectDetectorRtdetr(ModelBasedDetectorBase):
     """RT-DETR-based object detector."""
 

@@ -402,6 +402,7 @@ class UnifiedEventsJournal(UnifiedJournalBase):
         grouped = defaultdict(lambda: {'found': None, 'lost': None})
         cam_events = []
         sys_events = []
+        alarm_events = []
 
         for ev in rows:
             et = ev.get('event_type', '')
@@ -412,6 +413,8 @@ class UnifiedEventsJournal(UnifiedJournalBase):
                 cam_events.append(ev)
             elif et == 'sys':
                 sys_events.append(ev)
+            elif et == 'alarm':
+                alarm_events.append(ev)
             elif et.startswith('attr'):
                 key = ('attr', ev.get('object_id'))
                 if et == 'attr_found':
@@ -524,6 +527,22 @@ class UnifiedEventsJournal(UnifiedJournalBase):
                 'lost_event': None
             })
 
+        for ev in alarm_events:
+            alarm_type = ev.get('alarm_type') or ev.get('event') or 'Alarm'
+            severity = ev.get('severity') or 'warning'
+            details = ev.get('details') or {}
+            table_rows.append({
+                'source': ev.get('source_name') or str(ev.get('source_id', '')),
+                'event': str(alarm_type),
+                'information': ev.get('information') or f"{alarm_type} [{severity}]: {details}",
+                'time': ev.get('ts', ''),
+                'time_lost': '',
+                'preview': '',
+                'lost_preview': '',
+                'found_event': ev,
+                'lost_event': None,
+            })
+
         # Sort all rows by time desc
         try:
             table_rows.sort(key=lambda r: (r.get('time') or ''), reverse=True)
@@ -578,6 +597,7 @@ class UnifiedEventsJournal(UnifiedJournalBase):
             grouped = defaultdict(lambda: {'found': None, 'lost': None})
             cam_events = []
             sys_events = []
+            alarm_events = []
 
             for ev in rows:
                 et = ev.get('event_type', '')
@@ -588,6 +608,8 @@ class UnifiedEventsJournal(UnifiedJournalBase):
                     cam_events.append(ev)
                 elif et == 'sys':
                     sys_events.append(ev)
+                elif et == 'alarm':
+                    alarm_events.append(ev)
                 elif et.startswith('attr'):
                     key = ('attr', ev.get('object_id'))
                     if et == 'attr_found':
@@ -700,6 +722,22 @@ class UnifiedEventsJournal(UnifiedJournalBase):
                     'lost_preview': '',
                     'found_event': None,
                     'lost_event': None
+                })
+
+            for ev in alarm_events:
+                alarm_type = ev.get('alarm_type') or ev.get('event') or 'Alarm'
+                severity = ev.get('severity') or 'warning'
+                details = ev.get('details') or {}
+                new_table_rows.append({
+                    'source': ev.get('source_name') or str(ev.get('source_id', '')),
+                    'event': str(alarm_type),
+                    'information': ev.get('information') or f"{alarm_type} [{severity}]: {details}",
+                    'time': ev.get('ts', ''),
+                    'time_lost': '',
+                    'preview': '',
+                    'lost_preview': '',
+                    'found_event': ev,
+                    'lost_event': None,
                 })
 
             # Sort new rows by time desc

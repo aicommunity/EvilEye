@@ -63,6 +63,13 @@ class ProcessorBase(ABC):
         """
         return EvilEyeBase.create_instance(class_name)
 
+    @staticmethod
+    def configured_module_id(item, default: str) -> str:
+        """Return the new module id while accepting legacy ``type`` configs."""
+        if not isinstance(item, dict):
+            return default
+        return str(item.get("module_id") or item.get("type") or default)
+
     def get_processors(self):
         return self.processors
 
@@ -75,6 +82,8 @@ class ProcessorBase(ABC):
             self.logger.error(
                 f"Failed to initialize processors {self.class_name}[{self.num_processors}]. Wrong params list.")
 
+        self._validate_module_kinds(params)
+
         # Detect execution_mode from the first param block (shared across all)
         if params and isinstance(params, list) and len(params) > 0:
             self.execution_mode = params[0].get('execution_mode', DEFAULT_EXECUTION_MODE)
@@ -83,6 +92,40 @@ class ProcessorBase(ABC):
         for i in range(0, self.num_processors):
             self.processors[i].set_params(**params[i])
             self._validate_processor_capabilities(self.processors[i], i)
+
+    def _validate_module_kinds(self, params) -> None:
+        """Fail early when a registered plugin is assigned to the wrong stage."""
+        from .plugins import PluginError, plugin_registry
+
+        stage_kinds = {
+            "sources": {"source", "component"},
+            "preprocessors": {"preprocessor", "processor_item", "component"},
+            "detectors": {"detector", "processor_item", "component"},
+            "trackers": {"tracker", "processor_item", "component"},
+            "mc_trackers": {"tracker", "processor_item", "component"},
+            "attributes_roi": {"attribute", "processor_item", "component"},
+            "attributes_classifier": {"attribute", "processor_item", "component"},
+        }
+        expected = stage_kinds.get(self.processor_name)
+        if expected is None:
+            return
+        for index, item in enumerate(params or []):
+            if not isinstance(item, dict):
+                continue
+            default_module_id = (
+                self._class_names[index]
+                if index < len(self._class_names)
+                else self.class_name
+            )
+            module_id = self.configured_module_id(item, default_module_id)
+            registered = plugin_registry.get_module(module_id)
+            if registered is None or registered.spec.kind in expected:
+                continue
+            raise PluginError(
+                f"Module '{module_id}' has kind '{registered.spec.kind}' and cannot be "
+                f"used in PipelineSurveillance group '{self.processor_name}' "
+                f"(expected one of: {', '.join(sorted(expected))})"
+            )
 
     def _validate_processor_capabilities(self, processor: EvilEyeBase, idx: int) -> None:
         """Warn about incompatible stage capabilities for selected transport mode."""
@@ -119,6 +162,10 @@ class ProcessorBase(ABC):
                     init_success = False
                     self.logger.warning(f"Processor {i} ({self.class_name}) init failed; reconnect logic will retry")
             except Exception as e:
+                from .plugins import PluginError
+
+                if isinstance(e, PluginError):
+                    raise
                 init_success = False
                 self.logger.warning(
                     f"Processor {i} ({self.class_name}) init raised exception: {e}; reconnect logic will retry")

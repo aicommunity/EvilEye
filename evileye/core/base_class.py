@@ -11,9 +11,26 @@ class EvilEyeBase(ABC):
     ResultType = None
 
     @classmethod
-    def register(cls, class_name):
+    def register(
+        cls,
+        class_name,
+        *,
+        kind="component",
+        execution_modes=("thread", "process"),
+    ):
         def inner_wrapper(wrapped_class):
             cls._registry[class_name] = wrapped_class
+            # Keep the legacy class registry as a compatibility alias while
+            # making registration visible through the public plugin SPI.
+            from .plugins import plugin_registry
+
+            plugin_registry.register_builtin_module(
+                class_name,
+                wrapped_class,
+                kind=kind,
+                execution_modes=execution_modes,
+                legacy_ids=(class_name,),
+            )
 
             return wrapped_class
 
@@ -21,6 +38,30 @@ class EvilEyeBase(ABC):
 
     @classmethod
     def create_instance(cls, class_name, *args, **kwargs):
+        from .plugins import plugin_manager, plugin_registry
+
+        plugin_manager.load()
+        registered = plugin_registry.get_module(class_name)
+        if registered is not None:
+            if registered.spec.kind == "processor_item":
+                from .plugin_runtime import ItemModuleAdapter
+
+                return ItemModuleAdapter(registered)
+            if registered.spec.kind == "source":
+                factory = registered.spec.factory
+                if registered.plugin_id != "evileye":
+                    from .plugin_runtime import SourceModuleAdapter
+
+                    return SourceModuleAdapter(registered)
+                try:
+                    is_lifecycle_component = isinstance(factory, type) and issubclass(factory, EvilEyeBase)
+                except TypeError:
+                    is_lifecycle_component = False
+                if not is_lifecycle_component:
+                    from .plugin_runtime import SourceModuleAdapter
+
+                    return SourceModuleAdapter(registered)
+            return registered.spec.factory(*args, **kwargs)
         if class_name not in cls._registry:
             raise ValueError(f"Class not found: {class_name}")
         return cls._registry[class_name](*args, **kwargs)
@@ -60,6 +101,23 @@ class EvilEyeBase(ABC):
             self.logger = logging.getLogger("evileye")
 
     def set_params(self, **params):
+        params = dict(params)
+        module_id = params.get("module_id") or params.get("type")
+        if module_id:
+            from .plugins import plugin_registry
+
+            registered = plugin_registry.get_module(str(module_id))
+            if registered is not None and registered.spec.config_schema is not None:
+                config = params.get("config")
+                if config is None:
+                    reserved = {
+                        "type", "module_id", "execution_mode", "source_ids",
+                        "queue_size", "ipc_mode", "enable", "logger_name",
+                    }
+                    config = {key: value for key, value in params.items() if key not in reserved}
+                params["config"] = plugin_registry.validate_module_config(
+                    str(module_id), config
+                )
         self.params = params
         # Опционально переименовать логгер, если задано имя
         if 'logger_name' in params and params['logger_name']:

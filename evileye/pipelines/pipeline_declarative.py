@@ -25,6 +25,7 @@ import evileye.object_multi_camera_tracker  # noqa: F401
 import evileye.preprocessing  # noqa: F401
 
 from evileye.core.pipeline_processors import PipelineProcessors
+from evileye.core.processor_base import ProcessorBase
 from evileye.core.processor_frame import ProcessorFrame
 from evileye.core.processor_source import ProcessorSource
 from evileye.core.processor_step import ProcessorStep
@@ -53,9 +54,9 @@ class PipelineDeclarative(PipelineProcessors):
                 "frame": "PreprocessingPipeline",
                 "step": "ObjectDetectorYolo",
             }.get(kind, "ObjectDetectorYolo")
-            class_name = items[0].get("type", default_type) if isinstance(items[0], dict) else default_type
+            class_name = ProcessorBase.configured_module_id(items[0], default_type)
             class_names = [
-                (it.get("type", class_name) if isinstance(it, dict) else class_name)
+                ProcessorBase.configured_module_id(it, class_name)
                 for it in items
             ]
             if kind == "source":

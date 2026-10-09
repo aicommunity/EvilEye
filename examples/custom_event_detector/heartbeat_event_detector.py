@@ -1,6 +1,7 @@
-"""Minimal custom event detector registered via event_registry.
+"""Minimal custom event detector registered via the legacy event registry.
 
-Dry-run path: detector only (no DB/GUI). Enable in config::
+The detector emits generic AlarmEvent records into the shared journal path.
+Enable in config::
 
     "events_detectors": {
       "enabled": ["CamEventsDetector", "HeartbeatEventDetector"],
@@ -17,11 +18,12 @@ from typing import Any, List
 
 from evileye.events_detectors.event_registry import register_event_detector
 from evileye.events_detectors.events_detector import EventsDetector
+from evileye.events_detectors.alarm_event import AlarmEvent
 
 
 @register_event_detector("HeartbeatEventDetector")
 class HeartbeatEventDetector(EventsDetector):
-    """Emits a lightweight heartbeat dict on a fixed interval."""
+    """Emits a generic alarm event on a fixed interval."""
 
     def __init__(self, objects_handler=None):
         super().__init__()
@@ -55,12 +57,13 @@ class HeartbeatEventDetector(EventsDetector):
         if now - self._last_ts < self.interval_sec:
             return
         self._last_ts = now
-        event = {
-            "type": "Heartbeat",
-            "ts": now,
-            "source": "HeartbeatEventDetector",
-        }
+        event = AlarmEvent(
+            "Heartbeat",
+            severity="info",
+            source_name="HeartbeatEventDetector",
+            details={"timestamp": now},
+        )
         try:
             self.queue_out.put_nowait(event)
         except Exception:
-            pass
+            self.logger.exception("HeartbeatEventDetector could not publish its alarm")

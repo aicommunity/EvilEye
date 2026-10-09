@@ -17,7 +17,7 @@ from .botsort_config import BostSortCfg
 from .track_update_core import parse_detections_to_boxes, run_tracker_update
 
 
-@EvilEyeBase.register("ObjectTrackingBotsort")
+@EvilEyeBase.register("ObjectTrackingBotsort", kind="tracker")
 class ObjectTrackingBotsort(ObjectTrackingBase):
     # tracker: BOTSORT
 

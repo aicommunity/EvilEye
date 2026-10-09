@@ -3,6 +3,7 @@ from queue import Queue
 from timeit import default_timer as timer
 import time
 import copy
+from queue import Full
 from ..core.base_class import EvilEyeBase
 
 
@@ -21,6 +22,7 @@ class EventsDetectorsController(EvilEyeBase):
         self.any_events = False
         self._queue_drops = 0
         self._events_published = 0
+        self.degraded = False
 
     def set_params_impl(self):
         pass
@@ -112,16 +114,18 @@ class EventsDetectorsController(EvilEyeBase):
     def _publish_events_snapshot(self) -> None:
         snapshot = copy.deepcopy(self.events_detectors)
         try:
-            if self.queue_out.full():
-                try:
-                    self.queue_out.get_nowait()
-                    self._queue_drops += 1
-                except Exception:
-                    pass
             self.queue_out.put_nowait(snapshot)
             self._events_published += 1
+        except Full:
+            self._queue_drops += 1
+            self.degraded = True
+            self.logger.error(
+                "Event snapshot queue is full; snapshot was rejected (drops=%d)",
+                self._queue_drops,
+            )
         except Exception:
-            pass
+            self.degraded = True
+            self.logger.exception("Failed to publish event snapshot")
 
     def get_runtime_stats(self) -> dict:
         try:
@@ -133,4 +137,5 @@ class EventsDetectorsController(EvilEyeBase):
             "queue_maxsize": self.queue_out_maxsize,
             "queue_drops": self._queue_drops,
             "events_published": self._events_published,
+            "degraded": self.degraded,
         }

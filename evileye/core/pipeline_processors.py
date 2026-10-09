@@ -70,7 +70,7 @@ class PipelineProcessors(PipelineBase):
         """Set pipeline parameters from self.params - override in subclasses"""
         self._ipc_mode = str(self.params.get("ipc_mode", "standard") or "standard")
         for section_name in self.params:
-            if section_name in {"pipeline_class", "ipc_mode"}:
+            if section_name in {"pipeline_class", "ipc_mode", "modules"}:
                 continue
             section_params = self.params.get(section_name, []) or []
             self._processor_params[section_name] = section_params
@@ -351,6 +351,30 @@ class PipelineProcessors(PipelineBase):
         for processor in self.processors:
             if processor is not None:
                 processor.insert_debug_info_by_id(processor.get_name(), debug_info)
+        debug_info["runtime"] = self.get_runtime_stats()
+
+    def get_runtime_stats(self) -> dict[str, Any]:
+        """Aggregate health of generic plugin modules in this pipeline."""
+        modules = {}
+        for stage in self.processors:
+            if stage is None:
+                continue
+            for processor in getattr(stage, "processors", []):
+                get_stats = getattr(processor, "get_runtime_stats", None)
+                if not callable(get_stats):
+                    continue
+                try:
+                    key = f"{stage.get_name()}/{getattr(processor, 'module_id', processor.__class__.__name__)}"
+                    modules[key] = get_stats()
+                except Exception as exc:
+                    modules[f"{stage.get_name()}/{processor.__class__.__name__}"] = {
+                        "degraded": True,
+                        "diagnostic_error": str(exc),
+                    }
+        return {
+            "degraded": any(bool(stats.get("degraded")) for stats in modules.values()),
+            "modules": modules,
+        }
 
     def get_sources(self):
         """Get video sources for external subscriptions (events, etc.)"""

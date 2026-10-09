@@ -36,7 +36,7 @@ from .gstreamer_capture_pipeline import GStreamerCapturePipelineMixin
 from .gstreamer_capture_frames import GStreamerCaptureFramesMixin
 
 
-@EvilEyeBase.register("VideoCaptureGStreamer")
+@EvilEyeBase.register("VideoCaptureGStreamer", kind="source")
 class VideoCaptureGStreamer(
     GStreamerCaptureRecordingMixin,
     GStreamerCaptureDiagnosticsMixin,

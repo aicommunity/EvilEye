@@ -7,6 +7,7 @@ from unittest.mock import patch
 from evileye.core.base_class import EvilEyeBase
 from evileye.core.processor_step import ProcessorStep
 from evileye.events_detectors.event_registry import (
+    _EVENT_DETECTOR_REGISTRY,
     list_event_detectors,
     register_builtins,
     register_event_detector,
@@ -83,3 +84,12 @@ def test_event_registry_builtins_and_custom():
             pass
 
     assert "_AuditHeartbeat" in list_event_detectors()
+
+
+def test_builtin_event_detectors_register_when_custom_detector_was_loaded_first(monkeypatch):
+    monkeypatch.setitem(_EVENT_DETECTOR_REGISTRY, "_LoadedFirst", object)
+
+    register_builtins()
+
+    assert "_LoadedFirst" in list_event_detectors()
+    assert "ZoneEventsDetector" in list_event_detectors()

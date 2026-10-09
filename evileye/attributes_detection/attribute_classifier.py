@@ -15,7 +15,7 @@ from ..core.processor_base import (
 )
 
 
-@EvilEyeBase.register("AttributeClassifier")
+@EvilEyeBase.register("AttributeClassifier", kind="attribute")
 class AttributeClassifier(EvilEyeBase):
     """Attribute classifier that runs YOLO inference on ROI crops
 

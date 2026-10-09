@@ -47,7 +47,7 @@ def _sync_tracking_result_with_frame(
         track_info.frame_id = frame.frame_id
 
 
-@EvilEyeBase.register("ObjectMultiCameraTracking")
+@EvilEyeBase.register("ObjectMultiCameraTracking", kind="tracker", execution_modes=("thread",))
 class ObjectMultiCameraTracking(ObjectMultiCameraTrackingBase):
 
     def __init__(self):

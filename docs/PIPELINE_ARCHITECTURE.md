@@ -61,6 +61,7 @@ PipelineBase (abstract)
 - **Нормализация выхода:** [`stage_result_normalizer`](../../evileye/core/stage_result_normalizer.py) приводит результат к `(data, frame)` для downstream.
 - **Backlog snapshot:** перед `process()` вызывается `estimate_mp_backlog_stats()` → `_mp_pending_snapshot` для adaptive sync (`EVILEYE_PIPELINE_SYNC_MP`).
 - **mc_trackers:** только `_process_mc_trackers_sync` — без MP wait; `execution_mode: process` на MC не поддерживается.
+- Для совпадающего `source_id` кадр направляется всем подходящим модулям стадии, включая несколько детекторов.
 
 ### PipelineCapture
 
@@ -125,11 +126,11 @@ evileye/
 
 | Задача | Что трогать | Пример |
 |--------|-------------|--------|
-| Новый detector/tracker того же слота | `@EvilEyeBase.register` + JSON `type` (per-item) | mixed YOLO+RT-DETR в `detectors[]` |
+| Новый detector/tracker того же слота | Plugin package + `module_id`; legacy `@EvilEyeBase.register` и `type` остаются совместимы | [PLUGINS.md](PLUGINS.md) |
 | Новая стадия в графе | `PipelineDeclarative` + `stages[]` **или** форк Surveillance | [examples/custom_pipeline_stage](../examples/custom_pipeline_stage/) |
 | Dual-mode (thread/process) | `DualModeProcessor` + `MpWorker` | [developing_dual_mode_modules.md](developing_dual_mode_modules.md); RoiFeeder adopted |
-| Event detector (dry-run) | `@register_event_detector` + `events_detectors.enabled` | [examples/custom_event_detector](../examples/custom_event_detector/) |
-| Event + DB/GUI/journals | + JSON/DB adapters + GUI/web | см. README примера |
+| Event detector / alarm | Plugin package + `AlarmEvent` + `events_detectors.enabled` | [PLUGINS.md](PLUGINS.md) |
+| Custom pipeline | `PipelineSpec` через `evileye.plugins` entry point | [PLUGINS.md](PLUGINS.md) |
 
 **DI / DualMode:** `DIContainer` — roadmap (не product path). `DualModeProcessor` — base ready; RoiFeeder — reference adoption (S1 Partial→improving).
 

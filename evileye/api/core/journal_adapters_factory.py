@@ -42,6 +42,16 @@ def create_event_journal_adapters(db_controller, runtime_params: dict[str, Any])
     adapters.append(zone)
 
     try:
+        from evileye.visualization_modules.journal_adapters.jadapter_alarm_events import JournalAdapterAlarmEvents
+
+        alarm = JournalAdapterAlarmEvents()
+        alarm.set_params(**adapter_params.get("DatabaseAdapterAlarmEvents", {"table_name": "alarm_events"}))
+        alarm.init()
+        adapters.append(alarm)
+    except Exception:
+        pass
+
+    try:
         from evileye.visualization_modules.journal_adapters.jadapter_attribute_events import JournalAdapterAttributeEvents
 
         attr = JournalAdapterAttributeEvents()

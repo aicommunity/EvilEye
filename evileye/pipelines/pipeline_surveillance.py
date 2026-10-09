@@ -73,8 +73,30 @@ class PipelineSurveillance(PipelineProcessors):
         return True
 
     def _normalize_pipeline_params(self, params: Dict) -> Dict:
-        """Normalize ipc/execution modes for all processor sections."""
+        """Normalize extensions and IPC defaults without mutating input config."""
         normalized = dict(params or {})
+        normalized["modules"] = dict(normalized.get("modules") or {})
+        for section, extension in normalized["modules"].items():
+            if section not in {
+                "sources", "preprocessors", "detectors", "trackers", "mc_trackers",
+                "attributes_roi", "attributes_classifier",
+            }:
+                raise ValueError(f"Unsupported PipelineSurveillance module group: {section}")
+            if not isinstance(extension, dict):
+                raise ValueError(f"modules.{section} must be an object")
+            mode = str(extension.get("mode", "")).lower()
+            items = extension.get("items", [])
+            if mode not in {"replace", "extend"}:
+                raise ValueError(
+                    f"modules.{section}.mode must be 'replace' or 'extend'"
+                )
+            if not isinstance(items, list):
+                raise ValueError(f"modules.{section}.items must be a list")
+            current = normalized.get(section, []) or []
+            if not isinstance(current, list):
+                raise ValueError(f"pipeline.{section} must be a list")
+            normalized[section] = list(items) if mode == "replace" else [*current, *items]
+
         ipc_mode = str(normalized.get("ipc_mode", "standard") or "standard")
         normalized["ipc_mode"] = ipc_mode
         sections = (
@@ -110,9 +132,9 @@ class PipelineSurveillance(PipelineProcessors):
 
         num_sources = len(params)
         # Get class_name from config, default to VideoCaptureOpencv
-        class_name = params[0].get("type", "VideoCaptureOpencv") if params else "VideoCaptureOpencv"
-        class_names = [p.get("type", class_name) if isinstance(p, dict) else class_name for p in params]
-        if not any(param.get("type") for param in params):
+        class_name = ProcessorBase.configured_module_id(params[0], "VideoCaptureOpencv") if params else "VideoCaptureOpencv"
+        class_names = [ProcessorBase.configured_module_id(p, class_name) for p in params]
+        if not any(param.get("module_id") or param.get("type") for param in params):
             self.logger.warning(
                 f"Warning: 'type' parameter not found in sources configuration. Using default: {class_name}")
 
@@ -150,13 +172,14 @@ class PipelineSurveillance(PipelineProcessors):
 
         num_preps = len(params)
         # Get class_name from config, default to PreprocessingPipeline
-        class_name = params[0].get("type", "PreprocessingPipeline") if params else "PreprocessingPipeline"
-        if not any(param.get("type") for param in params):
+        class_name = ProcessorBase.configured_module_id(params[0], "PreprocessingPipeline") if params else "PreprocessingPipeline"
+        class_names = [ProcessorBase.configured_module_id(p, class_name) for p in params]
+        if not any(param.get("module_id") or param.get("type") for param in params):
             self.logger.warning(
                 f"Warning: 'type' parameter not found in preprocessors configuration. Using default: {class_name}")
 
         preprocessors_proc = ProcessorFrame(processor_name="preprocessors", class_name=class_name,
-                                            num_processors=num_preps, order=1)
+                                            num_processors=num_preps, order=1, class_names=class_names)
         preprocessors_proc.set_params(params)
         preprocessors_proc.init()
         self._add_processor(preprocessors_proc)
@@ -168,9 +191,9 @@ class PipelineSurveillance(PipelineProcessors):
 
         num_det = len(params)
         # Get class_name from config, default to ObjectDetectorYolo
-        class_name = params[0].get("type", "ObjectDetectorYolo") if params else "ObjectDetectorYolo"
-        class_names = [p.get("type", class_name) if isinstance(p, dict) else class_name for p in params]
-        if not any(param.get("type") for param in params):
+        class_name = ProcessorBase.configured_module_id(params[0], "ObjectDetectorYolo") if params else "ObjectDetectorYolo"
+        class_names = [ProcessorBase.configured_module_id(p, class_name) for p in params]
+        if not any(param.get("module_id") or param.get("type") for param in params):
             self.logger.warning(
                 f"Warning: 'type' parameter not found in detectors configuration. Using default: {class_name}")
 
@@ -198,9 +221,9 @@ class PipelineSurveillance(PipelineProcessors):
 
         num_trackers = len(params)
         # Get class_name from config, default to ObjectTrackingBotsort
-        class_name = params[0].get("type", "ObjectTrackingBotsort") if params else "ObjectTrackingBotsort"
-        class_names = [p.get("type", class_name) if isinstance(p, dict) else class_name for p in params]
-        if not any(param.get("type") for param in params):
+        class_name = ProcessorBase.configured_module_id(params[0], "ObjectTrackingBotsort") if params else "ObjectTrackingBotsort"
+        class_names = [ProcessorBase.configured_module_id(p, class_name) for p in params]
+        if not any(param.get("module_id") or param.get("type") for param in params):
             self.logger.warning(
                 f"Warning: 'type' parameter not found in trackers configuration. Using default: {class_name}")
 
@@ -228,13 +251,14 @@ class PipelineSurveillance(PipelineProcessors):
 
         num_trackers = len(active_params)
         # Get class_name from config, default to ObjectMultiCameraTracking
-        class_name = active_params[0].get("type", "ObjectMultiCameraTracking")
-        if not any(param.get("type") for param in active_params):
+        class_name = ProcessorBase.configured_module_id(active_params[0], "ObjectMultiCameraTracking")
+        class_names = [ProcessorBase.configured_module_id(p, class_name) for p in active_params]
+        if not any(param.get("module_id") or param.get("type") for param in active_params):
             self.logger.warning(
                 f"Warning: 'type' parameter not found in mc_trackers configuration. Using default: {class_name}")
 
         mc_trackers_proc = ProcessorStep(processor_name="mc_trackers", class_name=class_name,
-                                         num_processors=num_trackers, order=4)
+                                         num_processors=num_trackers, order=4, class_names=class_names)
         mc_trackers_proc.set_params(active_params)
         mc_trackers_proc.init(encoders=self.encoders)
         self._add_processor(mc_trackers_proc)
@@ -245,12 +269,19 @@ class PipelineSurveillance(PipelineProcessors):
             return
         num = len(params)
         # Get class_name from config, default to RoiFeeder
-        class_name = params[0].get("type", "RoiFeeder") if params else "RoiFeeder"
-        if not any(param.get("type") for param in params):
+        class_name = ProcessorBase.configured_module_id(params[0], "RoiFeeder") if params else "RoiFeeder"
+        class_names = [ProcessorBase.configured_module_id(p, class_name) for p in params]
+        if not any(param.get("module_id") or param.get("type") for param in params):
             self.logger.warning(
                 f"Warning: 'type' parameter not found in attributes_roi configuration. Using default: {class_name}")
 
-        roi_proc = ProcessorStep(processor_name="attributes_roi", class_name=class_name, num_processors=num, order=4)
+        roi_proc = ProcessorStep(
+            processor_name="attributes_roi",
+            class_name=class_name,
+            num_processors=num,
+            order=4,
+            class_names=class_names,
+        )
         roi_proc.set_params(params)
         roi_proc.init()
         self._add_processor(roi_proc)
@@ -261,13 +292,14 @@ class PipelineSurveillance(PipelineProcessors):
             return
         num = len(params)
         # Get class_name from config, default to AttributeClassifier
-        class_name = params[0].get("type", "AttributeClassifier") if params else "AttributeClassifier"
-        if not any(param.get("type") for param in params):
+        class_name = ProcessorBase.configured_module_id(params[0], "AttributeClassifier") if params else "AttributeClassifier"
+        class_names = [ProcessorBase.configured_module_id(p, class_name) for p in params]
+        if not any(param.get("module_id") or param.get("type") for param in params):
             self.logger.warning(
                 f"Warning: 'type' parameter not found in attributes_classifier configuration. Using default: {class_name}")
 
         cls_proc = ProcessorStep(processor_name="attributes_classifier", class_name=class_name, num_processors=num,
-                                 order=5)
+                                 order=5, class_names=class_names)
         cls_proc.set_params(params)
         cls_proc.init()
         self._add_processor(cls_proc)
