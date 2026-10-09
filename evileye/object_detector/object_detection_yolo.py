@@ -4,7 +4,11 @@ from ..core.base_class import EvilEyeBase
 from ..core.mp_control import parse_mp_restart_policy
 
 
-@EvilEyeBase.register("ObjectDetectorYolo", kind="detector")
+@EvilEyeBase.register(
+    "ObjectDetectorYolo",
+    kind="detector",
+    capabilities=("legacy_processor_protocol",),
+)
 class ObjectDetectorYolo(ModelBasedDetectorBase):
     """YOLO-based object detector."""
 

@@ -104,7 +104,9 @@ class PipelineProcessors(PipelineBase):
                     # Check if this processor contains detectors
                     if hasattr(processor, 'processors'):
                         for p in processor.processors:
-                            if isinstance(p, ObjectDetectorBase):
+                            if isinstance(p, ObjectDetectorBase) or callable(
+                                getattr(p, "is_ready", None)
+                            ):
                                 detectors.append(p)
 
         # Do not block pipeline startup for a long time on detector readiness.

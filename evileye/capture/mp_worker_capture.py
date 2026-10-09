@@ -18,6 +18,9 @@ from ..core.frame_transport import SharedFrameTransport
 
 # Exit code listed in capture MpControl no_restart_exit_codes — stops restart storms.
 CAPTURE_INIT_FAIL_EXIT_CODE = 2
+CAPTURE_DONE_MESSAGE = "__evileye_capture_done__"
+CAPTURE_DRAIN_ACK_MESSAGE = "__evileye_capture_drain_ack__"
+CAPTURE_FRAME_ACK_MESSAGE = "__evileye_capture_frame_ack__"
 
 
 class MpWorkerCapture(MpWorker):
@@ -167,11 +170,18 @@ class MpWorkerCapture(MpWorker):
 
         self.logger.info("Capture worker ready, entering frame loop")
 
+        natural_eof = False
         while not self._stop_event.is_set():
             try:
                 cmd = self.input_queue.get_nowait()
                 if cmd is None:
                     break
+                if isinstance(cmd, tuple) and cmd:
+                    if cmd[0] == CAPTURE_FRAME_ACK_MESSAGE and len(cmd) > 1:
+                        self._frame_transport.release_frame(cmd[1])
+                    elif cmd[0] == CAPTURE_DRAIN_ACK_MESSAGE:
+                        self._frame_transport.release_all_owned()
+                        continue
             except Empty:
                 pass
 
@@ -184,7 +194,17 @@ class MpWorkerCapture(MpWorker):
 
             if not frames:
                 if self._capture.is_finished():
-                    self.logger.info("Source finished (EOF) — exiting worker")
+                    capture_queue = getattr(self._capture, "frames_queue", None)
+                    try:
+                        queued_frames = capture_queue.qsize() if capture_queue is not None else None
+                    except Exception:
+                        queued_frames = None
+                    self.logger.info(
+                        "Source finished (EOF) — exiting worker; captured_frames=%s queued_frames=%s",
+                        getattr(self._capture, "frame_id_counter", None),
+                        queued_frames,
+                    )
+                    natural_eof = True
                     break
                 time.sleep(0.002)
                 continue
@@ -203,12 +223,33 @@ class MpWorkerCapture(MpWorker):
                     packed,
                     on_drop=self._release_packed_frame,
                 )
-                if ok and handle is not None:
-                    self._frame_transport.relinquish_frame(handle)
-                elif not ok:
+                if not ok:
                     self._release_packed_frame(packed)
 
             self._maybe_push_full_frame()
+
+        if natural_eof and not self._stop_event.is_set():
+            # Keep the process alive until the parent has consumed every frame
+            # descriptor ahead of this marker.  On Windows, exiting the process
+            # before consumption lets its shared-memory tracker remove those
+            # segments, causing short videos to lose all frames in the parent.
+            try:
+                self.output_queue.put((CAPTURE_DONE_MESSAGE,), timeout=2.0)
+                while not self._stop_event.is_set():
+                    try:
+                        command = self.input_queue.get(timeout=0.1)
+                    except Empty:
+                        continue
+                    if command is None:
+                        break
+                    if isinstance(command, tuple) and command:
+                        if command[0] == CAPTURE_FRAME_ACK_MESSAGE and len(command) > 1:
+                            self._frame_transport.release_frame(command[1])
+                        elif command[0] == CAPTURE_DRAIN_ACK_MESSAGE:
+                            self._frame_transport.release_all_owned()
+                            break
+            except Exception:
+                self.logger.exception("Could not wait for capture frame drain acknowledgement")
 
         try:
             self.cleanup()
@@ -255,10 +296,6 @@ class MpWorkerCapture(MpWorker):
         )
         if ok:
             self._last_full_ipc_ts = ts
-            try:
-                self._frame_transport.relinquish_frame(handle)
-            except Exception:
-                pass
         else:
             self._release_packed_frame(packed)
 

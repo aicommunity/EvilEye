@@ -96,6 +96,25 @@ class VideoCaptureBase(EvilEyeBase):
         # Process mode: parent tracks frame flow from child worker (is_working lives in worker).
         self._mp_last_frame_mono: float = 0.0
         self._mp_worker_started_mono: float = 0.0
+        self._mp_frame_decode_errors = 0
+
+    def _record_mp_frame_decode_error(self, detail: str) -> None:
+        self._mp_frame_decode_errors += 1
+        if self._mp_frame_decode_errors == 1:
+            self.logger.error("Could not decode process capture frame: %s", detail)
+
+    def _send_capture_worker_command(self, command) -> bool:
+        """Send control/ack commands without silently leaking shared frames."""
+        control = self._mp_control
+        while self.run_flag and control is not None:
+            try:
+                if not control.is_alive():
+                    return False
+                control.input_queue.put(command, timeout=0.1)
+                return True
+            except Exception:
+                continue
+        return False
 
     def is_opened(self) -> bool:
         return False
@@ -426,13 +445,38 @@ class VideoCaptureBase(EvilEyeBase):
 
     def _capture_dispatch_loop(self) -> None:
         """Read CaptureImage objects from child process and put them into frames_queue."""
+        from .mp_worker_capture import (
+            CAPTURE_DONE_MESSAGE,
+            CAPTURE_DRAIN_ACK_MESSAGE,
+            CAPTURE_FRAME_ACK_MESSAGE,
+        )
+
         while self.run_flag:
             try:
                 payload = self._mp_control.get(timeout=0.5)
             except Exception:
                 self._mark_finished_if_worker_stopped()
                 continue
+            if (
+                isinstance(payload, tuple)
+                and payload
+                and payload[0] == CAPTURE_DONE_MESSAGE
+            ):
+                if not self._send_capture_worker_command((CAPTURE_DRAIN_ACK_MESSAGE,)):
+                    self.logger.error(
+                        "Could not acknowledge capture frame drain for %s", self.source_names
+                    )
+                self.finished = True
+                self.is_working = False
+                continue
             frame = self._unpack_capture_payload(payload)
+            if isinstance(payload, dict) and payload.get("frame_handle") is not None:
+                if not self._send_capture_worker_command(
+                    (CAPTURE_FRAME_ACK_MESSAGE, payload["frame_handle"])
+                ):
+                    self.logger.warning(
+                        "Could not acknowledge process frame for %s", self.source_names
+                    )
             if frame is None:
                 # full_frame payloads return None after stashing; only probe worker exit
                 # when the queue item was not a usable processing frame.
@@ -457,10 +501,16 @@ class VideoCaptureBase(EvilEyeBase):
             try:
                 handle = payload.get("frame_handle")
                 if not isinstance(handle, FrameHandle):
+                    self._record_mp_frame_decode_error(
+                        f"invalid frame handle ({type(handle).__name__})"
+                    )
                     return None
                 meta = payload.get("frame_meta", {}) or {}
                 image = self._frame_transport.consume_frame(handle)
                 if image is None or getattr(image, "size", 0) == 0:
+                    self._record_mp_frame_decode_error(
+                        f"shared frame segment unavailable (name={handle.shm_name!r})"
+                    )
                     return None
                 if meta.get("kind") == "full_frame":
                     self._latest_full_frame = image
@@ -480,7 +530,8 @@ class VideoCaptureBase(EvilEyeBase):
                 frame.media_pts_sec = meta.get("media_pts_sec")
                 frame.image = image
                 return frame
-            except Exception:
+            except Exception as exc:
+                self._record_mp_frame_decode_error(f"{type(exc).__name__}: {exc}")
                 return None
         return payload
 

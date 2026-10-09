@@ -79,13 +79,20 @@ keeps recording and multi-camera behavior intact. A source configured with
 `execution_mode="process"` still uses the capture module's existing
 `MpWorkerCapture` backend; the adapter itself polls that backend in a host
 thread and reports both `execution_mode` and `backend_execution_mode` in its
-runtime diagnostics. External source plugins should implement the simpler
+runtime diagnostics. The capture worker acknowledges shared-memory frame
+descriptors before releasing them, so short finite videos are delivered before
+the worker exits. External source plugins should implement the simpler
 `open/read/close` contract described above and do not need to subclass
 `EvilEyeBase`.
 
-Model detectors, trackers, and remaining built-ins still use their specialized
-lifecycle and worker implementations; they will move to item processors in
-later increments to preserve their model and multi-camera behavior.
+Built-in YOLO/RT-DETR detectors, BoT-SORT, and attribute detector/classifier
+modules are also registered in the SPI. `LegacyProcessorModuleAdapter` bridges
+their established `put/get` and lifecycle contracts into the pipeline module
+boundary; their proven model and process-worker internals remain unchanged.
+New plugins should implement `process_item(item, state)` and use the common
+runtime directly. `ObjectMultiCameraTracking` remains a synchronous batch
+stage because it coordinates results across cameras and does not advertise
+process execution.
 
 ## Configure `PipelineSurveillance`
 

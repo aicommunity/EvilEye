@@ -45,6 +45,10 @@ class ObjectDetectorRfdetr(ModelBasedDetectorBase):
 
 # Apply registration only if supported
 if _SUPPORT_RFDETR:
-    ObjectDetectorRfdetr = EvilEyeBase.register("ObjectDetectorRfdetr")(ObjectDetectorRfdetr)
+    ObjectDetectorRfdetr = EvilEyeBase.register(
+        "ObjectDetectorRfdetr",
+        kind="detector",
+        capabilities=("legacy_processor_protocol",),
+    )(ObjectDetectorRfdetr)
 else:
     _logger.info("ObjectDetectorRfdetr not registered due to environment constraints")

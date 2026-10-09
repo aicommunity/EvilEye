@@ -15,7 +15,10 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 os.environ.setdefault("EVILEYE_PIPELINE_TIMELINE", "0")
 
-from poly_mode_compare_lib import REPO_ROOT, write_bench_config
+if __package__:
+    from .poly_mode_compare_lib import REPO_ROOT, write_bench_config
+else:
+    from poly_mode_compare_lib import REPO_ROOT, write_bench_config
 
 STALENESS_REF = 6.2
 STALENESS_MIN = 5.9

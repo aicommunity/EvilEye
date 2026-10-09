@@ -4,7 +4,11 @@ import time
 
 import pytest
 
-from evileye.core.plugin_runtime import ItemModuleAdapter, SourceModuleAdapter
+from evileye.core.plugin_runtime import (
+    ItemModuleAdapter,
+    LegacyProcessorModuleAdapter,
+    SourceModuleAdapter,
+)
 from evileye.core.processor_source import ProcessorSource
 from evileye.core.base_class import EvilEyeBase
 from evileye.core.plugins import (
@@ -542,3 +546,99 @@ def test_builtin_capture_sources_use_spi_adapter_and_keep_capture_backend(monkey
         assert frames == [{"source_id": 3, "frame_id": 9}]
     finally:
         adapter.stop()
+
+
+def test_builtin_model_tracker_and_attribute_modules_use_spi_adapter():
+    import evileye.attributes_detection as attributes
+    import evileye.object_detector as detectors
+    import evileye.object_tracker as trackers
+    from evileye.object_detector import object_detection_rfdetr
+
+    builtins = (
+        detectors.ObjectDetectorYolo,
+        detectors.ObjectDetectorRtdetr,
+        detectors.ObjectDetectorRfdetr,
+        detectors.ObjectDetectorYoloMp,
+        attributes.AttributeDetector,
+        attributes.AttributeClassifier,
+        trackers.ObjectTrackingBotsort,
+    )
+    for module_class in builtins:
+        registered = plugin_registry.get_module(module_class.__name__)
+        if (
+            module_class is detectors.ObjectDetectorRfdetr
+            and not object_detection_rfdetr._SUPPORT_RFDETR
+        ):
+            assert registered is None
+            continue
+        assert registered is not None
+        assert "legacy_processor_protocol" in registered.spec.capabilities
+        adapter = EvilEyeBase.create_instance(module_class.__name__)
+        assert isinstance(adapter, LegacyProcessorModuleAdapter)
+        assert adapter.ResultType is module_class.ResultType
+
+
+def test_legacy_processor_adapter_preserves_queue_lifecycle():
+    class _LegacyQueueProcessor(EvilEyeBase):
+        ResultType = dict
+
+        def __init__(self):
+            super().__init__()
+            self.items = []
+
+        def set_params_impl(self):
+            self.source_ids = self.params.get("source_ids", [])
+
+        def get_params_impl(self):
+            return dict(self.params)
+
+        def init_impl(self, **kwargs):
+            self.init_kwargs = kwargs
+            return True
+
+        def get_source_ids(self):
+            return self.source_ids
+
+        def put(self, item):
+            self.items.append(item)
+
+        def get(self):
+            return self.items.pop(0) if self.items else None
+
+        def start(self):
+            self.started = True
+
+        def stop(self):
+            self.stopped = True
+
+        def release_impl(self):
+            return None
+
+        def reset_impl(self):
+            self.items.clear()
+
+        def default(self):
+            self.items.clear()
+
+    registry = PluginRegistry()
+    spec = ModuleSpec(
+        "queue-processor",
+        "detector",
+        _LegacyQueueProcessor,
+        ("thread",),
+        capabilities=("legacy_processor_protocol",),
+    )
+    registry.register_plugin(PluginSpec("sample.legacy", PLUGIN_API_VERSION, (spec,)))
+    registered = registry.get_module("sample.legacy/queue-processor")
+    adapter = LegacyProcessorModuleAdapter(registered)
+    adapter.set_params(module_id="sample.legacy/queue-processor", source_ids=[7])
+
+    assert adapter.init(dependency="passed") is True
+    adapter.start()
+    adapter.put({"frame_id": 5})
+    assert adapter.get() == {"frame_id": 5}
+    assert adapter.get_source_ids() == [7]
+    assert adapter._module.init_kwargs == {"dependency": "passed"}
+    assert adapter._module.started is True
+    adapter.stop()
+    assert adapter._module.stopped is True

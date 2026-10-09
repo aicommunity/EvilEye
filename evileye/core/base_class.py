@@ -49,6 +49,10 @@ class EvilEyeBase(ABC):
                 from .plugin_runtime import ItemModuleAdapter
 
                 return ItemModuleAdapter(registered)
+            if "legacy_processor_protocol" in registered.spec.capabilities:
+                from .plugin_runtime import LegacyProcessorModuleAdapter
+
+                return LegacyProcessorModuleAdapter(registered)
             if registered.spec.kind == "source":
                 factory = registered.spec.factory
                 if "legacy_source_protocol" in registered.spec.capabilities:
