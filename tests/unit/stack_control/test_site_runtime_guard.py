@@ -118,7 +118,7 @@ def test_singleton_warnings_duplicate_pipeline(tmp_path: Path):
         {"pid": 2, "config_path": "configs/a.json", "alive": True},
     ]
     with patch("evileye.site_runtime_guard.discover_site_runs") as discover, patch(
-        "evileye.core.process_control.pid_exists", return_value=True
+        "evileye.site_runtime_guard.pid_exists", return_value=True
     ), patch("evileye.service_manager.is_web_os_service_active", return_value=False):
         discover.return_value = SimpleNamespace(
             pipeline_runs=snap_runs,

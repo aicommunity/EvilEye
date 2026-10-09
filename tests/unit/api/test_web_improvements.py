@@ -317,6 +317,7 @@ def test_journal_json_mode_from_on_disk_config(tmp_path, monkeypatch):
 
 def test_auth_register_and_users_flow(tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("EVILEYE_BOOTSTRAP_ADMIN_PASSWORD", "admin")
     creds_path = tmp_path / "credentials.json"
     creds_path.write_text(json.dumps({"web_auth": {"enabled": True, "users": []}}), encoding="utf-8")
     ensure_default_admin_credentials(creds_path)
@@ -324,10 +325,10 @@ def test_auth_register_and_users_flow(tmp_path, monkeypatch):
     app = create_app()
     client = TestClient(app)
 
-    reg = client.post("/api/v1/auth/register", json={"email": "test@example.com", "password": "secret1"})
+    reg = client.post("/api/v1/auth/register", json={"email": "test@example.com", "password": "secret123"})
     assert reg.status_code == 200
 
-    login_pending = client.post("/api/v1/auth/login", json={"username": "test@example.com", "password": "secret1"})
+    login_pending = client.post("/api/v1/auth/login", json={"username": "test@example.com", "password": "secret123"})
     assert login_pending.status_code == 401
 
     admin_login = client.post("/api/v1/auth/login", json={"username": "admin", "password": "admin"})
@@ -337,7 +338,7 @@ def test_auth_register_and_users_flow(tmp_path, monkeypatch):
     assert approve.status_code == 200
 
     app.state.web_auth = __import__("evileye.api.security", fromlist=["load_web_auth_config"]).load_web_auth_config()
-    user_login = client.post("/api/v1/auth/login", json={"username": "test@example.com", "password": "secret1"})
+    user_login = client.post("/api/v1/auth/login", json={"username": "test@example.com", "password": "secret123"})
     assert user_login.status_code == 200
     perms = set(user_login.json().get("permissions") or [])
     assert "logs:view" not in perms
@@ -345,6 +346,7 @@ def test_auth_register_and_users_flow(tmp_path, monkeypatch):
 
 def test_admin_create_user_approved_and_login(tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("EVILEYE_BOOTSTRAP_ADMIN_PASSWORD", "admin")
     creds_path = tmp_path / "credentials.json"
     creds_path.write_text(json.dumps({"web_auth": {"enabled": True, "users": []}}), encoding="utf-8")
     ensure_default_admin_credentials(creds_path)

@@ -138,9 +138,9 @@ def test_get_current_run_summary_hydrates_one(tmp_path, monkeypatch):
     calls = {"n": 0}
     real = ss._run_summary
 
-    def tracked(record):
+    def tracked(record, **kwargs):
         calls["n"] += 1
-        return real(record)
+        return real(record, **kwargs)
 
     monkeypatch.setattr(ss, "_run_summary", tracked)
     current = ss.get_current_run_summary()

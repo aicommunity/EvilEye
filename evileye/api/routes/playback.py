@@ -182,12 +182,15 @@ async def _to_thread_with_timeout_or_cached(
             len(_thread_inflight),
             " ".join(f"{k}={v}" for k, v in (log_ctx or {}).items()),
         )
+        # Snapshot a stale fallback before scheduling refresh work. The
+        # refresh can atomically replace the on-disk index, so invoking it
+        # first could erase the only stale result before cached_fn reads it.
+        cached = cached_fn()
         if on_timeout is not None:
             try:
                 on_timeout()
             except Exception:
                 pass
-        cached = cached_fn()
         if cached is not None:
             return cached
         _thread_503s += 1

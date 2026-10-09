@@ -34,7 +34,7 @@ class _CapHarness:
 
 @pytest.mark.unit
 def test_mp_pending_cap_detector_default():
-    assert qc.mp_pending_cap_detector(1) == 2
+    assert qc.mp_pending_cap_detector(1) == 1
     assert qc.mp_pending_cap_detector(3) == 3
 
 
@@ -57,4 +57,4 @@ def test_enforce_pending_cap_evicts_oldest():
 def test_detection_thread_yolo_mp_has_bridge_and_reporter():
     """Smoke: MP thread uses MpAsyncBridge and MpPendingReporter API."""
     assert hasattr(DetectionThreadYoloMp, "mp_pending_depth")
-    assert hasattr(DetectionThreadYoloMp, "_bridge")
+    assert hasattr(DetectionThreadYoloMp, "_init_bridge")

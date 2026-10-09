@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import time
+import sys
+import pytest
 from unittest.mock import MagicMock, patch
 
 from evileye.core import process_control
@@ -49,6 +51,7 @@ def test_is_zombie_false_for_running():
         assert process_control.is_zombie(42) is False
 
 
+@pytest.mark.skipif(sys.platform.startswith("win"), reason="POSIX process groups are unavailable on Windows")
 def test_terminate_tree_returns_immediately_for_zombie_only_group(monkeypatch):
     """Zombie leader must not block for the full grace period (Ctrl+C hang fix)."""
     monkeypatch.setattr(process_control.sys, "platform", "linux")
@@ -66,6 +69,7 @@ def test_terminate_tree_returns_immediately_for_zombie_only_group(monkeypatch):
     assert elapsed < 0.5, f"terminate_tree blocked for {elapsed:.2f}s on zombie-only group"
 
 
+@pytest.mark.skipif(sys.platform.startswith("win"), reason="POSIX process groups are unavailable on Windows")
 def test_terminate_tree_sigkills_when_live_members_remain(monkeypatch):
     monkeypatch.setattr(process_control.sys, "platform", "linux")
     grace = 0.25
@@ -84,6 +88,7 @@ def test_terminate_tree_sigkills_when_live_members_remain(monkeypatch):
     assert elapsed >= grace
 
 
+@pytest.mark.skipif(sys.platform.startswith("win"), reason="POSIX process groups are unavailable on Windows")
 def test_process_group_has_live_members_skips_zombies(monkeypatch):
     zombie = MagicMock()
     zombie.info = {"pid": 10}

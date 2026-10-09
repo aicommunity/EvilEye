@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+import sys
 from pathlib import Path
 
 from typer.testing import CliRunner
@@ -43,8 +44,12 @@ def test_deploy_creates_monitor_without_starting_services(tmp_path: Path):
     assert (monitor / "INSTALL_HINT.txt").is_file()
 
     hint = (monitor / "INSTALL_HINT.txt").read_text(encoding="utf-8")
-    assert "NOT started automatically" in hint
-    assert "install_timer.sh" in hint
+    if sys.platform.startswith("win"):
+        assert "Linux install_timer.sh does not run on Windows." in hint
+        assert "watchdog-install" in hint
+    else:
+        assert "NOT started automatically" in hint
+        assert "install_timer.sh" in hint
 
     # Deploy must not enable user systemd units.
     assert "systemctl" not in result.output.lower() or "not enabled" in result.output.lower()

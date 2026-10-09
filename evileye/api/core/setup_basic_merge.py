@@ -214,6 +214,30 @@ def _read_alarm_schedule_from_config(
 
 
 def _write_alarm_schedule_to_config(config: dict[str, Any], basic: dict[str, Any]) -> None:
+    global_raw = basic.get("alarm_schedule")
+    global_enabled = bool(global_raw.get("enabled")) if isinstance(global_raw, dict) else False
+
+    # A projected Basic setup payload always contains the default disabled
+    # schedule. Do not materialize a detector section for that default: it
+    # changes otherwise-unmanaged event configuration on a recording-only
+    # round trip and can shadow a legacy schedule detector.
+    schedule_inputs = _as_list(basic.get("alarm_cameras")) or _as_list(basic.get("sources"))
+    any_source_enabled = False
+    for camera in schedule_inputs:
+        if not isinstance(camera, dict):
+            continue
+        custom = camera.get("alarm_schedule")
+        custom_enabled = isinstance(custom, dict) and bool(custom.get("enabled", False))
+        if bool(camera.get("alarm_enabled", False)) or custom_enabled:
+            any_source_enabled = True
+            break
+
+    raw_events = config.get("events_detectors")
+    events = raw_events if isinstance(raw_events, dict) else {}
+    existing_schedule = resolve_detector_section(events)
+    if not global_enabled and not any_source_enabled and not existing_schedule:
+        return
+
     events = config.setdefault("events_detectors", {})
     if not isinstance(events, dict):
         config["events_detectors"] = {}
@@ -222,9 +246,6 @@ def _write_alarm_schedule_to_config(config: dict[str, Any], basic: dict[str, Any
     if not isinstance(section, dict):
         section = {}
         events[DETECTOR_CONFIG_KEY] = section
-
-    global_raw = basic.get("alarm_schedule")
-    global_enabled = bool(global_raw.get("enabled")) if isinstance(global_raw, dict) else False
 
     if isinstance(global_raw, dict):
         section["default_schedule"] = schedule_to_json(

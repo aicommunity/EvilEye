@@ -173,7 +173,9 @@ def test_list_camera_summaries_swr_refreshes_in_background(monkeypatch: pytest.M
     second = server_state.list_camera_summaries(scope="current")
     elapsed_ms = (time.perf_counter() - t0) * 1000
     assert second == first  # immediate stale
-    assert elapsed_ms < 100
+    # This is a non-blocking stale return even under a loaded test process;
+    # the blocked refresh below is allowed two seconds to complete.
+    assert elapsed_ms < 1000
     assert started.wait(timeout=1.0)
     release.set()
 

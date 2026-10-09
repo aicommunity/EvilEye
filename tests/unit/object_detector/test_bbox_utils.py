@@ -25,5 +25,5 @@ def test_roi_boxes_to_image_coords():
     bboxes, confs, ids = roi_boxes_to_image_coords(_Result(), (roi[1][0], roi[1][1]))
     assert len(bboxes) == 1
     assert bboxes[0] == [11, 22, 13, 24]
-    assert confs[0] == 0.9
+    assert np.isclose(confs[0], 0.9)
     assert ids[0] == 2.0

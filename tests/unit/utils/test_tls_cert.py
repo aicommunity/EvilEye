@@ -1,13 +1,16 @@
-import shutil
+import os
 import subprocess
 from pathlib import Path
 
 import pytest
 
-from evileye.utils.tls_cert import TlsCertError, generate_minica_leaf
+from evileye.utils.tls_cert import TlsCertError, generate_minica_leaf, openssl_bin
 
-openssl = shutil.which("openssl")
-pytestmark = pytest.mark.skipif(openssl is None, reason="openssl not on PATH")
+try:
+    openssl = openssl_bin()
+except TlsCertError:
+    openssl = None
+pytestmark = pytest.mark.skipif(openssl is None, reason="supported OpenSSL not installed")
 
 
 def test_generate_minica_leaf_includes_ip_and_dns_san(tmp_path: Path):
@@ -20,7 +23,8 @@ def test_generate_minica_leaf_includes_ip_and_dns_san(tmp_path: Path):
     assert "IP Address:127.0.0.1" in text or "IP:127.0.0.1" in text
     assert "IP Address:192.168.1.50" in text or "IP:192.168.1.50" in text
     assert "DNS:evileye.lan" in text
-    assert paths["server_key"].stat().st_mode & 0o077 == 0
+    if os.name != "nt":
+        assert paths["server_key"].stat().st_mode & 0o077 == 0
 
 
 def test_generate_requires_san(tmp_path: Path):

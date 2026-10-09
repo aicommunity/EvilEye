@@ -313,6 +313,12 @@ def test_load_segments_skips_files_outside_window_before_mvhd(tmp_path, monkeypa
         (cam / f"Cam1_20260817_014911_0_{idx:05d}.mp4").write_bytes(b"fake")
     monkeypatch.setenv("EVILEYE_DATA_DIR", str(root))
     monkeypatch.setattr(svc, "_configured_segment_length_sec", lambda: 1800.0)
+    # This assertion covers the synchronous window filter. The service also
+    # schedules a full-day index rebuild in the background, which is expected
+    # to inspect all files and must not be counted as route work here.
+    from evileye.api.core import playback_timeline_index
+
+    monkeypatch.setattr(playback_timeline_index, "schedule_segment_index_refresh", lambda *_a, **_k: None)
 
     calls = {"n": 0}
     real = svc._mp4_duration_sec
