@@ -6,6 +6,7 @@ import pytest
 
 from evileye.core.plugin_runtime import ItemModuleAdapter, SourceModuleAdapter
 from evileye.core.processor_source import ProcessorSource
+from evileye.core.base_class import EvilEyeBase
 from evileye.core.plugins import (
     PLUGIN_API_VERSION,
     ModuleSpec,
@@ -476,3 +477,68 @@ def test_finished_plugin_source_is_not_restarted_on_next_pipeline_tick():
     processor.run_sources()
 
     assert source.starts == 0
+
+
+def test_builtin_capture_sources_use_spi_adapter_and_keep_capture_backend(monkeypatch):
+    # Importing the builtins registers their public SPI manifests.
+    from evileye.capture.video_capture_opencv import VideoCaptureOpencv
+    from evileye.capture.video_capture_gstreamer import VideoCaptureGStreamer
+
+    for source_type in (VideoCaptureOpencv, VideoCaptureGStreamer):
+        registered = plugin_registry.get_module(source_type.__name__)
+        assert registered is not None
+        assert "legacy_source_protocol" in registered.spec.capabilities
+        assert isinstance(EvilEyeBase.create_instance(source_type.__name__), SourceModuleAdapter)
+
+    generated = []
+
+    def fake_init(source):
+        source.is_inited = True
+        return True
+
+    def fake_start(source):
+        source.run_flag = True
+
+    def fake_get(source):
+        if not generated:
+            generated.append(True)
+            source._test_finished = True
+            return [{"source_id": 3, "frame_id": 9}]
+        return []
+
+    def fake_is_finished(source):
+        return bool(getattr(source, "_test_finished", False))
+
+    monkeypatch.setattr(VideoCaptureOpencv, "init", fake_init)
+    monkeypatch.setattr(VideoCaptureOpencv, "start", fake_start)
+    monkeypatch.setattr(VideoCaptureOpencv, "get", fake_get)
+    monkeypatch.setattr(VideoCaptureOpencv, "is_finished", fake_is_finished)
+    monkeypatch.setattr(VideoCaptureOpencv, "stop", lambda source: setattr(source, "run_flag", False))
+
+    adapter = EvilEyeBase.create_instance("VideoCaptureOpencv")
+    adapter.set_params(
+        type="VideoCaptureOpencv",
+        execution_mode="process",
+        source="VideoFile",
+        camera="unused.mp4",
+        source_ids=[3],
+        source_names=["Test camera"],
+    )
+    assert adapter.init() is True
+    assert adapter.execution_mode == "thread"
+    assert adapter.get_runtime_stats()["backend_execution_mode"] == "process"
+    assert adapter._module.execution_mode == "process"
+    assert adapter.source_ids == [3]
+    assert adapter.source_names == ["Test camera"]
+
+    adapter.start()
+    try:
+        deadline = time.monotonic() + 2.0
+        frames = []
+        while not frames and time.monotonic() < deadline:
+            frames.extend(adapter.get())
+            if not frames:
+                time.sleep(0.01)
+        assert frames == [{"source_id": 3, "frame_id": 9}]
+    finally:
+        adapter.stop()

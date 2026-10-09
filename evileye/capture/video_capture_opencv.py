@@ -15,7 +15,11 @@ from ..video_recorder.recorder_base import SourceMeta
 from ..video_recorder.continuous_recorder_manager import ContinuousRecorderManager
 
 
-@EvilEyeBase.register("VideoCaptureOpencv", kind="source")
+@EvilEyeBase.register(
+    "VideoCaptureOpencv",
+    kind="source",
+    capabilities=("legacy_source_protocol", "preserves_source_metadata", "shared_frame_transport"),
+)
 class VideoCaptureOpencv(VideoCaptureBase):
     class VideoCaptureAPIs(IntEnum):
         CAP_ANY = 0

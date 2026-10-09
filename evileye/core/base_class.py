@@ -51,6 +51,10 @@ class EvilEyeBase(ABC):
                 return ItemModuleAdapter(registered)
             if registered.spec.kind == "source":
                 factory = registered.spec.factory
+                if "legacy_source_protocol" in registered.spec.capabilities:
+                    from .plugin_runtime import SourceModuleAdapter
+
+                    return SourceModuleAdapter(registered)
                 if registered.plugin_id != "evileye":
                     from .plugin_runtime import SourceModuleAdapter
 

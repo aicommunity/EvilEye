@@ -69,10 +69,23 @@ the source in a spawn child from its importable factory and config.
 and use the same runtime as external `processor_item` modules. Their legacy
 `type` configs remain valid. `RoiFeeder` accepts both `thread` and `process`;
 choose `process` when the isolation benefit is worth serializing each frame and
-tracking result. Video sources, model detectors, trackers, and other built-ins
-still use their specialized lifecycle and worker implementations behind the
-shared registry; they will move to the generic contracts incrementally to
-preserve their recording, model, and multi-camera behavior.
+tracking result.
+
+`VideoCaptureOpencv` and `VideoCaptureGStreamer` are registered through the
+source SPI and created by `SourceModuleAdapter`. The adapter exposes a common
+source to `PipelineSurveillance`, while delegating capture metadata,
+subscriptions, and lifecycle to the existing capture implementation. This
+keeps recording and multi-camera behavior intact. A source configured with
+`execution_mode="process"` still uses the capture module's existing
+`MpWorkerCapture` backend; the adapter itself polls that backend in a host
+thread and reports both `execution_mode` and `backend_execution_mode` in its
+runtime diagnostics. External source plugins should implement the simpler
+`open/read/close` contract described above and do not need to subclass
+`EvilEyeBase`.
+
+Model detectors, trackers, and remaining built-ins still use their specialized
+lifecycle and worker implementations; they will move to item processors in
+later increments to preserve their model and multi-camera behavior.
 
 ## Configure `PipelineSurveillance`
 
