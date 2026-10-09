@@ -51,6 +51,25 @@ def _create_state(module: Any, config: dict[str, Any]) -> Any:
     return create_state()
 
 
+def _close_item_resources(module: Any, state: Any, logger, module_id: str) -> None:
+    """Close optional per-worker module/state resources without double-closing."""
+    seen: set[int] = set()
+    for target in (state, module):
+        if target is None or id(target) in seen:
+            continue
+        seen.add(id(target))
+        close = getattr(target, "close", None)
+        if not callable(close):
+            close = getattr(target, "release", None)
+        if not callable(close):
+            continue
+        try:
+            close()
+        except Exception:
+            if logger:
+                logger.exception("Plugin module %s failed to close worker resources", module_id)
+
+
 class ItemModuleWorker(MpWorker):
     """Spawn-safe bridge that recreates a plugin module inside the child."""
 
@@ -64,15 +83,21 @@ class ItemModuleWorker(MpWorker):
         self.drop_oldest_on_full = False
 
     def init_worker(self) -> None:
-        factory = importlib.import_module(self.factory_module)
-        for component in self.factory_qualname.split("."):
-            factory = getattr(factory, component)
-        self.module = _call_factory(factory, self.config)
-        if not callable(getattr(self.module, "process_item", None)):
-            raise PluginError(
-                f"Module '{self.module_id}' must implement process_item(item, state)"
-            )
-        self.module_state = _create_state(self.module, self.config)
+        try:
+            factory = importlib.import_module(self.factory_module)
+            for component in self.factory_qualname.split("."):
+                factory = getattr(factory, component)
+            self.module = _call_factory(factory, self.config)
+            if not callable(getattr(self.module, "process_item", None)):
+                raise PluginError(
+                    f"Module '{self.module_id}' must implement process_item(item, state)"
+                )
+            self.module_state = _create_state(self.module, self.config)
+        except Exception:
+            _close_item_resources(self.module, self.module_state, self.logger, self.module_id)
+            self.module = None
+            self.module_state = None
+            raise
 
     def worker_impl(self, data):
         try:
@@ -94,6 +119,11 @@ class ItemModuleWorker(MpWorker):
             "factory_qualname": self.factory_qualname,
         }
 
+    def cleanup(self) -> None:
+        _close_item_resources(self.module, self.module_state, self.logger, self.module_id)
+        self.module = None
+        self.module_state = None
+
 
 class ItemModuleAdapter(EvilEyeBase):
     """Expose ``process_item(item, state)`` plugins as pipeline processors.
@@ -108,6 +138,8 @@ class ItemModuleAdapter(EvilEyeBase):
         self.module_id = registered_module.qualified_id
         self.execution_mode = "thread"
         self.source_ids = None
+        capabilities = set(registered_module.spec.capabilities or ())
+        factory = registered_module.spec.factory
         self._config: dict[str, Any] = {}
         self._input_queue: queue.Queue = queue.Queue(maxsize=8)
         self._output_queue: queue.Queue = queue.Queue(maxsize=8)
@@ -119,6 +151,19 @@ class ItemModuleAdapter(EvilEyeBase):
         self.degraded = False
         self._failure_reported = False
         super().__init__()
+        self.accepts_frame_handle = (
+            "accepts_frame_handle" in capabilities
+            or bool(getattr(factory, "accepts_frame_handle", False))
+        )
+        self.emits_dto_type = getattr(factory, "emits_dto_type", None)
+        for capability in capabilities:
+            if capability.startswith("emits_dto_type:"):
+                self.emits_dto_type = capability.split(":", 1)[1]
+                break
+        self.requires_materialized_frame = (
+            "requires_materialized_frame" in capabilities
+            or bool(getattr(factory, "requires_materialized_frame", not self.accepts_frame_handle))
+        )
 
     def set_params_impl(self):
         params = dict(self.params or {})
@@ -193,37 +238,44 @@ class ItemModuleAdapter(EvilEyeBase):
 
     def _run_thread(self):
         try:
-            self._module = _call_factory(self.registered_module.spec.factory, self._config)
-            if not callable(getattr(self._module, "process_item", None)):
-                raise PluginError(
-                    f"Module '{self.module_id}' must implement process_item(item, state)"
+            try:
+                self._module = _call_factory(
+                    self.registered_module.spec.factory, self._config
                 )
-            self._state = _create_state(self._module, self._config)
-        except Exception:
-            self.degraded = True
-            self.logger.exception("Plugin module %s failed during worker initialization", self.module_id)
-            return
-
-        while not self._stop_event.is_set():
-            try:
-                item = self._input_queue.get(timeout=0.1)
-            except queue.Empty:
-                continue
-            if item is None:
-                break
-            try:
-                result = self._module.process_item(item, self._state)
-                if result is not None:
-                    while not self._stop_event.is_set():
-                        try:
-                            self._output_queue.put(result, timeout=0.1)
-                            break
-                        except queue.Full:
-                            continue
+                if not callable(getattr(self._module, "process_item", None)):
+                    raise PluginError(
+                        f"Module '{self.module_id}' must implement process_item(item, state)"
+                    )
+                self._state = _create_state(self._module, self._config)
             except Exception:
                 self.degraded = True
-                self.logger.exception("Plugin module %s failed while processing item", self.module_id)
-                break
+                self.logger.exception("Plugin module %s failed during worker initialization", self.module_id)
+                return
+
+            while not self._stop_event.is_set():
+                try:
+                    item = self._input_queue.get(timeout=0.1)
+                except queue.Empty:
+                    continue
+                if item is None:
+                    break
+                try:
+                    result = self._module.process_item(item, self._state)
+                    if result is not None:
+                        while not self._stop_event.is_set():
+                            try:
+                                self._output_queue.put(result, timeout=0.1)
+                                break
+                            except queue.Full:
+                                continue
+                except Exception:
+                    self.degraded = True
+                    self.logger.exception("Plugin module %s failed while processing item", self.module_id)
+                    break
+        finally:
+            _close_item_resources(self._module, self._state, self.logger, self.module_id)
+            self._module = None
+            self._state = None
 
     def put(self, item):
         try:

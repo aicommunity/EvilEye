@@ -34,6 +34,8 @@ state inside the selected worker. Both factory and state are initialized in
 the worker, so plugin modules must not depend on parent-process model or device
 objects. For `process` mode the factory must be importable at module scope and
 the configuration, inputs, outputs, and state must be spawn/pickle compatible.
+An optional zero-argument `close()` method on the module or state is called
+when its worker stops; legacy lifecycle modules may use `release()` instead.
 
 ```python
 ModuleSpec(
@@ -43,6 +45,12 @@ ModuleSpec(
     execution_modes=("thread", "process"),
 )
 ```
+
+For frame processors, declare `capabilities=("accepts_frame_handle",)` when the
+module can consume EvilEye's descriptor-backed frame payload without first
+materializing its image. Optional metadata such as `"emits_dto_type:Frame"` is
+exposed to the pipeline's compatibility diagnostics. Without the handle
+capability the pipeline materializes a frame before calling the module.
 
 The runtime owns the bounded queues and worker lifecycle. A full input queue or
 worker failure marks the module degraded and is logged; the runtime does not
@@ -54,6 +62,17 @@ A source plugin uses `kind="source"` and implements `open()`, `read()`, and
 `close()`. `read()` returns the next EvilEye frame/item or `None` at end of
 stream. It may advertise `thread`, `process`, or both. Process mode recreates
 the source in a spawn child from its importable factory and config.
+
+## Built-in migration
+
+`PreprocessingPipeline` and `RoiFeeder` are now registered as item processors
+and use the same runtime as external `processor_item` modules. Their legacy
+`type` configs remain valid. `RoiFeeder` accepts both `thread` and `process`;
+choose `process` when the isolation benefit is worth serializing each frame and
+tracking result. Video sources, model detectors, trackers, and other built-ins
+still use their specialized lifecycle and worker implementations behind the
+shared registry; they will move to the generic contracts incrementally to
+preserve their recording, model, and multi-camera behavior.
 
 ## Configure `PipelineSurveillance`
 

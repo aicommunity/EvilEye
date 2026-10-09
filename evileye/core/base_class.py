@@ -17,6 +17,7 @@ class EvilEyeBase(ABC):
         *,
         kind="component",
         execution_modes=("thread", "process"),
+        capabilities=(),
     ):
         def inner_wrapper(wrapped_class):
             cls._registry[class_name] = wrapped_class
@@ -29,6 +30,7 @@ class EvilEyeBase(ABC):
                 wrapped_class,
                 kind=kind,
                 execution_modes=execution_modes,
+                capabilities=capabilities,
                 legacy_ids=(class_name,),
             )
 

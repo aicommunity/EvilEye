@@ -17,13 +17,17 @@ from ..core.processor_base import (
 )
 
 
-@EvilEyeBase.register("RoiFeeder", kind="attribute", execution_modes=("thread",))
+@EvilEyeBase.register(
+    "RoiFeeder",
+    kind="processor_item",
+    execution_modes=("thread", "process"),
+)
 class RoiFeeder(DualModeProcessor):
     """Lightweight processor that extracts ROI bbox coords from tracked objects.
 
-    DualModeProcessor adoption (S1): process mode is forced to thread because
-    this stage only computes bounding boxes (no YOLO) — pickling full frames
-    would be pure RAM waste.
+    ``PipelineSurveillance`` runs this component through the common item
+    runtime. The legacy lifecycle remains available to direct in-process
+    callers; only that legacy path forces execution to a thread.
     """
 
     ResultType = Frame
@@ -59,6 +63,33 @@ class RoiFeeder(DualModeProcessor):
             self.roi_size = (int(size[0]), int(size[1]))
         self.every_n_frames = int(self.params.get('every_n_frames', 1))
         self.execution_mode = self.params.get('execution_mode', DEFAULT_EXECUTION_MODE)
+
+    def create_state(self, config):
+        """Build per-worker cadence state for the common item runtime."""
+        self.set_params(**dict(config or {}))
+        return {
+            "frame_counters": {},
+            "every_n_frames": max(1, int(self.every_n_frames)),
+        }
+
+    def process_item(self, item, state):
+        """Attach ROI bounding boxes while preserving the legacy pair output."""
+        if not isinstance(item, (list, tuple)) or len(item) < 2:
+            return item
+
+        tracking_data, frame = item[0], item[1]
+        tracking_data = ensure_tracking_result_list(tracking_data)
+        source_id = getattr(frame, "source_id", None)
+        if source_id is None:
+            return tracking_data, frame
+
+        state = state if isinstance(state, dict) else {}
+        counters = state.setdefault("frame_counters", {})
+        counters[source_id] = counters.get(source_id, 0) + 1
+        every_n_frames = max(1, int(state.get("every_n_frames", self.every_n_frames)))
+        if counters[source_id] % every_n_frames == 0:
+            self._extract_rois(tracking_data, frame)
+        return tracking_data, frame
 
     def get_params_impl(self):
         params: Dict[str, Any] = dict()

@@ -10,7 +10,12 @@ from ..core.base_class import EvilEyeBase
 # from preprocessing.steps import Input, Normalize, Output, Inpaint, Clahe
 
 
-@EvilEyeBase.register("PreprocessingPipeline", kind="preprocessor")
+@EvilEyeBase.register(
+    "PreprocessingPipeline",
+    kind="processor_item",
+    execution_modes=("thread", "process"),
+    capabilities=("accepts_frame_handle", "emits_dto_type:Frame"),
+)
 class PreprocessingPipeline(PreprocessingBase):
     def __init__(self):
         super().__init__()
@@ -20,10 +25,39 @@ class PreprocessingPipeline(PreprocessingBase):
         self.copy_required = True
 
     def init_impl(self):
-        self.json_path = 'configs/preprocessing_pipeline.json'
+        self.json_path = self.json_path or 'configs/preprocessing_pipeline.json'
         factory = PreprocessingFactory(self.json_path)
         self.preprocessSequence = factory.build_pipeline()
         return True
+
+    def create_state(self, config):
+        """Initialize this legacy preprocessor inside the selected plugin worker."""
+        self.set_params(**dict(config or {}))
+        if not self.init():
+            raise RuntimeError("PreprocessingPipeline failed to initialize")
+        return self
+
+    def process_item(self, item, state):
+        """Preserve the old frame and (payload, frame) preprocessing contract."""
+        processor = state or self
+        is_pair = isinstance(item, (list, tuple)) and len(item) >= 2
+        if is_pair:
+            payload, frame = item[0], item[1]
+            preserve_tuple = isinstance(item, tuple)
+        else:
+            payload, frame = None, item
+            preserve_tuple = False
+
+        frame = processor._materialize_frame_if_needed(frame)
+        processed_frame = processor._process_image(frame)
+        from ..core.ipc_contracts import attach_frame_contract
+
+        processed_frame = attach_frame_contract(processed_frame, payload_version=1)
+        if not is_pair:
+            return processed_frame
+        if preserve_tuple:
+            return payload, processed_frame
+        return [payload, processed_frame]
 
     def release_impl(self):
         pass

@@ -90,6 +90,19 @@ class _FailingItemModule:
         raise RuntimeError("intentional test failure")
 
 
+class _CloseAwareItemModule:
+    def __init__(self, config=None):
+        self.marker_path = (config or {})["marker_path"]
+
+    def process_item(self, item, state):
+        return item
+
+    def close(self):
+        from pathlib import Path
+
+        Path(self.marker_path).write_text("closed", encoding="utf-8")
+
+
 def _echo_plugin():
     return PluginSpec(
         plugin_id="sample.echo",
@@ -341,6 +354,43 @@ def test_item_module_adapter_recreates_factory_in_spawn_process():
         assert result == "spawn-frame:1"
     finally:
         adapter.stop()
+
+
+@pytest.mark.parametrize("execution_mode", ["thread", "process"])
+def test_item_module_worker_closes_resources_on_stop(tmp_path, execution_mode):
+    plugin_id = f"test.close-{execution_mode}"
+    spec = ModuleSpec(
+        "close-aware",
+        "processor_item",
+        _CloseAwareItemModule,
+        execution_modes=(execution_mode,),
+    )
+    registered = RegisteredModule(plugin_id, spec)
+    plugin_registry.register_plugin(
+        PluginSpec(plugin_id, PLUGIN_API_VERSION, modules=(spec,))
+    )
+    marker_path = tmp_path / f"{execution_mode}.closed"
+    adapter = ItemModuleAdapter(registered)
+    adapter.set_params(
+        module_id=registered.qualified_id,
+        execution_mode=execution_mode,
+        config={"marker_path": str(marker_path)},
+    )
+    adapter.init()
+    adapter.start()
+    try:
+        adapter.put("item")
+        deadline = time.monotonic() + (45.0 if execution_mode == "process" else 2.0)
+        result = None
+        while result is None and time.monotonic() < deadline:
+            result = adapter.get()
+            if result is None:
+                time.sleep(0.02)
+        assert result == "item"
+    finally:
+        adapter.stop()
+
+    assert marker_path.read_text(encoding="utf-8") == "closed"
 
 
 @pytest.mark.parametrize("execution_mode", ["thread", "process"])
