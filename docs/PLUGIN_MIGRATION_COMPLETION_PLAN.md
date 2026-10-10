@@ -51,7 +51,7 @@
 2. [готово] BoT-SORT использует item runtime и хранит отдельный tracker на source_id; уменьшение frame_id сбрасывает состояние при rewind/loop. Capture публикует persistent disconnect/reconnect counters и помещает `connection_generation` в каждый кадр. BoT-SORT сбрасывает per-source состояние при смене поколения (включая process capture); контракт закреплён unit-тестом.
 3. [готово] AttributeDetector и AttributeClassifier используют item runtime. AttributeDetector сохраняет конфигурацию модели, class mapping, per-class thresholds и ROI; AttributeClassifier обогащает tracker result по `track_id`. Thread/process и реальные модели проверены smoke-тестами; сравнение результата на фиксированном видео с прежней реализацией остаётся.
 4. После каждой группы убрать `legacy_processor_protocol` у соответствующих manifests, не удаляя compatibility `type` aliases.
-5. Для каждого модуля сравнить старую и новую реализацию на фиксированных видео/кадрах: detection classes/confidence, track continuity, attributes, порядок кадров и сохранённые DTO.
+5. [частично] Для YOLO зафиксирован opt-in golden parity test (legacy thread против processor_item) на реальной yolo11n.pt и bus.jpg; classes, bbox и confidence совпали. Для остальных модулей сравнить старую и новую реализацию на фиксированных видео/кадрах: detection, track continuity, attributes, порядок кадров и DTO. Результат: tests/integration/object_detector/test_yolo_legacy_parity.py.
 
 **Критерий:** ни один штатный детектор, tracker или attribute module не требует `LegacyProcessorModuleAdapter`; thread/process режимы проходят один набор контрактных сценариев.
 
