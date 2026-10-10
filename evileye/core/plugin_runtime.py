@@ -1246,6 +1246,7 @@ class SourceModuleAdapter(EvilEyeBase):
         self.execution_mode = "thread"
         self._source_ids = []
         self._backend_execution_mode = "thread"
+        self._capture_source_backend = False
         self._legacy_source_protocol = False
         self._config: dict[str, Any] = {}
         self._subscribers: list[Any] = []
@@ -1265,9 +1266,14 @@ class SourceModuleAdapter(EvilEyeBase):
         params = dict(self.params or {})
         self.module_id = str(params.get("module_id") or params.get("type") or self.module_id)
         registered = plugin_registry.get_module(self.module_id)
-        self._legacy_source_protocol = bool(
-            registered and "legacy_source_protocol" in registered.spec.capabilities
-        )
+        capabilities = set(registered.spec.capabilities) if registered else set()
+        self._capture_source_backend = "capture_source_backend" in capabilities
+        self._legacy_source_protocol = "legacy_source_protocol" in capabilities
+        if self._capture_source_backend and self._legacy_source_protocol:
+            raise PluginError(
+                f"Source '{self.module_id}' cannot use the new and legacy source protocols together"
+            )
+        managed_backend = self._capture_source_backend or self._legacy_source_protocol
         nested_config = params.get("config") or {}
         configured_mode = str(
             params.get(
@@ -1275,42 +1281,39 @@ class SourceModuleAdapter(EvilEyeBase):
                 nested_config.get(
                     "execution_mode",
                     self.registered_module.spec.default_execution_mode
-                    or ("process" if self._legacy_source_protocol else "thread"),
+                    or ("process" if managed_backend else "thread"),
                 ),
             )
         ).lower()
         self._backend_execution_mode = configured_mode
-        # Legacy capture sources keep their optimized capture backend (including
-        # shared-memory process capture), while the SPI adapter itself runs in
-        # the host process and exposes frames through the common source API.
-        self.execution_mode = "thread" if self._legacy_source_protocol else configured_mode
+        # Capture backends expose the source SPI through this control adapter,
+        # while preserving their optimized shared-memory capture implementation.
+        self.execution_mode = "thread" if managed_backend else configured_mode
         self._source_ids = list(
             params.get("source_ids") or nested_config.get("source_ids") or []
         )
         self._queue_size = max(1, int(params.get("queue_size", 16)))
-        reserved = {"module_id", "queue_size", "ipc_mode", "config"}
-        if not self._legacy_source_protocol:
-            reserved.update({"type", "execution_mode", "source_ids"})
+        reserved = {"module_id", "queue_size", "ipc_mode", "config", "type", "execution_mode"}
         self._config = dict(nested_config)
         for key, value in params.items():
             if key not in reserved:
                 self._config.setdefault(key, value)
-        if self._legacy_source_protocol:
+        if self._source_ids:
+            self._config.setdefault("source_ids", self._source_ids)
+        if managed_backend:
             self._config["execution_mode"] = configured_mode
-            if self._source_ids:
-                self._config.setdefault("source_ids", self._source_ids)
         self._output_queue = queue.Queue(maxsize=self._queue_size)
 
     def get_params_impl(self):
         module = self.__dict__.get("_module")
-        if self._legacy_source_protocol and module is not None:
+        if (self._capture_source_backend or self._legacy_source_protocol) and module is not None:
             return module.get_params()
         return dict(self.params or {})
 
     def calc_memory_consumption(self):
         module = self.__dict__.get("_module")
         callback = getattr(module, "calc_memory_consumption", None)
-        if self._legacy_source_protocol and callable(callback):
+        if (self._capture_source_backend or self._legacy_source_protocol) and callable(callback):
             callback()
             self.memory_measure_results = getattr(module, "memory_measure_results", None)
             self.memory_measure_time = getattr(module, "memory_measure_time", None)
@@ -1328,7 +1331,7 @@ class SourceModuleAdapter(EvilEyeBase):
         return self._source_ids
 
     def __getattr__(self, name: str):
-        """Expose legacy source metadata and event helpers through the adapter."""
+        """Expose capture source metadata and event helpers through the adapter."""
         module = self.__dict__.get("_module")
         if module is not None and hasattr(module, name):
             return getattr(module, name)
@@ -1350,20 +1353,27 @@ class SourceModuleAdapter(EvilEyeBase):
             return fallback[name]
         raise AttributeError(name)
 
-    def _ensure_legacy_source(self):
-        if not self._legacy_source_protocol or self._module is not None:
+    def _ensure_managed_source_module(self):
+        if not (self._capture_source_backend or self._legacy_source_protocol) or self._module is not None:
             return self._module
-        module = _call_factory(self.registered_module.spec.factory, {})
-        if not callable(getattr(module, "set_params", None)):
-            raise PluginError(
-                f"Legacy source '{self.module_id}' must implement set_params()"
-            )
-        module.set_params(**self._config)
-        if callable(getattr(module, "set_id", None)):
-            module.set_id(self.id)
+        if self._legacy_source_protocol:
+            module = _call_factory(self.registered_module.spec.factory, {})
+            if not callable(getattr(module, "set_params", None)):
+                raise PluginError(
+                    f"Legacy source '{self.module_id}' must implement set_params()"
+                )
+            module.set_params(**self._config)
+            if callable(getattr(module, "set_id", None)):
+                module.set_id(self.id)
+        else:
+            module = _call_factory(self.registered_module.spec.factory, self._config)
+            if not all(callable(getattr(module, name, None)) for name in ("open", "read", "close")):
+                raise PluginError(
+                    f"Capture source '{self.module_id}' must implement open(), read(), and close()"
+                )
+        self._module = module
         if self._subscribers and callable(getattr(module, "subscribe", None)):
             module.subscribe(*self._subscribers)
-        self._module = module
         return module
 
     def subscribe(self, *subscribers):
@@ -1386,18 +1396,22 @@ class SourceModuleAdapter(EvilEyeBase):
         registered = plugin_registry.get_module(self.module_id)
         if registered is None or registered.spec.kind != "source":
             raise PluginError(f"Unknown source plugin '{self.module_id}'")
-        requested_mode = self._backend_execution_mode if self._legacy_source_protocol else self.execution_mode
+        requested_mode = (
+            self._backend_execution_mode
+            if self._capture_source_backend or self._legacy_source_protocol
+            else self.execution_mode
+        )
         if requested_mode not in registered.spec.execution_modes:
             raise PluginError(
                 f"Source '{self.module_id}' does not support execution_mode='{requested_mode}'"
             )
         self.registered_module = registered
-        if not self._legacy_source_protocol and self.execution_mode == "process":
+        if requested_mode == "process":
             _serialize_process_value(
                 self._config, self.module_id, "source configuration"
             )
         if self._legacy_source_protocol:
-            module = self._ensure_legacy_source()
+            module = self._ensure_managed_source_module()
             try:
                 initialized = module.init()
             except Exception:
@@ -1407,6 +1421,14 @@ class SourceModuleAdapter(EvilEyeBase):
             if not initialized:
                 self.degraded = True
             return bool(initialized)
+        if self._capture_source_backend:
+            module = self._ensure_managed_source_module()
+            try:
+                module.open()
+            except Exception:
+                self.degraded = True
+                self.logger.exception("Capture source plugin %s could not open", self.module_id)
+                return False
         return True
 
     def start(self):
@@ -1428,7 +1450,7 @@ class SourceModuleAdapter(EvilEyeBase):
             return
 
         self._stop_event.clear()
-        if not self._legacy_source_protocol:
+        if not (self._capture_source_backend or self._legacy_source_protocol):
             self._module = None
         self._thread = threading.Thread(
             target=self._read_thread,
@@ -1452,12 +1474,17 @@ class SourceModuleAdapter(EvilEyeBase):
         if self._legacy_source_protocol:
             self._read_legacy_source()
             return
+        if self._capture_source_backend:
+            self._read_capture_source_backend()
+            return
         try:
             self._module = _call_factory(self.registered_module.spec.factory, self._config)
             if not all(callable(getattr(self._module, name, None)) for name in ("open", "read", "close")):
                 raise PluginError(
                     f"Source '{self.module_id}' must implement open(), read(), and close()"
                 )
+            if self._subscribers and callable(getattr(self._module, "subscribe", None)):
+                self._module.subscribe(*self._subscribers)
             self._module.open()
             while not self._stop_event.is_set():
                 item = self._module.read()
@@ -1478,9 +1505,10 @@ class SourceModuleAdapter(EvilEyeBase):
                     self.logger.exception("Source plugin %s close failed", self.module_id)
 
     def _read_legacy_source(self):
-        module = None
+        module = self._ensure_managed_source_module()
+        backend_control = getattr(module, "_mp_control", None)
+        backend_processes = list(getattr(backend_control, "processes", []) or [])
         try:
-            module = self._ensure_legacy_source()
             module.start()
             while not self._stop_event.is_set():
                 items = module.get()
@@ -1492,7 +1520,6 @@ class SourceModuleAdapter(EvilEyeBase):
                             return
                     continue
                 if callable(getattr(module, "is_finished", None)) and module.is_finished():
-                    self._finished = True
                     return
                 self._stop_event.wait(0.01)
         except Exception:
@@ -1500,14 +1527,34 @@ class SourceModuleAdapter(EvilEyeBase):
             self.logger.exception("Legacy source plugin %s failed", self.module_id)
         finally:
             self._finished = True
-            if module is not None:
-                backend_control = getattr(module, "_mp_control", None)
-                backend_processes = list(getattr(backend_control, "processes", []) or [])
-                try:
-                    module.stop()
-                except Exception:
-                    self.logger.exception("Legacy source plugin %s stop failed", self.module_id)
-                self._capture_legacy_worker_exitcodes(backend_processes)
+            try:
+                module.stop()
+            except Exception:
+                self.logger.exception("Legacy source plugin %s stop failed", self.module_id)
+            self._capture_source_worker_exitcodes(backend_processes)
+
+    def _read_capture_source_backend(self):
+        module = self._ensure_managed_source_module()
+        backend_control = getattr(module, "_mp_control", None)
+        backend_processes = list(getattr(backend_control, "processes", []) or [])
+        try:
+            while not self._stop_event.is_set():
+                item = module.read()
+                if item is None:
+                    self._finished = True
+                    return
+                if not self._put_output(item):
+                    return
+        except Exception:
+            self.degraded = True
+            self.logger.exception("Capture source plugin %s failed", self.module_id)
+        finally:
+            self._finished = True
+            try:
+                module.close()
+            except Exception:
+                self.logger.exception("Capture source plugin %s close failed", self.module_id)
+            self._capture_source_worker_exitcodes(backend_processes)
 
     def get(self):
         # Surface non-zero exits even when there were no queued source items.
@@ -1628,22 +1675,20 @@ class SourceModuleAdapter(EvilEyeBase):
             self._process_stop_event.set()
         module = self.__dict__.get("_module")
         thread_alive = self._thread is not None and self._thread.is_alive()
-        if thread_alive:
-            self._thread.join(timeout=5.0 if self._legacy_source_protocol else 2.0)
-        if self._legacy_source_protocol and module is not None and (
-            not thread_alive or (self._thread is not None and self._thread.is_alive())
-        ):
+        if (self._capture_source_backend or self._legacy_source_protocol) and module is not None:
             backend_control = getattr(module, "_mp_control", None)
             backend_processes = list(getattr(backend_control, "processes", []) or [])
-            callback = getattr(module, "stop", None)
-            if callable(callback):
-                try:
-                    callback()
-                except Exception:
-                    self.logger.exception("Legacy source plugin %s stop failed", self.module_id)
-            self._capture_legacy_worker_exitcodes(backend_processes)
-            if self._thread is not None and self._thread.is_alive():
-                self._thread.join(timeout=2.0)
+            try:
+                module.stop()
+            except Exception:
+                self.logger.exception("Capture source plugin %s stop failed", self.module_id)
+            self._capture_source_worker_exitcodes(backend_processes)
+        if thread_alive:
+            self._thread.join(
+                timeout=5.0
+                if self._capture_source_backend or self._legacy_source_protocol
+                else 2.0
+            )
         self._thread = None
         if self._process is not None:
             self._process.join(timeout=3.0)
@@ -1656,31 +1701,27 @@ class SourceModuleAdapter(EvilEyeBase):
     def release_impl(self):
         self.stop()
         module = self.__dict__.get("_module")
-        if self._legacy_source_protocol and module is not None:
+        if module is not None and (self._capture_source_backend or self._legacy_source_protocol):
             try:
-                self._release_legacy_module(module)
+                self._close_managed_source_module(module)
             except Exception:
-                self.logger.exception("Legacy source plugin %s release failed", self.module_id)
+                self.logger.exception("Source plugin %s release failed", self.module_id)
 
-    @staticmethod
-    def _release_legacy_module(module) -> None:
-        release = getattr(module, "release", None)
-        if callable(release):
-            try:
+    def _close_managed_source_module(self, module) -> None:
+        if self._legacy_source_protocol:
+            release = getattr(module, "release", None)
+            if callable(release):
                 release()
-            finally:
-                # Some legacy sources expose a resource-only release() method
-                # instead of EvilEyeBase.release(), which also clears this flag.
                 if hasattr(module, "is_inited"):
                     module.is_inited = False
-            return
-        release_impl = getattr(module, "release_impl", None)
-        if callable(release_impl):
-            release_impl()
-        if hasattr(module, "is_inited"):
-            module.is_inited = False
+                return
+            raise PluginError(f"Legacy source '{self.module_id}' has no release() method")
+        close = getattr(module, "close", None)
+        if not callable(close):
+            raise PluginError("Capture source backend lost its required close() method")
+        close()
 
-    def _capture_legacy_worker_exitcodes(self, module) -> None:
+    def _capture_source_worker_exitcodes(self, module) -> None:
         if module is None:
             return
         try:
@@ -1708,7 +1749,7 @@ class SourceModuleAdapter(EvilEyeBase):
             if unexpected or still_running:
                 self.degraded = True
                 self.logger.error(
-                    "Legacy source plugin %s backend workers stopped unexpectedly "
+                    "Capture source plugin %s backend workers stopped unexpectedly "
                     "(exitcodes=%s, still_running=%s)",
                     self.module_id,
                     exitcodes,
@@ -1718,15 +1759,15 @@ class SourceModuleAdapter(EvilEyeBase):
             self.logger.debug("Could not read backend worker status for %s", self.module_id)
 
     def reset_impl(self):
-        if self._legacy_source_protocol:
+        if self._capture_source_backend or self._legacy_source_protocol:
             restart = self.is_running()
             self.stop()
             module = self.__dict__.get("_module")
             if module is not None:
                 try:
-                    self._release_legacy_module(module)
+                    self._close_managed_source_module(module)
                 except Exception:
-                    self.logger.exception("Legacy source plugin %s reset release failed", self.module_id)
+                    self.logger.exception("Capture source plugin %s reset release failed", self.module_id)
             self._module = None
             self.is_inited = False
             self._finished = False

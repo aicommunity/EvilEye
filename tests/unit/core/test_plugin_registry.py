@@ -827,8 +827,12 @@ def test_builtin_capture_sources_use_spi_adapter_and_keep_capture_backend(monkey
     for source_type in (VideoCaptureOpencv, VideoCaptureGStreamer):
         registered = plugin_registry.get_module(source_type.__name__)
         assert registered is not None
-        assert "legacy_source_protocol" in registered.spec.capabilities
         assert isinstance(EvilEyeBase.create_instance(source_type.__name__), SourceModuleAdapter)
+    opencv_spec = plugin_registry.get_module("VideoCaptureOpencv").spec
+    gst_spec = plugin_registry.get_module("VideoCaptureGStreamer").spec
+    assert "capture_source_backend" in opencv_spec.capabilities
+    assert "legacy_source_protocol" not in opencv_spec.capabilities
+    assert "legacy_source_protocol" in gst_spec.capabilities
 
     generated = []
 
@@ -1022,7 +1026,7 @@ def test_legacy_source_expected_termination_does_not_mark_runtime_degraded():
         )
     )
 
-    adapter._capture_legacy_worker_exitcodes(module)
+    adapter._capture_source_worker_exitcodes(module)
 
     assert adapter.degraded is False
     assert adapter._backend_worker_exitcodes == [-15]
@@ -1039,7 +1043,7 @@ def test_legacy_source_unexpected_worker_exit_marks_runtime_degraded():
         )
     )
 
-    adapter._capture_legacy_worker_exitcodes(module)
+    adapter._capture_source_worker_exitcodes(module)
 
     assert adapter.degraded is True
     assert adapter._backend_worker_exitcodes == [-9]
@@ -1056,7 +1060,7 @@ def test_legacy_source_worker_alive_after_stop_marks_runtime_degraded():
         )
     )
 
-    adapter._capture_legacy_worker_exitcodes(module)
+    adapter._capture_source_worker_exitcodes(module)
 
     assert adapter.degraded is True
     assert adapter._backend_worker_exitcodes == [None]

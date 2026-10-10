@@ -13,7 +13,7 @@
 - `evileye/core/plugins.py` содержит `PluginSpec`, `ModuleSpec`, `PipelineSpec`, `PluginRegistry` и загрузчик entry points группы `evileye.plugins`; есть проверка API version, фабрик, видов модулей, режимов и идентификаторов.
 - Встроенные классы регистрируются через `register_module`; старый `EvilEyeBase.register` остаётся совместимым фасадом. Параллельный `EvilEyeBase._registry` удалён.
 - `event_registry` использует общий `PluginRegistry`; встроенные и внешние event detectors перечисляются и создаются через него.
-- Инвентарь закреплён тестом: 18 публичных config IDs (17 manifest modules и alias `ObjectDetectorYoloMp`); inventory test фиксирует четыре модуля, которые ещё заявляют `legacy_*_protocol`.
+- Инвентарь закреплён тестом: 18 публичных config IDs (17 manifest modules и alias `ObjectDetectorYoloMp`); inventory test фиксирует один источник, который ещё заявляет `legacy_source_protocol`.
 - `PipelineSurveillance` принимает `modules.<group>.mode=extend|replace`, валидирует группы и виды модулей, а `ProcessorFrame` отправляет кадр каждому совместимому процессору. `module_id` принимается наряду со старым `type`.
 - `PreprocessingPipeline` и `RoiFeeder` используют `processor_item` runtime.
 - `parallel_items` включает общий ordered worker runtime: thread/process worker-ы получают изолированное состояние, runtime отдаёт результаты в порядке входа и помечает ошибки worker-ов как degraded. Для YOLO сохраняется старый `num_detection_threads` через перевод на `worker_count`.
@@ -23,7 +23,7 @@
 
 ### Что пока остаётся legacy или отдельной реализацией
 
-- Два capture source всё ещё заявляют legacy_source_protocol; object detectors используют processor_item runtime.
+- `VideoCaptureOpencv` теперь реализует публичный source SPI `open/read/close`; его thread/process режимы делегируются capture backend-у с shared-frame transport. `VideoCaptureGStreamer` пока остаётся единственным source с legacy-протоколом.
 - `ObjectMultiCameraTracking` переведён на `kind="batch_processor"` и публичный `IBatchProcessor.process_batch(batch, state)`. Общий адаптер создаёт модуль и вызывает batch-контракт; исполнение пока только потоковое.
 - Event detectors регистрируются через общий `PluginRegistry`, но жизненный цикл и подписки на `ObjectsHandler` всё ещё управляются `EventsService`; у этой стадии нет общего worker/health-контракта.
 - `PipelineSurveillance`, `PipelineCapture` и `PipelineDeclarative` уже регистрируются как встроенные `PipelineSpec`. `PipelineService` разрешает их через реестр; `pipeline_class` остаётся совместимым именем. Ошибка неизвестного класса не должна переключать запуск на другой пайплайн.

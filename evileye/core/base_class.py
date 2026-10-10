@@ -57,23 +57,9 @@ class EvilEyeBase(ABC):
 
                 return LegacyProcessorModuleAdapter(registered)
             if registered.spec.kind == "source":
-                factory = registered.spec.factory
-                if "legacy_source_protocol" in registered.spec.capabilities:
-                    from .plugin_runtime import SourceModuleAdapter
+                from .plugin_runtime import SourceModuleAdapter
 
-                    return SourceModuleAdapter(registered)
-                if registered.plugin_id != "evileye":
-                    from .plugin_runtime import SourceModuleAdapter
-
-                    return SourceModuleAdapter(registered)
-                try:
-                    is_lifecycle_component = isinstance(factory, type) and issubclass(factory, EvilEyeBase)
-                except TypeError:
-                    is_lifecycle_component = False
-                if not is_lifecycle_component:
-                    from .plugin_runtime import SourceModuleAdapter
-
-                    return SourceModuleAdapter(registered)
+                return SourceModuleAdapter(registered)
             return registered.spec.factory(*args, **kwargs)
         raise ValueError(
             f"Module not found in plugin registry: {class_name}"

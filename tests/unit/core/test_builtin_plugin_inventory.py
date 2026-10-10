@@ -95,10 +95,11 @@ def test_legacy_protocols_are_explicitly_tracked_during_migration():
             or "legacy_source_protocol" in registered.spec.capabilities
         )
     }
-    assert legacy_modules == {
-        "evileye/VideoCaptureGStreamer",
-        "evileye/VideoCaptureOpencv",
-    }
+    assert legacy_modules == {"evileye/VideoCaptureGStreamer"}
+    opencv = plugin_registry.get_module("VideoCaptureOpencv")
+    assert opencv is not None
+    assert "capture_source_backend" in opencv.spec.capabilities
+    assert "legacy_source_protocol" not in opencv.spec.capabilities
 
 
 def test_rfdetr_legacy_thread_count_maps_to_ordered_item_workers():
