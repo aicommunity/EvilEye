@@ -21,6 +21,19 @@ _PROCESS_OUTPUT_MARKER = "__evileye_plugin_runtime__"
 _SOURCE_ITEM_MARKER = "__evileye_source_item__"
 
 
+def _is_frame_work_item(item: Any) -> bool:
+    """Frame work can shed stale queued frames; other payloads reject overflow."""
+    from .frame import Frame
+
+    if isinstance(item, Frame):
+        return True
+    return (
+        isinstance(item, (tuple, list))
+        and len(item) == 2
+        and isinstance(item[1], Frame)
+    )
+
+
 def _serialize_process_value(value: Any, module_id: str, label: str) -> bytes:
     try:
         return pickle.dumps(value, protocol=pickle.HIGHEST_PROTOCOL)
@@ -291,6 +304,8 @@ class ItemModuleAdapter(EvilEyeBase):
         self._state = None
         self._mp_control = None
         self.degraded = False
+        self.input_queue_dropped = 0
+        self.input_queue_rejected = 0
         self._failure_reported = False
         self._model_class_mapping: dict[str, int] | None = None
         self._model_class_mapping_lock = threading.Lock()
@@ -341,12 +356,55 @@ class ItemModuleAdapter(EvilEyeBase):
                 self._config.setdefault(key, value)
         self._input_queue = queue.Queue(maxsize=self._queue_size)
         self._output_queue = queue.Queue(maxsize=self._queue_size)
+        self.input_queue_dropped = 0
+        self.input_queue_rejected = 0
 
     def get_params_impl(self):
         return dict(self.params or {})
 
     def get_source_ids(self):
         return list(self.source_ids)
+
+    def _record_input_drop(self) -> None:
+        self.input_queue_dropped += 1
+        self.degraded = True
+        self.logger.warning(
+            "Plugin module %s dropped stale frame input (dropped=%d)",
+            self.module_id,
+            self.input_queue_dropped,
+        )
+
+    def _enqueue_input(self, item: Any, payload: Any) -> Any | None:
+        if self.execution_mode == "process":
+            if self._mp_control is None:
+                raise RuntimeError(
+                    f"Process module '{self.module_id}' is not started"
+                )
+            if _is_frame_work_item(item):
+                dropped, dropped_payload = self._mp_control.put_drop_oldest(payload)
+                if dropped:
+                    self._record_input_drop()
+                    return dropped_payload
+            else:
+                self._mp_control.put(payload, block=False)
+            return None
+
+        try:
+            self._input_queue.put_nowait(payload)
+            return None
+        except queue.Full:
+            if not _is_frame_work_item(item):
+                raise
+
+        dropped_payload = None
+        try:
+            dropped_payload = self._input_queue.get_nowait()
+        except queue.Empty:
+            pass
+        self._input_queue.put_nowait(payload)
+        if dropped_payload is not None:
+            self._record_input_drop()
+        return dropped_payload
 
     def get_model_class_mapping(self) -> dict[str, int] | None:
         with self._model_class_mapping_lock:
@@ -486,6 +544,7 @@ class ItemModuleAdapter(EvilEyeBase):
 
     def put(self, item):
         try:
+            payload = item
             if self.execution_mode == "process":
                 if self._mp_control is None:
                     raise RuntimeError(
@@ -494,12 +553,10 @@ class ItemModuleAdapter(EvilEyeBase):
                 serialized_item = _serialize_process_value(
                     item, self.module_id, "input item"
                 )
-                self._mp_control.put(
-                    (_PROCESS_INPUT_MARKER, serialized_item), block=False
-                )
-            else:
-                self._input_queue.put_nowait(item)
+                payload = (_PROCESS_INPUT_MARKER, serialized_item)
+            self._enqueue_input(item, payload)
         except queue.Full:
+            self.input_queue_rejected += 1
             self.degraded = True
             self.logger.error("Plugin module %s input queue is full", self.module_id)
             raise RuntimeError(f"Plugin module '{self.module_id}' input queue is full")
@@ -603,6 +660,8 @@ class ItemModuleAdapter(EvilEyeBase):
             "worker_running": worker_running,
             "input_queue_size": input_queue_size,
             "output_queue_size": output_queue_size,
+            "input_queue_dropped": self.input_queue_dropped,
+            "input_queue_rejected": self.input_queue_rejected,
             "degraded": self.degraded,
         }
 
@@ -632,6 +691,8 @@ class ItemModuleAdapter(EvilEyeBase):
     def reset_impl(self):
         self.stop()
         self.degraded = False
+        self.input_queue_dropped = 0
+        self.input_queue_rejected = 0
         self._failure_reported = False
         while True:
             try:
@@ -844,19 +905,27 @@ class ParallelItemModuleAdapter(ItemModuleAdapter):
             return super().put(item)
         try:
             sequence = self._next_input_sequence
+            payload = (sequence, item)
             if self.execution_mode == "process":
                 if self._mp_control is None:
                     raise RuntimeError(
                         f"Process module '{self.module_id}' is not started"
                     )
-                payload = _serialize_process_value(item, self.module_id, "input item")
-                self._mp_control.put(
-                    (_PROCESS_INPUT_MARKER, sequence, payload), block=False
+                serialized = _serialize_process_value(
+                    item, self.module_id, "input item"
                 )
-            else:
-                self._input_queue.put_nowait((sequence, item))
+                payload = (_PROCESS_INPUT_MARKER, sequence, serialized)
+            dropped_payload = self._enqueue_input(item, payload)
             self._next_input_sequence += 1
+            if dropped_payload is not None:
+                dropped_sequence = (
+                    int(dropped_payload[1])
+                    if self.execution_mode == "process"
+                    else int(dropped_payload[0])
+                )
+                self._ordered_results[dropped_sequence] = _ORDERED_SKIP
         except queue.Full:
+            self.input_queue_rejected += 1
             self.degraded = True
             self.logger.error("Plugin module %s input queue is full", self.module_id)
             raise RuntimeError(f"Plugin module '{self.module_id}' input queue is full")

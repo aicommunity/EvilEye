@@ -1,6 +1,7 @@
 import multiprocessing as mp
 import logging
 import logging.handlers
+import queue
 import threading
 import time
 from typing import Callable, Iterable, Optional
@@ -74,6 +75,7 @@ class MpControl:
         self._stats = {
             "put_calls_total": 0,
             "put_wait_ms_total": 0.0,
+            "put_drop_oldest_total": 0,
             "get_calls_total": 0,
             "worker_restart_total": 0,
             "restart_suppressed_total": 0,
@@ -136,6 +138,27 @@ class MpControl:
 
     def put_nowait(self, data):
         self.input_queue.put_nowait(data)
+
+    def put_drop_oldest(self, data) -> tuple[bool, object | None]:
+        """Enqueue the latest item, evicting one queued item when full."""
+        try:
+            self.put(data, block=False)
+            return False, None
+        except queue.Full:
+            pass
+
+        dropped_item = None
+        try:
+            dropped_item = self.input_queue.get_nowait()
+        except queue.Empty:
+            # A worker may have freed a slot between put and get.
+            pass
+
+        self.put(data, block=False)
+        if dropped_item is not None:
+            with self._stats_lock:
+                self._stats["put_drop_oldest_total"] += 1
+        return dropped_item is not None, dropped_item
 
     def get(self, block=True, timeout=None):
         result = self.output_queue.get(block=block, timeout=timeout)

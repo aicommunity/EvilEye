@@ -602,6 +602,30 @@ def test_item_module_worker_failure_is_visible_in_runtime_diagnostics(execution_
         adapter.stop()
 
 
+def test_mp_control_drop_oldest_returns_evicted_item_and_metric(monkeypatch):
+    import queue
+
+    import evileye.core.mp_control as mp_control_module
+
+    class _QueueContext:
+        def Queue(self, maxsize=0):
+            return queue.Queue(maxsize=maxsize or 0)
+
+    monkeypatch.setattr(
+        mp_control_module, "get_spawn_context", lambda: _QueueContext()
+    )
+    control = mp_control_module.MpControl(max_input_size=1, max_output_size=1)
+    control.put("old", block=False)
+
+    dropped, item = control.put_drop_oldest("latest")
+
+    assert dropped is True
+    assert item == "old"
+    assert control.input_queue.get_nowait() == "latest"
+    assert control.get_metrics()["put_drop_oldest_total"] == 1
+    control.stop()
+
+
 def test_item_module_input_queue_overflow_is_explicit_and_degraded():
     import threading
 
@@ -638,6 +662,155 @@ def test_item_module_input_queue_overflow_is_explicit_and_degraded():
     finally:
         _BlockingModule.release.set()
         adapter.stop()
+
+
+def test_frame_input_overflow_drops_oldest_and_reports_runtime_stats():
+    import threading
+
+    from evileye.core.frame import Frame
+
+    class _BlockingFrameModule:
+        started = threading.Event()
+        release = threading.Event()
+
+        def process_item(self, item, state):
+            if item.frame_id == 1:
+                self.started.set()
+                self.release.wait(timeout=2.0)
+            return item
+
+    _BlockingFrameModule.started.clear()
+    _BlockingFrameModule.release.clear()
+    plugin_id = "test.queue-frame-drop"
+    spec = ModuleSpec(
+        "frame-drop", "processor_item", _BlockingFrameModule, ("thread",)
+    )
+    plugin_registry.register_plugin(
+        PluginSpec(plugin_id, PLUGIN_API_VERSION, modules=(spec,))
+    )
+    adapter = ItemModuleAdapter(plugin_registry.get_module(f"{plugin_id}/frame-drop"))
+    adapter.set_params(
+        module_id=f"{plugin_id}/frame-drop", execution_mode="thread", queue_size=1
+    )
+    adapter.init()
+    adapter.start()
+
+    def frame(frame_id):
+        item = Frame()
+        item.source_id = 0
+        item.frame_id = frame_id
+        return item
+
+    try:
+        adapter.put(frame(1))
+        assert _BlockingFrameModule.started.wait(timeout=2.0)
+        adapter.put(frame(2))
+        adapter.put(frame(3))
+
+        queued = adapter._input_queue.get_nowait()
+        assert queued.frame_id == 3
+        adapter._input_queue.put_nowait(queued)
+        stats = adapter.get_runtime_stats()
+        assert stats["input_queue_dropped"] == 1
+        assert stats["input_queue_rejected"] == 0
+        assert stats["degraded"] is True
+    finally:
+        _BlockingFrameModule.release.set()
+        adapter.stop()
+
+
+def test_process_frame_queue_overflow_uses_mp_latest_queue(monkeypatch):
+    import queue
+
+    import evileye.core.mp_control as mp_control_module
+    from evileye.core.frame import Frame
+
+    class _QueueContext:
+        def Queue(self, maxsize=0):
+            return queue.Queue(maxsize=maxsize or 0)
+
+    monkeypatch.setattr(
+        mp_control_module, "get_spawn_context", lambda: _QueueContext()
+    )
+    plugin_id = "test.queue-process-frame-drop"
+    spec = ModuleSpec(
+        "frame-drop", "processor_item", _EchoItemModule, ("process",)
+    )
+    plugin_registry.register_plugin(
+        PluginSpec(plugin_id, PLUGIN_API_VERSION, modules=(spec,))
+    )
+    adapter = ItemModuleAdapter(plugin_registry.get_module(f"{plugin_id}/frame-drop"))
+    adapter.set_params(
+        module_id=f"{plugin_id}/frame-drop",
+        execution_mode="process",
+        queue_size=1,
+    )
+    adapter.init()
+    adapter._mp_control = mp_control_module.MpControl(
+        max_input_size=1, max_output_size=1
+    )
+
+    def frame(frame_id):
+        item = Frame()
+        item.source_id = 0
+        item.frame_id = frame_id
+        return item
+
+    try:
+        adapter.put(frame(1))
+        adapter.put(frame(2))
+        stats = adapter.get_runtime_stats()
+        assert stats["input_queue_dropped"] == 1
+        assert stats["input_queue_rejected"] == 0
+        assert adapter._mp_control.get_metrics()["put_drop_oldest_total"] == 1
+    finally:
+        adapter.stop()
+
+
+def test_parallel_frame_drop_marks_evicted_sequence_as_skipped():
+    from evileye.core.frame import Frame
+    from evileye.core.plugin_runtime import ParallelItemModuleAdapter
+
+    plugin_id = "test.queue-parallel-frame-drop"
+    spec = ModuleSpec(
+        "parallel-frame-drop",
+        "processor_item",
+        _EchoItemModule,
+        execution_modes=("thread",),
+        capabilities=("parallel_items",),
+    )
+    plugin_registry.register_plugin(
+        PluginSpec(plugin_id, PLUGIN_API_VERSION, modules=(spec,))
+    )
+    adapter = ParallelItemModuleAdapter(
+        plugin_registry.get_module(f"{plugin_id}/parallel-frame-drop")
+    )
+    adapter.set_params(
+        module_id=f"{plugin_id}/parallel-frame-drop",
+        execution_mode="thread",
+        worker_count=2,
+        queue_size=1,
+    )
+    adapter.init()
+
+    def frame(frame_id):
+        item = Frame()
+        item.source_id = 0
+        item.frame_id = frame_id
+        return item
+
+    adapter.put(frame(1))
+    adapter.put(frame(2))
+    adapter.put(frame(3))
+
+    assert adapter._next_input_sequence == 3
+    assert set(adapter._ordered_results) == {0, 1}
+    assert adapter.get() is None
+    assert adapter._next_output_sequence == 2
+    queued_sequence, queued_item = adapter._input_queue.get_nowait()
+    assert queued_sequence == 2
+    assert queued_item.frame_id == 3
+    adapter.stop()
 
 
 @pytest.mark.parametrize("execution_mode", ["thread", "process"])

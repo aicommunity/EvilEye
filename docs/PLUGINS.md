@@ -89,9 +89,13 @@ when the model loads lazily. The controller merges the mapping into
 present together; changing a published mapping while the worker runs marks the
 module degraded.
 
-The runtime owns the bounded queues and worker lifecycle. A full input queue or
-worker failure marks the module degraded and is logged; the runtime does not
-silently discard a queued result.
+The runtime owns bounded queues and worker lifecycle. If an input queue fills,
+a `Frame` (or `(data, Frame)` pair) replaces the oldest pending frame;
+`input_queue_dropped` increments and the module becomes degraded. Other payloads
+are rejected with an explicit error and `input_queue_rejected` counter. Ordered
+parallel modules mark an evicted frame sequence as skipped so later outputs are
+not blocked. Worker output queues apply backpressure and do not silently discard
+results.
 
 ## Sources
 

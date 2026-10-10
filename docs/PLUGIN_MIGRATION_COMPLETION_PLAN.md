@@ -41,15 +41,15 @@
 3. [готово] Для `batch_processor` добавлен отдельный kind и `IBatchProcessor`; потоковая семантика явная, а `process` отвергается до запуска фабрики.
 4. [готово] Для `process` проверять импортируемость factory и сериализуемость config до старта; inputs и outputs передавать через явный pickle envelope с синхронной диагностикой ошибок, а state создавать только внутри worker. Неподдержанный режим отклоняется до запуска.
 5. [готово] `ModuleSpec.default_execution_mode` фиксирует режим по умолчанию; registry отвергает неподдерживаемое значение, а item/legacy/source adapters применяют заявленный режим.
-6. Для очередей определить поведение по виду данных: кадры могут иметь ограниченную политику drop-oldest, тревоги должны сообщать о переполнении и ошибке сохранения.
+6. [готово] Ограниченная очередь `processor_item` для `Frame` и пары `(data, Frame)` вытесняет самый старый ожидающий кадр, публикуя `input_queue_dropped` и `degraded`; некадровый payload при переполнении отклоняется с `input_queue_rejected`. Ordered parallel runtime пропускает sequence вытесненного кадра. Очередь EventsProcessor и DB alarm adapters сообщают об отказе/переполнении, а запись повторяется и отражается в degraded status.
 
 **Проверки:** контрактные тесты создания, старта, остановки, ошибки init, исключения `process_item`, переполнения очереди, сериализации, отказа неподдерживаемого execution mode и schema errors.
 
 ### Этап B. Удалить legacy processor adapter по семействам
 
-1. [частично] ObjectDetectorYolo переведён на processor_item: вход Frame/DTO, worker-local модель, ROI и class filtering, DetectionResultList; thread и spawn-process используют общий runtime. ObjectDetectorYoloMp сохраняется как alias. num_detection_threads отображается на worker_count и ordered worker pool возвращает результаты в порядке входа. При нескольких worker-ах vid_stride > 1 отклоняется, так как stride-счётчик локален worker-у. RT-DETR также переведён на item runtime; RF-DETR также использует item runtime и передаёт native Supervision detections без Ultralytics-совместимого преобразования.
-2. [частично] BoT-SORT использует item runtime и хранит отдельный tracker на source_id; уменьшение frame_id сбрасывает состояние при rewind/loop. Capture публикует persistent disconnect/reconnect counters и помещает `connection_generation` в каждый кадр. BoT-SORT сбрасывает per-source состояние при смене поколения (включая process capture); контракт закреплён unit-тестом.
-3. [частично] AttributeDetector и AttributeClassifier используют item runtime. AttributeDetector сохраняет конфигурацию модели, class mapping, per-class thresholds и ROI; AttributeClassifier обогащает tracker result по `track_id`. Thread/process и реальные модели проверены smoke-тестами; сравнение результата на фиксированном видео с прежней реализацией остаётся.
+1. [готово] ObjectDetectorYolo переведён на processor_item: вход Frame/DTO, worker-local модель, ROI и class filtering, DetectionResultList; thread и spawn-process используют общий runtime. ObjectDetectorYoloMp сохраняется как alias. num_detection_threads отображается на worker_count и ordered worker pool возвращает результаты в порядке входа. При нескольких worker-ах vid_stride > 1 отклоняется, так как stride-счётчик локален worker-у. RT-DETR также переведён на item runtime; RF-DETR также использует item runtime и передаёт native Supervision detections без Ultralytics-совместимого преобразования.
+2. [готово] BoT-SORT использует item runtime и хранит отдельный tracker на source_id; уменьшение frame_id сбрасывает состояние при rewind/loop. Capture публикует persistent disconnect/reconnect counters и помещает `connection_generation` в каждый кадр. BoT-SORT сбрасывает per-source состояние при смене поколения (включая process capture); контракт закреплён unit-тестом.
+3. [готово] AttributeDetector и AttributeClassifier используют item runtime. AttributeDetector сохраняет конфигурацию модели, class mapping, per-class thresholds и ROI; AttributeClassifier обогащает tracker result по `track_id`. Thread/process и реальные модели проверены smoke-тестами; сравнение результата на фиксированном видео с прежней реализацией остаётся.
 4. После каждой группы убрать `legacy_processor_protocol` у соответствующих manifests, не удаляя compatibility `type` aliases.
 5. Для каждого модуля сравнить старую и новую реализацию на фиксированных видео/кадрах: detection classes/confidence, track continuity, attributes, порядок кадров и сохранённые DTO.
 
@@ -134,6 +134,8 @@
 - После lifecycle-изменений полный `tests/unit` завершился с `exit=0`; точечные проверки остановки DB workers при недоступном соединении и отложенного старта event adapters прошли. Новый полный integration-прогон собрал 358 тестов, но за 360 секунд дошёл только до 40% и был остановлен timeout; это не даёт основания считать integration suite успешным. После остановки не осталось процессов этого прогона.
 
 - После уточнения ошибок загрузки `PluginManager` отдельно помечает `ModuleNotFoundError` как отсутствующую зависимость и сообщает её имя вместе с entry point; registry, controller lifecycle и adapter tests прошли. Целевые integration-проверки database controller без БД и PostgreSQL alarm persistence завершились: 8 passed; оставшихся pytest/multiprocessing процессов нет.
+
+- Очереди `processor_item` получили типизированную backpressure-политику: вытесненные кадры учитываются в runtime stats, а non-frame payload сохраняет явный reject. Thread, process-queue helper и ordered parallel tests прошли; полный `tests/unit` завершился с `exit=0`, после него не осталось pytest, resource_tracker, spawn_main или MpWorker процессов. Alarm overflow/retry tests остаются зелёными.
 
 ## Условие завершения миграции
 
