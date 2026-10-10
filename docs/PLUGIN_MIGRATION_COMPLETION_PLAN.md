@@ -108,6 +108,11 @@
   `tests/unit/core/test_plugin_registry.py`; весь тестовый файл прошёл, после него
   не осталось `pytest`, `resource_tracker` или `spawn_main` процессов.
 
+- Для item-модулей добавлен `IModelClassMappingProvider` с обязательной capability
+  `model_class_mapping`: адаптер собирает таблицу классов из thread worker или
+  передаёт metadata envelope из spawn worker. Controller принимает позднюю таблицу
+  в `ClassManager` и visualizer; незадекларированный provider или неверная таблица
+  даёт явную ошибку. Контракт адаптера и controller покрыт unit-тестами.
 - Для generic source в `process`-режиме конфигурация проверяется на сериализуемость
   до запуска, а каждый кадр идёт через явный pickle envelope. Невозможно
   сериализовать конфигурацию — запуск отклоняется с `PluginError`; ошибка

@@ -116,6 +116,13 @@ class ISource(Protocol):
 
 
 @runtime_checkable
+class IModelClassMappingProvider(Protocol):
+    """Publish model class names and IDs from a worker-owned model."""
+
+    def get_model_class_mapping(self) -> Mapping[str, int] | None: ...
+
+
+@runtime_checkable
 class IRuntimeStatusProvider(Protocol):
     """Runtime adapter status exposed to pipeline diagnostics."""
 

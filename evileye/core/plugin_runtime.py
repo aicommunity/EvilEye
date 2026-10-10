@@ -8,7 +8,7 @@ import logging
 import pickle
 import queue
 import threading
-from typing import Any
+from typing import Any, Mapping
 
 from .base_class import EvilEyeBase
 from .mp_worker import MpWorker
@@ -81,6 +81,58 @@ def _create_state(
     return create_state()
 
 
+def _normalize_model_class_mapping(mapping: Any, module_id: str) -> dict[str, int] | None:
+    if mapping is None:
+        return None
+    if not isinstance(mapping, Mapping):
+        raise PluginError(
+            f"Module '{module_id}' class mapping metadata must be a mapping"
+        )
+    normalized: dict[str, int] = {}
+    for name, class_id in mapping.items():
+        if not isinstance(name, str) or not name.strip():
+            raise PluginError(
+                f"Module '{module_id}' class mapping keys must be non-empty strings"
+            )
+        if not isinstance(class_id, int) or isinstance(class_id, bool) or class_id < 0:
+            raise PluginError(
+                f"Module '{module_id}' class mapping values must be non-negative integers"
+            )
+        normalized[name] = class_id
+    return normalized
+
+
+def _get_model_class_mapping(module: Any, module_id: str) -> dict[str, int] | None:
+    provider = getattr(module, "get_model_class_mapping", None)
+    if not callable(provider):
+        return None
+    mapping = provider()
+    if mapping is None:
+        return None
+    try:
+        return _normalize_model_class_mapping(mapping, module_id)
+    except PluginError as exc:
+        raise PluginError(
+            f"Module '{module_id}' get_model_class_mapping() is invalid: {exc}"
+        ) from exc
+
+
+def _validate_model_class_mapping_capability(
+    module: Any, module_id: str, declared: bool
+) -> None:
+    provider_exists = callable(getattr(module, "get_model_class_mapping", None))
+    if declared and not provider_exists:
+        raise PluginError(
+            f"Module '{module_id}' declares model_class_mapping but does not "
+            "implement get_model_class_mapping()"
+        )
+    if provider_exists and not declared:
+        raise PluginError(
+            f"Module '{module_id}' implements get_model_class_mapping() but "
+            "does not declare the model_class_mapping capability"
+        )
+
+
 def _close_item_resources(module: Any, state: Any, logger, module_id: str) -> None:
     """Close optional per-worker module/state resources without double-closing."""
     seen: set[int] = set()
@@ -112,6 +164,10 @@ class ItemModuleWorker(MpWorker):
         self.module = None
         self.module_state = None
         self.drop_oldest_on_full = False
+        self._last_model_class_mapping = None
+        self.reports_model_class_mapping = bool(
+            state.get("reports_model_class_mapping", False)
+        )
 
     def init_worker(self) -> None:
         try:
@@ -123,9 +179,13 @@ class ItemModuleWorker(MpWorker):
                 raise PluginError(
                     f"Module '{self.module_id}' must implement process_item(item, state)"
                 )
+            _validate_model_class_mapping_capability(
+                self.module, self.module_id, self.reports_model_class_mapping
+            )
             self.module_state = _create_state(
                 self.module, self.config, self.runtime_context
             )
+            self._publish_model_class_mapping()
         except Exception as exc:
             try:
                 self.output_queue.put(
@@ -143,6 +203,23 @@ class ItemModuleWorker(MpWorker):
             self.module_state = None
             raise
 
+    def _publish_model_class_mapping(self) -> None:
+        mapping = _get_model_class_mapping(self.module, self.module_id)
+        if not mapping or mapping == self._last_model_class_mapping:
+            return
+        payload = _serialize_process_value(
+            mapping, self.module_id, "model class mapping"
+        )
+        while not self._stop_event.is_set():
+            try:
+                self.output_queue.put(
+                    (_PROCESS_OUTPUT_MARKER, "metadata", payload), timeout=0.1
+                )
+                self._last_model_class_mapping = mapping
+                return
+            except queue.Full:
+                continue
+
     def worker_impl(self, data):
         if not (
             isinstance(data, tuple)
@@ -154,6 +231,7 @@ class ItemModuleWorker(MpWorker):
         try:
             item = pickle.loads(data[1])
             result = self.module.process_item(item, self.module_state)
+            self._publish_model_class_mapping()
         except Exception as exc:
             if self.logger:
                 self.logger.exception("Plugin module %s failed while processing item", self.module_id)
@@ -179,6 +257,7 @@ class ItemModuleWorker(MpWorker):
             "runtime_context": self.runtime_context,
             "factory_module": self.factory_module,
             "factory_qualname": self.factory_qualname,
+            "reports_model_class_mapping": self.reports_model_class_mapping,
         }
 
     def cleanup(self) -> None:
@@ -212,6 +291,11 @@ class ItemModuleAdapter(EvilEyeBase):
         self._mp_control = None
         self.degraded = False
         self._failure_reported = False
+        self._model_class_mapping: dict[str, int] | None = None
+        self._model_class_mapping_lock = threading.Lock()
+        self.reports_model_class_mapping = (
+            "model_class_mapping" in capabilities
+        )
         super().__init__()
         self.accepts_frame_handle = (
             "accepts_frame_handle" in capabilities
@@ -248,6 +332,29 @@ class ItemModuleAdapter(EvilEyeBase):
 
     def get_source_ids(self):
         return list(self.source_ids)
+
+    def get_model_class_mapping(self) -> dict[str, int] | None:
+        with self._model_class_mapping_lock:
+            return dict(self._model_class_mapping) if self._model_class_mapping is not None else None
+
+    def _set_model_class_mapping(self, mapping: Any) -> None:
+        normalized = _normalize_model_class_mapping(mapping, self.module_id)
+        if normalized is None:
+            return
+        with self._model_class_mapping_lock:
+            if self._model_class_mapping is not None and self._model_class_mapping != normalized:
+                self.degraded = True
+                self.logger.error(
+                    "Plugin module %s changed its model class mapping while running",
+                    self.module_id,
+                )
+                return
+            self._model_class_mapping = normalized
+
+    def _refresh_thread_model_class_mapping(self) -> None:
+        mapping = _get_model_class_mapping(self._module, self.module_id)
+        if mapping:
+            self._set_model_class_mapping(mapping)
 
     def _module_runtime_context(self) -> ModuleRuntimeContext:
         return ModuleRuntimeContext(
@@ -298,6 +405,7 @@ class ItemModuleAdapter(EvilEyeBase):
             worker.module = None
             worker.module_state = None
             worker.drop_oldest_on_full = False
+            worker.reports_model_class_mapping = self.reports_model_class_mapping
             self._mp_control.start()
             return
 
@@ -320,9 +428,15 @@ class ItemModuleAdapter(EvilEyeBase):
                     raise PluginError(
                         f"Module '{self.module_id}' must implement process_item(item, state)"
                     )
+                _validate_model_class_mapping_capability(
+                    self._module,
+                    self.module_id,
+                    self.reports_model_class_mapping,
+                )
                 self._state = _create_state(
                     self._module, self._config, self._module_runtime_context()
                 )
+                self._refresh_thread_model_class_mapping()
             except Exception:
                 self.degraded = True
                 self.logger.exception("Plugin module %s failed during worker initialization", self.module_id)
@@ -337,6 +451,7 @@ class ItemModuleAdapter(EvilEyeBase):
                     break
                 try:
                     result = self._module.process_item(item, self._state)
+                    self._refresh_thread_model_class_mapping()
                     if result is not None:
                         while not self._stop_event.is_set():
                             try:
@@ -383,12 +498,30 @@ class ItemModuleAdapter(EvilEyeBase):
             if self.execution_mode == "process":
                 if self._mp_control is None:
                     return None
-                result = self._mp_control.get_nowait()
-                if (
-                    isinstance(result, tuple)
-                    and len(result) == 3
-                    and result[0] == _PROCESS_OUTPUT_MARKER
-                ):
+                while True:
+                    result = self._mp_control.get_nowait()
+                    if not (
+                        isinstance(result, tuple)
+                        and len(result) == 3
+                        and result[0] == _PROCESS_OUTPUT_MARKER
+                    ):
+                        self.degraded = True
+                        self.logger.error(
+                            "Plugin module %s returned an invalid process envelope",
+                            self.module_id,
+                        )
+                        return None
+                    if result[1] == "metadata":
+                        try:
+                            self._set_model_class_mapping(pickle.loads(result[2]))
+                        except Exception as exc:
+                            self.degraded = True
+                            self.logger.error(
+                                "Plugin module %s returned invalid class mapping metadata: %s",
+                                self.module_id,
+                                exc,
+                            )
+                        continue
                     if result[1] == "error":
                         self.degraded = True
                         self.logger.error(
@@ -412,12 +545,6 @@ class ItemModuleAdapter(EvilEyeBase):
                         self.module_id,
                     )
                     return None
-                self.degraded = True
-                self.logger.error(
-                    "Plugin module %s returned an invalid process envelope",
-                    self.module_id,
-                )
-                return None
             return self._output_queue.get_nowait()
         except queue.Empty:
             self._check_process_health()

@@ -30,7 +30,7 @@ installable package.
 
 The structural protocols are in `evileye.core.interfaces`: `IItemProcessor`,
 `IStatefulItemProcessor`, `IContextualStatefulItemProcessor`, `ISource`,
-`IBatchProcessor`, and `IEventDetector`. Plugins do not inherit from these protocols. The runtime
+`IBatchProcessor`, `IModelClassMappingProvider`, and `IEventDetector`. Plugins do not inherit from these protocols. The runtime
 validates the required callable methods when the module is initialized.
 
 The common item, source, and batch adapters expose `get_runtime_stats()`
@@ -72,6 +72,17 @@ module can consume EvilEye's descriptor-backed frame payload without first
 materializing its image. Optional metadata such as `"emits_dto_type:Frame"` is
 exposed to the pipeline's compatibility diagnostics. Without the handle
 capability the pipeline materializes a frame before calling the module.
+
+
+A model-backed processor that publishes class IDs implements
+`get_model_class_mapping() -> Mapping[str, int]` and declares
+`capabilities=("model_class_mapping",)`. The runtime validates the mapping and
+publishes it from the worker to the controller in both execution modes. In
+process mode the worker sends metadata independently of frame results, including
+when the model loads lazily. The controller merges the mapping into
+`ClassManager` and the visualizer. The provider method and capability must be
+present together; changing a published mapping while the worker runs marks the
+module degraded.
 
 The runtime owns the bounded queues and worker lifecycle. A full input queue or
 worker failure marks the module degraded and is logged; the runtime does not

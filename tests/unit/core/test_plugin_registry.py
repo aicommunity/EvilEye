@@ -20,6 +20,7 @@ from evileye.core.interfaces import (
     IBatchProcessor,
     IContextualStatefulItemProcessor,
     IItemProcessor,
+    IModelClassMappingProvider,
     IRuntimeStatusProvider,
     ISource,
     IStatefulItemProcessor,
@@ -80,6 +81,23 @@ class _ContextItemModule:
             "execution_mode": context.execution_mode,
             "source_ids": context.source_ids,
         }
+
+
+class _LateModelMappingItemModule:
+    def __init__(self, config=None):
+        self.mapping = dict((config or {}).get("model_class_mapping", {}))
+        self.loaded = False
+
+    def create_state(self, config):
+        return {"loaded": False}
+
+    def process_item(self, item, state):
+        state["loaded"] = True
+        self.loaded = True
+        return item
+
+    def get_model_class_mapping(self):
+        return self.mapping if self.loaded else None
 
 
 class _EchoBatchModule:
@@ -1113,3 +1131,42 @@ def test_process_source_reports_unserializable_items():
         assert source.is_finished() is True
     finally:
         source.stop()
+
+
+@pytest.mark.parametrize("execution_mode", ["thread", "process"])
+def test_item_module_publishes_late_model_class_mapping(execution_mode):
+    module_id = f"test.mapping-{execution_mode}/detector"
+    spec = ModuleSpec(
+        "detector",
+        "processor_item",
+        _LateModelMappingItemModule,
+        execution_modes=(execution_mode,),
+        capabilities=("model_class_mapping",),
+    )
+    registered = RegisteredModule(f"test.mapping-{execution_mode}", spec)
+    plugin_registry.register_plugin(
+        PluginSpec(registered.plugin_id, PLUGIN_API_VERSION, modules=(spec,))
+    )
+    assert isinstance(_LateModelMappingItemModule(), IModelClassMappingProvider)
+    adapter = ItemModuleAdapter(registered)
+    adapter.set_params(
+        module_id=module_id,
+        execution_mode=execution_mode,
+        config={"model_class_mapping": {"person": 0, "helmet": 1}},
+    )
+    assert adapter.reports_model_class_mapping is True
+    assert adapter.init() is True
+    adapter.start()
+    try:
+        adapter.put("frame")
+        deadline = time.monotonic() + (15.0 if execution_mode == "process" else 2.0)
+        result = None
+        while result is None and time.monotonic() < deadline:
+            result = adapter.get()
+            if result is None:
+                time.sleep(0.02)
+        assert result == "frame"
+        assert adapter.get_model_class_mapping() == {"person": 0, "helmet": 1}
+        assert adapter.get_runtime_stats()["degraded"] is False
+    finally:
+        adapter.stop()

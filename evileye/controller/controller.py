@@ -171,6 +171,7 @@ class Controller(ControllerProcessingMixin):
 
         # Initialize centralized class manager
         self.class_manager = ClassManager()
+        self._detector_class_mapping_cache: dict[str, dict[str, int]] = {}
 
         # Initialize service locator and services
         self.service_locator = ServiceLocator()
@@ -2219,39 +2220,62 @@ class Controller(ControllerProcessingMixin):
         sorted_classes = sorted(self.class_mapping.items(), key=lambda x: x[1])
         return [name for name, _ in sorted_classes]
 
+    def _get_pipeline_detectors(self):
+        """Return detectors through the pipeline's declared detector accessor."""
+        if self.pipeline is None:
+            return []
+        get_detectors = getattr(self.pipeline, "get_detectors", None)
+        if not callable(get_detectors):
+            return []
+        return list(get_detectors() or [])
+
+    @staticmethod
+    def _get_detector_class_mapping(detector):
+        provider = getattr(detector, "get_model_class_mapping", None)
+        return provider() if callable(provider) else None
+
+    def _merge_detector_class_mapping(self, detector, mapping) -> bool:
+        """Merge a newly published detector mapping into controller metadata."""
+        if not mapping:
+            return False
+        detector_name = str(
+            getattr(detector, "module_id", None) or detector.__class__.__name__
+        )
+        normalized = dict(mapping)
+        cache = getattr(self, "_detector_class_mapping_cache", None)
+        if cache is None:
+            cache = self._detector_class_mapping_cache = {}
+        if cache.get(detector_name) == normalized:
+            return False
+
+        cache[detector_name] = normalized
+        if not self.class_manager.add_class_mapping(normalized, detector_name):
+            self.logger.warning(
+                "Conflicts detected when adding mapping from %s", detector_name
+            )
+        self.class_mapping = self.class_manager.get_class_mapping()
+        if self.visualizer:
+            self.visualizer.class_mapping = self.class_mapping
+        return True
+
     def update_class_mapping_from_detectors(self):
         """Update class_mapping from all detectors in the pipeline using ClassManager"""
         if not self.pipeline:
             return
 
-        # Get all detectors from pipeline
-        detectors = []
-        # PipelineProcessors инициализирует processors в __init__, поэтому прямой доступ безопасен
-        if hasattr(self.pipeline, 'processors') and self.pipeline.processors:
-            for processor in self.pipeline.processors:
-                # ProcessorFrame имеет метод get_processors, проверяем наличие метода
-                if hasattr(processor, 'get_processors'):
-                    for proc in processor.get_processors():
-                        # ObjectDetectorBase имеет метод get_model_class_mapping, проверяем наличие метода
-                        if hasattr(proc, 'get_model_class_mapping'):
-                            detectors.append(proc)
+        detectors = self._get_pipeline_detectors()
 
         # Collect class mappings from all detectors using ClassManager
         for detector in detectors:
-            mapping = detector.get_model_class_mapping()
+            mapping = self._get_detector_class_mapping(detector)
             if mapping:
-                detector_name = detector.__class__.__name__
-                success = self.class_manager.add_class_mapping(mapping, detector_name)
-                if not success:
-                    self.logger.warning(f"Conflicts detected when adding mapping from {detector_name}")
+                self._merge_detector_class_mapping(detector, mapping)
 
-                # CRITICAL: Force update classes after getting model mapping
-                # Проверяем наличие метода, так как не все детекторы могут его иметь
-                if hasattr(detector, '_update_classes_after_model_loading'):
-                    detector._update_classes_after_model_loading()
-            else:
-                # Model not loaded yet, try to get mapping (this will trigger late update if model is loaded)
-                detector.get_model_class_mapping()
+                update_classes = getattr(
+                    detector, "_update_classes_after_model_loading", None
+                )
+                if callable(update_classes):
+                    update_classes()
 
         # Update controller's class_mapping from ClassManager
         if self.class_manager.class_mapping:
@@ -2301,17 +2325,7 @@ class Controller(ControllerProcessingMixin):
                 if not self.pipeline:
                     continue
 
-                # Get all detectors from pipeline
-                detectors = []
-                # PipelineProcessors инициализирует processors в __init__, поэтому прямой доступ безопасен
-                if hasattr(self.pipeline, 'processors') and self.pipeline.processors:
-                    for processor in self.pipeline.processors:
-                        # ProcessorFrame имеет метод get_processors, проверяем наличие метода
-                        if hasattr(processor, 'get_processors'):
-                            for proc in processor.get_processors():
-                                # ObjectDetectorBase имеет метод get_model_class_mapping, проверяем наличие метода
-                                if hasattr(proc, 'get_model_class_mapping'):
-                                    detectors.append(proc)
+                detectors = self._get_pipeline_detectors()
 
                 # Check each detector
                 updated = False
@@ -2323,8 +2337,17 @@ class Controller(ControllerProcessingMixin):
                     )
                     if str(exec_mode).lower() not in {"process", "mp", "multiprocessing"}:
                         process_mode_only = False
-                    mapping = detector.get_model_class_mapping()
-                    # Проверяем наличие метода, так как не все детекторы могут его иметь
+                    mapping = self._get_detector_class_mapping(detector)
+                    if mapping:
+                        mapping_changed = self._merge_detector_class_mapping(
+                            detector, mapping
+                        )
+                        # A plugin publishes model metadata from its worker. Once
+                        # available, no legacy detector callback is required.
+                        if mapping_changed or getattr(
+                            detector, "reports_model_class_mapping", False
+                        ):
+                            updated = True
                     if mapping and hasattr(detector, '_check_and_update_classes_if_needed'):
                         detector._check_and_update_classes_if_needed()
                         updated = True
@@ -2333,9 +2356,13 @@ class Controller(ControllerProcessingMixin):
                     self.logger.info("Late model loading detected, classes updated")
                     break
 
-                if detectors and process_mode_only:
+                if detectors and process_mode_only and not any(
+                    getattr(detector, "reports_model_class_mapping", False)
+                    and not getattr(detector, "degraded", False)
+                    for detector in detectors
+                ):
                     self.logger.debug(
-                        "Model class late-update skipped: detectors run in process mode"
+                        "Model class late-update skipped: process detectors do not publish class mappings"
                     )
                     return
 
