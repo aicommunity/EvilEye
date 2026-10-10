@@ -79,7 +79,7 @@
 2. [готово] `pipeline_class` сохранён как compatibility alias; неизвестный выбранный pipeline приводит к диагностируемой ошибке без fallback.
 3. [готово] Оставить `PipelineSurveillance` фиксированным графом стадий; порядок, правила `extend`/`replace`, несколько детекторов на один источник и ограничения thread-only стадий описаны в `PLUGINS.md` и `PIPELINE_ARCHITECTURE.md`.
 4. [готово] Минимальный внешний пакет установлен editable-режимом в изолированное server-side virtualenv; entry point `evileye.plugins` обнаружен, модуль зарегистрирован без изменения/переустановки EvilEye. В example package указан build backend с PEP 660 поддержкой.
-5. [частично] Контрактные тесты покрывают конфликт ID, неизвестный module/pipeline, неверную API version, ошибку импорта, неверный IPipeline и отказ без fallback. Отдельная проверка диагностики отсутствующих package dependencies остаётся.
+5. [готово] Контрактные тесты покрывают конфликт ID, неизвестный module/pipeline, неверную API version, общую ошибку импорта, отсутствующую зависимость с указанием entry point и имени пакета, неверный IPipeline и отказ без fallback.
 
 **Критерий:** builtin и внешний pipeline разрешаются тем же API; сторонний package обнаруживается после перезапуска приложения.
 
@@ -132,6 +132,8 @@
   orphan multiprocessing workers после прогона не остались.
 
 - После lifecycle-изменений полный `tests/unit` завершился с `exit=0`; точечные проверки остановки DB workers при недоступном соединении и отложенного старта event adapters прошли. Новый полный integration-прогон собрал 358 тестов, но за 360 секунд дошёл только до 40% и был остановлен timeout; это не даёт основания считать integration suite успешным. После остановки не осталось процессов этого прогона.
+
+- После уточнения ошибок загрузки `PluginManager` отдельно помечает `ModuleNotFoundError` как отсутствующую зависимость и сообщает её имя вместе с entry point; registry, controller lifecycle и adapter tests прошли. Целевые integration-проверки database controller без БД и PostgreSQL alarm persistence завершились: 8 passed; оставшихся pytest/multiprocessing процессов нет.
 
 ## Условие завершения миграции
 

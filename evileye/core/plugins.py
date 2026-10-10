@@ -443,9 +443,13 @@ class PluginManager:
                         plugin = loaded() if callable(loaded) and not isinstance(loaded, PluginSpec) else loaded
                         self.registry.register_plugin(plugin)
                     except Exception as exc:
-                        self._load_errors.append(
-                            f"{getattr(entry_point, 'name', '<unknown>')}: {exc}"
-                        )
+                        entry_name = getattr(entry_point, "name", "<unknown>")
+                        if isinstance(exc, ModuleNotFoundError):
+                            dependency = exc.name or "<unknown>"
+                            reason = f"missing dependency '{dependency}': {exc}"
+                        else:
+                            reason = str(exc)
+                        self._load_errors.append(f"{entry_name}: {reason}")
                 self._loaded = True
                 if self._load_errors:
                     raise PluginError("Plugin loading failed: " + "; ".join(self._load_errors))

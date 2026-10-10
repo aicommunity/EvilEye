@@ -55,6 +55,14 @@ class _BrokenEntryPoint:
         raise ImportError("plugin dependency is missing")
 
 
+class _MissingDependencyEntryPoint:
+    name = "missing-dependency-plugin"
+    value = "vendor_plugin:load_plugin"
+
+    def load(self):
+        raise ModuleNotFoundError("No module named 'vendor_runtime'", name="vendor_runtime")
+
+
 class _EchoItemModule:
     def __init__(self, config=None):
         self.prefix = (config or {}).get("prefix", "")
@@ -244,6 +252,16 @@ def test_plugin_import_failure_names_entry_point_and_reason():
 
     with pytest.raises(PluginError, match="broken-plugin.*dependency is missing"):
         manager.load([_BrokenEntryPoint()])
+
+
+def test_missing_plugin_dependency_names_distribution_and_import():
+    manager = PluginManager(PluginRegistry())
+
+    with pytest.raises(
+        PluginError,
+        match=r"missing-dependency-plugin: missing dependency 'vendor_runtime'",
+    ):
+        manager.load([_MissingDependencyEntryPoint()])
 
 
 def test_plugins_with_same_local_module_id_are_namespaced():
