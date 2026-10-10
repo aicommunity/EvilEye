@@ -186,6 +186,9 @@ class ObjectDetectorYolo(ModelBasedDetectorBase):
                 rois.append((x1, y1, x2 - x1, y2 - y1))
         return rois
 
+    def _plugin_roi_conversion_options(self):
+        return {}
+
     def _plugin_roi_detections(self, crops, rois):
         from .bbox_utils import roi_boxes_to_image_coords
         from ..utils import utils
@@ -202,7 +205,8 @@ class ObjectDetectorYolo(ModelBasedDetectorBase):
         for index, roi in enumerate(rois):
             prediction = predictions[index] if index < len(predictions) else None
             roi_boxes, roi_confidences, roi_class_ids = roi_boxes_to_image_coords(
-                prediction, (roi[0], roi[1]), logger=self.logger
+                prediction, (roi[0], roi[1]), logger=self.logger,
+                **self._plugin_roi_conversion_options(),
             )
             boxes.extend(roi_boxes)
             confidences.extend(roi_confidences)

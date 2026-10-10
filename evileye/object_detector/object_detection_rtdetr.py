@@ -32,6 +32,9 @@ class ObjectDetectorRtdetr(ObjectDetectorYolo):
     def _get_default_model_name(self) -> str:
         return "rtdetr-l.pt"
 
+    def _plugin_roi_conversion_options(self):
+        return {"round_coordinates": True, "clip_to_image": True}
+
     def init_impl(self):
         # Preserve direct class usage; PluginRegistry uses the item adapter.
         return ModelBasedDetectorBase.init_impl(self)

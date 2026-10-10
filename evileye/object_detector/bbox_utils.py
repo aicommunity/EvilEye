@@ -29,14 +29,14 @@ def roi_boxes_to_image_coords(
         roi_offset: Sequence[int],
         *,
         logger: Optional[Any] = None,
+        round_coordinates: bool = False,
+        clip_to_image: bool = False,
 ) -> Tuple[List, List, List]:
     """
     Convert detection boxes for one ROI split to image coordinates.
 
-    Args:
-        result: Model prediction for one ROI crop
-        roi_offset: (x_offset, y_offset) from split_image entry roi[1]
-        logger: Optional logger for debug messages
+    RT-DETR's legacy adapter rounded coordinates and clipped them to the crop;
+    other model adapters retain the historical truncation behavior.
     """
     bboxes_coords: List = []
     confidences: List = []
@@ -47,17 +47,28 @@ def roi_boxes_to_image_coords(
 
     from evileye.utils import utils
 
+    orig_img = getattr(result, "orig_img", None)
+    height, width = orig_img.shape[:2] if clip_to_image and orig_img is not None else (None, None)
     for coord, class_id, conf in zip(coords, class_ids, confs):
         if not np.all(np.isfinite(coord)):
             if logger is not None:
                 logger.debug("Skipping bbox with non-finite coords: %s", coord)
             continue
+        if round_coordinates or clip_to_image:
+            x1, y1, x2, y2 = (int(round(float(value))) for value in coord)
+            if width is not None and height is not None:
+                x1 = max(0, min(x1, width - 1))
+                y1 = max(0, min(y1, height - 1))
+                x2 = max(0, min(x2, width - 1))
+                y2 = max(0, min(y2, height - 1))
+            if clip_to_image and (x1 >= x2 or y1 >= y2):
+                continue
+            coord = (x1, y1, x2, y2)
         abs_coords = utils.roi_to_image(coord, roi_offset[0], roi_offset[1])
         bboxes_coords.append(abs_coords)
         confidences.append(conf)
         ids.append(class_id)
     return bboxes_coords, confidences, ids
-
 
 def mp_dict_list_to_image_coords(
         result_list: list,
