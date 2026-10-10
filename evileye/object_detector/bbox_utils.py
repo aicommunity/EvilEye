@@ -35,8 +35,12 @@ def roi_boxes_to_image_coords(
     """
     Convert detection boxes for one ROI split to image coordinates.
 
-    RT-DETR's legacy adapter rounded coordinates and clipped them to the crop;
-    other model adapters retain the historical truncation behavior.
+    Args:
+        result: Model prediction for one ROI crop.
+        roi_offset: (x_offset, y_offset) from the ROI split.
+        logger: Optional logger for debug messages.
+        round_coordinates: Round box corners before applying the ROI offset.
+        clip_to_image: Clip to result.orig_img bounds and discard degenerate boxes.
     """
     bboxes_coords: List = []
     confidences: List = []
@@ -47,8 +51,18 @@ def roi_boxes_to_image_coords(
 
     from evileye.utils import utils
 
-    orig_img = getattr(result, "orig_img", None)
-    height, width = orig_img.shape[:2] if clip_to_image and orig_img is not None else (None, None)
+    height = width = None
+    if clip_to_image:
+        orig_img = getattr(result, "orig_img", None)
+        shape = getattr(orig_img, "shape", None)
+        if shape is None or len(shape) < 2:
+            raise ValueError(
+                "clip_to_image requires model result with a 2D orig_img"
+            )
+        height, width = shape[:2]
+        if height <= 0 or width <= 0:
+            raise ValueError("clip_to_image requires a non-empty orig_img")
+
     for coord, class_id, conf in zip(coords, class_ids, confs):
         if not np.all(np.isfinite(coord)):
             if logger is not None:
@@ -56,13 +70,13 @@ def roi_boxes_to_image_coords(
             continue
         if round_coordinates or clip_to_image:
             x1, y1, x2, y2 = (int(round(float(value))) for value in coord)
-            if width is not None and height is not None:
+            if clip_to_image:
                 x1 = max(0, min(x1, width - 1))
                 y1 = max(0, min(y1, height - 1))
                 x2 = max(0, min(x2, width - 1))
                 y2 = max(0, min(y2, height - 1))
-            if clip_to_image and (x1 >= x2 or y1 >= y2):
-                continue
+                if x1 >= x2 or y1 >= y2:
+                    continue
             coord = (x1, y1, x2, y2)
         abs_coords = utils.roi_to_image(coord, roi_offset[0], roi_offset[1])
         bboxes_coords.append(abs_coords)

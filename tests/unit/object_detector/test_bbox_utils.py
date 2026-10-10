@@ -1,4 +1,5 @@
 import numpy as np
+import pytest
 
 from evileye.object_detector.bbox_utils import roi_boxes_to_image_coords
 
@@ -26,10 +27,7 @@ class _Result:
 
 
 def test_roi_boxes_to_image_coords_truncates_by_default():
-    roi = [None, [10, 20]]
-    boxes, confidences, ids = roi_boxes_to_image_coords(
-        _Result(), (roi[1][0], roi[1][1])
-    )
+    boxes, confidences, ids = roi_boxes_to_image_coords(_Result(), (10, 20))
     assert boxes == [[11, 22, 13, 24]]
     assert np.isclose(confidences[0], 0.9)
     assert ids[0] == 2.0
@@ -41,3 +39,8 @@ def test_roi_boxes_can_match_legacy_rtdetr_rounding_and_clipping():
         result, (10, 20), round_coordinates=True, clip_to_image=True
     )
     assert boxes == [[12, 22, 19, 29]]
+
+
+def test_clipping_requires_original_image_dimensions():
+    with pytest.raises(ValueError, match="requires model result with a 2D orig_img"):
+        roi_boxes_to_image_coords(_Result(), (0, 0), clip_to_image=True)
