@@ -59,7 +59,7 @@
 
 1. [частично] `VideoCaptureBase` предоставляет общий `open/read/close`, а кадры используют общий `CaptureImage`. `get_capture_health()` публикует состояние, persistent disconnect/reconnect counters, последнюю смену состояния и dropped frames; единая модель размеров ещё не оформлена.
 2. [готово] OpenCV и GStreamer подключены к source SPI через `SourceModuleAdapter`. Их codec handling, reconnect, split/crop, запись сегментов, ограниченные очереди и shared-frame capture остаются в специализированных backend-ах.
-3. [частично] Для встроенных capture backend-ов режим `thread/process` исполняется их собственным backend-ом; сторонние source plugins используют общий thread/spawn runtime. `SourceModuleAdapter` публикует capture health и `MpControl` worker metrics. В process-режиме disconnect/reconnect фиксируются по переходам доступности кадров в parent proxy; внутренние быстрые reconnect-попытки дочернего backend-а не передаются отдельно.
+3. [частично] Для встроенных capture backend-ов режим `thread/process` исполняется их собственным backend-ом; сторонние source plugins используют общий thread/spawn runtime. `SourceModuleAdapter` публикует capture health и `MpControl` worker metrics. В process-режиме parent proxy отдельно публикует наблюдаемые переходы доступности кадров и `backend_connection_generation`, который приходит в metadata кадра от дочернего backend-а и фиксирует быстрые reconnect без паузы кадров.
 4. [частично] Остановка проверена в thread/process тестах и полном unit suite без оставшихся worker-ов. Проверки RTSP/GStreamer зависят от доступности backend-а и камеры.
 
 **Проверки:** видеофайл, loop/reconnect, синтетический RTSP и доступные реальные камеры; запись и ffprobe; проверка отсутствия worker, сокетов и очередей после stop.

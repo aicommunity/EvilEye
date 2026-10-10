@@ -103,6 +103,7 @@ class VideoCaptureBase(EvilEyeBase):
         # Process mode: parent tracks frame flow from child worker (is_working lives in worker).
         self._mp_last_frame_mono: float = 0.0
         self._mp_worker_started_mono: float = 0.0
+        self._mp_backend_connection_generation = 0
         self._mp_frame_decode_errors = 0
 
     def open(self, config: dict | None = None) -> bool:
@@ -473,6 +474,7 @@ class VideoCaptureBase(EvilEyeBase):
         self._mp_control.start()
         self._mp_worker_started_mono = time.monotonic()
         self._mp_last_frame_mono = 0.0
+        self._mp_backend_connection_generation = 0
         self.logger.info("Capture initialised in PROCESS mode")
         return True
 
@@ -529,15 +531,20 @@ class VideoCaptureBase(EvilEyeBase):
             elif was_working and not working and has_received_frame:
                 self._record_disconnect()
 
-    def _touch_process_mode_frame_activity(self) -> None:
-        """Mark capture healthy when a frame arrives from the MP worker."""
+    def _touch_process_mode_frame_activity(self, frame=None) -> None:
+        """Mark capture healthy and sync child reconnect metadata from a frame."""
         if self.execution_mode != EXEC_MODE_PROCESS:
             return
         had_received_frame = self._mp_last_frame_mono > 0.0
         self._mp_last_frame_mono = time.monotonic()
+        connection_generation = getattr(frame, "connection_generation", None)
         with self.conn_mutex:
             was_working = self.is_working
             self.is_working = True
+            if isinstance(connection_generation, int) and connection_generation >= 0:
+                self._mp_backend_connection_generation = max(
+                    self._mp_backend_connection_generation, connection_generation
+                )
             if had_received_frame and not was_working:
                 self._record_reconnect()
         self.is_inited = True
@@ -584,7 +591,7 @@ class VideoCaptureBase(EvilEyeBase):
                     continue
                 self._mark_finished_if_worker_stopped()
                 continue
-            self._touch_process_mode_frame_activity()
+            self._touch_process_mode_frame_activity(frame)
             try:
                 self.frames_queue.put(frame)
             except Exception:
@@ -833,6 +840,11 @@ class VideoCaptureBase(EvilEyeBase):
                 "working": bool(self.is_working),
                 "disconnect_count": self._disconnect_count,
                 "reconnect_count": self._reconnect_count,
+                "backend_connection_generation": (
+                    self._mp_backend_connection_generation
+                    if self.execution_mode == EXEC_MODE_PROCESS
+                    else self._reconnect_count
+                ),
                 "last_transition": transition,
                 "dropped_frames": int(self.dropped_frames),
             }

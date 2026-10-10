@@ -146,3 +146,14 @@ def test_first_process_frame_does_not_count_as_reconnect(monkeypatch):
     health = cap.get_capture_health()
     assert health["disconnect_count"] == 0
     assert health["reconnect_count"] == 0
+
+
+def test_frame_syncs_child_backend_connection_generation():
+    cap = _process_capture()
+    from evileye.core.frame import Frame
+
+    frame = Frame()
+    frame.connection_generation = 3
+    cap._touch_process_mode_frame_activity(frame)
+
+    assert cap.get_capture_health()["backend_connection_generation"] == 3
