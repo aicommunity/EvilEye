@@ -13,6 +13,13 @@ from evileye.core.plugin_runtime import (
 )
 from evileye.core.processor_source import ProcessorSource
 from evileye.core.base_class import EvilEyeBase
+from evileye.core.interfaces import (
+    IBatchProcessor,
+    IItemProcessor,
+    IRuntimeStatusProvider,
+    ISource,
+    IStatefulItemProcessor,
+)
 from evileye.core.plugins import (
     PLUGIN_API_VERSION,
     ModuleSpec,
@@ -141,6 +148,13 @@ def _echo_config_schema(config):
     if not isinstance(config.get("prefix", ""), str):
         raise ValueError("prefix must be a string")
     return {**config, "normalized": True}
+
+
+def test_public_plugin_protocols_are_structural():
+    assert isinstance(_EchoItemModule(), IItemProcessor)
+    assert isinstance(_EchoItemModule(), IStatefulItemProcessor)
+    assert isinstance(_EchoBatchModule(), IBatchProcessor)
+    assert isinstance(_SequenceSource(), ISource)
 
 
 def test_plugin_manager_loads_entry_point_manifest():
@@ -274,6 +288,13 @@ def test_batch_processor_adapter_preserves_batch_semantics_and_state():
     assert first == ["camera-1:1:1", "camera-2:2:1"]
     assert second == ["camera-1:1:2"]
     assert module.get_source_ids() == [1, 2]
+    assert isinstance(module, IRuntimeStatusProvider)
+    assert module.get_runtime_stats() == {
+        "module_id": "vendor.batch_adapter/merge",
+        "execution_mode": "thread",
+        "module_initialized": True,
+        "degraded": False,
+    }
     module.release()
 
 

@@ -26,6 +26,21 @@ valid, or raise an exception with a validation message.
 See [`examples/plugin_package`](../examples/plugin_package) for a minimal
 installable package.
 
+## Runtime contracts
+
+The structural protocols are in `evileye.core.interfaces`: `IItemProcessor`,
+`IStatefulItemProcessor`, `ISource`, `IBatchProcessor`, and
+`IEventDetector`. Plugins do not inherit from these protocols. The runtime
+validates the required callable methods when the module is initialized.
+
+The common item, source, and batch adapters expose `get_runtime_stats()`
+through `IRuntimeStatusProvider`. The status includes the qualified module id, selected
+execution mode, and degraded state; asynchronous adapters add worker and queue
+details. A synchronous batch processor reports whether its module instance is
+initialized because it has no background worker. Initialization and processing
+exceptions are logged, set the adapter to degraded, and are surfaced to the
+pipeline caller where the stage contract allows it.
+
 ## Item processors
 
 An item processor is a factory that returns an object implementing

@@ -80,6 +80,38 @@ class IBatchProcessor(Protocol):
 
 
 @runtime_checkable
+class IItemProcessor(Protocol):
+    """Process one pipeline item using worker-local state."""
+
+    def process_item(self, item: Any, state: Any) -> Any: ...
+
+
+@runtime_checkable
+class IStatefulItemProcessor(IItemProcessor, Protocol):
+    """Item processor that constructs state inside its runtime worker."""
+
+    def create_state(self, config: Mapping[str, Any]) -> Any: ...
+
+
+@runtime_checkable
+class ISource(Protocol):
+    """Lifecycle contract for a source plugin."""
+
+    def open(self) -> None: ...
+
+    def read(self) -> Any | None: ...
+
+    def close(self) -> None: ...
+
+
+@runtime_checkable
+class IRuntimeStatusProvider(Protocol):
+    """Runtime adapter status exposed to pipeline diagnostics."""
+
+    def get_runtime_stats(self) -> Mapping[str, Any]: ...
+
+
+@runtime_checkable
 class IObjectHandler(Protocol):
     """Интерфейс обработчика объектов.
 

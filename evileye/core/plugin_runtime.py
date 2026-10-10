@@ -464,6 +464,14 @@ class BatchProcessorModuleAdapter(EvilEyeBase):
             self.logger.exception("Batch plugin %s failed while processing a batch", self.module_id)
             raise
 
+    def get_runtime_stats(self) -> dict[str, Any]:
+        return {
+            "module_id": self.module_id,
+            "execution_mode": self.execution_mode,
+            "module_initialized": self._module is not None,
+            "degraded": self.degraded,
+        }
+
     def start(self):
         callback = getattr(self._module, "start", None)
         if callable(callback):
