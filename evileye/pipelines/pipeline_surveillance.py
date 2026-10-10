@@ -209,12 +209,12 @@ class PipelineSurveillance(PipelineProcessors):
         detectors_proc.set_params(params)
         detectors_proc.init()
         self._add_processor(detectors_proc)
-        # Сохраняем прямые ссылки на инициализированные детекторы для внешнего доступа
-        try:
-            self.detectors = list(detectors_proc.processors)
-            self.logger.info(f"PipelineSurveillance: initialized {len(self.detectors)} detectors")
-        except Exception:
-            self.detectors = []
+        # Keep one authoritative detector list for controller and UI access.
+        self.detectors = list(detectors_proc.processors)
+        self.logger.info(
+            "PipelineSurveillance: initialized %s detectors",
+            len(self.detectors),
+        )
 
     def _init_trackers(self, params: List[Dict]):
         """Initialize tracker processors for surveillance"""
@@ -479,29 +479,13 @@ class PipelineSurveillance(PipelineProcessors):
 
     # === ROI Editor integration helpers ===
     def get_detectors(self):
-        """Возвращает список инстансов детекторов, если они инициализированы."""
-        try:
-            if isinstance(self.detectors, list) and self.detectors:
-                return self.detectors
-            # Попробуем получить из внутренних процессоров
-            if self.processors:
-                for proc in self.processors:
-                    try:
-                        if getattr(proc, 'processor_name', '') == 'detectors' and hasattr(proc, 'processors'):
-                            return proc.processors
-                    except Exception:
-                        continue
-        except Exception:
-            pass
-        return []
+        """Return the detector instances created during pipeline initialization."""
+        return list(self.detectors)
 
     def get_detector_by_index(self, idx: int):
-        try:
-            dets = self.get_detectors()
-            if 0 <= idx < len(dets):
-                return dets[idx]
-        except Exception:
-            pass
+        detectors = self.get_detectors()
+        if 0 <= idx < len(detectors):
+            return detectors[idx]
         return None
 
     def estimate_mp_backlog_stats(self) -> dict[str, int]:
