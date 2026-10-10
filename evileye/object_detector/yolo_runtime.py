@@ -1,10 +1,10 @@
-"""Centralized YOLO load/predict for thread and MP workers."""
+"""Ultralytics model loading and prediction shared by thread and process workers."""
 
 from __future__ import annotations
 
 import logging
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable
 
 from ultralytics import YOLO
 
@@ -12,11 +12,18 @@ from ..core.gpu_errors import CudaOutOfMemoryError, is_cuda_oom_error
 from .ultralytics_postprocess import apply_ultralytics_optimizations
 
 
-class YoloRuntime:
-    """Owns a single Ultralytics YOLO model instance."""
+class UltralyticsRuntime:
+    """Own one Ultralytics model instance behind a stable inference interface."""
 
-    def __init__(self, logger: logging.Logger | None = None) -> None:
-        self._logger = logger or logging.getLogger("evileye.yolo_runtime")
+    def __init__(
+        self,
+        model_factory: Callable[[str], Any],
+        model_family: str,
+        logger: logging.Logger | None = None,
+    ) -> None:
+        self._logger = logger or logging.getLogger("evileye.ultralytics_runtime")
+        self._model_factory = model_factory
+        self._model_family = model_family
         self.model_name: str = ""
         self.model: Any = None
         self.classes: list = []
@@ -34,7 +41,7 @@ class YoloRuntime:
         if model_path and not Path(str(model_path)).is_absolute():
             model_path = str((Path.cwd() / model_path).resolve())
         try:
-            self.model = YOLO(model_path)
+            self.model = self._model_factory(model_path)
             apply_ultralytics_optimizations(
                 self.model,
                 half=bool(self.inf_params.get("half", True)),
@@ -43,7 +50,7 @@ class YoloRuntime:
         except Exception as exc:
             if is_cuda_oom_error(exc):
                 raise CudaOutOfMemoryError(
-                    f"Failed to load YOLO model on CUDA: {model_path}: {exc}"
+                    f"Failed to load {self._model_family} model on CUDA: {model_path}: {exc}"
                 ) from exc
             raise
 
@@ -81,12 +88,23 @@ class YoloRuntime:
         except Exception as exc:
             if is_cuda_oom_error(exc):
                 raise CudaOutOfMemoryError(
-                    f"YOLO predict failed due to CUDA OOM: {exc}"
+                    f"{self._model_family} predict failed due to CUDA OOM: {exc}"
                 ) from exc
             raise
 
     def release(self) -> None:
         self.model = None
+
+
+class YoloRuntime(UltralyticsRuntime):
+    """Compatibility runtime for Ultralytics YOLO models."""
+
+    def __init__(self, logger: logging.Logger | None = None) -> None:
+        super().__init__(self._load_yolo, "YOLO", logger)
+
+    @staticmethod
+    def _load_yolo(model_path: str):
+        return YOLO(model_path)
 
 
 def yolo_results_to_dto_list(results: Any) -> list:

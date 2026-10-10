@@ -8,6 +8,7 @@ from evileye.core.frame import Frame
 from evileye.core.plugins import ModuleRuntimeContext
 from evileye.object_detector.object_detection_base import DetectionResultList
 from evileye.object_detector.object_detection_yolo import ObjectDetectorYolo
+from evileye.object_detector.object_detection_rtdetr import ObjectDetectorRtdetr
 
 
 class _FakeBox:
@@ -49,6 +50,7 @@ class _FakeYoloRuntime:
         self.classes = []
 
     def configure(self, model, classes, params):
+        self.model_name = model
         self.params = params
 
     def load(self):
@@ -123,4 +125,33 @@ def test_yolo_plugin_rejects_names_missing_from_model_mapping(monkeypatch):
 
     with pytest.raises(ValueError, match="absent from model mapping"):
         module.create_state({"classes": ["helmet"]})
+    module.close()
+
+
+def test_rtdetr_plugin_uses_shared_item_contract(monkeypatch):
+    import evileye.object_detector.rtdetr_runtime as rtdetr_runtime_module
+
+    monkeypatch.setattr(rtdetr_runtime_module, "RtdetrRuntime", _FakeYoloRuntime)
+    _FakeYoloRuntime.calls = []
+    _FakeYoloRuntime.predictions = [_FakeBox(0, 0.82, [1, 2, 5, 6])]
+    module = ObjectDetectorRtdetr()
+    state = module.create_state(
+        {
+            "model": "synthetic-rtdetr.pt",
+            "classes": ["person"],
+            "source_ids": [4],
+            "roi": [[[10, 20, 30, 25]]],
+        },
+        ModuleRuntimeContext(
+            "evileye/ObjectDetectorRtdetr", "thread", (4,), worker_count=1
+        ),
+    )
+
+    result, output_frame = module.process_item(_frame(), state)
+
+    assert module.model_name == "synthetic-rtdetr.pt"
+    assert isinstance(result, DetectionResultList)
+    assert output_frame.frame_id == 11
+    assert len(result.detections) == 1
+    assert result.detections[0].bounding_box == [11, 22, 15, 26]
     module.close()

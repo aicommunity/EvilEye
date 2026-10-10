@@ -180,3 +180,58 @@ def test_yolo_detector_runs_real_model_with_parallel_spawn_workers():
         adapter.stop()
         adapter.release()
         owner.release_frame(handle)
+
+
+_RTDETR_MODEL_PATH = Path(__file__).resolve().parents[3] / "models" / "rtdetr-l.pt"
+
+
+@pytest.mark.skipif(
+    not _RUN_REAL_MODEL_SMOKE or not _RTDETR_MODEL_PATH.is_file(),
+    reason="set EVILEYE_RUN_MODEL_PROCESS_SMOKE=1 and provide models/rtdetr-l.pt",
+)
+def test_rtdetr_detector_runs_real_model_in_spawn_worker():
+    owner = SharedFrameTransport()
+    handle = owner.alloc_frame(
+        np.zeros((64, 64, 3), dtype=np.uint8), frame_id=4, timestamp=4.0
+    )
+    adapter = EvilEyeBase.create_instance("ObjectDetectorRtdetr")
+    adapter.set_params(
+        module_id="ObjectDetectorRtdetr",
+        execution_mode="process",
+        source_ids=[0],
+        worker_count=1,
+        model=str(_RTDETR_MODEL_PATH),
+        classes=["person"],
+        inference_size=640,
+        device="cpu",
+        half=False,
+    )
+    try:
+        assert adapter.init() is True
+        adapter.start()
+        frame = Frame()
+        frame.source_id = 0
+        frame.frame_id = 4
+        frame.frame_handle = handle
+        adapter.put(frame)
+
+        deadline = time.monotonic() + 120
+        output = None
+        while time.monotonic() < deadline:
+            output = adapter.get()
+            if output is not None:
+                break
+            if adapter.degraded:
+                raise AssertionError("RT-DETR worker degraded")
+            time.sleep(0.05)
+
+        assert output is not None, adapter.get_debug_info({})
+        result, returned_frame = output
+        assert result.source_id == 0
+        assert result.frame_id == 4
+        assert returned_frame.frame_handle == handle
+        assert owner.get_frame_view(handle)[0, 0, 0] == 0
+    finally:
+        adapter.stop()
+        adapter.release()
+        owner.release_frame(handle)

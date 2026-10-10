@@ -911,6 +911,7 @@ def test_builtin_model_tracker_and_attribute_modules_use_spi_adapter():
         adapter = EvilEyeBase.create_instance(module_class.__name__)
         if module_class in {
             detectors.ObjectDetectorYolo,
+            detectors.ObjectDetectorRtdetr,
             detectors.ObjectDetectorYoloMp,
             trackers.ObjectTrackingBotsort,
             attributes.AttributeClassifier,

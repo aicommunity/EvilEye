@@ -31,11 +31,14 @@ class ObjectDetectorYolo(ModelBasedDetectorBase):
 
     ResultType = DetectionResultList
 
-    def create_state(self, config, context=None):
+    def _create_plugin_runtime(self):
         from .yolo_runtime import YoloRuntime
 
+        return YoloRuntime(logger=self.logger)
+
+    def create_state(self, config, context=None):
         config = dict(config or {})
-        self.model_name = config.get("model", "models/yolo11n.pt")
+        self.model_name = config.get("model", self._get_default_model_name())
         self.source_ids = [
             int(item) for item in (
                 config.get("source_ids")
@@ -61,7 +64,7 @@ class ObjectDetectorYolo(ModelBasedDetectorBase):
         self._plugin_class_mapping = dict(config.get("model_class_mapping") or {})
         self._plugin_class_filter: list[int] | None = None
 
-        self._plugin_yolo_runtime = YoloRuntime(logger=self.logger)
+        self._plugin_yolo_runtime = self._create_plugin_runtime()
         self._plugin_yolo_runtime.configure(
             self.model_name,
             [],

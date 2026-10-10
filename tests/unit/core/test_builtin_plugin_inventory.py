@@ -97,7 +97,6 @@ def test_legacy_protocols_are_explicitly_tracked_during_migration():
     }
     assert legacy_modules == {
         "evileye/ObjectDetectorRfdetr",
-        "evileye/ObjectDetectorRtdetr",
         "evileye/VideoCaptureGStreamer",
         "evileye/VideoCaptureOpencv",
     }
