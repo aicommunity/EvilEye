@@ -38,6 +38,15 @@ class PluginError(RuntimeError):
 
 
 @dataclass(frozen=True)
+class ModuleRuntimeContext:
+    """Serializable runtime metadata passed to worker-local module state."""
+
+    module_id: str
+    execution_mode: str
+    source_ids: tuple[int, ...] = ()
+
+
+@dataclass(frozen=True)
 class ModuleSpec:
     """A module exported by a plugin.
 

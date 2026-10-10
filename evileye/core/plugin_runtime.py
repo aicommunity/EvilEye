@@ -2,17 +2,17 @@
 
 from __future__ import annotations
 
-import inspect
 import importlib
-import queue
-import threading
+import inspect
 import logging
 import pickle
+import queue
+import threading
 from typing import Any
 
 from .base_class import EvilEyeBase
 from .mp_worker import MpWorker
-from .plugins import PluginError, plugin_registry
+from .plugins import ModuleRuntimeContext, PluginError, plugin_registry
 from .mp_context import get_spawn_context
 
 
@@ -47,7 +47,11 @@ def _call_factory(factory, config: dict[str, Any]):
     return factory()
 
 
-def _create_state(module: Any, config: dict[str, Any]) -> Any:
+def _create_state(
+    module: Any,
+    config: dict[str, Any],
+    context: ModuleRuntimeContext | None = None,
+) -> Any:
     create_state = getattr(module, "create_state", None)
     if not callable(create_state):
         return None
@@ -55,13 +59,23 @@ def _create_state(module: Any, config: dict[str, Any]) -> Any:
         signature = inspect.signature(create_state)
     except (TypeError, ValueError):
         return create_state(config)
+    parameters = signature.parameters
     positional = [
-        p for p in signature.parameters.values()
+        p for p in parameters.values()
         if p.kind in (p.POSITIONAL_ONLY, p.POSITIONAL_OR_KEYWORD)
     ]
+    if len(positional) >= 2:
+        return create_state(config, context)
+    if "context" in parameters:
+        if positional:
+            return create_state(config, context=context)
+        kwargs = {"context": context}
+        if "config" in parameters:
+            kwargs["config"] = config
+        return create_state(**kwargs)
     if positional:
         return create_state(config)
-    if "config" in signature.parameters:
+    if "config" in parameters:
         return create_state(config=config)
     return create_state()
 
@@ -91,6 +105,7 @@ class ItemModuleWorker(MpWorker):
     def apply_spawn_state(self, state: dict[str, Any]) -> None:
         self.module_id = state["module_id"]
         self.config = state.get("config") or {}
+        self.runtime_context = state["runtime_context"]
         self.factory_module = state["factory_module"]
         self.factory_qualname = state["factory_qualname"]
         self.module = None
@@ -107,7 +122,9 @@ class ItemModuleWorker(MpWorker):
                 raise PluginError(
                     f"Module '{self.module_id}' must implement process_item(item, state)"
                 )
-            self.module_state = _create_state(self.module, self.config)
+            self.module_state = _create_state(
+                self.module, self.config, self.runtime_context
+            )
         except Exception:
             _close_item_resources(self.module, self.module_state, self.logger, self.module_id)
             self.module = None
@@ -147,6 +164,7 @@ class ItemModuleWorker(MpWorker):
         return {
             "module_id": self.module_id,
             "config": self.config,
+            "runtime_context": self.runtime_context,
             "factory_module": self.factory_module,
             "factory_qualname": self.factory_qualname,
         }
@@ -169,7 +187,7 @@ class ItemModuleAdapter(EvilEyeBase):
         self.registered_module = registered_module
         self.module_id = registered_module.qualified_id
         self.execution_mode = "thread"
-        self.source_ids = None
+        self.source_ids: tuple[int, ...] = ()
         capabilities = set(registered_module.spec.capabilities or ())
         factory = registered_module.spec.factory
         self._config: dict[str, Any] = {}
@@ -201,9 +219,9 @@ class ItemModuleAdapter(EvilEyeBase):
         params = dict(self.params or {})
         self.module_id = str(params.get("module_id") or params.get("type") or self.module_id)
         self.execution_mode = str(params.get("execution_mode", "thread")).lower()
-        self.source_ids = params.get("source_ids")
-        if self.source_ids is not None:
-            self.source_ids = [int(item) for item in self.source_ids]
+        self.source_ids = tuple(
+            int(item) for item in (params.get("source_ids") or ())
+        )
         self._queue_size = max(1, int(params.get("queue_size", 8)))
         self._config = dict(params.get("config") or {})
         reserved = {"type", "module_id", "execution_mode", "source_ids", "queue_size", "ipc_mode"}
@@ -217,7 +235,14 @@ class ItemModuleAdapter(EvilEyeBase):
         return dict(self.params or {})
 
     def get_source_ids(self):
-        return self.source_ids
+        return list(self.source_ids)
+
+    def _module_runtime_context(self) -> ModuleRuntimeContext:
+        return ModuleRuntimeContext(
+            module_id=self.registered_module.qualified_id,
+            execution_mode=self.execution_mode,
+            source_ids=self.source_ids,
+        )
 
     def init_impl(self, **kwargs):
         registered = plugin_registry.get_module(self.module_id)
@@ -255,6 +280,7 @@ class ItemModuleAdapter(EvilEyeBase):
             worker = self._mp_control.add_worker(ItemModuleWorker)
             worker.module_id = self.module_id
             worker.config = self._config
+            worker.runtime_context = self._module_runtime_context()
             worker.factory_module = self.registered_module.spec.factory.__module__
             worker.factory_qualname = self.registered_module.spec.factory.__qualname__
             worker.module = None
@@ -282,7 +308,9 @@ class ItemModuleAdapter(EvilEyeBase):
                     raise PluginError(
                         f"Module '{self.module_id}' must implement process_item(item, state)"
                     )
-                self._state = _create_state(self._module, self._config)
+                self._state = _create_state(
+                    self._module, self._config, self._module_runtime_context()
+                )
             except Exception:
                 self.degraded = True
                 self.logger.exception("Plugin module %s failed during worker initialization", self.module_id)
@@ -525,7 +553,12 @@ class BatchProcessorModuleAdapter(EvilEyeBase):
             result = init(**kwargs)
             if result is False:
                 return False
-        self._state = _create_state(self._module, self._config)
+        context = ModuleRuntimeContext(
+            module_id=self.registered_module.qualified_id,
+            execution_mode=self.execution_mode,
+            source_ids=tuple(self.source_ids),
+        )
+        self._state = _create_state(self._module, self._config, context)
         return True
 
     def process_batch(self, batch):

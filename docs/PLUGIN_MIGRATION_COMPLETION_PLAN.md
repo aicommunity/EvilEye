@@ -33,9 +33,9 @@
 ### Этап A. Уточнить контракт runtime и диагностику
 
 1. [готово] Зафиксировать публичные структурные протоколы `processor_item`, `source`,
-   `event_detector` и `batch_processor`; общие item/source/batch адаптеры предоставляют runtime status с
-   execution mode и degraded state, а пакетные модули отдельно указывают факт
-   инициализации (они не создают фонового worker).
+   `event_detector` и `batch_processor`; item/source/batch адаптеры предоставляют runtime status,
+   а `ModuleRuntimeContext` передаёт state factory сериализуемые `module_id`,
+   `execution_mode` и `source_ids` в потоковом и process режимах.
 2. [готово] `ModuleSpec.config_schema` проверяется и нормализуется до вызова фабрики item/batch/source runtime adapters; ошибка включает qualified module ID и причину валидации. Регрессионный тест подтверждает, что фабрика не вызывается для неверной конфигурации.
 3. [готово] Для `batch_processor` добавлен отдельный kind и `IBatchProcessor`; потоковая семантика явная, а `process` отвергается до запуска фабрики.
 4. [готово] Для `process` проверять импортируемость factory и сериализуемость config до старта; inputs и outputs передавать через явный pickle envelope с синхронной диагностикой ошибок, а state создавать только внутри worker. Неподдержанный режим отклоняется до запуска.

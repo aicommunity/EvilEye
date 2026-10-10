@@ -65,6 +65,22 @@ class _EchoItemModule:
         return f"{self.prefix}{item}:{state['count']}"
 
 
+class _ContextItemModule:
+    def create_state(self, config, context):
+        return {"count": 0, "context": context}
+
+    def process_item(self, item, state):
+        state["count"] += 1
+        context = state["context"]
+        return {
+            "item": item,
+            "count": state["count"],
+            "module_id": context.module_id,
+            "execution_mode": context.execution_mode,
+            "source_ids": context.source_ids,
+        }
+
+
 class _EchoBatchModule:
     def __init__(self, config=None):
         self.prefix = (config or {}).get("prefix", "")
@@ -562,6 +578,46 @@ def test_item_module_input_queue_overflow_is_explicit_and_degraded():
         assert adapter.get_runtime_stats()["degraded"] is True
     finally:
         _BlockingModule.release.set()
+        adapter.stop()
+
+
+@pytest.mark.parametrize("execution_mode", ["thread", "process"])
+def test_item_module_adapter_passes_runtime_context_to_worker(execution_mode):
+    plugin_id = f"test.context-{execution_mode}"
+    spec = ModuleSpec(
+        "context",
+        "processor_item",
+        _ContextItemModule,
+        execution_modes=(execution_mode,),
+    )
+    plugin_registry.register_plugin(
+        PluginSpec(plugin_id, PLUGIN_API_VERSION, modules=(spec,))
+    )
+    module_id = f"{plugin_id}/context"
+    adapter = ItemModuleAdapter(plugin_registry.get_module(module_id))
+    adapter.set_params(
+        module_id=module_id,
+        execution_mode=execution_mode,
+        source_ids=[0, 3],
+    )
+    assert adapter.init() is True
+    adapter.start()
+    try:
+        adapter.put("frame")
+        deadline = time.monotonic() + (15.0 if execution_mode == "process" else 2.0)
+        result = None
+        while result is None and time.monotonic() < deadline:
+            result = adapter.get()
+            if result is None:
+                time.sleep(0.02)
+        assert result == {
+            "item": "frame",
+            "count": 1,
+            "module_id": module_id,
+            "execution_mode": execution_mode,
+            "source_ids": (0, 3),
+        }
+    finally:
         adapter.stop()
 
 

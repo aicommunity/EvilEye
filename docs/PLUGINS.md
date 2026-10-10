@@ -45,7 +45,10 @@ pipeline caller where the stage contract allows it.
 
 An item processor is a factory that returns an object implementing
 `process_item(item, state)`. The optional `create_state(config)` method creates
-state inside the selected worker. Both factory and state are initialized in
+state inside the selected worker. It may accept a second `context` argument of
+`ModuleRuntimeContext`, containing the qualified module id, execution mode, and
+configured source ids. Existing one-argument and zero-argument state factories
+remain valid. Both factory and state are initialized in
 the worker, so plugin modules must not depend on parent-process model or device
 objects. For `process` mode the factory must be importable at module scope.
 Configuration is checked before startup. Inputs are serialized synchronously
