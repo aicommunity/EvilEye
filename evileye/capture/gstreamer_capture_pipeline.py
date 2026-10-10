@@ -69,7 +69,17 @@ class GStreamerCapturePipelineMixin:
                     is_mp4
             )
 
-            if use_nvdec:
+            if getattr(self, "_force_decodebin", False):
+                # Last-resort path supports the file's actual codec instead of
+                # assuming every MP4 contains H.264.
+                pipeline = (
+                    f'filesrc location="{self.source_address}" '
+                    f"! decodebin name=dec ! videoconvert"
+                )
+                self.logger.info(
+                    f"Using decodebin fallback for {self.source_names}"
+                )
+            elif use_nvdec:
                 # Use NVDEC hardware decoder (RTX/GTX series)
                 # This is the fastest path for H.264/MP4 files on NVIDIA GPUs
                 pipeline = (
@@ -276,6 +286,16 @@ class GStreamerCapturePipelineMixin:
         except Exception:
             return False
 
+    def _format_gst_diagnostic(self, error, debug=None) -> str:
+        """Keep RTSP failure details while removing any camera credentials."""
+        details = str(error)
+        if debug:
+            details = f"{details}; {debug}"
+        for secret in (getattr(self, "username", None), getattr(self, "password", None)):
+            if secret:
+                details = details.replace(str(secret), "****")
+        return self._mask_credentials_in_pipeline(details)
+
     def _init_pipeline(self):
         """
         Initialize GStreamer pipeline.
@@ -427,12 +447,15 @@ class GStreamerCapturePipelineMixin:
                                 if msg:
                                     if msg.type == Gst.MessageType.ERROR:
                                         err, debug = msg.parse_error()
+                                        details = self._format_gst_diagnostic(err, debug)
                                         self.logger.warning(
-                                            f"GStreamer pipeline ERROR (candidate {i}): {err}, debug: {debug}")
+                                            f"GStreamer pipeline ERROR (candidate {i}): {details}")
+                                        last_error = f"Failed to start pipeline candidate {i}: {details}"
                                     elif msg.type == Gst.MessageType.WARNING:
                                         warn, debug = msg.parse_warning()
+                                        details = self._format_gst_diagnostic(warn, debug)
                                         self.logger.warning(
-                                            f"GStreamer pipeline WARNING (candidate {i}): {warn}, debug: {debug}")
+                                            f"GStreamer pipeline WARNING (candidate {i}): {details}")
                                 last_error = f"Failed to start pipeline candidate {i}"
                                 continue
                             elif ret == Gst.StateChangeReturn.ASYNC:
@@ -444,12 +467,15 @@ class GStreamerCapturePipelineMixin:
                                     if msg:
                                         if msg.type == Gst.MessageType.ERROR:
                                             err, debug = msg.parse_error()
+                                            details = self._format_gst_diagnostic(err, debug)
                                             self.logger.warning(
-                                                f"GStreamer pipeline ERROR (candidate {i} async): {err}, debug: {debug}")
+                                                f"GStreamer pipeline ERROR (candidate {i} async): {details}")
+                                            last_error = f"Failed to start pipeline candidate {i} (async): {details}"
                                         elif msg.type == Gst.MessageType.WARNING:
                                             warn, debug = msg.parse_warning()
+                                            details = self._format_gst_diagnostic(warn, debug)
                                             self.logger.warning(
-                                                f"GStreamer pipeline WARNING (candidate {i} async): {warn}, debug: {debug}")
+                                                f"GStreamer pipeline WARNING (candidate {i} async): {details}")
                                     last_error = f"Failed to start pipeline candidate {i} (async)"
                                     continue
 
@@ -460,8 +486,9 @@ class GStreamerCapturePipelineMixin:
                             break
 
                         except Exception as e:
-                            self.logger.warning(f"Error with pipeline candidate {i}: {e}")
-                            last_error = str(e)
+                            details = self._format_gst_diagnostic(e)
+                            self.logger.warning(f"Error with pipeline candidate {i}: {details}")
+                            last_error = details
                             continue
 
                     if not pipeline_str:
@@ -604,9 +631,42 @@ class GStreamerCapturePipelineMixin:
                 self._perf_frame_buffer_full = 0
 
         except Exception as e:
-            self.logger.error(f"Failed to initialize GStreamer pipeline: {e}")
+            is_video_file = self.source_type == CaptureDeviceType.VideoFile
+            uses_hardware_decoder = bool(
+                pipeline_str and any(
+                    decoder in pipeline_str
+                    for decoder in ("nvh264dec", "nvv4l2decoder")
+                )
+            )
+            uses_explicit_h264_decoder = bool(
+                pipeline_str and "h264parse" in pipeline_str and "avdec_h264" in pipeline_str
+            )
+            fallback_message = None
+            if is_video_file and uses_hardware_decoder and not self._force_sw_decoder:
+                self._force_sw_decoder = True
+                fallback_message = "Hardware decoder failed; retrying with software decoding"
+            elif (
+                is_video_file
+                and uses_explicit_h264_decoder
+                and not getattr(self, "_force_decodebin", False)
+            ):
+                self._force_decodebin = True
+                fallback_message = "Explicit H.264 decoder failed; retrying with decodebin"
+
+            if fallback_message:
+                self.logger.warning(
+                    "%s for %s", fallback_message, self.source_names
+                )
+                self._teardown_pipeline("decoder_fallback", join_main_loop=False)
+                self._init_pipeline()
+                return
+
+            details = self._format_gst_diagnostic(e)
+            self.logger.error(f"Failed to initialize GStreamer pipeline: {details}")
             if pipeline_str:
-                self.logger.error(f"Pipeline string was: {self._mask_credentials_in_pipeline(pipeline_str)}")
+                self.logger.error(
+                    f"Pipeline string was: {self._mask_credentials_in_pipeline(pipeline_str)}"
+                )
             raise
 
     def _mask_credentials_in_pipeline(self, pipeline_str: str) -> str:

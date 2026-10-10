@@ -51,6 +51,11 @@ def test_all_builtin_modules_are_resolved_from_plugin_registry():
         assert modes and modes <= EXECUTION_MODES
         assert callable(registered.spec.factory)
 
+    batch = plugin_registry.get_module("ObjectMultiCameraTracking")
+    assert batch is not None
+    assert batch.spec.kind == "batch_processor"
+    assert tuple(batch.spec.execution_modes) == ("thread",)
+
 
 def test_legacy_protocols_are_explicitly_tracked_during_migration():
     register_builtins()

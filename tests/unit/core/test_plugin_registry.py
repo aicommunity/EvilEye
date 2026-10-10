@@ -6,6 +6,7 @@ import time
 import pytest
 
 from evileye.core.plugin_runtime import (
+    BatchProcessorModuleAdapter,
     ItemModuleAdapter,
     LegacyProcessorModuleAdapter,
     SourceModuleAdapter,
@@ -52,6 +53,18 @@ class _EchoItemModule:
     def process_item(self, item, state):
         state["count"] += 1
         return f"{self.prefix}{item}:{state['count']}"
+
+
+class _EchoBatchModule:
+    def __init__(self, config=None):
+        self.prefix = (config or {}).get("prefix", "")
+
+    def create_state(self, config):
+        return {"count": 0}
+
+    def process_batch(self, batch, state):
+        state["count"] += 1
+        return [f"{self.prefix}{source_id}:{len(items)}:{state['count']}" for source_id, items in batch.items()]
 
 
 class _SequenceSource:
@@ -200,6 +213,70 @@ def test_duplicate_ids_inside_one_manifest_are_rejected_atomically():
     assert registry.list_modules() == []
 
 
+def test_batch_processor_kind_is_thread_only():
+    registry = PluginRegistry()
+    registry.register_plugin(
+        PluginSpec(
+            "vendor.batch",
+            PLUGIN_API_VERSION,
+            modules=(ModuleSpec("merge", "batch_processor", _EchoItemModule, ("thread",)),),
+        )
+    )
+
+    assert registry.get_module("vendor.batch/merge").spec.kind == "batch_processor"
+    with pytest.raises(PluginError, match="batch processor.*only supports thread"):
+        PluginRegistry().register_plugin(
+            PluginSpec(
+                "vendor.batch.process",
+                PLUGIN_API_VERSION,
+                modules=(ModuleSpec("merge", "batch_processor", _EchoItemModule, ("process",)),),
+            )
+        )
+
+
+def test_module_rejects_unsupported_execution_mode_before_init():
+    registry = PluginRegistry()
+    registry.register_plugin(
+        PluginSpec(
+            "vendor.thread_only",
+            PLUGIN_API_VERSION,
+            modules=(ModuleSpec("echo", "processor_item", _EchoItemModule, ("thread",)),),
+        )
+    )
+    module = ItemModuleAdapter(registry.get_module("vendor.thread_only/echo"))
+
+    with pytest.raises(PluginError, match="vendor.thread_only/echo.*execution_mode='process'"):
+        module.set_params(module_id="vendor.thread_only/echo", execution_mode="process")
+
+
+def test_batch_processor_adapter_preserves_batch_semantics_and_state():
+    registry = PluginRegistry()
+    registry.register_plugin(
+        PluginSpec(
+            "vendor.batch_adapter",
+            PLUGIN_API_VERSION,
+            modules=(ModuleSpec("merge", "batch_processor", _EchoBatchModule, ("thread",)),),
+        )
+    )
+    module = BatchProcessorModuleAdapter(registry.get_module("vendor.batch_adapter/merge"))
+    module.set_params(
+        module_id="vendor.batch_adapter/merge",
+        execution_mode="thread",
+        config={"prefix": "camera-"},
+        source_ids=[1, 2],
+    )
+    assert module.init() is True
+    module.start()
+
+    first = module.process_batch({1: ["a"], 2: ["b", "c"]})
+    second = module.process_batch({1: ["d"]})
+
+    assert first == ["camera-1:1:1", "camera-2:2:1"]
+    assert second == ["camera-1:1:2"]
+    assert module.get_source_ids() == [1, 2]
+    module.release()
+
+
 def test_declared_module_config_schema_validates_and_normalizes():
     registry = PluginRegistry()
     registry.register_plugin(
@@ -222,6 +299,41 @@ def test_declared_module_config_schema_validates_and_normalizes():
     ) == {"prefix": "safe-", "normalized": True}
     with pytest.raises(PluginError, match="prefix must be a string"):
         registry.validate_module_config("vendor.configured/echo", {"prefix": 2})
+
+
+def test_invalid_item_config_is_rejected_before_factory_runs():
+    factory_calls = []
+
+    def factory(config=None):
+        factory_calls.append(config)
+        return _EchoItemModule(config)
+
+    def reject_config(config):
+        raise ValueError("policy is required")
+
+    plugin_id = "test.schema-before-factory"
+    plugin_registry.register_plugin(
+        PluginSpec(
+            plugin_id,
+            PLUGIN_API_VERSION,
+            modules=(
+                ModuleSpec(
+                    "probe",
+                    "processor_item",
+                    factory,
+                    execution_modes=("thread",),
+                    config_schema=reject_config,
+                ),
+            ),
+        )
+    )
+    module_id = f"{plugin_id}/probe"
+    adapter = EvilEyeBase.create_instance(module_id)
+
+    with pytest.raises(PluginError, match="policy is required"):
+        adapter.set_params(module_id=module_id, config={})
+
+    assert factory_calls == []
 
 
 def test_item_module_adapter_runs_thread_mode_with_per_worker_state():

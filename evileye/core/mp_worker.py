@@ -2,6 +2,7 @@ from abc import ABC, abstractmethod
 import logging
 import logging.handlers
 import multiprocessing as mp
+import signal
 import sys
 from queue import Empty, Full
 from timeit import default_timer as timer
@@ -32,6 +33,14 @@ def run_mp_worker_entry(
     Fork mode passed ``target=worker`` (bound instance); spawn must not pickle locks,
     threading primitives, or GPU handles held by a parent-side worker object.
     """
+    # Worker children must not handle terminal Ctrl+C independently. Let the
+    # owning runtime stop them through their stop event/queue so cleanup runs
+    # once in the supervisor and shutdown does not emit worker tracebacks.
+    try:
+        signal.signal(signal.SIGINT, signal.SIG_IGN)
+    except (AttributeError, OSError, ValueError):
+        pass
+
     if worker_class.__name__ == "MpWorkerCapture":
         from evileye.core.gstreamer_runtime import ensure_gstreamer_spawn_runtime
 

@@ -811,10 +811,16 @@ class VideoCaptureBase(EvilEyeBase):
         try:
             path = (parsed.path or "") if parsed is not None else ""
             if path in {"", "/"}:
-                hints.append(
-                    "RTSP URL looks incomplete (missing stream path). "
-                    "Use a full stream URL like `rtsp://user:pass@host:554/stream_path`."
-                )
+                if last_error is not None and "250" in err_text:
+                    hints.append(
+                        "The RTSP server returned status 250 during pipeline startup. "
+                        "Check the camera-specific stream URI, supported transport, and codec."
+                    )
+                else:
+                    hints.append(
+                        "RTSP URL points to the server root. Some cameras require a "
+                        "device-specific stream path; verify the URI and playback support."
+                    )
         except Exception:
             pass
 

@@ -25,6 +25,7 @@ from evileye.core.config_validator import ConfigValidator
 from evileye.gui import GUIManager, GUIMode, determine_gui_mode
 from evileye.core.mp_session_registry import cleanup_current_session_workers
 from evileye.core.mp_context import ensure_spawn_start_method
+from evileye.core.paths import pin_site_root
 
 # Shared-memory descriptor path can trigger noisy shutdown warnings from
 # multiprocessing resource_tracker when segments are already cleaned up.
@@ -59,6 +60,9 @@ def run_config(config_path: str, gui: bool = True, autoclose: bool = False) -> i
     ensure_spawn_start_method()
     logger = get_module_logger("run_config")
 
+    # Configs outside the site's configs/ directory cause a cwd change below.
+    # Pin the launch directory first so credentials and data paths stay stable.
+    pin_site_root()
     config_file_name = normalize_config_path(config_path)
     config_dir = os.path.dirname(os.path.abspath(config_file_name))
     if config_dir:

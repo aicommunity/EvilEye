@@ -90,9 +90,12 @@ modules are also registered in the SPI. `LegacyProcessorModuleAdapter` bridges
 their established `put/get` and lifecycle contracts into the pipeline module
 boundary; their proven model and process-worker internals remain unchanged.
 New plugins should implement `process_item(item, state)` and use the common
-runtime directly. `ObjectMultiCameraTracking` remains a synchronous batch
-stage because it coordinates results across cameras and does not advertise
-process execution.
+runtime directly. For stages that consume a synchronized multi-source batch,
+declare `kind="batch_processor"` and implement
+`process_batch(batch, state)`. `ObjectMultiCameraTracking` uses this contract
+via `BatchProcessorModuleAdapter`; it coordinates results across cameras and
+currently advertises thread execution only. The runtime rejects a requested
+process mode before starting a thread-only module.
 
 ## Configure `PipelineSurveillance`
 

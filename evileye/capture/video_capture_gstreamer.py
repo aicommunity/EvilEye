@@ -146,6 +146,7 @@ class VideoCaptureGStreamer(
         # Optional: force software decoding (disable NVDEC/Jetson HW decoders) to isolate driver-side leaks.
         # Can be set via env EVILEYE_GST_FORCE_SW_DECODER=1/true/yes/on, or params['force_sw_decoder']=true.
         self._force_sw_decoder: bool = False
+        self._force_decodebin: bool = False
         try:
             import os as _os
             self._force_sw_decoder = _os.environ.get("EVILEYE_GST_FORCE_SW_DECODER", "").strip().lower() in {

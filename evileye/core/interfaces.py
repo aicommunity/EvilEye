@@ -30,7 +30,7 @@
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
-from typing import Any, Dict, Iterable, List, Optional, Protocol, runtime_checkable
+from typing import Any, Dict, Iterable, List, Mapping, Optional, Protocol, runtime_checkable
 
 
 @runtime_checkable
@@ -68,6 +68,15 @@ class IPipeline(Protocol):
     def get_results_list(self) -> List[Dict[str, Any]]: ...
 
     def get_current_results(self) -> Dict[str, Any]: ...
+
+
+@runtime_checkable
+class IBatchProcessor(Protocol):
+    """Synchronous thread-only processor for one coordinated pipeline batch."""
+
+    def process_batch(
+        self, batch: Mapping[int, tuple[Any, Any]], state: Any
+    ) -> Optional[Iterable[Any]]: ...
 
 
 @runtime_checkable

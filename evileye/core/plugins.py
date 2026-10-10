@@ -27,6 +27,7 @@ MODULE_KINDS = frozenset(
         "event_detector",
         "alarm_detector",
         "processor_item",
+        "batch_processor",
     }
 )
 EXECUTION_MODES = frozenset({"thread", "process"})
@@ -141,6 +142,11 @@ class PluginRegistry:
                 raise PluginError(
                     f"Plugin '{plugin_id}' module '{module_id}' has invalid execution modes: "
                     f"{sorted(modes)}"
+                )
+            if spec.kind == "batch_processor" and "process" in modes:
+                raise PluginError(
+                    f"Plugin '{plugin_id}' batch processor '{module_id}' only "
+                    "supports thread execution in this API version"
                 )
             if "process" in modes:
                 self._validate_spawn_factory(plugin_id, module_id, spec.factory)

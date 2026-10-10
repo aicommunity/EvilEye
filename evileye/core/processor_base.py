@@ -102,7 +102,7 @@ class ProcessorBase(ABC):
             "preprocessors": {"preprocessor", "processor_item", "component"},
             "detectors": {"detector", "processor_item", "component"},
             "trackers": {"tracker", "processor_item", "component"},
-            "mc_trackers": {"tracker", "processor_item", "component"},
+            "mc_trackers": {"batch_processor", "tracker", "processor_item", "component"},
             "attributes_roi": {"attribute", "processor_item", "component"},
             "attributes_classifier": {"attribute", "processor_item", "component"},
         }

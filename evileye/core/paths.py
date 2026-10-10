@@ -24,6 +24,17 @@ def site_root(explicit: Optional[Path | str] = None) -> Path:
     return Path.cwd().resolve()
 
 
+def pin_site_root(explicit: Optional[Path | str] = None) -> Path:
+    """Keep the launch/site directory stable when runtime code changes cwd.
+
+    Config loading may chdir to the directory containing a selected JSON file.
+    Runtime data and credentials still belong to the site that launched EvilEye.
+    """
+    root = site_root(explicit)
+    os.environ[_SITE_ENV] = str(root)
+    return root
+
+
 def creds_path(root: Optional[Path | str] = None) -> Path:
     return site_root(root) / "credentials.json"
 

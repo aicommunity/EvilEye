@@ -48,7 +48,7 @@ def _sync_tracking_result_with_frame(
         track_info.frame_id = frame.frame_id
 
 
-@register_module("ObjectMultiCameraTracking", kind="tracker", execution_modes=("thread",))
+@register_module("ObjectMultiCameraTracking", kind="batch_processor", execution_modes=("thread",))
 class ObjectMultiCameraTracking(ObjectMultiCameraTrackingBase):
 
     def __init__(self):
@@ -274,6 +274,14 @@ class ObjectMultiCameraTracking(ObjectMultiCameraTrackingBase):
         if emitted:
             self._accumulated_tick_batch.clear()
         return emitted
+
+    def process_batch(
+        self,
+        batch: dict[int, tuple[TrackingResultList, Frame]],
+        state=None,
+    ) -> list[tuple[TrackingResultList, Frame]]:
+        """Plugin SPI entry point for one synchronized multi-camera batch."""
+        return self.ingest_tick_batch(batch)
 
     def process_tick_batch(
         self,

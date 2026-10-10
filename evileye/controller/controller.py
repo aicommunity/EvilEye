@@ -64,6 +64,7 @@ except ImportError:
     pyqt_version = 5
 
 from evileye.controller.controller_processing_mixin import ControllerProcessingMixin
+from evileye.core.paths import creds_path
 
 
 class Controller(ControllerProcessingMixin):
@@ -76,6 +77,17 @@ class Controller(ControllerProcessingMixin):
             return True
         except OSError:
             return False
+
+    def _load_credentials(self) -> None:
+        """Load site credentials independently of the selected config path."""
+        credentials_file = creds_path()
+        try:
+            with credentials_file.open(encoding="utf-8") as creds_file:
+                self.credentials = json.load(creds_file)
+                self.credentials_loaded = True
+        except FileNotFoundError:
+            self.credentials = {}
+            self.credentials_loaded = False
 
     def __init__(self):
         self.logger = get_module_logger("controller")
@@ -1446,12 +1458,7 @@ class Controller(ControllerProcessingMixin):
         if isinstance(server_cfg, dict):
             self._stream_publish_fps = float(server_cfg.get("publish_fps", self._stream_publish_fps) or 0.0)
 
-        try:
-            with open("credentials.json") as creds_file:
-                self.credentials = json.load(creds_file)
-                self.credentials_loaded = True
-        except FileNotFoundError as ex:
-            self.credentials_loaded = False
+        self._load_credentials()
 
         pipeline_params = self.params.get("pipeline", {})
         if self._config_service is not None:

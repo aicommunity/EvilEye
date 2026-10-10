@@ -43,6 +43,10 @@ class EvilEyeBase(ABC):
                 from .plugin_runtime import ItemModuleAdapter
 
                 return ItemModuleAdapter(registered)
+            if registered.spec.kind == "batch_processor":
+                from .plugin_runtime import BatchProcessorModuleAdapter
+
+                return BatchProcessorModuleAdapter(registered)
             if "legacy_processor_protocol" in registered.spec.capabilities:
                 from .plugin_runtime import LegacyProcessorModuleAdapter
 
@@ -108,9 +112,21 @@ class EvilEyeBase(ABC):
         params = dict(params)
         module_id = params.get("module_id") or params.get("type")
         if module_id:
-            from .plugins import plugin_registry
+            from .plugins import PluginError, plugin_registry
 
-            registered = plugin_registry.get_module(str(module_id))
+            registered = getattr(self, "registered_module", None)
+            if registered is None:
+                registered = plugin_registry.get_module(str(module_id))
+            if registered is not None:
+                requested_mode = params.get("execution_mode")
+                if requested_mode is not None:
+                    requested_mode = str(requested_mode).strip().lower()
+                    if requested_mode not in registered.spec.execution_modes:
+                        raise PluginError(
+                            f"Module '{registered.qualified_id}' does not support "
+                            f"execution_mode='{requested_mode}'; supported modes: "
+                            f"{', '.join(registered.spec.execution_modes)}"
+                        )
             if registered is not None and registered.spec.config_schema is not None:
                 config = params.get("config")
                 if config is None:

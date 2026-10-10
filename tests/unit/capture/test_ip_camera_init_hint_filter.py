@@ -64,10 +64,36 @@ def test_rtsp_hint_kept_for_real_pipeline_connect_error():
     cap = _ip_cam()
     err = RuntimeError("GStreamer pipeline timeout connecting to rtsp source")
     hint = cap.get_ip_camera_init_hint(err)
-    assert "incomplete" in hint.lower() or "stream path" in hint.lower()
+    assert "root" in hint.lower() or "stream path" in hint.lower()
 
 
-def test_rtsp_hint_without_error_still_reports_incomplete_url():
+def test_rtsp_hint_without_error_describes_root_url_without_claiming_it_is_invalid():
     cap = _ip_cam()
     hint = cap.get_ip_camera_init_hint()
-    assert "incomplete" in hint.lower()
+    assert "root" in hint.lower()
+    assert "missing stream path" not in hint.lower()
+
+
+def test_rtsp_status_250_reports_playback_diagnostic_instead_of_missing_path():
+    cap = _ip_cam()
+    hint = cap.get_ip_camera_init_hint(RuntimeError("GStreamer returned ERROR (250)"))
+    assert "250" in hint
+    assert "transport" in hint.lower()
+    assert "missing stream path" not in hint.lower()
+
+
+def test_gstreamer_pipeline_errors_redact_credentials():
+    from evileye.capture.video_capture_gstreamer import VideoCaptureGStreamer
+
+    cap = object.__new__(VideoCaptureGStreamer)
+    cap.username = "camera-user"
+    cap.password = "camera-secret"
+    diagnostic = cap._format_gst_diagnostic(
+        "Unhandled RTSP error",
+        "rtsp://camera-user:camera-secret@10.245.1.199/ user-id=camera-user "
+        "user-pw=camera-secret",
+    )
+
+    assert "camera-user" not in diagnostic
+    assert "camera-secret" not in diagnostic
+    assert "****" in diagnostic

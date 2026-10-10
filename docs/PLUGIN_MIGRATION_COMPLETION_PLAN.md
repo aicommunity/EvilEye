@@ -22,23 +22,19 @@
 
 ### Что пока остаётся legacy или отдельной реализацией
 
-- Девять модулей ещё имеют capabilities `legacy_*_protocol` и создаются соответствующими адаптерами:
-  - источники: `VideoCaptureOpencv`, `VideoCaptureGStreamer`;
-  - детекторы: `ObjectDetectorYolo`, `ObjectDetectorYoloMp`, `ObjectDetectorRtdetr`, `ObjectDetectorRfdetr`;
-  - tracker: `ObjectTrackingBotsort`;
-  - атрибуты: `AttributeDetector`, `AttributeClassifier`.
-- `ObjectMultiCameraTracking` — синхронная batch-стадия; общего batch SPI нет, она остаётся thread-only.
-- Event detectors уже видны через SPI, но их lifecycle и подписки на `ObjectsHandler` задаёт отдельный `EventsService`; для них ещё нет общего runtime/health-контракта.
-- В `PluginRegistry` есть API пайплайнов и стороннего discovery, но встроенные классы пока не декларируют `PipelineSpec` через `register_pipeline` (в коде нет вызовов регистрации встроенных pipeline manifests). `PipelineService`/service locator и PluginRegistry поэтому ещё не дают одного пути разрешения встроенных пайплайнов.
-- Есть unit-проверки entry point и custom alarm detector, но пока нет отдельного устанавливаемого стороннего wheel/editable-пакета, проверенного с чистого окружения EvilEye.
+- Девять встроенных модулей всё ещё заявляют `legacy_*_protocol` и используют специализированные внутренние worker/backend протоколы: два источника, четыре семейства детекторов, BoT-SORT и два модуля атрибутов. SPI-адаптеры дают им общий внешний контракт, но не заменяют эти внутренние протоколы.
+- `ObjectMultiCameraTracking` переведён на `kind="batch_processor"` и публичный `IBatchProcessor.process_batch(batch, state)`. Общий адаптер создаёт модуль и вызывает batch-контракт; исполнение пока только потоковое.
+- Event detectors регистрируются через общий `PluginRegistry`, но жизненный цикл и подписки на `ObjectsHandler` всё ещё управляются `EventsService`; у этой стадии нет общего worker/health-контракта.
+- `PipelineSurveillance`, `PipelineCapture` и `PipelineDeclarative` уже регистрируются как встроенные `PipelineSpec`. `PipelineService` разрешает их через реестр; `pipeline_class` остаётся совместимым именем. Ошибка неизвестного класса не должна переключать запуск на другой пайплайн.
+- Discovery и тревоги покрыты контрактными тестами. Пример внешнего пакета уже проверен через editable install в изолированном server-side virtualenv без переустановки EvilEye.
 
 ## План оставшихся доработок
 
 ### Этап A. Уточнить контракт runtime и диагностику
 
 1. Зафиксировать публичные протоколы `processor_item`, `source`, `event_detector` и `batch_processor` в небольших интерфейсах/документации: создание из config, `init/start/stop`, health, сообщения об ошибках и состояние деградации.
-2. Подключить `ModuleSpec.config_schema` к проверке конфигурации до старта фабрики; ошибки должны содержать qualified module ID и путь к неверному полю.
-3. Для `batch_processor` добавить отдельный kind/capability с явной потоковой семантикой; до готовности multiprocessing оставить для него только `thread`.
+2. [готово] `ModuleSpec.config_schema` проверяется и нормализуется до вызова фабрики item/batch/source runtime adapters; ошибка включает qualified module ID и причину валидации. Регрессионный тест подтверждает, что фабрика не вызывается для неверной конфигурации.
+3. [готово] Для `batch_processor` добавлен отдельный kind и `IBatchProcessor`; потоковая семантика явная, а `process` отвергается до запуска фабрики.
 4. Определить правила исполнения `process`: spawn-safe фабрика, сериализуемые входы/выходы и state внутри worker; при несовместимости режима останавливать конфигурацию до старта.
 5. Для очередей определить поведение по виду данных: кадры могут иметь ограниченную политику drop-oldest, тревоги должны сообщать о переполнении и ошибке сохранения.
 
@@ -65,7 +61,7 @@
 
 ### Этап D. Завершить batch и event/alarm lifecycle
 
-1. Перенести `ObjectMultiCameraTracking` на batch SPI с явными требованиями к синхронизации и `thread`-ограничению.
+1. [готово] `ObjectMultiCameraTracking` использует batch SPI с явной синхронизацией и ограничением `thread`-режима; контракт покрыт unit-тестами.
 2. Перевести Event detector фабрики и lifecycle с `EventsService` на PluginRegistry + общий runtime; оставить `EventsService` как управляющий слой, не второй реестр.
 3. Довести `AlarmEvent` до общего контракта: type, severity, timestamp, source, details, stable ID. Проверить JSON и PostgreSQL adapters, повтор записи, недоступное хранилище и журнал UI.
 4. Добавить диагностируемую остановку/переполнение, retry с ограничением и метрики очереди; отдельно решить долговечный outbox, если нужна гарантия пережить падение хоста (сейчас такой гарантии нет).
@@ -74,11 +70,11 @@
 
 ### Этап E. Свести пайплайны к реестру и проверить внешний пакет
 
-1. Зарегистрировать `PipelineSurveillance` и `PipelineDeclarative` как встроенные `PipelineSpec`; перевести `PipelineService` на единое разрешение через PluginRegistry.
-2. Сохранить `pipeline_class` только как compatibility alias. Если выбранный pipeline неизвестен или контракт не проходит, завершать запуск с понятной диагностикой, не делать fallback.
+1. [готово] `PipelineSurveillance`, `PipelineCapture` и `PipelineDeclarative` зарегистрированы как builtin `PipelineSpec`; `PipelineService` разрешает их через PluginRegistry.
+2. [готово] `pipeline_class` сохранён как compatibility alias; неизвестный выбранный pipeline приводит к диагностируемой ошибке без fallback.
 3. Оставить `PipelineSurveillance` фиксированным графом стадий, документировать порядок, правила `extend`/`replace`, несколько детекторов на один источник и thread-only стадии.
-4. Подготовить минимальный пример стороннего пакета и проверить editable install/entry point из чистого server-side virtualenv без изменения исходников/переустановки EvilEye.
-5. Проверить конфликт ID, неизвестный module/pipeline, неверную API version, ошибку импорта и требования зависимостей.
+4. [готово] Минимальный внешний пакет установлен editable-режимом в изолированное server-side virtualenv; entry point `evileye.plugins` обнаружен, модуль зарегистрирован без изменения/переустановки EvilEye. В example package указан build backend с PEP 660 поддержкой.
+5. Проверить изолированными сценариями конфликт ID, неизвестный module/pipeline, неверную API version, ошибку импорта и требования зависимостей; часть конфликтов и ошибок уже покрыта тестами реестра.
 
 **Критерий:** builtin и внешний pipeline разрешаются тем же API; сторонний package обнаруживается после перезапуска приложения.
 
@@ -92,12 +88,15 @@
 
 ## Проверки на сервере 2026-10-10
 
-- `tests/unit`: полный набор завершился с `UNIT_EXIT=0`; дополнительный smoke-тест подтвердил создание Configurer при уже установленном multiprocessing `spawn`.
-- `tests/integration`: `311 passed, 42 skipped`; пропуски связаны с отсутствием локального RTSP тест-сервера, тестовой RTSP переменной/пароля, v4l2loopback и выключенными real-data тестами. После итогового summary pytest оставил один multiprocessing worker и не завершил процесс сам; тестовый процесс был остановлен. Причину worker leak ещё нужно локализовать и исправить.
-- Полный API/system запуск с видеофайлом успешен: `PipelineSurveillance`, capture process, YOLO и BoT-SORT стартовали; видео переподключалось в loop; позже `MemoryAttr` показал активный объект; приложение остановлено с кодом 0. При shutdown больше не было `Frame relay publish failed` и ошибок ack от остановленного capture worker.
-- В scratch-каталоге есть 18 MP4 сегментов, суммарно около 84 MB; `ffprobe` прочитал первый сегмент: 4.97 секунды, MPEG-4, 3840×2160.
-- Проверка трёх камер из `configs/vehicle_perpocessing.json`: TCP endpoints доступны, но конфигурация не задаёт пароли; прямой RTSP DESCRIBE возвращает `401 Unauthorized`. Камеры нельзя считать проверенными по видео до предоставления корректных camera credentials/конфигурации. Секреты в документацию не копировались.
-- Web UI загрузился через tunnel и показал «Вход в веб-интерфейс». Корень возвращал HTTP 200; `/api/v1/health` и `/api/v1/state` — 401. Без учетной записи пройти защищённые сценарии и проверить кадр/журнал через UI не удалось.
+- `tests/unit`: полный набор после изменений batch adapter и GStreamer fallback завершился с `exit=0` и дошёл до 100%; остались только warning от установленной версии Albumentations. После завершения pytest оставил 14 orphan `spawn`/`resource_tracker` процессов; их process group и `/tmp` working directory проверены, только эта тестовая группа остановлена. Targeted schema-order tests после этого также прошли.
+- `tests/integration`: все тесты дошли до итогового summary: `311 passed, 42 skipped`; пропуски связаны с отсутствием локального RTSP тест-сервера, тестовой RTSP переменной/пароля, v4l2loopback и выключенными real-data тестами. После summary pytest завис на завершении multiprocessing/thread ресурсов и был остановлен таймаутом. Это остаётся эксплуатационным дефектом тестового shutdown.
+- `configs/poly-cameras-gst.json` прошёл `evileye validate`. Полный запуск трёхкамерного приложения на отдельном порту поднял 3 capture, 5 detector и 5 tracker worker; Web UI root ответил HTTP 200, защищённые `/api/v1/health` и `/api/v1/state` без входа вернули 401. После SIGINT тестовый порт закрылся, оставшихся worker не найдено.
+- Реальное чтение камер проверялось отдельно: OpenCV/FFmpeg получил кадры от `.200` и `.202`, `.199` кадр не отдал. В GStreamer `.200` проходит старт RTSP, а `.199` и `.202` проходят DESCRIBE/SETUP, затем камеры отвечают нестандартным `RTSP 250` на PLAY. Поэтому нельзя считать все три потока рабочими в GStreamer runtime; для двух камер требуется выяснить совместимость PLAY/transport/firmware.
+- Для существующего MP4 MPEG-4 файла прямой OpenCV и прямой GStreamer `decodebin` декодировали 55 кадров. Полный `evileye run` для этой записи завершился с кодом 0: аппаратный decoder fallback и fallback на `decodebin` сработали, pipeline и capture инициализировались, ошибок capture не зарегистрировано. Root Web UI вернул 200, защищённый API — 401, тестовый порт после остановки закрылся. В этом запуске не было достоверного счётчика кадров на уровне приложения, поэтому нужно отдельно добавить/снять end-to-end подтверждение детекции на видеозаписи.
+- В предыдущем system smoke видеозапись проходила через `PipelineSurveillance`, YOLO и BoT-SORT; были сохранены сегменты, `ffprobe` прочитал первый сегмент, а `MemoryAttr` показал активный объект. Последний smoke дополнительно подтвердил новый codec fallback на MPEG-4 файле.
+- Пользовательский внешний пакет из `examples/plugin_package` установлен editable-режимом в отдельное virtualenv с PEP 660 backend. Discovery группы `evileye.plugins` зарегистрировал `example/add-label` с режимами `thread,process`; ядро не переустанавливалось.
+- Site credentials теперь разрешаются относительно корня EvilEye даже при запуске с конфигом из другого каталога; регрессионный unit test закрепляет это поведение. Секреты и URL с учётными данными в этот план не копируются.
+- Web UI загрузился и показал форму входа. Доступ к защищённым API и проверка live/recorded video через авторизованные экраны не выполнены: валидная пользовательская учётная запись для UI не предоставлена.
 
 ## Условие завершения миграции
 

@@ -250,16 +250,15 @@ class ProcessorStep(ProcessorBase):
 
     def _process_mc_trackers_sync(self, input_list) -> list:
         from evileye.core.frame import Frame
-        from evileye.object_multi_camera_tracker.custom_object_tracking import (
-            ObjectMultiCameraTracking,
-        )
         from evileye.object_tracker.tracking_results import TrackingResultList
 
         if not self.processors:
             return []
         mc = self.processors[0]
-        if not isinstance(mc, ObjectMultiCameraTracking):
-            raise RuntimeError("mc_trackers expects ObjectMultiCameraTracking")
+        if not callable(getattr(mc, "process_batch", None)):
+            raise RuntimeError(
+                "mc_trackers expects a batch_processor implementing process_batch(batch, state)"
+            )
 
         batch: dict[int, tuple[TrackingResultList, Frame]] = {}
         for inp in input_list:
@@ -274,7 +273,7 @@ class ProcessorStep(ProcessorBase):
             batch[frame.source_id] = (track_info, frame)
 
         t_mc = time.monotonic()
-        emitted = mc.ingest_tick_batch(batch)
+        emitted = mc.process_batch(batch)
         if self._pipeline_timeline_env:
             acc_ages: dict[int, float] = {}
             acc_fids: dict[int, int | None] = {}
