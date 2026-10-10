@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import logging
+import pickle
+import threading
 import time
 
 import pytest
@@ -8,6 +10,7 @@ import pytest
 from evileye.core.plugin_runtime import (
     BatchProcessorModuleAdapter,
     ItemModuleAdapter,
+    ItemModuleWorker,
     LegacyProcessorModuleAdapter,
     SourceModuleAdapter,
 )
@@ -109,6 +112,19 @@ class _FailingSource:
 
     def close(self):
         pass
+
+
+class _UnpicklableOutputModule:
+    def process_item(self, item, state):
+        return lambda: item
+
+
+class _ProcessQueueSink:
+    def __init__(self):
+        self.items = []
+
+    def put(self, item, **kwargs):
+        self.items.append(item)
 
 
 class _FailingItemModule:
@@ -246,6 +262,94 @@ def test_batch_processor_kind_is_thread_only():
                 modules=(ModuleSpec("merge", "batch_processor", _EchoItemModule, ("process",)),),
             )
         )
+
+
+def _register_process_echo_module(plugin_id):
+    plugin_registry.register_plugin(
+        PluginSpec(
+            plugin_id,
+            PLUGIN_API_VERSION,
+            modules=(
+                ModuleSpec(
+                    "echo",
+                    "processor_item",
+                    _EchoItemModule,
+                    execution_modes=("thread", "process"),
+                ),
+            ),
+        )
+    )
+    module_id = f"{plugin_id}/echo"
+    return ItemModuleAdapter(plugin_registry.get_module(module_id)), module_id
+
+
+def test_process_item_configuration_must_be_serializable_before_start():
+    module, module_id = _register_process_echo_module("test.process-config")
+    module.set_params(
+        module_id=module_id,
+        execution_mode="process",
+        config={"prefix": lambda value: value},
+    )
+
+    with pytest.raises(PluginError, match="configuration must be serializable"):
+        module.init()
+
+
+def test_process_item_rejects_unserializable_input_without_queueing_it():
+    module, module_id = _register_process_echo_module("test.process-input")
+    module.set_params(
+        module_id=module_id,
+        execution_mode="process",
+        config={"prefix": ""},
+    )
+    assert module.init() is True
+    sink = _ProcessQueueSink()
+    module._mp_control = sink
+    module.put({"frame_id": 7})
+    assert sink.items[0][0] == "__evileye_plugin_input__"
+    assert pickle.loads(sink.items[0][1]) == {"frame_id": 7}
+
+    with pytest.raises(PluginError, match="input item must be serializable"):
+        module.put(lambda: None)
+
+    assert module.degraded is True
+    assert len(sink.items) == 1
+    module._mp_control = None
+    module.release()
+
+
+def test_process_item_serializes_worker_output():
+    worker = ItemModuleWorker.__new__(ItemModuleWorker)
+    worker.module_id = "test.process-output/echo"
+    worker.module = _EchoItemModule({"prefix": "result-"})
+    worker.module_state = {"count": 0}
+    worker.logger = logging.getLogger("test.plugin-runtime")
+    worker._stop_event = threading.Event()
+
+    result = worker.worker_impl(
+        ("__evileye_plugin_input__", pickle.dumps("frame"))
+    )
+
+    assert result[:2] == ("__evileye_plugin_runtime__", "output")
+    assert pickle.loads(result[2]) == "result-frame:1"
+
+
+def test_process_item_rejects_unserializable_output_in_worker():
+    worker = ItemModuleWorker.__new__(ItemModuleWorker)
+    worker.module_id = "test.process-output/echo"
+    worker.module = _UnpicklableOutputModule()
+    worker.module_state = None
+    worker.logger = logging.getLogger("test.plugin-runtime")
+    worker._stop_event = threading.Event()
+
+    result = worker.worker_impl(
+        ("__evileye_plugin_input__", pickle.dumps("frame"))
+    )
+
+    assert result[0] == "__evileye_plugin_runtime__"
+    assert result[1] == "error"
+    assert "process_item result must be serializable" in result[2]
+    assert worker._stop_event.is_set()
 
 
 def test_module_rejects_unsupported_execution_mode_before_init():

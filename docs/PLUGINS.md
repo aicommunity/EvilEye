@@ -47,9 +47,12 @@ An item processor is a factory that returns an object implementing
 `process_item(item, state)`. The optional `create_state(config)` method creates
 state inside the selected worker. Both factory and state are initialized in
 the worker, so plugin modules must not depend on parent-process model or device
-objects. For `process` mode the factory must be importable at module scope and
-the configuration, inputs, outputs, and state must be spawn/pickle compatible.
-An optional zero-argument `close()` method on the module or state is called
+objects. For `process` mode the factory must be importable at module scope.
+Configuration is checked before startup. Inputs are serialized synchronously
+before enqueueing, and outputs are serialized in the worker before they reach
+the multiprocessing queue; failures become explicit module errors instead of
+asynchronous queue feeder errors. State remains inside its worker and does not
+cross the process boundary. An optional zero-argument `close()` method on the module or state is called
 when its worker stops; legacy lifecycle modules may use `release()` instead.
 
 ```python

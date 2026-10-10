@@ -7,12 +7,27 @@ import importlib
 import queue
 import threading
 import logging
+import pickle
 from typing import Any
 
 from .base_class import EvilEyeBase
 from .mp_worker import MpWorker
 from .plugins import PluginError, plugin_registry
 from .mp_context import get_spawn_context
+
+
+_PROCESS_INPUT_MARKER = "__evileye_plugin_input__"
+_PROCESS_OUTPUT_MARKER = "__evileye_plugin_runtime__"
+
+
+def _serialize_process_value(value: Any, module_id: str, label: str) -> bytes:
+    try:
+        return pickle.dumps(value, protocol=pickle.HIGHEST_PROTOCOL)
+    except Exception as exc:
+        raise PluginError(
+            f"Module '{module_id}' {label} must be serializable for process "
+            f"execution: {exc}"
+        ) from exc
 
 
 def _call_factory(factory, config: dict[str, Any]):
@@ -100,16 +115,33 @@ class ItemModuleWorker(MpWorker):
             raise
 
     def worker_impl(self, data):
+        if not (
+            isinstance(data, tuple)
+            and len(data) == 2
+            and data[0] == _PROCESS_INPUT_MARKER
+        ):
+            self._stop_event.set()
+            return (_PROCESS_OUTPUT_MARKER, "error", "invalid serialized input envelope")
         try:
-            result = self.module.process_item(data, self.module_state)
+            item = pickle.loads(data[1])
+            result = self.module.process_item(item, self.module_state)
         except Exception as exc:
             if self.logger:
                 self.logger.exception("Plugin module %s failed while processing item", self.module_id)
             self._stop_event.set()
-            return ("__evileye_plugin_runtime__", "error", str(exc))
+            return (_PROCESS_OUTPUT_MARKER, "error", str(exc))
         if result is None:
             return None
-        return ("__evileye_plugin_runtime__", "output", result)
+        try:
+            serialized_result = _serialize_process_value(
+                result, self.module_id, "process_item result"
+            )
+        except PluginError as exc:
+            if self.logger:
+                self.logger.error("%s", exc)
+            self._stop_event.set()
+            return (_PROCESS_OUTPUT_MARKER, "error", str(exc))
+        return (_PROCESS_OUTPUT_MARKER, "output", serialized_result)
 
     def get_spawn_state(self) -> dict[str, Any]:
         return {
@@ -201,6 +233,10 @@ class ItemModuleAdapter(EvilEyeBase):
                 f"Module '{self.module_id}' does not support execution_mode="
                 f"'{self.execution_mode}'"
             )
+        if self.execution_mode == "process":
+            _serialize_process_value(
+                self._config, self.module_id, "configuration"
+            )
         self.registered_module = registered
         return True
 
@@ -279,24 +315,39 @@ class ItemModuleAdapter(EvilEyeBase):
 
     def put(self, item):
         try:
-            if self._mp_control is not None:
-                self._mp_control.put(item, block=False)
+            if self.execution_mode == "process":
+                if self._mp_control is None:
+                    raise RuntimeError(
+                        f"Process module '{self.module_id}' is not started"
+                    )
+                serialized_item = _serialize_process_value(
+                    item, self.module_id, "input item"
+                )
+                self._mp_control.put(
+                    (_PROCESS_INPUT_MARKER, serialized_item), block=False
+                )
             else:
                 self._input_queue.put_nowait(item)
         except queue.Full:
             self.degraded = True
             self.logger.error("Plugin module %s input queue is full", self.module_id)
             raise RuntimeError(f"Plugin module '{self.module_id}' input queue is full")
+        except PluginError as exc:
+            self.degraded = True
+            self.logger.error("%s", exc)
+            raise
 
     def get(self):
         self._check_process_health()
         try:
-            if self._mp_control is not None:
+            if self.execution_mode == "process":
+                if self._mp_control is None:
+                    return None
                 result = self._mp_control.get_nowait()
                 if (
                     isinstance(result, tuple)
                     and len(result) == 3
-                    and result[0] == "__evileye_plugin_runtime__"
+                    and result[0] == _PROCESS_OUTPUT_MARKER
                 ):
                     if result[1] == "error":
                         self.degraded = True
@@ -304,8 +355,29 @@ class ItemModuleAdapter(EvilEyeBase):
                             "Plugin module %s failed in worker: %s", self.module_id, result[2]
                         )
                         return None
-                    return result[2]
-                return result
+                    if result[1] == "output":
+                        try:
+                            return pickle.loads(result[2])
+                        except Exception as exc:
+                            self.degraded = True
+                            self.logger.error(
+                                "Plugin module %s returned an invalid serialized output: %s",
+                                self.module_id,
+                                exc,
+                            )
+                            return None
+                    self.degraded = True
+                    self.logger.error(
+                        "Plugin module %s returned an unknown process envelope",
+                        self.module_id,
+                    )
+                    return None
+                self.degraded = True
+                self.logger.error(
+                    "Plugin module %s returned an invalid process envelope",
+                    self.module_id,
+                )
+                return None
             return self._output_queue.get_nowait()
         except queue.Empty:
             self._check_process_health()
