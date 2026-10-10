@@ -149,6 +149,14 @@ class _FailingItemModule:
         raise RuntimeError("intentional test failure")
 
 
+class _FailingStateItemModule:
+    def create_state(self, config):
+        raise RuntimeError("intentional state initialization failure")
+
+    def process_item(self, item, state):
+        return item
+
+
 class _CloseAwareItemModule:
     def __init__(self, config=None):
         self.marker_path = (config or {})["marker_path"]
@@ -1007,3 +1015,35 @@ def test_legacy_source_worker_alive_after_stop_marks_runtime_degraded():
 
     assert adapter.degraded is True
     assert adapter._backend_worker_exitcodes == [None]
+
+
+@pytest.mark.parametrize("execution_mode", ["thread", "process"])
+def test_item_module_state_initialization_failure_is_visible(execution_mode):
+    plugin_id = f"test.init-failure-{execution_mode}"
+    spec = ModuleSpec(
+        "failure",
+        "processor_item",
+        _FailingStateItemModule,
+        execution_modes=(execution_mode,),
+    )
+    registered = RegisteredModule(plugin_id, spec)
+    plugin_registry.register_plugin(
+        PluginSpec(plugin_id, PLUGIN_API_VERSION, modules=(spec,))
+    )
+    adapter = ItemModuleAdapter(registered)
+    adapter.set_params(
+        module_id=registered.qualified_id,
+        execution_mode=execution_mode,
+    )
+    assert adapter.init() is True
+    adapter.start()
+    try:
+        deadline = time.monotonic() + (15.0 if execution_mode == "process" else 2.0)
+        while time.monotonic() < deadline:
+            adapter.get()
+            if adapter.get_runtime_stats()["degraded"]:
+                break
+            time.sleep(0.02)
+        assert adapter.get_runtime_stats()["degraded"] is True
+    finally:
+        adapter.stop()

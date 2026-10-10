@@ -125,7 +125,18 @@ class ItemModuleWorker(MpWorker):
             self.module_state = _create_state(
                 self.module, self.config, self.runtime_context
             )
-        except Exception:
+        except Exception as exc:
+            try:
+                self.output_queue.put(
+                    (_PROCESS_OUTPUT_MARKER, "error", f"Worker initialization failed: {exc}"),
+                    timeout=1.0,
+                )
+            except Exception:
+                if self.logger:
+                    self.logger.exception(
+                        "Plugin module %s could not report worker initialization failure",
+                        self.module_id,
+                    )
             _close_item_resources(self.module, self.module_state, self.logger, self.module_id)
             self.module = None
             self.module_state = None
