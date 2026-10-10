@@ -8,6 +8,7 @@ import numpy as np
 from ..core.base_class import EvilEyeBase
 from ..core.plugins import register_module
 from ..core.tracking_dto import ensure_tracking_result_list
+from ..object_tracker.tracking_results import TrackingResultList
 
 from ..core.processor_base import (
     DEFAULT_EXECUTION_MODE,
@@ -18,8 +19,8 @@ from ..core.processor_base import (
 
 @register_module(
     "AttributeClassifier",
-    kind="attribute",
-    capabilities=("legacy_processor_protocol",),
+    kind="processor_item",
+    capabilities=("accepts_frame_handle",),
     execution_modes=("thread", "process"),
     default_execution_mode="process",
 )
@@ -29,6 +30,8 @@ class AttributeClassifier(EvilEyeBase):
     Supports both thread and process execution modes via the
     ``execution_mode`` configuration parameter
     """
+
+    ResultType = TrackingResultList
 
     def __init__(self):
         super().__init__()
@@ -52,6 +55,105 @@ class AttributeClassifier(EvilEyeBase):
         self.processing_thread = None
 
         self._mp_control = None
+        self._plugin_frame_transport = None
+
+    def create_state(self, config, context=None):
+        """Initialize the classifier and model inside its runtime worker."""
+        config = dict(config or {})
+        self.enabled = bool(config.get("enabled", True))
+        self.model_path = config.get("model", "models/yolo11n.pt")
+        self.attrs = list(config.get("attrs", []) or [])
+        self.conf_threshold = float(config.get("conf_threshold", 0.5))
+        self.inference_size = int(config.get("inference_size", 224))
+        self.attr_class_mapping = {}
+        class_mapping = config.get("class_mapping") or {}
+        if class_mapping:
+            for attr_name, class_id in class_mapping.items():
+                if attr_name in self.attrs:
+                    self.attr_class_mapping[int(class_id)] = attr_name
+        else:
+            self.attr_class_mapping = {
+                class_id: attr_name
+                for class_id, attr_name in enumerate(self.attrs)
+            }
+
+        self._plugin_frame_transport = None
+        self._yolo_runtime.release()
+        if self.enabled:
+            self._yolo_runtime.configure(
+                self.model_path,
+                list(self.attr_class_mapping),
+                {
+                    "conf": self.conf_threshold,
+                    "imgsz": self.inference_size,
+                    "half": False,
+                },
+            )
+            self._yolo_runtime.load()
+            if self._yolo_runtime.model is None:
+                raise RuntimeError(
+                    f"AttributeClassifier failed to load model '{self.model_path}'"
+                )
+        return self
+
+    def _plugin_frame_image(self, frame):
+        image = getattr(frame, "image", None)
+        if image is not None:
+            return image
+        handle = getattr(frame, "frame_handle", None)
+        if handle is None:
+            handle = getattr(frame, "frame_ref", None)
+        if handle is None:
+            raise RuntimeError(
+                "AttributeClassifier frame has neither image nor shared-frame handle"
+            )
+        if self._plugin_frame_transport is None:
+            from ..core.frame_transport import SharedFrameTransport
+
+            self._plugin_frame_transport = SharedFrameTransport()
+        image = self._plugin_frame_transport.get_frame_view(handle)
+        if image is None or getattr(image, "size", 0) == 0:
+            raise RuntimeError(
+                f"AttributeClassifier could not read shared frame {handle.shm_name}"
+            )
+        return image
+
+    def process_item(self, item, state):
+        """Attach ROI attributes to one ``(TrackingResultList, Frame)`` pair."""
+        if not isinstance(item, (list, tuple)) or len(item) < 2:
+            raise TypeError("AttributeClassifier expects (tracking_data, frame)")
+        tracking_data, frame = item[0], item[1]
+        if frame is None:
+            raise ValueError("AttributeClassifier received an empty frame")
+        if not state.enabled:
+            if isinstance(item, tuple):
+                return tracking_data, frame
+            return [tracking_data, frame]
+
+        tracking_data = ensure_tracking_result_list(tracking_data)
+        roi_data = getattr(tracking_data, "roi_data", None) or []
+        if roi_data:
+            image = state._plugin_frame_image(frame)
+            for roi_info in roi_data:
+                track_id = roi_info.get("track_id")
+                roi_bbox = roi_info.get("roi_bbox")
+                if track_id is None or roi_bbox is None:
+                    continue
+                roi_image = state._crop_roi(image, roi_bbox)
+                if roi_image is None:
+                    continue
+                attr_results = state._classify_roi_with_detector(roi_image)
+                if not hasattr(tracking_data, "attr_results"):
+                    tracking_data.attr_results = {}
+                tracking_data.attr_results[track_id] = attr_results
+
+        if isinstance(item, tuple):
+            return tracking_data, frame
+        return [tracking_data, frame]
+
+    def close(self):
+        self._yolo_runtime.release()
+        self._plugin_frame_transport = None
 
     def set_params_impl(self):
         self.enabled = self.params.get('enabled', True)
@@ -317,7 +419,8 @@ class AttributeClassifier(EvilEyeBase):
                     }
             return attr_results
         except Exception:
-            return {}
+            self.logger.exception("AttributeClassifier inference failed for ROI")
+            raise
 
     def get_source_ids(self):
         return self.params.get('source_ids', [0])

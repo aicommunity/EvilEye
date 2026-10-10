@@ -22,7 +22,7 @@
 
 ### Что пока остаётся legacy или отдельной реализацией
 
-- Семь manifest modules всё ещё заявляют `legacy_*_protocol` и используют специализированные внутренние worker/backend протоколы: два источника, три семейства детекторов (YOLO, RT-DETR, RF-DETR), два модуля атрибутов. `ObjectDetectorYoloMp` теперь только legacy config alias канонического YOLO модуля. SPI-адаптеры дают оставшимся модулям общий внешний контракт, но не заменяют их внутренние протоколы.
+- Шесть manifest modules всё ещё заявляют `legacy_*_protocol` и используют специализированные внутренние worker/backend протоколы: два источника, три семейства детекторов (YOLO, RT-DETR, RF-DETR) и AttributeDetector. `ObjectDetectorYoloMp` теперь только legacy config alias канонического YOLO модуля. SPI-адаптеры дают оставшимся модулям общий внешний контракт, но не заменяют их внутренние протоколы.
 - `ObjectMultiCameraTracking` переведён на `kind="batch_processor"` и публичный `IBatchProcessor.process_batch(batch, state)`. Общий адаптер создаёт модуль и вызывает batch-контракт; исполнение пока только потоковое.
 - Event detectors регистрируются через общий `PluginRegistry`, но жизненный цикл и подписки на `ObjectsHandler` всё ещё управляются `EventsService`; у этой стадии нет общего worker/health-контракта.
 - `PipelineSurveillance`, `PipelineCapture` и `PipelineDeclarative` уже регистрируются как встроенные `PipelineSpec`. `PipelineService` разрешает их через реестр; `pipeline_class` остаётся совместимым именем. Ошибка неизвестного класса не должна переключать запуск на другой пайплайн.
@@ -48,7 +48,7 @@
 
 1. [частично] Устранён отдельный YOLO-MP manifest: `ObjectDetectorYoloMp` разрешается как config alias на `ObjectDetectorYolo`, а `execution_mode` выбирает один канонический runtime. Сам `ObjectDetectorYolo` и семейства RT-DETR/RF-DETR ещё нужно перевести на общий item runtime: вход `Frame`/DTO, состояние worker, унифицированный выход detections/debug metadata.
 2. [частично] BoT-SORT использует item runtime и хранит отдельный tracker на source_id; уменьшение frame_id сбрасывает состояние при rewind/loop. Capture пока не публикует единый признак reconnect, поэтому точный сброс по переподключению остаётся за этапом C.
-3. Перевести AttributeDetector и AttributeClassifier на item runtime после tracker stage; проверить передачу `track_id`, `source_id`, ROI и истории атрибутов.
+3. [частично] AttributeClassifier использует item runtime после tracker stage; проверена передача `track_id`, `source_id`, ROI, output frame и shared-frame handle. AttributeDetector ещё требует миграции.
 4. После каждой группы убрать `legacy_processor_protocol` у соответствующих manifests, не удаляя compatibility `type` aliases.
 5. Для каждого модуля сравнить старую и новую реализацию на фиксированных видео/кадрах: detection classes/confidence, track continuity, attributes, порядок кадров и сохранённые DTO.
 
@@ -109,6 +109,7 @@
   `tests/unit/core/test_plugin_registry.py`; весь тестовый файл прошёл, после него
   не осталось `pytest`, `resource_tracker` или `spawn_main` процессов.
 
+- AttributeClassifier переведён на `processor_item`: конфигурация и модель создаются в worker, ROI берутся из `TrackingResultList.roi_data`, `attr_results` индексируются по `track_id`; process worker читает shared frame без его уничтожения. Ошибки inference теперь попадают в runtime diagnostics. Дополнительно пройден opt-in integration smoke с реальной `yolo11n.pt`: spawn worker обработал ROI из shared-frame handle, вернул атрибут по `track_id` и сохранил handle; сценарий закреплён в `tests/integration/attributes/test_attribute_classifier_process.py`.
 - BoT-SORT переведён на `processor_item`: thread и spawn process используют один контракт, runtime state изолирован по `source_id`, shared-frame handle читается без уничтожения. Unit-проверки подтверждают per-source state, reset на rewind, пустые результаты в thread/process и сериализацию реального tracking result в spawn worker. Pipeline загружает encoder только для legacy thread tracker; item worker создаёт его у себя. Полный `tests/unit` после миграции завершился с `exit=0` и дошёл до 100%; после прогона не осталось `pytest`, `resource_tracker` или `spawn_main` процессов.
 - Для item-модулей добавлен `IModelClassMappingProvider` с обязательной capability
   `model_class_mapping`: адаптер собирает таблицу классов из thread worker или
