@@ -79,7 +79,7 @@
 2. [готово] `pipeline_class` сохранён как compatibility alias; неизвестный выбранный pipeline приводит к диагностируемой ошибке без fallback.
 3. [готово] Оставить `PipelineSurveillance` фиксированным графом стадий; порядок, правила `extend`/`replace`, несколько детекторов на один источник и ограничения thread-only стадий описаны в `PLUGINS.md` и `PIPELINE_ARCHITECTURE.md`.
 4. [готово] Минимальный внешний пакет установлен editable-режимом в изолированное server-side virtualenv; entry point `evileye.plugins` обнаружен, модуль зарегистрирован без изменения/переустановки EvilEye. В example package указан build backend с PEP 660 поддержкой.
-5. Проверить изолированными сценариями конфликт ID, неизвестный module/pipeline, неверную API version, ошибку импорта и требования зависимостей; часть конфликтов и ошибок уже покрыта тестами реестра.
+5. [частично] Контрактные тесты покрывают конфликт ID, неизвестный module/pipeline, неверную API version, ошибку импорта, неверный IPipeline и отказ без fallback. Отдельная проверка диагностики отсутствующих package dependencies остаётся.
 
 **Критерий:** builtin и внешний pipeline разрешаются тем же API; сторонний package обнаруживается после перезапуска приложения.
 
@@ -103,6 +103,8 @@
 - Пользовательский внешний пакет из `examples/plugin_package` установлен editable-режимом в отдельное virtualenv с PEP 660 backend. Discovery группы `evileye.plugins` зарегистрировал `example/add-label` с режимами `thread,process`; ядро не переустанавливалось.
 - Site credentials теперь разрешаются относительно корня EvilEye даже при запуске с конфигом из другого каталога; регрессионный unit test закрепляет это поведение. Секреты и URL с учётными данными в этот план не копируются.
 - Web UI загрузился и показал форму входа. Доступ к защищённым API и проверка live/recorded video через авторизованные экраны не выполнены: валидная пользовательская учётная запись для UI не предоставлена.
+- `tests/unit` после source health, frame connection generation и BoT-SORT reset завершился на 100%; после прогона фоновых `pytest`, `resource_tracker`, `spawn_main`, `MpWorkerCapture` и `PluginSource` процессов не осталось. OpenCV loop integration на spawn capture подтвердил передачу connection generation в кадре и runtime health.
+- Невалидный сторонний `PipelineSpec` проверяется отдельно: `PipelineService` сообщает об отсутствии методов `IPipeline` и не подставляет встроенный pipeline. Тест вместе с registry и custom-pipeline тестами прошёл.
 
 - Проверен init-failure путь `processor_item`: process worker теперь публикует
   явную ошибку в runtime output envelope, когда фабрика или `create_state` падает
