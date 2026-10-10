@@ -44,7 +44,10 @@ def test_opencv_builtin_source_uses_spi_adapter_with_capture_backend(tmp_path, b
     try:
         assert source.init() is True
         assert source.execution_mode == "thread"
-        assert source.get_runtime_stats()["backend_execution_mode"] == backend_mode
+        source_stats = source.get_runtime_stats()
+        assert source_stats["backend_execution_mode"] == backend_mode
+        assert source_stats["capture_health"]["disconnect_count"] == 0
+        assert source_stats["capture_health"]["reconnect_count"] == 0
         assert source._module.subscribers == [subscriber]
         source.start()
 

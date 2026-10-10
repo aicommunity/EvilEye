@@ -48,7 +48,7 @@
 ### Этап B. Удалить legacy processor adapter по семействам
 
 1. [частично] ObjectDetectorYolo переведён на processor_item: вход Frame/DTO, worker-local модель, ROI и class filtering, DetectionResultList; thread и spawn-process используют общий runtime. ObjectDetectorYoloMp сохраняется как alias. num_detection_threads отображается на worker_count и ordered worker pool возвращает результаты в порядке входа. При нескольких worker-ах vid_stride > 1 отклоняется, так как stride-счётчик локален worker-у. RT-DETR также переведён на item runtime; RF-DETR также использует item runtime и передаёт native Supervision detections без Ultralytics-совместимого преобразования.
-2. [частично] BoT-SORT использует item runtime и хранит отдельный tracker на source_id; уменьшение frame_id сбрасывает состояние при rewind/loop. Capture пока не публикует единый признак reconnect, поэтому точный сброс по переподключению остаётся за этапом C.
+2. [частично] BoT-SORT использует item runtime и хранит отдельный tracker на source_id; уменьшение frame_id сбрасывает состояние при rewind/loop. Capture теперь публикует disconnect/reconnect events и persistent health counters; сброс tracker state по этим событиям ещё нужно подключить и проверить.
 3. [частично] AttributeDetector и AttributeClassifier используют item runtime. AttributeDetector сохраняет конфигурацию модели, class mapping, per-class thresholds и ROI; AttributeClassifier обогащает tracker result по `track_id`. Thread/process и реальные модели проверены smoke-тестами; сравнение результата на фиксированном видео с прежней реализацией остаётся.
 4. После каждой группы убрать `legacy_processor_protocol` у соответствующих manifests, не удаляя compatibility `type` aliases.
 5. Для каждого модуля сравнить старую и новую реализацию на фиксированных видео/кадрах: detection classes/confidence, track continuity, attributes, порядок кадров и сохранённые DTO.
@@ -57,9 +57,9 @@
 
 ### Этап C. Мигрировать источники без потери capture-функций
 
-1. [частично] `VideoCaptureBase` предоставляет общий `open/read/close`, а кадры используют общий `CaptureImage`; единая модель размеров и reconnect state ещё не оформлена.
+1. [частично] `VideoCaptureBase` предоставляет общий `open/read/close`, а кадры используют общий `CaptureImage`. `get_capture_health()` публикует состояние, persistent disconnect/reconnect counters, последнюю смену состояния и dropped frames; единая модель размеров ещё не оформлена.
 2. [готово] OpenCV и GStreamer подключены к source SPI через `SourceModuleAdapter`. Их codec handling, reconnect, split/crop, запись сегментов, ограниченные очереди и shared-frame capture остаются в специализированных backend-ах.
-3. [частично] Для встроенных capture backend-ов режим `thread/process` исполняется их собственным backend-ом; сторонние source plugins используют общий thread/spawn runtime. Нужны общие диагностические метрики reconnect и worker health.
+3. [частично] Для встроенных capture backend-ов режим `thread/process` исполняется их собственным backend-ом; сторонние source plugins используют общий thread/spawn runtime. `SourceModuleAdapter` публикует capture health и `MpControl` worker metrics. В process-режиме disconnect/reconnect фиксируются по переходам доступности кадров в parent proxy; внутренние быстрые reconnect-попытки дочернего backend-а не передаются отдельно.
 4. [частично] Остановка проверена в thread/process тестах и полном unit suite без оставшихся worker-ов. Проверки RTSP/GStreamer зависят от доступности backend-а и камеры.
 
 **Проверки:** видеофайл, loop/reconnect, синтетический RTSP и доступные реальные камеры; запись и ffprobe; проверка отсутствия worker, сокетов и очередей после stop.

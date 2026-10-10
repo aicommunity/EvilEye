@@ -81,6 +81,9 @@ class VideoCaptureBase(EvilEyeBase):
         self.conn_mutex = RLock()
         self.disconnects = []
         self.reconnects = []
+        self._disconnect_count = 0
+        self._reconnect_count = 0
+        self._last_connection_transition = None
         self.subscribers = []
         self._first_pts_ns: int | None = None
 
@@ -483,10 +486,10 @@ class VideoCaptureBase(EvilEyeBase):
             return
         try:
             if not self._mp_control.is_alive():
-                self.is_working = False
+                self._set_process_mode_working(False)
                 return
         except Exception:
-            self.is_working = False
+            self._set_process_mode_working(False)
             return
 
         timeout_sec = float(
@@ -497,9 +500,9 @@ class VideoCaptureBase(EvilEyeBase):
 
         if self._mp_last_frame_mono > 0.0:
             if (now_mono - self._mp_last_frame_mono) <= timeout_sec:
-                self.is_working = True
+                self._set_process_mode_working(True)
             elif self.source_type == CaptureDeviceType.IpCamera:
-                self.is_working = False
+                self._set_process_mode_working(False)
             return
 
         # Worker alive, no frames yet: optimistic during init grace, then down for IP cameras.
@@ -509,16 +512,34 @@ class VideoCaptureBase(EvilEyeBase):
         )
         started_mono = self._mp_worker_started_mono or now_mono
         if (now_mono - started_mono) <= grace_sec:
-            self.is_working = True
+            self._set_process_mode_working(True)
         elif self.source_type == CaptureDeviceType.IpCamera:
-            self.is_working = False
+            self._set_process_mode_working(False)
+
+    def _set_process_mode_working(self, working: bool) -> None:
+        """Update parent health and publish observed process-mode transitions."""
+        with self.conn_mutex:
+            was_working = self.is_working
+            self.is_working = working
+            # The init grace period is optimistic, so only count transitions
+            # after the worker has produced at least one frame.
+            has_received_frame = self._mp_last_frame_mono > 0.0
+            if not was_working and working and has_received_frame:
+                self._record_reconnect()
+            elif was_working and not working and has_received_frame:
+                self._record_disconnect()
 
     def _touch_process_mode_frame_activity(self) -> None:
         """Mark capture healthy when a frame arrives from the MP worker."""
         if self.execution_mode != EXEC_MODE_PROCESS:
             return
+        had_received_frame = self._mp_last_frame_mono > 0.0
         self._mp_last_frame_mono = time.monotonic()
-        self.is_working = True
+        with self.conn_mutex:
+            was_working = self.is_working
+            self.is_working = True
+            if had_received_frame and not was_working:
+                self._record_reconnect()
         self.is_inited = True
         self.last_frame_time = datetime.datetime.now()
 
@@ -783,14 +804,16 @@ class VideoCaptureBase(EvilEyeBase):
         return params
 
     def get_disconnects_info(self) -> list[tuple[str, datetime.datetime, bool]]:
-        disconnects = copy.deepcopy(self.disconnects)
-        self.disconnects = []
-        return disconnects
+        with self.conn_mutex:
+            disconnects = copy.deepcopy(self.disconnects)
+            self.disconnects.clear()
+            return disconnects
 
     def get_reconnects_info(self) -> list[tuple[str, datetime.datetime, bool]]:
-        reconnects = copy.deepcopy(self.reconnects)
-        self.reconnects = []
-        return reconnects
+        with self.conn_mutex:
+            reconnects = copy.deepcopy(self.reconnects)
+            self.reconnects.clear()
+            return reconnects
 
     def _camera_event_identity(self) -> str:
         """Stream name(s) for CameraEvent; never embed RTSP credentials."""
@@ -801,13 +824,39 @@ class VideoCaptureBase(EvilEyeBase):
             address=getattr(self, "source_address", None) or (self.params or {}).get("camera"),
         )
 
+    def get_capture_health(self) -> dict:
+        """Return persistent connection counters without consuming event queues."""
+        with self.conn_mutex:
+            transition = copy.deepcopy(self._last_connection_transition)
+            return {
+                "working": bool(self.is_working),
+                "disconnect_count": self._disconnect_count,
+                "reconnect_count": self._reconnect_count,
+                "last_transition": transition,
+                "dropped_frames": int(self.dropped_frames),
+            }
+
     def _record_disconnect(self, timestamp: datetime.datetime | None = None) -> None:
         ts = timestamp or datetime.datetime.now()
-        self.disconnects.append((self._camera_event_identity(), ts, self.is_working))
+        identity = self._camera_event_identity()
+        with self.conn_mutex:
+            self.disconnects.append((identity, ts, self.is_working))
+            self._disconnect_count += 1
+            self._last_connection_transition = {
+                "kind": "disconnect",
+                "timestamp": ts.isoformat(),
+            }
 
     def _record_reconnect(self, timestamp: datetime.datetime | None = None) -> None:
         ts = timestamp or datetime.datetime.now()
-        self.reconnects.append((self._camera_event_identity(), ts, self.is_working))
+        identity = self._camera_event_identity()
+        with self.conn_mutex:
+            self.reconnects.append((identity, ts, self.is_working))
+            self._reconnect_count += 1
+            self._last_connection_transition = {
+                "kind": "reconnect",
+                "timestamp": ts.isoformat(),
+            }
 
     @staticmethod
     def reconstruct_url(url_parsed_info: ParseResult, username: str | None, password: str | None) -> str:

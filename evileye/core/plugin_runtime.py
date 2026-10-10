@@ -1764,10 +1764,29 @@ class SourceModuleAdapter(EvilEyeBase):
                     self.degraded = True
             except Exception:
                 pass
+        capture_health = None
+        module = self.__dict__.get("_module")
+        get_capture_health = getattr(module, "get_capture_health", None)
+        if callable(get_capture_health):
+            try:
+                capture_health = get_capture_health()
+            except Exception as exc:
+                self.degraded = True
+                self.logger.error("Source %s health query failed: %s", self.module_id, exc)
+        backend_metrics = None
+        get_metrics = getattr(control, "get_metrics", None)
+        if callable(get_metrics):
+            try:
+                backend_metrics = get_metrics()
+            except Exception as exc:
+                self.degraded = True
+                self.logger.error("Source %s backend metrics failed: %s", self.module_id, exc)
         return {
             "module_id": self.module_id,
             "execution_mode": self.execution_mode,
             "backend_execution_mode": self._backend_execution_mode,
+            "capture_health": capture_health,
+            "backend_worker_metrics": backend_metrics,
             "backend_worker_running": backend_running,
             "backend_worker_exitcodes": self._backend_worker_exitcodes,
             "worker_running": self.is_running(),

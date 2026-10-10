@@ -104,3 +104,45 @@ def test_dead_worker_marks_not_working():
     cap.is_working = True
     cap.sync_process_mode_health()
     assert cap.is_working is False
+
+
+def test_stale_process_capture_records_one_disconnect(monkeypatch):
+    cap = _process_capture()
+    now = 5000.0
+    monkeypatch.setattr(time, "monotonic", lambda: now)
+    cap._mp_last_frame_mono = now - CaptureConstants.FRAME_TIMEOUT_SECONDS - 1.0
+    cap.is_working = True
+
+    cap.sync_process_mode_health()
+    cap.sync_process_mode_health()
+
+    assert cap.get_capture_health()["disconnect_count"] == 1
+    assert len(cap.get_disconnects_info()) == 1
+
+
+def test_frame_after_stale_process_capture_records_reconnect(monkeypatch):
+    cap = _process_capture()
+    now = 6000.0
+    monkeypatch.setattr(time, "monotonic", lambda: now)
+    cap._mp_last_frame_mono = now - CaptureConstants.FRAME_TIMEOUT_SECONDS - 1.0
+    cap.is_working = True
+
+    cap.sync_process_mode_health()
+    cap._touch_process_mode_frame_activity()
+
+    health = cap.get_capture_health()
+    assert health["disconnect_count"] == 1
+    assert health["reconnect_count"] == 1
+    assert health["last_transition"]["kind"] == "reconnect"
+
+
+def test_first_process_frame_does_not_count_as_reconnect(monkeypatch):
+    cap = _process_capture()
+    monkeypatch.setattr(time, "monotonic", lambda: 7000.0)
+    cap.is_working = False
+
+    cap._touch_process_mode_frame_activity()
+
+    health = cap.get_capture_health()
+    assert health["disconnect_count"] == 0
+    assert health["reconnect_count"] == 0
