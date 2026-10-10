@@ -1,5 +1,6 @@
 from .object_detection_base import ModelBasedDetectorBase
 from ..core.base_class import EvilEyeBase
+from ..core.plugins import register_module
 from ..core.logger import get_module_logger
 
 # Determine whether RF-DETR should be registered on this platform
@@ -45,9 +46,10 @@ class ObjectDetectorRfdetr(ModelBasedDetectorBase):
 
 # Apply registration only if supported
 if _SUPPORT_RFDETR:
-    ObjectDetectorRfdetr = EvilEyeBase.register(
+    ObjectDetectorRfdetr = register_module(
         "ObjectDetectorRfdetr",
         kind="detector",
+        execution_modes=("thread", "process"),
         capabilities=("legacy_processor_protocol",),
     )(ObjectDetectorRfdetr)
 else:

@@ -195,11 +195,11 @@ def test_remove_track(attribute_manager):
     
     # Добавляем атрибут
     attribute_manager.update(track_id, attr_name, True, 0.8, now_ts, 100)
-    assert track_id in attribute_manager._attr_by_track
+    assert (None, track_id) in attribute_manager._attr_by_track
     
     # Удаляем трек
     attribute_manager.remove_track(track_id)
-    assert track_id not in attribute_manager._attr_by_track
+    assert (None, track_id) not in attribute_manager._attr_by_track
 
 
 @pytest.fixture

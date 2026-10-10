@@ -114,6 +114,28 @@ class SecurityHeadersMiddleware(BaseHTTPMiddleware):
         return response
 
 
+def _shutdown_runtime_components() -> None:
+    """Stop producers before closing the Unix relay they publish to."""
+    try:
+        get_config_run_manager().shutdown()
+    except Exception as exc:
+        logger.error("Error during ConfigRunManager shutdown: %s", exc)
+
+    try:
+        from evileye.core.runtime_services import get_pipeline_manager
+
+        get_pipeline_manager().shutdown()
+    except Exception as exc:
+        logger.error("Error during PipelineManager shutdown: %s", exc)
+
+    try:
+        from evileye.api.core.internal_unix import stop_internal_unix_server
+
+        stop_internal_unix_server()
+    except Exception as exc:
+        logger.error("Error during internal Unix server shutdown: %s", exc)
+
+
 @asynccontextmanager
 async def lifespan(_app: FastAPI):
     logger.info("FastAPI lifespan startup")
@@ -241,17 +263,8 @@ async def lifespan(_app: FastAPI):
             await get_live_preview_hub().stop()
         except Exception:
             pass
-        try:
-            from evileye.api.core.internal_unix import stop_internal_unix_server
-
-            stop_internal_unix_server()
-        except Exception:
-            pass
         logger.info("FastAPI lifespan shutdown")
-        try:
-            get_config_run_manager().shutdown()
-        except Exception as e:
-            logger.error(f"Error during ConfigRunManager shutdown: {e}")
+        _shutdown_runtime_components()
 
 def _cors_origins(web_auth) -> list[str]:
     raw = os.getenv("EVILEYE_CORS_ALLOW_ORIGINS", "*")

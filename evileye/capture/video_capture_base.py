@@ -136,6 +136,8 @@ class VideoCaptureBase(EvilEyeBase):
             and not self._running_inside_mp_worker()
         ):
             self.is_inited = self._init_process_mode()
+            if self.is_inited:
+                self.sync_process_mode_health()
             return self.is_inited
         return super().init(**kwargs)
 
@@ -150,6 +152,7 @@ class VideoCaptureBase(EvilEyeBase):
             return False
 
     def get(self) -> list[CaptureImage]:
+        self.sync_process_mode_health()
         captured_images: list[CaptureImage] = []
         if self.get_init_flag():
             if self.execution_mode == EXEC_MODE_PROCESS:
@@ -462,7 +465,7 @@ class VideoCaptureBase(EvilEyeBase):
                 and payload
                 and payload[0] == CAPTURE_DONE_MESSAGE
             ):
-                if not self._send_capture_worker_command((CAPTURE_DRAIN_ACK_MESSAGE,)):
+                if not self._send_capture_worker_command((CAPTURE_DRAIN_ACK_MESSAGE,)) and self.run_flag:
                     self.logger.error(
                         "Could not acknowledge capture frame drain for %s", self.source_names
                     )
@@ -473,7 +476,7 @@ class VideoCaptureBase(EvilEyeBase):
             if isinstance(payload, dict) and payload.get("frame_handle") is not None:
                 if not self._send_capture_worker_command(
                     (CAPTURE_FRAME_ACK_MESSAGE, payload["frame_handle"])
-                ):
+                ) and self.run_flag:
                     self.logger.warning(
                         "Could not acknowledge process frame for %s", self.source_names
                     )
@@ -696,7 +699,7 @@ class VideoCaptureBase(EvilEyeBase):
         if self.params and 'type' in self.params:
             params['type'] = self.params['type']
         else:
-            # Use class name - this is the registered name in EvilEyeBase._registry
+            # Use module id - factories are resolved through PluginRegistry
             params['type'] = self.__class__.__name__
         record_cfg = self._recording_config_dict()
         if record_cfg is not None:

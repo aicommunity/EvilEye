@@ -1,11 +1,13 @@
 from .object_detection_base import ModelBasedDetectorBase
 from ..core.base_class import EvilEyeBase
+from ..core.plugins import register_module
 
 
-@EvilEyeBase.register(
+@register_module(
     "ObjectDetectorYoloMp",
     kind="detector",
     capabilities=("legacy_processor_protocol",),
+    execution_modes=("thread", "process"),
 )
 class ObjectDetectorYoloMp(ModelBasedDetectorBase):
     """Legacy YOLO detector that always uses MP detection threads.

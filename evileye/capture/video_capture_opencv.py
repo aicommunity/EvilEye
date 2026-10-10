@@ -10,15 +10,17 @@ from .exceptions import CaptureInitializationError, CaptureConnectionError
 from enum import IntEnum
 
 from ..core.base_class import EvilEyeBase
+from ..core.plugins import register_module
 from ..video_recorder.recording_params import RecordingParams
 from ..video_recorder.recorder_base import SourceMeta
 from ..video_recorder.continuous_recorder_manager import ContinuousRecorderManager
 
 
-@EvilEyeBase.register(
+@register_module(
     "VideoCaptureOpencv",
     kind="source",
     capabilities=("legacy_source_protocol", "preserves_source_metadata", "shared_frame_transport"),
+    execution_modes=("thread", "process"),
 )
 class VideoCaptureOpencv(VideoCaptureBase):
     class VideoCaptureAPIs(IntEnum):

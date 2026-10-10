@@ -12,15 +12,17 @@ from ..object_detector.object_detection_base import DetectionResultList
 from .tracking_results import TrackingResult
 from .tracking_results import TrackingResultList
 from ..core.base_class import EvilEyeBase
+from ..core.plugins import register_module
 from ..core.processor_base import EXEC_MODE_PROCESS
 from .botsort_config import BostSortCfg
 from .track_update_core import parse_detections_to_boxes, run_tracker_update
 
 
-@EvilEyeBase.register(
+@register_module(
     "ObjectTrackingBotsort",
     kind="tracker",
     capabilities=("legacy_processor_protocol",),
+    execution_modes=("thread", "process"),
 )
 class ObjectTrackingBotsort(ObjectTrackingBase):
     # tracker: BOTSORT

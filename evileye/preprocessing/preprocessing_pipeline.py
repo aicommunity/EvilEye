@@ -5,12 +5,13 @@ import numpy as np
 from ..utils import utils
 from . import PreprocessingBase, PreprocessingFactory
 from ..core.base_class import EvilEyeBase
+from ..core.plugins import register_module
 
 
 # from preprocessing.steps import Input, Normalize, Output, Inpaint, Clahe
 
 
-@EvilEyeBase.register(
+@register_module(
     "PreprocessingPipeline",
     kind="processor_item",
     execution_modes=("thread", "process"),

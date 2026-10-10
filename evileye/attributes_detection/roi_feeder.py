@@ -6,6 +6,7 @@ from queue import Queue, Full, Empty
 from typing import Any, Dict, List, Tuple
 
 from ..core.base_class import EvilEyeBase
+from ..core.plugins import register_module
 from ..core.dual_mode_processor import DualModeProcessor
 from ..core.frame import Frame
 from ..core.tracking_dto import ensure_tracking_result_list
@@ -17,7 +18,7 @@ from ..core.processor_base import (
 )
 
 
-@EvilEyeBase.register(
+@register_module(
     "RoiFeeder",
     kind="processor_item",
     execution_modes=("thread", "process"),

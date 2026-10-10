@@ -970,8 +970,9 @@ class SourceModuleAdapter(EvilEyeBase):
         if module is None:
             return
         try:
+            control = None
             if isinstance(module, (list, tuple)):
-                processes = module
+                processes = list(module)
             else:
                 control = getattr(module, "_mp_control", None)
                 processes = list(getattr(control, "processes", []) or [])
@@ -979,12 +980,25 @@ class SourceModuleAdapter(EvilEyeBase):
             if not exitcodes:
                 return
             self._backend_worker_exitcodes = exitcodes
-            if any(code not in (None, 0) for code in exitcodes):
+            # Source.stop() intentionally terminates capture workers; normal
+            # Python process termination is 0 or SIGTERM (-15).
+            expected_exitcodes = {0, -15}
+            unexpected = [
+                code for code in exitcodes
+                if code is not None and code not in expected_exitcodes
+            ]
+            still_running = [
+                process for process in processes
+                if callable(getattr(process, "is_alive", None)) and process.is_alive()
+            ]
+            if unexpected or still_running:
                 self.degraded = True
                 self.logger.error(
-                    "Legacy source plugin %s backend worker exited with codes %s",
+                    "Legacy source plugin %s backend workers stopped unexpectedly "
+                    "(exitcodes=%s, still_running=%s)",
                     self.module_id,
                     exitcodes,
+                    len(still_running),
                 )
         except Exception:
             self.logger.debug("Could not read backend worker status for %s", self.module_id)

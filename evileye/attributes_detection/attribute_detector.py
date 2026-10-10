@@ -2,11 +2,12 @@ import os
 from ..object_detector.object_detection_base import ObjectDetectorBase
 from .attribute_detection_thread import AttributeDetectionThread
 from ..core.base_class import EvilEyeBase
+from ..core.plugins import register_module
 from typing import Dict, Any, List
 import numpy as np
 
 
-@EvilEyeBase.register(
+@register_module(
     "AttributeDetector",
     kind="detector",
     execution_modes=("thread",),

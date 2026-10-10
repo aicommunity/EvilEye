@@ -27,6 +27,7 @@ from ..object_tracker.trackers.sctrack import SCTrack
 from dataclasses import dataclass
 from pympler import asizeof
 from ..core.base_class import EvilEyeBase
+from ..core.plugins import register_module
 from ..core.frame import Frame
 from ..core.ipc_contracts import BatchMeta
 from ..core.tracking_dto import TrackingDTO, TrackingObjectDTO
@@ -47,7 +48,7 @@ def _sync_tracking_result_with_frame(
         track_info.frame_id = frame.frame_id
 
 
-@EvilEyeBase.register("ObjectMultiCameraTracking", kind="tracker", execution_modes=("thread",))
+@register_module("ObjectMultiCameraTracking", kind="tracker", execution_modes=("thread",))
 class ObjectMultiCameraTracking(ObjectMultiCameraTrackingBase):
 
     def __init__(self):

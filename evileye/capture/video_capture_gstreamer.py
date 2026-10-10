@@ -23,6 +23,7 @@ from .constants import CaptureConstants
 from .exceptions import CaptureInitializationError, CaptureConnectionError
 from ..core.frame import CaptureImage, Frame
 from ..core.base_class import EvilEyeBase
+from ..core.plugins import register_module
 
 from evileye.video_recorder.recorder_base import SourceMeta
 from evileye.video_recorder.continuous_recorder_gst import GstContinuousRecorder
@@ -36,10 +37,11 @@ from .gstreamer_capture_pipeline import GStreamerCapturePipelineMixin
 from .gstreamer_capture_frames import GStreamerCaptureFramesMixin
 
 
-@EvilEyeBase.register(
+@register_module(
     "VideoCaptureGStreamer",
     kind="source",
     capabilities=("legacy_source_protocol", "preserves_source_metadata", "shared_frame_transport"),
+    execution_modes=("thread", "process"),
 )
 class VideoCaptureGStreamer(
     GStreamerCaptureRecordingMixin,

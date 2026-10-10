@@ -9,6 +9,14 @@ import tempfile
 import json
 import os
 import time
+
+# Qt widgets need the offscreen backend on headless CI and remote hosts.
+if not os.environ.get("DISPLAY") and not os.environ.get("WAYLAND_DISPLAY"):
+    os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+
+# Qt widgets need the offscreen backend on headless CI and remote hosts.
+if not os.environ.get("DISPLAY") and not os.environ.get("WAYLAND_DISPLAY"):
+    os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 from pathlib import Path
 
 try:

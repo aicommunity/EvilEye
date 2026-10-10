@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 import time
 
 import pytest
@@ -642,3 +643,72 @@ def test_legacy_processor_adapter_preserves_queue_lifecycle():
     assert adapter._module.started is True
     adapter.stop()
     assert adapter._module.stopped is True
+
+
+class _FakeBackendProcess:
+    def __init__(self, exitcode, alive=False):
+        self.exitcode = exitcode
+        self._alive = alive
+
+    def is_alive(self):
+        return self._alive
+
+
+def _source_adapter_for_exit_check():
+    adapter = SourceModuleAdapter.__new__(SourceModuleAdapter)
+    adapter.module_id = "test/source"
+    adapter.degraded = False
+    adapter._backend_worker_exitcodes = []
+    adapter.logger = logging.getLogger("test.source_adapter")
+    return adapter
+
+
+def test_legacy_source_expected_termination_does_not_mark_runtime_degraded():
+    from types import SimpleNamespace
+
+    adapter = _source_adapter_for_exit_check()
+    module = SimpleNamespace(
+        _mp_control=SimpleNamespace(
+            processes=[_FakeBackendProcess(-15)],
+            no_restart_exit_codes={-15},
+        )
+    )
+
+    adapter._capture_legacy_worker_exitcodes(module)
+
+    assert adapter.degraded is False
+    assert adapter._backend_worker_exitcodes == [-15]
+
+
+def test_legacy_source_unexpected_worker_exit_marks_runtime_degraded():
+    from types import SimpleNamespace
+
+    adapter = _source_adapter_for_exit_check()
+    module = SimpleNamespace(
+        _mp_control=SimpleNamespace(
+            processes=[_FakeBackendProcess(-9)],
+            no_restart_exit_codes={-15},
+        )
+    )
+
+    adapter._capture_legacy_worker_exitcodes(module)
+
+    assert adapter.degraded is True
+    assert adapter._backend_worker_exitcodes == [-9]
+
+
+def test_legacy_source_worker_alive_after_stop_marks_runtime_degraded():
+    from types import SimpleNamespace
+
+    adapter = _source_adapter_for_exit_check()
+    module = SimpleNamespace(
+        _mp_control=SimpleNamespace(
+            processes=[_FakeBackendProcess(None, alive=True)],
+            no_restart_exit_codes={-15},
+        )
+    )
+
+    adapter._capture_legacy_worker_exitcodes(module)
+
+    assert adapter.degraded is True
+    assert adapter._backend_worker_exitcodes == [None]

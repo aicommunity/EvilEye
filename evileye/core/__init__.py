@@ -49,8 +49,7 @@ from .contracts import (
     VisualizationDependencies,
 )
 from .facades import DatabaseFacade, PipelineFacade
-# DI компоненты: зарезервировано для будущего использования
-# В текущей версии используется EvilEyeBase._registry как основной механизм создания компонентов
+# DI управляет сервисами приложения; component factories регистрируются в PluginRegistry.
 from .di_container import DIContainer
 from .dependencies import DependencyRegistry, DependencyDefinition, get_registry, register_dependency
 from .config_validator import ConfigValidator

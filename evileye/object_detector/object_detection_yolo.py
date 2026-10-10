@@ -1,13 +1,15 @@
 import os
 from .object_detection_base import EXEC_MODE_PROCESS, ModelBasedDetectorBase, ObjectDetectorBase
 from ..core.base_class import EvilEyeBase
+from ..core.plugins import register_module
 from ..core.mp_control import parse_mp_restart_policy
 
 
-@EvilEyeBase.register(
+@register_module(
     "ObjectDetectorYolo",
     kind="detector",
     capabilities=("legacy_processor_protocol",),
+    execution_modes=("thread", "process"),
 )
 class ObjectDetectorYolo(ModelBasedDetectorBase):
     """YOLO-based object detector."""

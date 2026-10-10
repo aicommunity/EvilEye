@@ -176,7 +176,7 @@ def test_corrupt_alarm_journal_is_reported_without_overwriting(tmp_path):
     file_path = tmp_path / "Events" / "2026-10-09" / "Metadata" / "alarm_events.json"
     file_path.parent.mkdir(parents=True, exist_ok=True)
     file_path.write_text("{broken", encoding="utf-8")
-    alarm = AlarmEvent("ppe_violation", alarm_id="stable-alarm-2")
+    alarm = AlarmEvent("ppe_violation", timestamp=datetime(2026, 10, 9, 10, 0, 0), alarm_id="stable-alarm-2")
 
     with pytest.raises(json.JSONDecodeError):
         adapter.insert(alarm)

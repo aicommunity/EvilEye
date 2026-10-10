@@ -5,15 +5,16 @@ Example config fragment::
     {
       "pipeline_class": "PipelineDeclarative",
       "stages": [
-        {"name": "sources", "kind": "source", "items": [{"type": "VideoCaptureOpencv", ...}]},
-        {"name": "detectors", "kind": "step", "items": [{"type": "ObjectDetectorYolo", ...}]},
-        {"name": "trackers", "kind": "step", "items": [{"type": "ObjectTrackingBotsort", ...}]}
+        {"name": "sources", "kind": "source", "items": [{"module_id": "evileye/VideoCaptureOpencv", ...}]},
+        {"name": "detectors", "kind": "step", "items": [{"module_id": "evileye/ObjectDetectorYolo", ...}]},
+        {"name": "trackers", "kind": "step", "items": [{"module_id": "evileye/ObjectTrackingBotsort", ...}]}
       ],
       "final_results": "trackers"
     }
 
-Authors of custom stages register processors with ``@EvilEyeBase.register`` and
-list them in ``items[].type`` — no fork of PipelineSurveillance required.
+Authors register processors through ``register_module`` or an
+``evileye.plugins`` entry point and select them with ``items[].module_id``.
+Legacy ``items[].type`` remains supported.
 """
 
 from __future__ import annotations

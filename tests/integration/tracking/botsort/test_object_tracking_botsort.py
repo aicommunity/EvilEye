@@ -27,40 +27,45 @@ def test_one_obj_one_frame():
     tracker.init_impl()
     tracker.start()
     
-    # Create detection result
-    det_result = DetectionResult()
-    det_result.bounding_box = [1, 2, 10, 10]
-    det_result.confidence = 0.8
-    det_result.class_id = 0
-    
-    det_list = DetectionResultList()
-    det_list.detections = [det_result]
-    det_list.source_id = 0
-    det_list.frame_id = 1
-    
-    # Create frame
-    frame = Frame()
-    frame.source_id = 0
-    frame.frame_id = 1
-    frame.image = np.zeros((480, 640, 3), dtype=np.uint8)
-    
-    # Use put method instead of process
-    result = tracker.put((det_list, frame), force=True)
-    assert result
-    
-    # Get tracking result
-    import time
-    time.sleep(0.1)
-    track_data = tracker.get()
-    
-    assert track_data is not None
-    tracks_info, output_frame = track_data
-    assert len(tracks_info.tracks) > 0
-    track = tracks_info.tracks[0]
-    assert track.track_id >= 0
-    assert track.class_id == 0
-    
-    tracker.stop()
+    try:
+        # Create detection result
+        det_result = DetectionResult()
+        det_result.bounding_box = [1, 2, 10, 10]
+        det_result.confidence = 0.8
+        det_result.class_id = 0
+
+        det_list = DetectionResultList()
+        det_list.detections = [det_result]
+        det_list.source_id = 0
+        det_list.frame_id = 1
+
+        # Create frame
+        frame = Frame()
+        frame.source_id = 0
+        frame.frame_id = 1
+        frame.image = np.zeros((480, 640, 3), dtype=np.uint8)
+
+        # Use put method instead of process
+        result = tracker.put((det_list, frame), force=True)
+        assert result
+
+        # Tracker results arrive asynchronously from its worker.
+        import time
+        deadline = time.monotonic() + 10.0
+        track_data = None
+        while track_data is None and time.monotonic() < deadline:
+            track_data = tracker.get()
+            if track_data is None:
+                time.sleep(0.05)
+
+        assert track_data is not None
+        tracks_info, output_frame = track_data
+        assert len(tracks_info.tracks) > 0
+        track = tracks_info.tracks[0]
+        assert track.track_id >= 0
+        assert track.class_id == 0
+    finally:
+        tracker.stop()
 
 
 def test_several_objects():
@@ -127,24 +132,16 @@ def test_several_objects():
                 # Уменьшаем задержку
                 time.sleep(0.001)  # Было 0.01
                 
-                # Добавляем таймаут для get
-                get_result = [None]
-                get_exception = [None]
-                
-                def get_data():
-                    try:
-                        get_result[0] = tracker.get()
-                    except Exception as e:
-                        get_exception[0] = e
-                
-                get_thread = threading.Thread(target=get_data, daemon=True)
-                get_thread.start()
-                get_thread.join(timeout=1.0)  # Таймаут 1 секунда
-                
-                if get_exception[0]:
-                    raise get_exception[0]
-                
-                track_data = get_result[0]
+                # Tracker results are asynchronous; poll briefly so the
+                # process worker has time to return this frame's result.
+                wait_seconds = 5.0 if not track_ids else 0.25
+                deadline = time.monotonic() + wait_seconds
+                track_data = None
+                while track_data is None and time.monotonic() < deadline:
+                    track_data = tracker.get()
+                    if track_data is None:
+                        time.sleep(0.01)
+
                 if track_data:
                     tracks_info, _ = track_data
                     for track in tracks_info.tracks:

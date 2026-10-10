@@ -1,39 +1,8 @@
-"""Dependency Injection контейнер для управления зависимостями.
+"""DI container for application services.
 
-Этот модуль предоставляет контейнер для управления зависимостями через паттерн
-Dependency Injection (DI). Контейнер позволяет регистрировать сервисы, фабрики
-и singleton-объекты, а затем получать их по типу.
-
-Статус: зарезервировано для будущего использования
--------------------------------------------
-
-В текущей версии EvilEye используется `EvilEyeBase._registry` с декоратором
-`@EvilEyeBase.register` как основной механизм создания компонентов (plugin-фабрика).
-Этот подход активно используется в 11+ классах проекта.
-
-`DIContainer` планируется интегрировать в будущих версиях для:
-- Снижения связности между компонентами
-- Упрощения тестирования (возможность подмены зависимостей)
-- Централизованного управления жизненным циклом сервисов
-- Замены прямого создания объектов в services на DI
-
-Связь с EvilEyeBase._registry:
-- `EvilEyeBase._registry` остается основным механизмом для создания компонентов
-  pipeline (детекторы, трекеры, процессоры и т.д.)
-- `DIContainer` планируется использовать для управления сервисами верхнего уровня
-  (PipelineService, DatabaseService, EventsService и т.д.)
-- Оба механизма могут сосуществовать: `EvilEyeBase` для компонентов pipeline,
-  `DIContainer` для сервисов контроллера
-
-Пример планируемого использования:
-    container = DIContainer()
-    container.register_factory(IPipeline, lambda: create_pipeline())
-    container.register_singleton(IDatabaseService, lambda: DatabaseService())
-    
-    # В сервисах:
-    pipeline = container.get(IPipeline)
-    db_service = container.get(IDatabaseService)
-"""
+Pipeline component factories are registered and resolved through PluginRegistry.
+DIContainer manages service instances and factories used by controller/runtime
+services; it is independent of component module discovery."""
 
 from __future__ import annotations
 
@@ -42,9 +11,6 @@ from typing import Any, Callable, Dict, Optional, Type, TypeVar
 T = TypeVar('T')
 
 
-# TODO: Планируется интеграция в будущих версиях для снижения связности
-# между компонентами. В текущей версии используется EvilEyeBase._registry
-# как основной механизм создания компонентов.
 class DIContainer:
     """Контейнер для управления зависимостями через Dependency Injection."""
 

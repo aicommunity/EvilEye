@@ -53,11 +53,14 @@ def test_detection():
             if boxes is not None:
                 test_logger.info(f"✅ Detection successful! Found {len(boxes)} objects")
                 
-                # Print detected objects
-                for j, box in enumerate(boxes):
-                    cls = int(box.cls[0])
-                    conf = float(box.conf[0])
-                    coords = box.xyxy[0].cpu().numpy()
+                # Read the tensor directly. Iterating Ultralytics Boxes calls
+                # its __getitem__ wrapper, which segfaults with the server's
+                # installed Torch/Ultralytics binary combination.
+                rows = boxes.data.detach().cpu().numpy()
+                for j, row in enumerate(rows):
+                    coords = row[:4]
+                    conf = float(row[4])
+                    cls = int(row[5])
                     test_logger.info(f"  Object {j+1}: Class {cls}, Confidence {conf:.3f}, Coords {coords}")
             else:
                 test_logger.info("❌ No objects detected")
@@ -78,10 +81,11 @@ def test_detection():
                     boxes = result.boxes
                     if boxes is not None:
                         test_logger.info(f"✅ Planes detection: Found {len(boxes)} objects")
-                        for j, box in enumerate(boxes):
-                            cls = int(box.cls[0])
-                            conf = float(box.conf[0])
-                            coords = box.xyxy[0].cpu().numpy()
+                        rows = boxes.data.detach().cpu().numpy()
+                        for j, row in enumerate(rows):
+                            coords = row[:4]
+                            conf = float(row[4])
+                            cls = int(row[5])
                             test_logger.info(f"  Object {j+1}: Class {cls}, Confidence {conf:.3f}, Coords {coords}")
                     else:
                         test_logger.info("❌ No objects detected in planes video")

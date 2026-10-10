@@ -6,7 +6,6 @@ import logging
 
 class EvilEyeBase(ABC):
     _id_counter = 0
-    _registry = dict()
 
     ResultType = None
 
@@ -20,21 +19,16 @@ class EvilEyeBase(ABC):
         capabilities=(),
     ):
         def inner_wrapper(wrapped_class):
-            cls._registry[class_name] = wrapped_class
-            # Keep the legacy class registry as a compatibility alias while
-            # making registration visible through the public plugin SPI.
-            from .plugins import plugin_registry
+            # Compatibility decorator for older extensions. Built-ins use
+            # register_module directly; both paths publish to PluginRegistry.
+            from .plugins import register_module
 
-            plugin_registry.register_builtin_module(
+            return register_module(
                 class_name,
-                wrapped_class,
                 kind=kind,
                 execution_modes=execution_modes,
                 capabilities=capabilities,
-                legacy_ids=(class_name,),
-            )
-
-            return wrapped_class
+            )(wrapped_class)
 
         return inner_wrapper
 
@@ -72,9 +66,9 @@ class EvilEyeBase(ABC):
 
                     return SourceModuleAdapter(registered)
             return registered.spec.factory(*args, **kwargs)
-        if class_name not in cls._registry:
-            raise ValueError(f"Class not found: {class_name}")
-        return cls._registry[class_name](*args, **kwargs)
+        raise ValueError(
+            f"Module not found in plugin registry: {class_name}"
+        )
 
     def __init__(self):
         self.is_inited = False

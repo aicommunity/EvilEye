@@ -6,6 +6,7 @@ from typing import Any, Dict
 import numpy as np
 
 from ..core.base_class import EvilEyeBase
+from ..core.plugins import register_module
 from ..core.tracking_dto import ensure_tracking_result_list
 
 from ..core.processor_base import (
@@ -15,10 +16,11 @@ from ..core.processor_base import (
 )
 
 
-@EvilEyeBase.register(
+@register_module(
     "AttributeClassifier",
     kind="attribute",
     capabilities=("legacy_processor_protocol",),
+    execution_modes=("thread", "process"),
 )
 class AttributeClassifier(EvilEyeBase):
     """Attribute classifier that runs YOLO inference on ROI crops

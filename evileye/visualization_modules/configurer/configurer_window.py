@@ -1,7 +1,6 @@
 import copy
 import json
 import os.path
-import multiprocessing
 from pathlib import Path
 from typing import Optional, Dict, Any
 from .jobs_history_journal import JobsHistory
@@ -209,7 +208,6 @@ class ConfigurerMainWindow(QDialog):
         self._connect_to_db()
 
         self.result_filename = None
-        multiprocessing.set_start_method('spawn')
 
         # Инициализация отслеживания изменений
         self._init_change_tracking()

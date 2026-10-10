@@ -49,7 +49,7 @@ class ProcessorBase(ABC):
         механизм создания (например, для тестирования с моками).
         
         Args:
-            class_name: Имя класса процессора, зарегистрированного через @EvilEyeBase.register
+            class_name: ID модуля, зарегистрированного в PluginRegistry
             
         Returns:
             Экземпляр процессора (наследник EvilEyeBase)
@@ -58,7 +58,7 @@ class ProcessorBase(ABC):
             ValueError: Если класс не найден в plugin-регистре
             
         Note:
-            Зависит от EvilEyeBase._registry и декоратора @EvilEyeBase.register.
+            Разрешает factory через PluginRegistry; legacy type остается alias-конфигурацией.
             Для тестирования можно переопределить этот метод в подклассах.
         """
         return EvilEyeBase.create_instance(class_name)

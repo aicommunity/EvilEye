@@ -19,22 +19,9 @@ def _make_record_cfg(tmp_path: Path) -> dict:
 
 
 def _assert_recording_created(out_dir: Path) -> None:
-    # OpenCV recorder may write either directly into out_dir or into a date/camera hierarchy.
-    files = []
-    files.extend(list(out_dir.glob("*.mp4")))
-    files.extend(list(out_dir.glob("*.mkv")))
-    if files:
-        return
-
-    date_dirs = list(out_dir.glob("*/"))
-    assert len(date_dirs) > 0, f"Не создана папка с датой записи в {out_dir}"
-    for date_dir in date_dirs:
-        files.extend(list(date_dir.glob("*.mp4")))
-        files.extend(list(date_dir.glob("*.mkv")))
-        for camera_dir in date_dir.glob("*/"):
-            files.extend(list(camera_dir.glob("*.mp4")))
-            files.extend(list(camera_dir.glob("*.mkv")))
-    assert len(files) >= 1, f"Файлы записи не найдены. Проверено: {out_dir}, date_dirs: {date_dirs}"
+    # Recorder uses Streams/<date>/<camera>/..., so search the full tree.
+    files = list(out_dir.rglob("*.mp4")) + list(out_dir.rglob("*.mkv"))
+    assert files, f"Файлы записи не найдены в {out_dir}"
 
 
 @pytest.mark.parametrize("variant", ["VideoFile", "IpCamera", "Device"])

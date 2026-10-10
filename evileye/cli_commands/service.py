@@ -49,7 +49,9 @@ def service_install(
         console.print("[red]Cannot combine --user and --system[/red]")
         raise typer.Exit(1)
 
-    _ensure_web_environment_for_server()
+    # A dry-run must not install packages or build frontend assets.
+    if not dry_run:
+        _ensure_web_environment_for_server()
     ensure_system_config(site_dir)
     try:
         tls_result = run_tls_deploy_step(
