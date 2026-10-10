@@ -18,6 +18,7 @@ from .mp_context import get_spawn_context
 
 _PROCESS_INPUT_MARKER = "__evileye_plugin_input__"
 _PROCESS_OUTPUT_MARKER = "__evileye_plugin_runtime__"
+_SOURCE_ITEM_MARKER = "__evileye_source_item__"
 
 
 def _serialize_process_value(value: Any, module_id: str, label: str) -> bytes:
@@ -738,7 +739,7 @@ class LegacyProcessorModuleAdapter(EvilEyeBase):
         raise AttributeError(name)
 
 
-def _source_worker_entry(factory_module, factory_qualname, config, output_queue, stop_event):
+def _source_worker_entry(module_id, factory_module, factory_qualname, config, output_queue, stop_event):
     """Spawn target for source plugins implementing open/read/close."""
     logger = logging.getLogger("evileye.plugin_source")
     module = None
@@ -752,9 +753,11 @@ def _source_worker_entry(factory_module, factory_qualname, config, output_queue,
             item = module.read()
             if item is None:
                 break
+            serialized_item = _serialize_process_value(item, module_id, "source output")
+            envelope = (_SOURCE_ITEM_MARKER, serialized_item)
             while not stop_event.is_set():
                 try:
-                    output_queue.put(item, timeout=0.1)
+                    output_queue.put(envelope, timeout=0.1)
                     break
                 except queue.Full:
                     continue
@@ -933,6 +936,10 @@ class SourceModuleAdapter(EvilEyeBase):
                 f"Source '{self.module_id}' does not support execution_mode='{requested_mode}'"
             )
         self.registered_module = registered
+        if not self._legacy_source_protocol and self.execution_mode == "process":
+            _serialize_process_value(
+                self._config, self.module_id, "source configuration"
+            )
         if self._legacy_source_protocol:
             module = self._ensure_legacy_source()
             try:
@@ -956,8 +963,8 @@ class SourceModuleAdapter(EvilEyeBase):
             factory = self.registered_module.spec.factory
             self._process = context.Process(
                 target=_source_worker_entry,
-                args=(factory.__module__, factory.__qualname__, self._config,
-                      self._output_queue, self._process_stop_event),
+                args=(self.module_id, factory.__module__, factory.__qualname__,
+                      self._config, self._output_queue, self._process_stop_event),
                 daemon=True,
                 name=f"PluginSource-{self.module_id.replace('/', '-')}",
             )
@@ -1064,6 +1071,30 @@ class SourceModuleAdapter(EvilEyeBase):
                 self.logger.error("Source plugin %s failed in process: %s", self.module_id, item[1])
                 self._finished = True
                 continue
+            if self.execution_mode == "process":
+                if not (
+                    isinstance(item, tuple)
+                    and len(item) == 2
+                    and item[0] == _SOURCE_ITEM_MARKER
+                ):
+                    self.degraded = True
+                    self._finished = True
+                    self.logger.error(
+                        "Source plugin %s returned an invalid process envelope",
+                        self.module_id,
+                    )
+                    continue
+                try:
+                    item = pickle.loads(item[1])
+                except Exception as exc:
+                    self.degraded = True
+                    self._finished = True
+                    self.logger.error(
+                        "Source plugin %s returned an invalid serialized item: %s",
+                        self.module_id,
+                        exc,
+                    )
+                    continue
             items.append(item)
         if self.execution_mode == "process" and self._process is not None and not self._process.is_alive():
             self._finished = True

@@ -131,6 +131,20 @@ class _FailingSource:
         pass
 
 
+class _UnpicklableOutputSource:
+    def __init__(self, config=None):
+        pass
+
+    def open(self):
+        pass
+
+    def read(self):
+        return lambda: "not serializable"
+
+    def close(self):
+        pass
+
+
 class _UnpicklableOutputModule:
     def process_item(self, item, state):
         return lambda: item
@@ -1047,3 +1061,55 @@ def test_item_module_state_initialization_failure_is_visible(execution_mode):
         assert adapter.get_runtime_stats()["degraded"] is True
     finally:
         adapter.stop()
+
+
+
+def test_process_source_rejects_unserializable_config_before_start():
+    spec = ModuleSpec(
+        "sequence",
+        "source",
+        _SequenceSource,
+        execution_modes=("process",),
+    )
+    registered = RegisteredModule("test.source-config", spec)
+    plugin_registry.register_plugin(
+        PluginSpec(registered.plugin_id, PLUGIN_API_VERSION, modules=(spec,))
+    )
+    source = SourceModuleAdapter(registered)
+    source.set_params(
+        module_id=registered.qualified_id,
+        execution_mode="process",
+        config={"callback": lambda: None},
+    )
+
+    with pytest.raises(PluginError, match="source configuration.*serializable"):
+        source.init()
+
+
+def test_process_source_reports_unserializable_items():
+    spec = ModuleSpec(
+        "unserializable",
+        "source",
+        _UnpicklableOutputSource,
+        execution_modes=("process",),
+    )
+    registered = RegisteredModule("test.source-output", spec)
+    plugin_registry.register_plugin(
+        PluginSpec(registered.plugin_id, PLUGIN_API_VERSION, modules=(spec,))
+    )
+    source = SourceModuleAdapter(registered)
+    source.set_params(
+        module_id=registered.qualified_id,
+        execution_mode="process",
+    )
+    assert source.init() is True
+    source.start()
+    try:
+        deadline = time.monotonic() + 15.0
+        while time.monotonic() < deadline and not source.degraded:
+            source.get()
+            time.sleep(0.02)
+        assert source.degraded is True
+        assert source.is_finished() is True
+    finally:
+        source.stop()

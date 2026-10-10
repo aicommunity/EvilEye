@@ -108,6 +108,14 @@
   `tests/unit/core/test_plugin_registry.py`; весь тестовый файл прошёл, после него
   не осталось `pytest`, `resource_tracker` или `spawn_main` процессов.
 
+- Для generic source в `process`-режиме конфигурация проверяется на сериализуемость
+  до запуска, а каждый кадр идёт через явный pickle envelope. Невозможно
+  сериализовать конфигурацию — запуск отклоняется с `PluginError`; ошибка
+  сериализации результата worker попадает в degraded status. Проверки находятся в
+  `tests/unit/core/test_plugin_registry.py` и
+  `tests/unit/capture/test_plugin_capture_source_adapter.py`; оба файла прошли,
+  orphan multiprocessing workers после прогона не остались.
+
 ## Условие завершения миграции
 
 Миграция завершена, когда встроенный inventory целиком работает через Plugin SPI, legacy protocol count равен нулю (кроме явно принятого исключения), builtin и внешний пакет проходят одинаковые контрактные тесты, полный доступный suite завершается без оставшихся процессов, штатные видео и тревоги проходят end-to-end, а внешние ограничения камер и Web UI закрыты корректной конфигурацией доступа.
