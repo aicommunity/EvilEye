@@ -111,22 +111,24 @@ tracking result.
 `VideoCaptureOpencv` and `VideoCaptureGStreamer` are registered through the
 source SPI and created by `SourceModuleAdapter`. The adapter exposes a common
 source to `PipelineSurveillance`, while delegating capture metadata,
-subscriptions, and lifecycle to the existing capture implementation. This
-keeps recording and multi-camera behavior intact. A source configured with
-`execution_mode="process"` still uses the capture module's existing
-`MpWorkerCapture` backend; the adapter itself polls that backend in a host
-thread and reports both `execution_mode` and `backend_execution_mode` in its
-runtime diagnostics. The capture worker acknowledges shared-memory frame
-descriptors before releasing them, so short finite videos are delivered before
-the worker exits. External source plugins should implement the simpler
-`open/read/close` contract described above and do not need to subclass
-`EvilEyeBase`.
+subscriptions, and lifecycle to the capture implementation. A source configured
+with `execution_mode="process"` still uses its specialized `MpWorkerCapture`
+backend; the adapter polls it from a host thread and reports both the adapter
+mode and backend mode. Runtime diagnostics include parent-observed availability
+transitions, the backend connection generation carried by frames, and worker
+metrics. The capture worker acknowledges shared-memory frame descriptors before
+releasing them, so short finite videos are delivered before the worker exits.
+External source plugins implement the simpler `open/read/close` contract and do
+not need to subclass `EvilEyeBase`.
 
-Built-in YOLO/RT-DETR detectors, BoT-SORT, and attribute detector/classifier
-modules are also registered in the SPI. `LegacyProcessorModuleAdapter` bridges
-their established `put/get` and lifecycle contracts into the pipeline module
-boundary; their proven model and process-worker internals remain unchanged.
-`ObjectDetectorYoloMp` is a compatibility config alias for `ObjectDetectorYolo`; the configured `execution_mode` selects the canonical detector runtime.
+Built-in YOLO, RT-DETR, RF-DETR, BoT-SORT, and attribute detector/classifier
+modules are registered as `processor_item` modules and execute through
+`ItemModuleAdapter`. Model and tracker state is created inside the selected
+thread or spawn worker. Existing config names remain valid, including
+`ObjectDetectorYoloMp` as an alias for `ObjectDetectorYolo`.
+`LegacyProcessorModuleAdapter` remains a compatibility bridge for modules that
+still expose only the old `put/get` contract; the migrated built-ins do not use
+it.
 
 New plugins should implement `process_item(item, state)` and use the common
 runtime directly. For stages that consume a synchronized multi-source batch,
@@ -164,7 +166,9 @@ tracker instead of stopping at the first matching `source_id`.
 
 An event module declares `kind="event_detector"` (and
 `capabilities=("object_handler",)` when it subscribes to ObjectsHandler). It
-must follow EvilEye's event-detector lifecycle and emit event objects. For a
+must follow EvilEye's event-detector lifecycle and emit event objects. Event
+detectors currently run in `thread` mode; requesting `process` is rejected
+until their event and dependency transport has a process contract. For a
 generic custom alarm, use `AlarmEvent(alarm_type, severity=..., source_id=...,
 details=...)`; it is persisted by the generic JSON and PostgreSQL adapters and
 displayed by the events journal. A stable `alarm_id` makes retries idempotent.

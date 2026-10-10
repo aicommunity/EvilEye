@@ -77,7 +77,7 @@
 
 1. [готово] `PipelineSurveillance`, `PipelineCapture` и `PipelineDeclarative` зарегистрированы как builtin `PipelineSpec`; `PipelineService` разрешает их через PluginRegistry.
 2. [готово] `pipeline_class` сохранён как compatibility alias; неизвестный выбранный pipeline приводит к диагностируемой ошибке без fallback.
-3. Оставить `PipelineSurveillance` фиксированным графом стадий, документировать порядок, правила `extend`/`replace`, несколько детекторов на один источник и thread-only стадии.
+3. [готово] Оставить `PipelineSurveillance` фиксированным графом стадий; порядок, правила `extend`/`replace`, несколько детекторов на один источник и ограничения thread-only стадий описаны в `PLUGINS.md` и `PIPELINE_ARCHITECTURE.md`.
 4. [готово] Минимальный внешний пакет установлен editable-режимом в изолированное server-side virtualenv; entry point `evileye.plugins` обнаружен, модуль зарегистрирован без изменения/переустановки EvilEye. В example package указан build backend с PEP 660 поддержкой.
 5. Проверить изолированными сценариями конфликт ID, неизвестный module/pipeline, неверную API version, ошибку импорта и требования зависимостей; часть конфликтов и ошибок уже покрыта тестами реестра.
 
