@@ -46,3 +46,20 @@ def test_custom_pipeline_entry_point_factory_receives_runtime_dependencies():
     )
 
     assert isinstance(pipeline, PipelineCapture)
+
+
+def _invalid_pipeline_factory(_dependencies):
+    return object()
+
+
+def test_custom_pipeline_with_invalid_contract_fails_without_fallback():
+    plugin_registry.register_plugin(
+        PluginSpec(
+            plugin_id="unit.invalid_pipeline",
+            api_version=PLUGIN_API_VERSION,
+            pipelines=(PipelineSpec("not-a-pipeline", _invalid_pipeline_factory),),
+        )
+    )
+
+    with pytest.raises(TypeError, match="does not implement IPipeline"):
+        PipelineService().create_pipeline("unit.invalid_pipeline/not-a-pipeline")
