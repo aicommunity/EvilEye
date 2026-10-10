@@ -56,6 +56,10 @@ class EventsService:
         self._detectors_controller: Optional[EventsDetectorsController] = None
         self._events_processor: Optional[EventsProcessor] = None
         self._adapters: List[Any] = []
+        # These adapters are constructed and owned by EventsService. DatabaseService
+        # owns the adapters passed into build_event_adapters.
+        self._owned_adapters: List[Any] = []
+        self._started_adapters: List[Any] = []
 
     def initialize_detectors(
             self,
@@ -240,8 +244,8 @@ class EventsService:
                 alarm_db_adapter = DatabaseAdapterAlarmEvents(db_controller)
                 alarm_db_adapter.set_params(table_name="alarm_events")
                 alarm_db_adapter.init()
-                alarm_db_adapter.start()
                 adapters.append(alarm_db_adapter)
+                self._owned_adapters.append(alarm_db_adapter)
             except Exception as exc:
                 self.logger.error("Failed to initialize alarm database adapter: %s", exc)
             try:
@@ -271,11 +275,11 @@ class EventsService:
                 adapter = adapter_cls(None)
                 adapter.set_params(image_dir=img_dir)
                 adapter.init()
-                adapter.start()
                 adapters.append(adapter)
+                self._owned_adapters.append(adapter)
                 try:
                     self.logger.info(
-                        "JSON adapter started: %s -> image_dir=%s",
+                        "JSON adapter initialized: %s -> image_dir=%s",
                         adapter.get_event_name(),
                         img_dir,
                     )
@@ -295,6 +299,61 @@ class EventsService:
                     raise RuntimeError("Generic alarm persistence is unavailable") from e
 
         return adapters
+
+    def start_adapters(self) -> None:
+        """Start adapters created by this service after controller startup."""
+        started_ids = {id(adapter) for adapter in self._started_adapters}
+        newly_started: List[Any] = []
+        current_adapter: Any = None
+        try:
+            for adapter in self._owned_adapters:
+                if id(adapter) in started_ids:
+                    continue
+                current_adapter = adapter
+                adapter.start()
+                self._started_adapters.append(adapter)
+                newly_started.append(adapter)
+                self.logger.info("Started event adapter: %s", adapter.__class__.__name__)
+        except Exception as exc:
+            if current_adapter is not None:
+                try:
+                    current_adapter.stop()
+                except Exception:
+                    self.logger.exception(
+                        "Failed to clean up event adapter %s after startup failure",
+                        current_adapter.__class__.__name__,
+                    )
+            for adapter in reversed(newly_started):
+                try:
+                    adapter.stop()
+                except Exception:
+                    self.logger.exception(
+                        "Failed to roll back event adapter %s after startup failure",
+                        adapter.__class__.__name__,
+                    )
+                else:
+                    self._started_adapters.remove(adapter)
+            raise RuntimeError(
+                f"Failed to start event adapter {current_adapter.__class__.__name__}"
+            ) from exc
+
+    def stop_adapters(self) -> None:
+        """Stop service-owned event adapters after event processing has drained."""
+        still_started: List[Any] = []
+        errors = []
+        for adapter in reversed(self._started_adapters):
+            try:
+                adapter.stop()
+            except Exception as exc:
+                errors.append((adapter, exc))
+                still_started.append(adapter)
+                self.logger.exception(
+                    "Failed to stop event adapter %s", adapter.__class__.__name__
+                )
+        self._started_adapters = list(reversed(still_started))
+        if errors:
+            names = ", ".join(adapter.__class__.__name__ for adapter, _ in errors)
+            raise RuntimeError(f"Failed to stop event adapters: {names}") from errors[0][1]
 
     def apply_legacy_detector_refs(self, host: Any) -> None:
         """Синхронизировать legacy-атрибуты Controller с детекторами сервиса."""
@@ -437,17 +496,17 @@ class EventsService:
                 self._events_processor.stop()
             except Exception as exc:
                 self.logger.exception("Failed to stop events processor: %s", exc)
-        seen.clear()
-        for adapter in self._adapters:
-            if adapter is None or id(adapter) in seen:
-                continue
-            seen.add(id(adapter))
-            try:
-                adapter.stop()
-            except Exception as exc:
-                self.logger.exception("Failed to stop event adapter: %s", exc)
+        adapters_stopped = True
+        try:
+            self.stop_adapters()
+        except Exception as exc:
+            adapters_stopped = False
+            self.logger.exception("Failed to stop event adapters during release: %s", exc)
         self._detectors.clear()
         self._detectors_controller = None
         self._events_processor = None
         self._adapters.clear()
+        if adapters_stopped:
+            self._owned_adapters.clear()
+            self._started_adapters.clear()
         self.logger.info("Events service released")

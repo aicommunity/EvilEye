@@ -1042,6 +1042,7 @@ class Controller(ControllerProcessingMixin):
 
         # Start events detectors и processor через EventsService
         if self._events_service:
+            self._events_service.start_adapters()
             self._events_service.start_detectors()
             if self.events_detectors_controller:
                 self.events_detectors_controller.start()
@@ -1311,6 +1312,10 @@ class Controller(ControllerProcessingMixin):
                 self.events_detectors_controller.stop()
             if self.events_processor:
                 self.events_processor.stop()
+            try:
+                self._events_service.stop_adapters()
+            except Exception as exc:
+                self.logger.error("Failed to stop event adapters: %s", exc, exc_info=True)
 
         # Stop event recording
         self.logger.info("Controller shutdown: stopping event recorders")
@@ -1323,12 +1328,16 @@ class Controller(ControllerProcessingMixin):
         self.event_recorders.clear()
         self.event_buffers.clear()
 
-        # Stop database adapters через DatabaseService
-        if self.use_database and self._database_service.is_connected():
+        # Stop database adapters even after the connection has failed or the
+        # runtime has switched to JSON-only mode. Workers may still be alive.
+        if self._database_service is not None:
             self.logger.info("Controller shutdown: stopping database adapters")
             self._database_service.stop_adapters()
-            if self.db_controller:
-                self.db_controller.disconnect()
+            if self.db_controller is not None:
+                try:
+                    self.db_controller.disconnect()
+                except Exception as exc:
+                    self.logger.warning("Error disconnecting database: %s", exc)
 
         # Stop storage monitor
         if self.storage_monitor:
