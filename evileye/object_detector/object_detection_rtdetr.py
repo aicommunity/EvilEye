@@ -8,6 +8,7 @@ from ..core.plugins import register_module
     kind="detector",
     capabilities=("legacy_processor_protocol",),
     execution_modes=("thread", "process"),
+    default_execution_mode="process",
 )
 class ObjectDetectorRtdetr(ModelBasedDetectorBase):
     """RT-DETR-based object detector."""

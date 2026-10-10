@@ -42,6 +42,7 @@ from .gstreamer_capture_frames import GStreamerCaptureFramesMixin
     kind="source",
     capabilities=("legacy_source_protocol", "preserves_source_metadata", "shared_frame_transport"),
     execution_modes=("thread", "process"),
+    default_execution_mode="process",
 )
 class VideoCaptureGStreamer(
     GStreamerCaptureRecordingMixin,

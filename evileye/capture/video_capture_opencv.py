@@ -21,6 +21,7 @@ from ..video_recorder.continuous_recorder_manager import ContinuousRecorderManag
     kind="source",
     capabilities=("legacy_source_protocol", "preserves_source_metadata", "shared_frame_transport"),
     execution_modes=("thread", "process"),
+    default_execution_mode="process",
 )
 class VideoCaptureOpencv(VideoCaptureBase):
     class VideoCaptureAPIs(IntEnum):

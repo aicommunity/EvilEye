@@ -51,6 +51,7 @@ if _SUPPORT_RFDETR:
         kind="detector",
         execution_modes=("thread", "process"),
         capabilities=("legacy_processor_protocol",),
+        default_execution_mode="process",
     )(ObjectDetectorRfdetr)
 else:
     _logger.info("ObjectDetectorRfdetr not registered due to environment constraints")

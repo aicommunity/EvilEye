@@ -23,6 +23,7 @@ from .track_update_core import parse_detections_to_boxes, run_tracker_update
     kind="tracker",
     capabilities=("legacy_processor_protocol",),
     execution_modes=("thread", "process"),
+    default_execution_mode="process",
 )
 class ObjectTrackingBotsort(ObjectTrackingBase):
     # tracker: BOTSORT

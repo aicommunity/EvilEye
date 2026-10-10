@@ -1170,3 +1170,38 @@ def test_item_module_publishes_late_model_class_mapping(execution_mode):
         assert adapter.get_runtime_stats()["degraded"] is False
     finally:
         adapter.stop()
+
+
+def test_item_module_uses_declared_default_execution_mode():
+    registry = PluginRegistry()
+    spec = ModuleSpec(
+        "worker",
+        "processor_item",
+        _EchoItemModule,
+        execution_modes=("thread", "process"),
+        default_execution_mode="process",
+    )
+    registry.register_plugin(
+        PluginSpec("test.mode-default", PLUGIN_API_VERSION, modules=(spec,))
+    )
+
+    adapter = ItemModuleAdapter(registry.get_module("test.mode-default/worker"))
+    adapter.set_params(module_id="test.mode-default/worker")
+
+    assert adapter.execution_mode == "process"
+
+
+def test_registry_rejects_unsupported_default_execution_mode():
+    registry = PluginRegistry()
+    spec = ModuleSpec(
+        "worker",
+        "processor_item",
+        _EchoItemModule,
+        execution_modes=("thread",),
+        default_execution_mode="process",
+    )
+
+    with pytest.raises(PluginError, match="default execution mode 'process' is not supported"):
+        registry.register_plugin(
+            PluginSpec("test.invalid-mode-default", PLUGIN_API_VERSION, modules=(spec,))
+        )

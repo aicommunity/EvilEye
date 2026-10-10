@@ -10,6 +10,7 @@ from ..core.mp_control import parse_mp_restart_policy
     kind="detector",
     capabilities=("legacy_processor_protocol",),
     execution_modes=("thread", "process"),
+    default_execution_mode="process",
     legacy_ids=("ObjectDetectorYoloMp",),
 )
 class ObjectDetectorYolo(ModelBasedDetectorBase):

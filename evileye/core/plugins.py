@@ -62,6 +62,7 @@ class ModuleSpec:
     capabilities: Sequence[str] = ()
     config_schema: Any = None
     legacy_ids: Sequence[str] = ()
+    default_execution_mode: str | None = None
 
 
 @dataclass(frozen=True)
@@ -156,6 +157,15 @@ class PluginRegistry:
                 raise PluginError(
                     f"Plugin '{plugin_id}' batch processor '{module_id}' only "
                     "supports thread execution in this API version"
+                )
+            if (
+                spec.default_execution_mode is not None
+                and spec.default_execution_mode not in modes
+            ):
+                raise PluginError(
+                    f"Plugin '{plugin_id}' module '{module_id}' default execution mode "
+                    f"'{spec.default_execution_mode}' is not supported; supported modes: "
+                    f"{', '.join(sorted(modes))}"
                 )
             if "process" in modes:
                 self._validate_spawn_factory(plugin_id, module_id, spec.factory)
@@ -261,6 +271,7 @@ class PluginRegistry:
         capabilities: Sequence[str] = (),
         config_schema: Any = None,
         legacy_ids: Sequence[str] = (),
+        default_execution_mode: str | None = None,
     ) -> None:
         spec = ModuleSpec(
             module_id=module_id,
@@ -270,6 +281,7 @@ class PluginRegistry:
             capabilities=capabilities,
             config_schema=config_schema,
             legacy_ids=tuple(dict.fromkeys([module_id, *legacy_ids])),
+            default_execution_mode=default_execution_mode,
         )
         plugin = PluginSpec("evileye", PLUGIN_API_VERSION, modules=(spec,))
         self.register_plugin(plugin)
@@ -448,6 +460,7 @@ def register_module(
     capabilities: Sequence[str] = (),
     config_schema: Any = None,
     legacy_ids: Sequence[str] = (),
+    default_execution_mode: str | None = None,
 ) -> Callable[[Callable[..., Any]], Callable[..., Any]]:
     """Decorator for builtin modules and simple in-process extensions."""
 
@@ -460,6 +473,7 @@ def register_module(
             capabilities=capabilities,
             config_schema=config_schema,
             legacy_ids=legacy_ids,
+            default_execution_mode=default_execution_mode,
         )
         return factory
 

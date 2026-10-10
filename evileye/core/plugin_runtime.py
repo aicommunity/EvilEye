@@ -314,7 +314,13 @@ class ItemModuleAdapter(EvilEyeBase):
     def set_params_impl(self):
         params = dict(self.params or {})
         self.module_id = str(params.get("module_id") or params.get("type") or self.module_id)
-        self.execution_mode = str(params.get("execution_mode", "thread")).lower()
+        default_mode = (
+            self.registered_module.spec.default_execution_mode
+            or tuple(self.registered_module.spec.execution_modes)[0]
+        )
+        self.execution_mode = str(
+            params.get("execution_mode", default_mode)
+        ).lower()
         self.source_ids = tuple(
             int(item) for item in (params.get("source_ids") or ())
         )
@@ -775,7 +781,9 @@ class LegacyProcessorModuleAdapter(EvilEyeBase):
         params = dict(self.params or {})
         self.module_id = str(params.get("module_id") or params.get("type") or self.module_id)
         supported_modes = tuple(self.registered_module.spec.execution_modes)
-        default_mode = "process" if "process" in supported_modes else supported_modes[0]
+        default_mode = self.registered_module.spec.default_execution_mode
+        if default_mode is None:
+            default_mode = "process" if "process" in supported_modes else supported_modes[0]
         self.execution_mode = str(params.get("execution_mode", default_mode)).lower()
         self.source_ids = list(params.get("source_ids") or [])
         module_params = dict(params)
@@ -946,7 +954,8 @@ class SourceModuleAdapter(EvilEyeBase):
                 "execution_mode",
                 nested_config.get(
                     "execution_mode",
-                    "process" if self._legacy_source_protocol else "thread",
+                    self.registered_module.spec.default_execution_mode
+                    or ("process" if self._legacy_source_protocol else "thread"),
                 ),
             )
         ).lower()

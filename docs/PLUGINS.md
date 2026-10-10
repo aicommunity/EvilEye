@@ -64,8 +64,13 @@ ModuleSpec(
     kind="processor_item",
     factory=MyDetector,
     execution_modes=("thread", "process"),
+    default_execution_mode="thread",
 )
 ```
+
+If omitted, the first declared execution mode is the default. Set it explicitly
+when changing a built-in module's runtime would otherwise change existing
+configuration behavior. The default must be one of `execution_modes`.
 
 For frame processors, declare `capabilities=("accepts_frame_handle",)` when the
 module can consume EvilEye's descriptor-backed frame payload without first

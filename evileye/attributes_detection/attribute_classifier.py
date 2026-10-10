@@ -21,6 +21,7 @@ from ..core.processor_base import (
     kind="attribute",
     capabilities=("legacy_processor_protocol",),
     execution_modes=("thread", "process"),
+    default_execution_mode="process",
 )
 class AttributeClassifier(EvilEyeBase):
     """Attribute classifier that runs YOLO inference on ROI crops
