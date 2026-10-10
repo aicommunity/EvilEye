@@ -7,6 +7,7 @@ import evileye.object_tracker  # noqa: F401
 import evileye.object_multi_camera_tracker  # noqa: F401
 import evileye.preprocessing  # noqa: F401
 
+from evileye.core.base_class import EvilEyeBase
 from evileye.core.plugins import EXECUTION_MODES, MODULE_KINDS, plugin_registry
 from evileye.events_detectors.event_registry import register_builtins
 
@@ -57,6 +58,27 @@ def test_all_builtin_modules_are_resolved_from_plugin_registry():
     assert tuple(batch.spec.execution_modes) == ("thread",)
 
 
+def test_yolo_mp_config_name_resolves_to_canonical_yolo_module():
+    register_builtins()
+    canonical = plugin_registry.get_module("ObjectDetectorYolo")
+    compatibility = plugin_registry.get_module("ObjectDetectorYoloMp")
+
+    assert canonical is not None
+    assert compatibility is canonical
+    assert compatibility.spec.factory.__name__ == "ObjectDetectorYolo"
+    assert "evileye/ObjectDetectorYoloMp" not in plugin_registry.list_modules()
+
+    adapter = EvilEyeBase.create_instance("ObjectDetectorYoloMp")
+    adapter.set_params(
+        type="ObjectDetectorYoloMp",
+        execution_mode="thread",
+        source_ids=[0],
+    )
+    assert adapter.execution_mode == "thread"
+    assert adapter._module.__class__.__name__ == "ObjectDetectorYolo"
+    assert adapter._module.execution_mode == "thread"
+
+
 def test_legacy_protocols_are_explicitly_tracked_during_migration():
     register_builtins()
     legacy_modules = {
@@ -75,7 +97,6 @@ def test_legacy_protocols_are_explicitly_tracked_during_migration():
         "evileye/ObjectDetectorRfdetr",
         "evileye/ObjectDetectorRtdetr",
         "evileye/ObjectDetectorYolo",
-        "evileye/ObjectDetectorYoloMp",
         "evileye/ObjectTrackingBotsort",
         "evileye/VideoCaptureGStreamer",
         "evileye/VideoCaptureOpencv",

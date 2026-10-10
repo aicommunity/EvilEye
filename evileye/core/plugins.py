@@ -438,6 +438,7 @@ def register_module(
     execution_modes: Sequence[str] = ("thread",),
     capabilities: Sequence[str] = (),
     config_schema: Any = None,
+    legacy_ids: Sequence[str] = (),
 ) -> Callable[[Callable[..., Any]], Callable[..., Any]]:
     """Decorator for builtin modules and simple in-process extensions."""
 
@@ -449,6 +450,7 @@ def register_module(
             execution_modes=execution_modes,
             capabilities=capabilities,
             config_schema=config_schema,
+            legacy_ids=legacy_ids,
         )
         return factory
 

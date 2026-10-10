@@ -13,7 +13,7 @@
 - `evileye/core/plugins.py` содержит `PluginSpec`, `ModuleSpec`, `PipelineSpec`, `PluginRegistry` и загрузчик entry points группы `evileye.plugins`; есть проверка API version, фабрик, видов модулей, режимов и идентификаторов.
 - Встроенные классы регистрируются через `register_module`; старый `EvilEyeBase.register` остаётся совместимым фасадом. Параллельный `EvilEyeBase._registry` удалён.
 - `event_registry` использует общий `PluginRegistry`; встроенные и внешние event detectors перечисляются и создаются через него.
-- Инвентарь закреплён тестом: 18 встроенных module IDs; отдельный тест явно учитывает девять компонентов с legacy backend-протоколом.
+- Инвентарь закреплён тестом: 18 публичных config IDs (17 manifest modules и alias `ObjectDetectorYoloMp`); тест legacy capabilities учитывает восемь отдельных модулей с legacy backend-протоколом.
 - `PipelineSurveillance` принимает `modules.<group>.mode=extend|replace`, валидирует группы и виды модулей, а `ProcessorFrame` отправляет кадр каждому совместимому процессору. `module_id` принимается наряду со старым `type`.
 - `PreprocessingPipeline` и `RoiFeeder` используют `processor_item` runtime.
 - Для пользовательских тревог есть `AlarmEvent`: тест проходит от внешнего event detector через controller и JSON adapter до данных журнала; проверены стабильный ID, повторная доставка, retry временной ошибки и диагностика переполнения очереди.
@@ -22,7 +22,7 @@
 
 ### Что пока остаётся legacy или отдельной реализацией
 
-- Девять встроенных модулей всё ещё заявляют `legacy_*_protocol` и используют специализированные внутренние worker/backend протоколы: два источника, четыре семейства детекторов, BoT-SORT и два модуля атрибутов. SPI-адаптеры дают им общий внешний контракт, но не заменяют эти внутренние протоколы.
+- Восемь manifest modules всё ещё заявляют `legacy_*_protocol` и используют специализированные внутренние worker/backend протоколы: два источника, три семейства детекторов (YOLO, RT-DETR, RF-DETR), BoT-SORT и два модуля атрибутов. `ObjectDetectorYoloMp` теперь только legacy config alias канонического YOLO модуля. SPI-адаптеры дают оставшимся модулям общий внешний контракт, но не заменяют их внутренние протоколы.
 - `ObjectMultiCameraTracking` переведён на `kind="batch_processor"` и публичный `IBatchProcessor.process_batch(batch, state)`. Общий адаптер создаёт модуль и вызывает batch-контракт; исполнение пока только потоковое.
 - Event detectors регистрируются через общий `PluginRegistry`, но жизненный цикл и подписки на `ObjectsHandler` всё ещё управляются `EventsService`; у этой стадии нет общего worker/health-контракта.
 - `PipelineSurveillance`, `PipelineCapture` и `PipelineDeclarative` уже регистрируются как встроенные `PipelineSpec`. `PipelineService` разрешает их через реестр; `pipeline_class` остаётся совместимым именем. Ошибка неизвестного класса не должна переключать запуск на другой пайплайн.
@@ -42,7 +42,7 @@
 
 ### Этап B. Удалить legacy processor adapter по семействам
 
-1. Перевести YOLO, YOLO-MP, RT-DETR и RF-DETR на общий item runtime: вход `Frame`/DTO, собственное состояние worker, унифицированный выход detections/debug metadata. Сохранить текущие backend реализации и параметры модели.
+1. [частично] Устранён отдельный YOLO-MP manifest: `ObjectDetectorYoloMp` разрешается как config alias на `ObjectDetectorYolo`, а `execution_mode` выбирает один канонический runtime. Сам `ObjectDetectorYolo` и семейства RT-DETR/RF-DETR ещё нужно перевести на общий item runtime: вход `Frame`/DTO, состояние worker, унифицированный выход detections/debug metadata.
 2. Перевести BoT-SORT на тот же контракт item processor; определить, где находится состояние трекера и как оно сбрасывается при потере/переподключении источника.
 3. Перевести AttributeDetector и AttributeClassifier на item runtime после tracker stage; проверить передачу `track_id`, `source_id`, ROI и истории атрибутов.
 4. После каждой группы убрать `legacy_processor_protocol` у соответствующих manifests, не удаляя compatibility `type` aliases.

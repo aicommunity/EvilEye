@@ -89,6 +89,8 @@ Built-in YOLO/RT-DETR detectors, BoT-SORT, and attribute detector/classifier
 modules are also registered in the SPI. `LegacyProcessorModuleAdapter` bridges
 their established `put/get` and lifecycle contracts into the pipeline module
 boundary; their proven model and process-worker internals remain unchanged.
+`ObjectDetectorYoloMp` is a compatibility config alias for `ObjectDetectorYolo`; the configured `execution_mode` selects the canonical detector runtime.
+
 New plugins should implement `process_item(item, state)` and use the common
 runtime directly. For stages that consume a synchronized multi-source batch,
 declare `kind="batch_processor"` and implement
