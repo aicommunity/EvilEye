@@ -404,6 +404,10 @@ class GstContinuousRecorder(VideoRecorderBase):
             self._check_thread = None
             refs = self._refs
             self._refs = None
+            output_dirs = set(self._recording_out_dirs)
+            if self._recording_out_dir is not None:
+                output_dirs.add(self._recording_out_dir)
+            container = self._recording_container
             self._recording_out_dir = None
             self._recording_out_dirs = set()
             self._session_date_str = None
@@ -419,6 +423,66 @@ class GstContinuousRecorder(VideoRecorderBase):
 
         if not refs:
             return
+
+        # Finalize the active fragment before setting splitmuxsink to NULL.
+        # MP4 muxers write the moov atom only after EOS reaches the sink.
+        eos_sent = False
+        try:
+            srcpad = refs.queue_before_mux.get_static_pad("src")
+            eos_sent = bool(srcpad and srcpad.push_event(Gst.Event.new_eos()))
+        except Exception as exc:
+            self.logger.warning("Could not send EOS to recording branch: %s", exc)
+
+        if eos_sent:
+            deadline = time.monotonic() + 10.0
+            last_signature = None
+            stable_since = None
+            while time.monotonic() < deadline:
+                try:
+                    queue_level = refs.queue_before_mux.get_property("current-level-buffers")
+                except Exception:
+                    queue_level = 0
+                files = []
+                for out_dir in output_dirs:
+                    try:
+                        files.extend(out_dir.glob(f"*.{container}"))
+                    except Exception:
+                        pass
+                latest = None
+                latest_stat = None
+                for path in files:
+                    try:
+                        stat = path.stat()
+                    except OSError:
+                        continue
+                    if latest_stat is None or stat.st_mtime_ns > latest_stat.st_mtime_ns:
+                        latest = path
+                        latest_stat = stat
+                if latest is None:
+                    signature = None
+                    file_ready = True
+                else:
+                    signature = (str(latest), latest_stat.st_size, latest_stat.st_mtime_ns)
+                    file_ready = latest_stat.st_size > 0
+                if queue_level == 0 and file_ready and signature == last_signature:
+                    if stable_since is None:
+                        stable_since = time.monotonic()
+                    elif time.monotonic() - stable_since >= 0.5:
+                        break
+                else:
+                    stable_since = None
+                last_signature = signature
+                time.sleep(0.05)
+            else:
+                self.logger.warning(
+                    "Timed out waiting for recording branch to finalize for %s",
+                    self.source.source_name if self.source else "source",
+                )
+        else:
+            self.logger.warning(
+                "Recording branch rejected EOS during shutdown for %s",
+                self.source.source_name if self.source else "source",
+            )
 
         for elem in [
             refs.videoconvert,

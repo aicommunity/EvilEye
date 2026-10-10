@@ -190,3 +190,23 @@ def test_find_alive_pipelines_filters_by_site(tmp_path: Path):
         matches = find_alive_pipelines_for_config(tmp_path, "a.json")
     assert len(matches) == 1
     assert matches[0]["pid"] == 10
+
+
+def test_find_alive_pipelines_ignores_current_cli_process(tmp_path: Path):
+    from types import SimpleNamespace
+    import os
+
+    with patch(
+        "evileye.site_runtime_guard.discover_site_runs",
+        return_value=SimpleNamespace(pipeline_runs=[]),
+    ), patch(
+        "evileye.watchdog_native.find_cli_and_child",
+        return_value=(os.getpid(), None),
+    ), patch(
+        "evileye.site_runtime_guard.pid_exists", return_value=True
+    ), patch(
+        "evileye.site_runtime_guard.pid_belongs_to_site", return_value=True
+    ):
+        matches = find_alive_pipelines_for_config(tmp_path, "configs/a.json")
+
+    assert matches == []

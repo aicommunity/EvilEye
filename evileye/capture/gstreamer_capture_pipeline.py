@@ -1038,10 +1038,6 @@ class GStreamerCapturePipelineMixin:
         # Finally, try to move pipeline to NULL to release GStreamer resources.
         if pipeline is not None:
             try:
-                pipeline.send_event(Gst.Event.new_eos())
-            except Exception:
-                pass
-            try:
                 pipeline.set_state(Gst.State.NULL)
             except Exception:
                 pass
