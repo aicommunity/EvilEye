@@ -92,6 +92,7 @@ def test_opencv_video_loop_reconnect_single(
     assert cap.is_inited, "is_inited должен быть True после реконнекта"
     assert cap.is_working, "is_working должен быть True после реконнекта"
     assert len(frames_after_eos) > 0, "Должны быть получены кадры после реконнекта"
+    assert max(frame.connection_generation for frame in frames_after_eos) >= 1
     
     # Проверяем, что получили кадры из нового цикла
     if frames_after_eos:

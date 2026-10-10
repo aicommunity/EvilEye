@@ -49,6 +49,7 @@ class ObjectTrackingBotsort(ObjectTrackingBase):
             "trackers": {},
             "encoders": None,
             "last_frame_ids": {},
+            "connection_generations": {},
         }
         self._plugin_state = state
         return state
@@ -124,15 +125,24 @@ class ObjectTrackingBotsort(ObjectTrackingBase):
 
         tracker = state["trackers"].get(source_id)
         previous_frame_id = state["last_frame_ids"].get(source_id)
-        if (
-            tracker is not None
-            and isinstance(previous_frame_id, (int, np.integer))
+        connection_generation = getattr(frame, "connection_generation", None)
+        previous_generation = state["connection_generations"].get(source_id)
+        frame_rewound = (
+            isinstance(previous_frame_id, (int, np.integer))
             and isinstance(frame_id, (int, np.integer))
             and frame_id < previous_frame_id
-        ):
+        )
+        connection_restarted = (
+            isinstance(previous_generation, (int, np.integer))
+            and isinstance(connection_generation, (int, np.integer))
+            and connection_generation != previous_generation
+        )
+        if tracker is not None and (frame_rewound or connection_restarted):
             tracker.reset()
         if isinstance(frame_id, (int, np.integer)):
             state["last_frame_ids"][source_id] = int(frame_id)
+        if isinstance(connection_generation, (int, np.integer)):
+            state["connection_generations"][source_id] = int(connection_generation)
 
         detections = (
             detection_result.get("detections", [])

@@ -313,6 +313,7 @@ class MpWorkerCapture(MpWorker):
             "frame_meta": {
                 "source_id": getattr(frame, "source_id", None),
                 "frame_id": getattr(frame, "frame_id", None),
+                "connection_generation": getattr(frame, "connection_generation", 0),
                 "current_video_frame": getattr(frame, "current_video_frame", None),
                 "current_video_position": getattr(frame, "current_video_position", None),
                 "source_video_duration": getattr(frame, "source_video_duration", None),

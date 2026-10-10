@@ -112,6 +112,7 @@ def test_botsort_plugin_emits_empty_result_per_frame(execution_mode):
     adapter.start()
     try:
         frame = _frame(7, 1)
+        frame.connection_generation = 3
         empty = DetectionResultList()
         empty.source_id = 7
         empty.frame_id = 1
@@ -130,6 +131,7 @@ def test_botsort_plugin_emits_empty_result_per_frame(execution_mode):
         assert tracks.source_id == 7
         assert tracks.frame_id == 1
         assert output_frame.frame_id == 1
+        assert output_frame.connection_generation == 3
     finally:
         adapter.stop()
         adapter.release()
@@ -235,3 +237,37 @@ def test_botsort_plugin_process_serializes_live_tracking_output():
     finally:
         adapter.stop()
         adapter.release()
+
+
+def test_botsort_plugin_resets_source_tracker_on_connection_generation_change(monkeypatch):
+    import evileye.object_tracker.object_tracking_botsort as botsort_module
+
+    created_trackers = []
+
+    class FakeTracker:
+        def __init__(self, _cfg, _encoders, frame_rate):
+            self.frame_rate = frame_rate
+            self.reset_count = 0
+            created_trackers.append(self)
+
+        def reset(self):
+            self.reset_count += 1
+
+    monkeypatch.setattr(botsort_module, "BOTSORT", FakeTracker)
+    monkeypatch.setattr(
+        botsort_module,
+        "run_tracker_update",
+        lambda tracker, _detections, _image, time_stamp=None: TrackingResultList(),
+    )
+    module = ObjectTrackingBotsort()
+    state = module.create_state({"fps": 12}, context=None)
+    first_frame = _frame(1, 10)
+    first_frame.connection_generation = 0
+    second_frame = _frame(1, 11)
+    second_frame.connection_generation = 1
+
+    module.process_item((_detection(1, 10), first_frame), state)
+    module.process_item((_detection(1, 11), second_frame), state)
+
+    assert len(created_trackers) == 1
+    assert created_trackers[0].reset_count == 1

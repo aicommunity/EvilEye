@@ -622,6 +622,7 @@ class VideoCaptureBase(EvilEyeBase):
                 frame = Frame()
                 frame.source_id = meta.get("source_id")
                 frame.frame_id = meta.get("frame_id")
+                frame.connection_generation = meta.get("connection_generation", 0)
                 frame.current_video_frame = meta.get("current_video_frame")
                 frame.current_video_position = meta.get("current_video_position")
                 frame.source_video_duration = meta.get("source_video_duration")
@@ -1000,6 +1001,7 @@ class VideoCaptureBase(EvilEyeBase):
         capture_image = CaptureImage()
         capture_image.image = image
         capture_image.frame_id = frame_id
+        capture_image.connection_generation = self._reconnect_count
         capture_image.time_stamp = timestamp
         capture_image.source_id = source_id
         capture_image.current_video_frame = current_video_frame if current_video_frame is not None else self.video_current_frame
