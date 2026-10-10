@@ -92,7 +92,6 @@ def test_legacy_protocols_are_explicitly_tracked_during_migration():
         )
     }
     assert legacy_modules == {
-        "evileye/AttributeDetector",
         "evileye/ObjectDetectorRfdetr",
         "evileye/ObjectDetectorRtdetr",
         "evileye/ObjectDetectorYolo",

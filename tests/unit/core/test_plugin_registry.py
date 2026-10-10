@@ -909,7 +909,11 @@ def test_builtin_model_tracker_and_attribute_modules_use_spi_adapter():
             continue
         assert registered is not None
         adapter = EvilEyeBase.create_instance(module_class.__name__)
-        if module_class in {trackers.ObjectTrackingBotsort, attributes.AttributeClassifier}:
+        if module_class in {
+            trackers.ObjectTrackingBotsort,
+            attributes.AttributeClassifier,
+            attributes.AttributeDetector,
+        }:
             assert registered.spec.kind == "processor_item"
             assert "legacy_processor_protocol" not in registered.spec.capabilities
             assert isinstance(adapter, ItemModuleAdapter)
