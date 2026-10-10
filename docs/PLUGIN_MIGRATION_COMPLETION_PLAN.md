@@ -12,7 +12,7 @@
 
 - `evileye/core/plugins.py` содержит `PluginSpec`, `ModuleSpec`, `PipelineSpec`, `PluginRegistry` и загрузчик entry points группы `evileye.plugins`; есть проверка API version, фабрик, видов модулей, режимов и идентификаторов.
 - Встроенные классы регистрируются через `register_module`; старый `EvilEyeBase.register` остаётся совместимым фасадом. Параллельный `EvilEyeBase._registry` удалён.
-- `event_registry` использует общий `PluginRegistry`; встроенные и внешние event detectors перечисляются и создаются через него.
+- `event_registry` использует общий `PluginRegistry`; встроенные и внешние event detectors создаются через `EventDetectorContext` и `EventDetectorModuleAdapter`, который владеет их конфигурацией и lifecycle. Сейчас adapter поддерживает только `thread`.
 - Инвентарь закреплён тестом: 18 публичных config IDs (17 manifest modules и alias `ObjectDetectorYoloMp`); inventory test фиксирует нулевое число встроенных `legacy_*_protocol`.
 - `PipelineSurveillance` принимает `modules.<group>.mode=extend|replace`, валидирует группы и виды модулей, а `ProcessorFrame` отправляет кадр каждому совместимому процессору. `module_id` принимается наряду со старым `type`.
 - `PreprocessingPipeline` и `RoiFeeder` используют `processor_item` runtime.
@@ -25,7 +25,7 @@
 
 - `VideoCaptureOpencv` и `VideoCaptureGStreamer` реализуют общий source SPI `open/read/close`; их thread/process режимы делегируются capture backend-ам с shared-frame transport. Встроенный inventory больше не содержит `legacy_source_protocol`.
 - `ObjectMultiCameraTracking` переведён на `kind="batch_processor"` и публичный `IBatchProcessor.process_batch(batch, state)`. Общий адаптер создаёт модуль и вызывает batch-контракт; исполнение пока только потоковое.
-- Event detectors регистрируются через общий `PluginRegistry`, но жизненный цикл и подписки на `ObjectsHandler` всё ещё управляются `EventsService`; у этой стадии нет общего worker/health-контракта.
+- Event detectors регистрируются через общий `PluginRegistry` и создаются runtime-адаптером с единым контекстом зависимостей. `EventsService` пока управляет подписками на источники/`ObjectsHandler`, контроллером и запуском; process-runtime для event detectors ещё не реализован.
 - `PipelineSurveillance`, `PipelineCapture` и `PipelineDeclarative` уже регистрируются как встроенные `PipelineSpec`. `PipelineService` разрешает их через реестр; `pipeline_class` остаётся совместимым именем. Ошибка неизвестного класса не должна переключать запуск на другой пайплайн.
 - Discovery и тревоги покрыты контрактными тестами. Пример внешнего пакета уже проверен через editable install в изолированном server-side virtualenv без переустановки EvilEye.
 
@@ -67,11 +67,11 @@
 ### Этап D. Завершить batch и event/alarm lifecycle
 
 1. [готово] `ObjectMultiCameraTracking` использует batch SPI с явной синхронизацией и ограничением `thread`-режима; контракт покрыт unit-тестами.
-2. Перевести Event detector фабрики и lifecycle с `EventsService` на PluginRegistry + общий runtime; оставить `EventsService` как управляющий слой, не второй реестр.
-3. Довести `AlarmEvent` до общего контракта: type, severity, timestamp, source, details, stable ID. Проверить JSON и PostgreSQL adapters, повтор записи, недоступное хранилище и журнал UI.
-4. Добавить диагностируемую остановку/переполнение, retry с ограничением и метрики очереди; отдельно решить долговечный outbox, если нужна гарантия пережить падение хоста (сейчас такой гарантии нет).
+2. [готово для thread] Фабрики и lifecycle Event detectors используют `PluginRegistry`, `EventDetectorContext` и общий runtime-адаптер; `EventsService` остался управляющим слоем зависимостей, запуска и освобождения ресурсов. Event detectors пока не поддерживают process execution.
+3. [частично] `AlarmEvent` проходит от стороннего detector-а через контроллер, JSON adapter и модель журнала; закреплены type, severity, timestamp, source, details и stable ID. End-to-end проверка PostgreSQL adapter-а остаётся.
+4. [частично] Ошибка detector-а не останавливает сбор событий от соседних detector-ов и отражается в degraded diagnostics; переполнение очереди и временный сбой JSON-записи диагностируются, запись повторяется. Нужно проверить остановку/повтор с PostgreSQL и UI; долговечный outbox не реализован.
 
-**Критерий:** внешний event/alarm detector не меняет ядро для нового события и проходит до выбранного хранилища и общего представления в журнале.
+**Критерий:** внешний event/alarm detector не меняет ядро для нового события и проходит до выбранного хранилища и общего представления в журнале; режим исполнения и отказ detector-а диагностируются явно.
 
 ### Этап E. Свести пайплайны к реестру и проверить внешний пакет
 

@@ -15,6 +15,7 @@ from evileye.database_controller.json_adapter_zone_events import JsonAdapterZone
 from evileye.events_control.events_controller import EventsDetectorsController
 from evileye.events_control.events_processor import EventsProcessor
 from evileye.events_detectors.event_registry import (
+    EventDetectorContext,
     create_event_detector,
     list_event_detectors,
     register_builtins,
@@ -66,7 +67,12 @@ class EventsService:
         """Инициализировать детекторы событий через plugin registry."""
         register_builtins()
         sources = pipeline.get_sources()
-        pipeline_source_ids = list(range(len(sources)))
+        pipeline_source_ids = tuple(range(len(sources)))
+        detector_context = EventDetectorContext(
+            sources=tuple(sources),
+            objects_handler=objects_handler,
+            pipeline_source_ids=pipeline_source_ids,
+        )
 
         enabled = params.get("enabled")
         if enabled is None:
@@ -88,10 +94,7 @@ class EventsService:
             try:
                 detector = self._instantiate_detector(
                     name,
-                    sources=sources,
-                    objects_handler=objects_handler,
-                    pipeline_source_ids=pipeline_source_ids,
-                    params=params,
+                    context=detector_context,
                 )
             except KeyError:
                 raise ValueError(f"Unknown event detector '{name}'")
@@ -106,38 +109,27 @@ class EventsService:
             if registered is not None and registered.spec.config_schema is not None:
                 detector_config = plugin_registry.validate_module_config(name, detector_config)
             detector.set_params(**detector_config)
-            detector.init()
+            if detector.init() is False:
+                raise RuntimeError(f"Event detector '{name}' initialization returned false")
             self._detectors[name] = detector
             if name == DETECTOR_CONFIG_KEY:
                 self._detectors[LEGACY_DETECTOR_CONFIG_KEY] = detector
             elif name == LEGACY_DETECTOR_CONFIG_KEY:
                 self._detectors[DETECTOR_CONFIG_KEY] = detector
 
-        # Cam sources subscribe to cam detector when present
-        cam = self._detectors.get("CamEventsDetector")
-        if cam is not None:
-            try:
-                for source in sources:
-                    if hasattr(source, "subscribe"):
-                        source.subscribe(cam)
-            except Exception:
-                pass
-
-        # ObjectsHandler subscribers (schedule/zone/attr) when present
-        oh_subs = [
-            self._detectors.get(DETECTOR_CONFIG_KEY),
-            self._detectors.get("ZoneEventsDetector"),
-            self._detectors.get("AttributeEventsDetector"),
-        ]
+        # Dependencies are wired by manifest capabilities, not detector names.
+        oh_subs = []
         for name in enabled_list:
             registered = plugin_registry.get_module(name)
             detector = self._detectors.get(name)
-            if (
-                registered is not None
-                and registered.spec.kind == "event_detector"
-                and "object_handler" in registered.spec.capabilities
-                and detector is not None
-            ):
+            if registered is None or registered.spec.kind != "event_detector" or detector is None:
+                continue
+            if "capture_sources" in registered.spec.capabilities:
+                for source in sources:
+                    subscribe = getattr(source, "subscribe", None)
+                    if callable(subscribe):
+                        subscribe(detector)
+            if "object_handler" in registered.spec.capabilities:
                 oh_subs.append(detector)
         unique_subscribers = []
         seen_subscribers: set[int] = set()
@@ -158,32 +150,9 @@ class EventsService:
             use_database,
         )
 
-    def _instantiate_detector(
-        self,
-        name: str,
-        *,
-        sources,
-        objects_handler,
-        pipeline_source_ids,
-        params: Dict[str, Any],
-    ):
-        if name == "CamEventsDetector":
-            return create_event_detector(name, sources)
-        if name in {DETECTOR_CONFIG_KEY, LEGACY_DETECTOR_CONFIG_KEY}:
-            return create_event_detector(
-                DETECTOR_CONFIG_KEY,
-                objects_handler,
-                pipeline_source_ids=pipeline_source_ids,
-            )
-        if name in {"ZoneEventsDetector", "AttributeEventsDetector"}:
-            return create_event_detector(name, objects_handler)
-        if name == "SystemEventsDetector":
-            return create_event_detector(name)
-        # Custom detectors: try (objects_handler) then no-arg
-        try:
-            return create_event_detector(name, objects_handler)
-        except TypeError:
-            return create_event_detector(name)
+    def _instantiate_detector(self, name: str, *, context: EventDetectorContext):
+        """Create any registered event detector with the shared dependency context."""
+        return create_event_detector(name, context)
 
     def initialize_attribute_processors(
             self,
@@ -449,21 +418,34 @@ class EventsService:
                 self.logger.error(f"Failed to stop detector {name}: {e}")
 
     def release(self) -> None:
-        self.stop_detectors()
+        if self._detectors_controller is not None:
+            try:
+                self._detectors_controller.release()
+            except Exception as exc:
+                self.logger.exception("Failed to release event detectors controller: %s", exc)
+        seen: set[int] = set()
+        for detector in self._detectors.values():
+            if id(detector) in seen:
+                continue
+            seen.add(id(detector))
+            try:
+                detector.release()
+            except Exception as exc:
+                self.logger.exception("Failed to release event detector: %s", exc)
         if self._events_processor is not None:
             try:
                 self._events_processor.stop()
-            except Exception:
-                pass
-        seen: set[int] = set()
+            except Exception as exc:
+                self.logger.exception("Failed to stop events processor: %s", exc)
+        seen.clear()
         for adapter in self._adapters:
             if adapter is None or id(adapter) in seen:
                 continue
             seen.add(id(adapter))
             try:
                 adapter.stop()
-            except Exception:
-                pass
+            except Exception as exc:
+                self.logger.exception("Failed to stop event adapter: %s", exc)
         self._detectors.clear()
         self._detectors_controller = None
         self._events_processor = None

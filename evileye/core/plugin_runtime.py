@@ -1237,6 +1237,187 @@ def _source_worker_entry(module_id, factory_module, factory_qualname, config, ou
             pass
 
 
+class EventDetectorModuleAdapter(EvilEyeBase):
+    """Own event-detector construction, config, and lifecycle for the plugin SPI."""
+
+    def __init__(self, registered_module, context):
+        self.registered_module = registered_module
+        self.module_id = registered_module.qualified_id
+        self.context = context
+        self.module = None
+        self._config: dict[str, Any] = {}
+        self._started = False
+        self.execution_mode = "thread"
+        self.degraded = False
+        self.last_error = None
+        super().__init__()
+        modes = set(registered_module.spec.execution_modes)
+        if "thread" not in modes:
+            raise PluginError(
+                f"Event detector '{self.module_id}' requires thread execution; "
+                f"manifest declares {sorted(modes)}"
+            )
+
+    def _record_failure(self, operation: str, exc: Exception) -> None:
+        self.degraded = True
+        self.last_error = f"{operation}: {type(exc).__name__}: {exc}"
+        self.logger.error(
+            "Event detector '%s' %s failed: %s",
+            self.module_id,
+            operation,
+            exc,
+            exc_info=(type(exc), exc, exc.__traceback__),
+        )
+
+    def _call_module(self, operation: str, *args, **kwargs):
+        if self.module is None:
+            raise PluginError(f"Event detector '{self.module_id}' is not initialized")
+        method = getattr(self.module, operation)
+        try:
+            return method(*args, **kwargs)
+        except Exception as exc:
+            self._record_failure(operation, exc)
+            raise PluginError(
+                f"Event detector '{self.module_id}' {operation} failed: {exc}"
+            ) from exc
+
+    def default(self):
+        if self.module is not None and callable(getattr(self.module, "default", None)):
+            return self._call_module("default")
+        return {}
+
+    def get_params_impl(self):
+        if self.module is not None and callable(getattr(self.module, "get_params", None)):
+            return self._call_module("get_params")
+        return dict(self._config)
+
+    def set_params_impl(self):
+        params = dict(self.params or {})
+        spec = self.registered_module.spec
+        requested_mode = str(
+            params.get("execution_mode") or spec.default_execution_mode or "thread"
+        ).strip().lower()
+        if requested_mode not in spec.execution_modes:
+            raise PluginError(
+                f"Event detector '{self.module_id}' does not support "
+                f"execution_mode='{requested_mode}'; supported modes: "
+                f"{', '.join(spec.execution_modes)}"
+            )
+        if requested_mode != "thread":
+            raise PluginError(
+                f"Event detector '{self.module_id}' process execution is not "
+                "implemented by the current event runtime"
+            )
+        self.execution_mode = requested_mode
+        reserved = {"module_id", "type", "execution_mode", "logger_name"}
+        config = params.get("config")
+        if config is None:
+            config = {key: value for key, value in params.items() if key not in reserved}
+        if not isinstance(config, dict):
+            raise PluginError(f"Event detector '{self.module_id}' config must be an object")
+        self._config = dict(config)
+        if self.registered_module.spec.config_schema is not None:
+            self._config = plugin_registry.validate_module_config(self.module_id, self._config)
+
+    def init_impl(self, **kwargs):
+        factory = self.registered_module.spec.factory
+        try:
+            self.module = factory(self.context)
+        except Exception as exc:
+            self._record_failure("factory", exc)
+            raise PluginError(
+                f"Event detector factory '{self.module_id}' failed: {exc}"
+            ) from exc
+        required = ("set_params", "init", "start", "stop", "reset", "put", "get", "get_name")
+        if "object_handler" in self.registered_module.spec.capabilities or "capture_sources" in self.registered_module.spec.capabilities:
+            required += ("update",)
+        missing = [name for name in required if not callable(getattr(self.module, name, None))]
+        if missing:
+            exc = PluginError(
+                f"Event detector '{self.module_id}' is missing contract methods: "
+                f"{', '.join(missing)}"
+            )
+            self._record_failure("contract validation", exc)
+            self.module = None
+            raise exc
+        self._call_module("set_params", **self._config)
+        initialized = self._call_module("init")
+        if initialized is False:
+            self._record_failure("initialization", RuntimeError("init returned false"))
+            return False
+        return True
+
+    def start(self):
+        if self.module is None or not self.is_inited:
+            raise PluginError(f"Event detector '{self.module_id}' is not initialized")
+        if self._started:
+            return
+        self._call_module("start")
+        self._started = True
+
+    def stop(self):
+        if self.module is not None and self._started:
+            self._call_module("stop")
+            self._started = False
+
+    def put(self, data):
+        return self._call_module("put", data)
+
+    def get(self):
+        return self._call_module("get")
+
+    def update(self):
+        if self.module is not None and callable(getattr(self.module, "update", None)):
+            return self._call_module("update")
+        return None
+
+    def get_name(self):
+        if self.module is None:
+            return self.registered_module.spec.module_id
+        return self._call_module("get_name")
+
+    def get_runtime_stats(self) -> dict[str, Any]:
+        module_stats = getattr(self.module, "get_runtime_stats", None)
+        return {
+            "module_id": self.module_id,
+            "execution_mode": self.execution_mode,
+            "initialized": self.is_inited,
+            "started": self._started,
+            "degraded": self.degraded,
+            "last_error": self.last_error,
+            "module": module_stats() if callable(module_stats) else None,
+        }
+
+    def get_debug_info(self, debug_info: dict | None):
+        if debug_info is None:
+            debug_info = {}
+        super().get_debug_info(debug_info)
+        debug_info["plugin_runtime"] = self.get_runtime_stats()
+        return debug_info
+
+    def reset_impl(self):
+        self.stop()
+        if self.module is not None:
+            self._call_module("reset")
+        self.degraded = False
+        self.last_error = None
+
+    def release_impl(self):
+        self.stop()
+        if self.module is not None:
+            release = getattr(self.module, "release", None)
+            if callable(release):
+                self._call_module("release")
+            self.module = None
+        self.is_inited = False
+
+    def __getattr__(self, name: str):
+        module = self.__dict__.get("module")
+        if module is not None and hasattr(module, name):
+            return getattr(module, name)
+        raise AttributeError(name)
+
+
 class SourceModuleAdapter(EvilEyeBase):
     """Adapt ``open/read/close`` source plugins to ProcessorSource."""
 

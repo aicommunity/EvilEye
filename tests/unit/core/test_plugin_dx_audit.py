@@ -7,6 +7,8 @@ import pytest
 from evileye.core.base_class import EvilEyeBase
 from evileye.core.processor_step import ProcessorStep
 from evileye.events_detectors.event_registry import (
+    EventDetectorContext,
+    create_event_detector,
     list_event_detectors,
     register_builtins,
     register_event_detector,
@@ -89,12 +91,18 @@ def test_event_registry_builtins_and_custom():
     register_builtins()
     assert "ZoneEventsDetector" in list_event_detectors()
 
+    from evileye.events_detectors.system_events_detector import SystemEventsDetector
+
     @register_event_detector("_AuditHeartbeat")
-    class _AuditHeartbeat:
-        def __init__(self, *args, **kwargs):
-            pass
+    class _AuditHeartbeat(SystemEventsDetector):
+        def __init__(self, context):
+            super().__init__()
+            self.context = context
 
     assert "_AuditHeartbeat" in list_event_detectors()
+    context = EventDetectorContext(pipeline_source_ids=(0, 2))
+    detector = create_event_detector("_AuditHeartbeat", context)
+    assert detector.context is context
 
 
 def test_builtin_event_detectors_register_when_custom_detector_was_loaded_first():

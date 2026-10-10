@@ -82,10 +82,43 @@ def test_alarm_flows_through_controller_storage_and_journal(tmp_path):
         detector_controller.stop()
 
 
+def test_event_controller_thread_starts_and_stops_cleanly():
+    controller = EventsDetectorsController([])
+    controller.init()
+
+    controller.start()
+    assert controller.is_running() is True
+    controller.stop()
+
+    assert controller.is_running() is False
+
+
+def test_detector_failure_is_reported_without_blocking_other_alarms():
+    class _BrokenDetector:
+        def get_name(self):
+            return "BrokenRule"
+
+        def get(self):
+            raise RuntimeError("rule evaluation failed")
+
+    alarm = AlarmEvent("ppe_violation", alarm_id="healthy-alarm")
+    controller = EventsDetectorsController([_BrokenDetector(), _AlarmDetector(alarm)])
+    controller.init()
+
+    assert controller.flush_once() is True
+    assert controller.get()["SafetyRule"][0].alarm_id == "healthy-alarm"
+    stats = controller.get_runtime_stats()
+    assert stats["degraded"] is True
+    assert "rule evaluation failed" in stats["last_error"]
+    controller.stop()
+
+
 def test_entry_point_event_detector_can_emit_generic_alarm():
     from evileye.controller.services.events_service import EventsService
     from evileye.core.base_class import EvilEyeBase
-    from evileye.core.plugins import PLUGIN_API_VERSION, ModuleSpec, PluginSpec, plugin_registry
+    from evileye.core.plugins import PLUGIN_API_VERSION, ModuleSpec, PluginError, PluginSpec, plugin_registry
+    from evileye.events_detectors.event_registry import EventDetectorContext
+    from evileye.events_detectors.system_events_detector import SystemEventsDetector
 
     alarm = AlarmEvent(
         "ppe_violation",
@@ -94,9 +127,10 @@ def test_entry_point_event_detector_can_emit_generic_alarm():
         alarm_id="entrypoint-alarm",
     )
 
-    class _PluginAlarmDetector(EvilEyeBase):
-        def __init__(self, objects_handler=None):
+    class _PluginAlarmDetector(SystemEventsDetector):
+        def __init__(self, context):
             super().__init__()
+            self.context = context
             self._event = alarm
 
         def get_name(self):
@@ -122,7 +156,7 @@ def test_entry_point_event_detector_can_emit_generic_alarm():
             pass
 
         def release_impl(self):
-            pass
+            self.was_released = True
 
         def default(self):
             pass
@@ -151,6 +185,10 @@ def test_entry_point_event_detector_can_emit_generic_alarm():
             self.subscribers.extend(subscribers)
 
     handler = _ObjectsHandler()
+    candidate = EvilEyeBase.create_instance(module_id, EventDetectorContext(objects_handler=handler))
+    with pytest.raises(PluginError, match="does not support execution_mode"):
+        candidate.set_params(execution_mode="process")
+
     service = EventsService()
     service.initialize_detectors(
         {"enabled": [module_id], module_id: {"threshold": 0.5}},
@@ -165,8 +203,21 @@ def test_entry_point_event_detector_can_emit_generic_alarm():
     snapshot = controller.get()
 
     assert snapshot["safety/ppe"][0].alarm_id == "entrypoint-alarm"
-    assert service.get_detector(module_id) in handler.subscribers
-    controller.stop()
+    detector = service.get_detector(module_id)
+    assert detector.context.objects_handler is handler
+    assert detector in handler.subscribers
+
+    def fail_get():
+        raise RuntimeError("event detector crashed")
+
+    detector.module.get = fail_get
+    assert controller.flush_once() is False
+    assert detector.get_runtime_stats()["degraded"] is True
+    assert "event detector crashed" in detector.get_runtime_stats()["last_error"]
+    assert controller.get_runtime_stats()["degraded"] is True
+    module = detector.module
+    service.release()
+    assert module.was_released is True
 
 
 def test_corrupt_alarm_journal_is_reported_without_overwriting(tmp_path):

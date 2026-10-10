@@ -1,9 +1,8 @@
 from threading import Thread
 from queue import Queue
-from timeit import default_timer as timer
 import time
 import copy
-from queue import Full
+from queue import Empty, Full
 from ..core.base_class import EvilEyeBase
 
 
@@ -23,6 +22,7 @@ class EventsDetectorsController(EvilEyeBase):
         self._queue_drops = 0
         self._events_published = 0
         self.degraded = False
+        self.last_error = None
 
     def set_params_impl(self):
         pass
@@ -32,74 +32,84 @@ class EventsDetectorsController(EvilEyeBase):
 
     def init_impl(self):
         self.events_detectors = {detector.get_name(): [] for detector in self.detectors}
+        return True
+
+    def start(self):
+        if self.run_flag:
+            return
+        if self.control_thread.ident is not None and not self.control_thread.is_alive():
+            self.control_thread = Thread(target=self.run)
+        self.run_flag = True
+        self.control_thread.start()
 
     def is_running(self):
         return self.run_flag
 
     def get(self):
-        if self.queue_out.empty():
+        try:
+            return self.queue_out.get_nowait()
+        except Empty:
             return {}
-        else:
-            return self.queue_out.get()
 
     def run(self):
         while self.run_flag:
+            try:
+                self._collect_once()
+            except Exception as exc:
+                self._record_failure("event collection", exc)
             time.sleep(0.01)
-            self.any_events = False  # Для отслеживания, были ли обнаружены события
-            begin_it = timer()
-
-            # Получаем от детекторов события
-            for detector in self.detectors:
-                events = detector.get()
-                if events:
-                    self.events_detectors[detector.get_name()] = events
-                    self.any_events = True
-                else:
-                    self.events_detectors[detector.get_name()] = []
-
-            if self.any_events:
-                self._publish_events_snapshot()
-            end_it = timer()
-
-    def start(self):
-        self.run_flag = True
-        self.control_thread.start()
 
     def stop(self):
-        # Try to flush one more batch of events before stopping
-        try:
-            self.flush_once()
-        except Exception:
-            pass
         self.run_flag = False
-        # Join control thread to ensure pending processing completed
-        try:
+        if self.control_thread.is_alive():
+            self.control_thread.join(timeout=0.3)
             if self.control_thread.is_alive():
-                self.control_thread.join(timeout=0.3)
-        except Exception:
-            pass
+                self._record_failure(
+                    "event controller shutdown",
+                    RuntimeError("controller thread did not stop within 0.3 seconds"),
+                )
+                return
+        self.logger.info("Everything in controller stopped")
 
     def flush_once(self):
-        """Collect events from detectors once and push to queue if any."""
+        """Collect events once and expose failures through degraded diagnostics."""
         try:
-            self.any_events = False
-            # небольшая задержка чтобы детекторы успели выложить события
-            time.sleep(0.01)
-            for detector in self.detectors:
-                events = detector.get()
-                if events:
-                    self.events_detectors[detector.get_name()] = events
-                    self.any_events = True
-                else:
-                    self.events_detectors[detector.get_name()] = []
-            if self.any_events:
-                self._publish_events_snapshot()
-            return self.any_events
-        except Exception:
+            return self._collect_once()
+        except Exception as exc:
+            self._record_failure("event collection", exc)
             return False
-        if self.control_thread.is_alive():
-            self.control_thread.join()
-        self.logger.info('Everything in controller stopped')
+
+    def _collect_once(self):
+        self.any_events = False
+        time.sleep(0.01)
+        for detector in self.detectors:
+            try:
+                detector_name = detector.get_name()
+                events = detector.get()
+            except Exception as exc:
+                self._record_failure(
+                    f"event detector {getattr(detector, 'module_id', type(detector).__name__)}",
+                    exc,
+                )
+                continue
+            if events:
+                self.events_detectors[detector_name] = events
+                self.any_events = True
+            else:
+                self.events_detectors[detector_name] = []
+        if self.any_events:
+            self._publish_events_snapshot()
+        return self.any_events
+
+    def _record_failure(self, operation: str, exc: Exception) -> None:
+        self.degraded = True
+        self.last_error = f"{operation}: {type(exc).__name__}: {exc}"
+        self.logger.error(
+            "%s failed: %s",
+            operation,
+            exc,
+            exc_info=(type(exc), exc, exc.__traceback__),
+        )
 
     def default(self):
         pass
@@ -119,13 +129,13 @@ class EventsDetectorsController(EvilEyeBase):
         except Full:
             self._queue_drops += 1
             self.degraded = True
+            self.last_error = "event snapshot queue is full; snapshot was rejected"
             self.logger.error(
                 "Event snapshot queue is full; snapshot was rejected (drops=%d)",
                 self._queue_drops,
             )
-        except Exception:
-            self.degraded = True
-            self.logger.exception("Failed to publish event snapshot")
+        except Exception as exc:
+            self._record_failure("event snapshot publication", exc)
 
     def get_runtime_stats(self) -> dict:
         try:
@@ -138,4 +148,5 @@ class EventsDetectorsController(EvilEyeBase):
             "queue_drops": self._queue_drops,
             "events_published": self._events_published,
             "degraded": self.degraded,
+            "last_error": self.last_error,
         }

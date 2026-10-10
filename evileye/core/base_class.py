@@ -56,6 +56,10 @@ class EvilEyeBase(ABC):
                 from .plugin_runtime import LegacyProcessorModuleAdapter
 
                 return LegacyProcessorModuleAdapter(registered)
+            if registered.spec.kind == "event_detector":
+                from .plugin_runtime import EventDetectorModuleAdapter
+
+                return EventDetectorModuleAdapter(registered, *args, **kwargs)
             if registered.spec.kind == "source":
                 from .plugin_runtime import SourceModuleAdapter
 
