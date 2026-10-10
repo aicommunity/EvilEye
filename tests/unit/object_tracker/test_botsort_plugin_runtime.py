@@ -271,3 +271,58 @@ def test_botsort_plugin_resets_source_tracker_on_connection_generation_change(mo
 
     assert len(created_trackers) == 1
     assert created_trackers[0].reset_count == 1
+
+
+@pytest.mark.parametrize("execution_mode", ["thread", "process"])
+def test_botsort_item_runtime_preserves_track_continuity(execution_mode):
+    import cv2
+
+    adapter = EvilEyeBase.create_instance("ObjectTrackingBotsort")
+    adapter.set_params(
+        module_id="ObjectTrackingBotsort",
+        execution_mode=execution_mode,
+        source_ids=[7],
+        fps=10,
+    )
+    assert adapter.init() is True
+    adapter.start()
+    track_ids = []
+    try:
+        for frame_id in range(1, 6):
+            x1 = 60 + frame_id * 3
+            image = np.zeros((240, 320, 3), dtype=np.uint8)
+            cv2.rectangle(image, (x1, 80), (x1 + 50, 180), (255, 255, 255), -1)
+            frame = Frame()
+            frame.source_id = 7
+            frame.frame_id = frame_id
+            frame.time_stamp = frame_id / 10
+            frame.image = image
+
+            detection = DetectionResult()
+            detection.bounding_box = [x1, 80, x1 + 50, 180]
+            detection.confidence = 0.95
+            detection.class_id = 0
+            detections = DetectionResultList()
+            detections.source_id = 7
+            detections.frame_id = frame_id
+            detections.time_stamp = frame.time_stamp
+            detections.detections = [detection]
+            adapter.put((detections, frame))
+
+            deadline = time.monotonic() + (15.0 if execution_mode == "process" else 3.0)
+            output = None
+            while output is None and time.monotonic() < deadline:
+                candidate = adapter.get()
+                if candidate is not None and candidate[0].frame_id == frame_id:
+                    output = candidate
+                elif candidate is None:
+                    time.sleep(0.01)
+            assert output is not None, f"no tracker output for frame {frame_id}"
+            tracks, output_frame = output
+            assert output_frame.frame_id == frame_id
+            assert len(tracks.tracks) == 1
+            track_ids.append(tracks.tracks[0].track_id)
+        assert len(set(track_ids)) == 1
+    finally:
+        adapter.stop()
+        adapter.release()
