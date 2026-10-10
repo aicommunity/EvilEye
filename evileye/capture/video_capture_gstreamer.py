@@ -40,7 +40,7 @@ from .gstreamer_capture_frames import GStreamerCaptureFramesMixin
 @register_module(
     "VideoCaptureGStreamer",
     kind="source",
-    capabilities=("legacy_source_protocol", "preserves_source_metadata", "shared_frame_transport"),
+    capabilities=("capture_source_backend", "preserves_source_metadata", "shared_frame_transport"),
     execution_modes=("thread", "process"),
     default_execution_mode="process",
 )
@@ -53,8 +53,8 @@ class VideoCaptureGStreamer(
 ):
     _recording_fs_error_logged = set()
 
-    def __init__(self):
-        super().__init__()
+    def __init__(self, config=None):
+        super().__init__(plugin_config=config)
         self.pipeline = None
         self.appsink = None
         self.loop = None
@@ -78,7 +78,7 @@ class VideoCaptureGStreamer(
             if not Gst.is_initialized():
                 Gst.init(None)
         else:
-            self.logger.warning("GStreamer not available, falling back to OpenCV")
+            self.logger.warning("GStreamer backend is unavailable")
 
         self.bus = None
         self._bus_handler_id = None
@@ -245,10 +245,12 @@ class VideoCaptureGStreamer(
             return super().init()
 
         if not self.gstreamer_available:
-            self.logger.error("GStreamer not available, cannot initialize")
+            self.logger.error("GStreamer backend is unavailable")
             self.is_inited = False
             self.is_working = False
-            return False
+            raise CaptureInitializationError(
+                "VideoCaptureGStreamer was selected but GStreamer is unavailable"
+            )
 
         # For IP cameras, use simple approach from api-refactoring without timeout
         # get_state(Gst.CLOCK_TIME_NONE) will block until state change completes
@@ -267,9 +269,12 @@ class VideoCaptureGStreamer(
                     self._recording_check_thread.start()
 
                 return True
-            except CaptureInitializationError:
-                # Re-raise initialization errors
-                raise
+            except CaptureInitializationError as e:
+                self.logger.error("Failed to initialize GStreamer capture: %s", e)
+                self.is_inited = False
+                self.is_working = False
+                self._last_init_error = e
+                return False
             except Exception as e:
                 hint = self.get_ip_camera_init_hint(e)
                 error_msg = f"Failed to initialize GStreamer capture: {e}"
@@ -280,7 +285,7 @@ class VideoCaptureGStreamer(
                 self.is_working = False
                 # Store error for protocol switching logic
                 self._last_init_error = e
-                raise CaptureInitializationError(error_msg) from e
+                return False
         else:
             # For non-IP cameras, use timeout to prevent hanging
             import threading as _thr_init

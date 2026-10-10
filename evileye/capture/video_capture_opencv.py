@@ -1,5 +1,4 @@
 import datetime
-from collections import deque
 
 import cv2
 from threading import Event, RLock, Thread
@@ -35,10 +34,7 @@ class VideoCaptureOpencv(VideoCaptureBase):
     _gstreamer_error_logged = set()  # Set of source_names for which error has already been logged
 
     def __init__(self, config=None):
-        super().__init__()
-        self._plugin_source_config = dict(config or {})
-        self._plugin_source_opened = False
-        self._plugin_pending_frames = deque()
+        super().__init__(plugin_config=config)
 
         self.capture = cv2.VideoCapture()
         self.recording_params: RecordingParams = RecordingParams()
@@ -65,80 +61,6 @@ class VideoCaptureOpencv(VideoCaptureBase):
         self._reconnect_attempt = 0
         self._noframes_reset_last_ts = 0.0
         self._reset_in_progress = False
-
-    def open(self, config=None):
-        """Open the capture backend through the public source plugin contract."""
-        source_config = dict(self._plugin_source_config)
-        if config is not None:
-            source_config.update(dict(config))
-        if not source_config:
-            raise ValueError("OpenCV source requires a configuration")
-        if self._plugin_source_opened:
-            return True
-
-        # The plugin adapter owns the backend mode. Keeping it in the source
-        # configuration lets VideoCaptureBase select its optimized shared-frame
-        # capture worker while the SPI adapter remains the control endpoint.
-        source_config.setdefault("execution_mode", "thread")
-        self.set_params(**source_config)
-        try:
-            initialized = self.init()
-        except CaptureConnectionError as exc:
-            if self.source_type != CaptureDeviceType.IpCamera:
-                raise
-            self.logger.warning("Initial camera connection failed; source will retry: %s", exc)
-            initialized = False
-        if not initialized and self.source_type != CaptureDeviceType.IpCamera:
-            raise CaptureConnectionError(
-                f"Could not initialize source {self.source_names}"
-            )
-        self._plugin_source_opened = True
-        return True
-
-    def read(self):
-        """Block until one frame is available or a finite source reaches EOF."""
-        if not self._plugin_source_opened:
-            raise RuntimeError("OpenCV source must be opened before reading")
-        while not self.stop_event.is_set():
-            if self._plugin_pending_frames:
-                return self._plugin_pending_frames.popleft()
-            if not self.get_init_flag():
-                try:
-                    initialized = self.init()
-                except CaptureConnectionError as exc:
-                    if self.source_type != CaptureDeviceType.IpCamera:
-                        raise
-                    self.logger.warning("Camera connection retry failed: %s", exc)
-                    if self.stop_event.wait(1.0):
-                        return None
-                    continue
-                if not initialized:
-                    if self.source_type != CaptureDeviceType.IpCamera:
-                        raise CaptureConnectionError(
-                            f"Could not initialize source {self.source_names}"
-                        )
-                    if self.stop_event.wait(1.0):
-                        return None
-                    continue
-
-            if not self.run_flag:
-                self.start()
-            frames = self.get()
-            if frames:
-                self._plugin_pending_frames.extend(frames[1:])
-                return frames[0]
-            if self.is_finished():
-                return None
-            if self.stop_event.wait(0.01):
-                return None
-        return None
-
-    def close(self):
-        """Stop capture workers and release the source resources."""
-        self.stop()
-        self.release()
-        self._plugin_pending_frames.clear()
-        self._plugin_source_opened = False
 
     def _shutdown_requested(self) -> bool:
         return (not self.run_flag) or self.stop_event.is_set()

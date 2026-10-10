@@ -21,6 +21,7 @@ from ..core.frame import CaptureImage, Frame
 from ..core.frame_transport import FrameHandle, SharedFrameTransport
 from .constants import CaptureConstants, CaptureConfig
 from .queue_utils import DropOldestQueue
+from .exceptions import CaptureConnectionError
 
 from ..core.processor_base import (
     DEFAULT_EXECUTION_MODE,
@@ -38,8 +39,11 @@ class CaptureDeviceType(Enum):
 
 
 class VideoCaptureBase(EvilEyeBase):
-    def __init__(self):
+    def __init__(self, plugin_config: dict | None = None):
         super().__init__()
+        self._plugin_source_config = dict(plugin_config or {})
+        self._plugin_source_opened = False
+        self._plugin_pending_frames = deque()
         # Raw parameters passed from configuration / controller
         # Initialized here to avoid hasattr checks in methods
         self.params: dict | None = None
@@ -97,6 +101,78 @@ class VideoCaptureBase(EvilEyeBase):
         self._mp_last_frame_mono: float = 0.0
         self._mp_worker_started_mono: float = 0.0
         self._mp_frame_decode_errors = 0
+
+    def open(self, config: dict | None = None) -> bool:
+        """Configure and initialize a capture source for the source SPI."""
+        source_config = dict(self._plugin_source_config)
+        if config is not None:
+            source_config.update(dict(config))
+        if not source_config:
+            raise ValueError("Capture source requires a configuration")
+        if self._plugin_source_opened:
+            return True
+
+        source_config.setdefault("execution_mode", "thread")
+        self.set_params(**source_config)
+        try:
+            initialized = self.init()
+        except CaptureConnectionError as exc:
+            if self.source_type != CaptureDeviceType.IpCamera:
+                raise
+            self.logger.warning("Initial camera connection failed; source will retry: %s", exc)
+            initialized = False
+        if not initialized and self.source_type != CaptureDeviceType.IpCamera:
+            raise CaptureConnectionError(
+                f"Could not initialize source {self.source_names}"
+            )
+        self._plugin_source_opened = True
+        return True
+
+    def read(self):
+        """Block until one frame is available or a finite source reaches EOF."""
+        if not self._plugin_source_opened:
+            raise RuntimeError("Capture source must be opened before reading")
+        while not self.stop_event.is_set():
+            if self._plugin_pending_frames:
+                return self._plugin_pending_frames.popleft()
+            if not self.get_init_flag():
+                try:
+                    initialized = self.init()
+                except CaptureConnectionError as exc:
+                    if self.source_type != CaptureDeviceType.IpCamera:
+                        raise
+                    self.logger.warning("Camera connection retry failed: %s", exc)
+                    if self.stop_event.wait(1.0):
+                        return None
+                    continue
+                if not initialized:
+                    if self.source_type != CaptureDeviceType.IpCamera:
+                        raise CaptureConnectionError(
+                            f"Could not initialize source {self.source_names}"
+                        )
+                    if self.stop_event.wait(1.0):
+                        return None
+                    continue
+
+            if not self.run_flag:
+                self.start()
+            frames = self.get()
+            if frames:
+                self._plugin_pending_frames.extend(frames[1:])
+                return frames[0]
+            if self.is_finished():
+                return None
+            if self.stop_event.wait(0.01):
+                return None
+        return None
+
+    def close(self) -> None:
+        """Stop capture workers and release the source resources."""
+        self.stop()
+        self.release()
+        self.is_inited = False
+        self._plugin_pending_frames.clear()
+        self._plugin_source_opened = False
 
     def _record_mp_frame_decode_error(self, detail: str) -> None:
         self._mp_frame_decode_errors += 1

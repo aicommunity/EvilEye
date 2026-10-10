@@ -83,7 +83,7 @@ def test_yolo_mp_config_name_resolves_to_canonical_yolo_module():
     assert adapter.registered_module.spec.factory.__name__ == "ObjectDetectorYolo"
 
 
-def test_legacy_protocols_are_explicitly_tracked_during_migration():
+def test_builtin_inventory_has_no_legacy_processor_or_source_protocols():
     register_builtins()
     legacy_modules = {
         module_id
@@ -95,11 +95,12 @@ def test_legacy_protocols_are_explicitly_tracked_during_migration():
             or "legacy_source_protocol" in registered.spec.capabilities
         )
     }
-    assert legacy_modules == {"evileye/VideoCaptureGStreamer"}
-    opencv = plugin_registry.get_module("VideoCaptureOpencv")
-    assert opencv is not None
-    assert "capture_source_backend" in opencv.spec.capabilities
-    assert "legacy_source_protocol" not in opencv.spec.capabilities
+    assert legacy_modules == set()
+    for module_id in ("VideoCaptureOpencv", "VideoCaptureGStreamer"):
+        source = plugin_registry.get_module(module_id)
+        assert source is not None
+        assert "capture_source_backend" in source.spec.capabilities
+        assert "legacy_source_protocol" not in source.spec.capabilities
 
 
 def test_rfdetr_legacy_thread_count_maps_to_ordered_item_workers():

@@ -132,3 +132,79 @@ def test_opencv_process_capture_delivers_short_video_before_eof(tmp_path):
     finally:
         source.stop()
         source.release()
+
+def test_gstreamer_builtin_source_uses_common_source_spi(monkeypatch):
+    from evileye.capture.video_capture_gstreamer import VideoCaptureGStreamer
+
+    emitted = []
+    init_attempts = []
+    expected = {"source_id": 7, "frame_id": 11}
+
+    def fake_init(source):
+        init_attempts.append(True)
+        source.is_inited = len(init_attempts) > 1
+        source.finished = False
+        return source.is_inited
+
+    def fake_start(source):
+        source.run_flag = True
+
+    def fake_get(source):
+        if not emitted:
+            emitted.append(expected)
+            source.finished = True
+            return [expected]
+        return []
+
+    monkeypatch.setattr(VideoCaptureGStreamer, "init", fake_init)
+    monkeypatch.setattr(VideoCaptureGStreamer, "start", fake_start)
+    monkeypatch.setattr(VideoCaptureGStreamer, "get", fake_get)
+    monkeypatch.setattr(VideoCaptureGStreamer, "stop", lambda source: setattr(source, "run_flag", False))
+    monkeypatch.setattr(VideoCaptureGStreamer, "release", lambda source: setattr(source, "is_inited", False))
+
+    source = EvilEyeBase.create_instance("VideoCaptureGStreamer")
+    source.set_params(
+        module_id="VideoCaptureGStreamer",
+        execution_mode="thread",
+        source="IpCamera",
+        camera="rtsp://127.0.0.1:65535/test-stream",
+        source_ids=[7],
+        source_names=["gst-spi-test"],
+    )
+    assert source.init() is True
+    assert source._module._plugin_source_opened is True
+
+    source.start()
+    try:
+        deadline = time.monotonic() + 2.0
+        frames = []
+        while not frames and time.monotonic() < deadline:
+            frames.extend(source.get())
+            if not frames:
+                time.sleep(0.01)
+        assert frames == [expected]
+        assert len(init_attempts) >= 2
+        assert source.source_ids == [7]
+        assert source.source_names == ["gst-spi-test"]
+    finally:
+        source.stop()
+        source.release()
+
+def test_gstreamer_source_does_not_fall_back_when_backend_is_unavailable(monkeypatch):
+    import evileye.capture.video_capture_gstreamer as gst_module
+
+    monkeypatch.setattr(gst_module, "GSTREAMER_AVAILABLE", False)
+    source = EvilEyeBase.create_instance("VideoCaptureGStreamer")
+    source.set_params(
+        module_id="VideoCaptureGStreamer",
+        execution_mode="thread",
+        source="VideoFile",
+        camera="unused-video.mp4",
+        source_ids=[8],
+        source_names=["gst-unavailable-test"],
+    )
+
+    assert source.init() is False
+    assert source.degraded is True
+    assert isinstance(source._module, gst_module.VideoCaptureGStreamer)
+    assert source._module._plugin_source_opened is False

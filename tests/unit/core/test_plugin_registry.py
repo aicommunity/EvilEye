@@ -831,8 +831,9 @@ def test_builtin_capture_sources_use_spi_adapter_and_keep_capture_backend(monkey
     opencv_spec = plugin_registry.get_module("VideoCaptureOpencv").spec
     gst_spec = plugin_registry.get_module("VideoCaptureGStreamer").spec
     assert "capture_source_backend" in opencv_spec.capabilities
+    assert "capture_source_backend" in gst_spec.capabilities
     assert "legacy_source_protocol" not in opencv_spec.capabilities
-    assert "legacy_source_protocol" in gst_spec.capabilities
+    assert "legacy_source_protocol" not in gst_spec.capabilities
 
     generated = []
 
@@ -1015,7 +1016,7 @@ def _source_adapter_for_exit_check():
     return adapter
 
 
-def test_legacy_source_expected_termination_does_not_mark_runtime_degraded():
+def test_capture_source_expected_termination_does_not_mark_runtime_degraded():
     from types import SimpleNamespace
 
     adapter = _source_adapter_for_exit_check()
@@ -1032,7 +1033,7 @@ def test_legacy_source_expected_termination_does_not_mark_runtime_degraded():
     assert adapter._backend_worker_exitcodes == [-15]
 
 
-def test_legacy_source_unexpected_worker_exit_marks_runtime_degraded():
+def test_capture_source_unexpected_worker_exit_marks_runtime_degraded():
     from types import SimpleNamespace
 
     adapter = _source_adapter_for_exit_check()
@@ -1049,7 +1050,7 @@ def test_legacy_source_unexpected_worker_exit_marks_runtime_degraded():
     assert adapter._backend_worker_exitcodes == [-9]
 
 
-def test_legacy_source_worker_alive_after_stop_marks_runtime_degraded():
+def test_capture_source_worker_alive_after_stop_marks_runtime_degraded():
     from types import SimpleNamespace
 
     adapter = _source_adapter_for_exit_check()

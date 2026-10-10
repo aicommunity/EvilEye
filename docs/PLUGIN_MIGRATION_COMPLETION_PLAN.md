@@ -13,7 +13,7 @@
 - `evileye/core/plugins.py` содержит `PluginSpec`, `ModuleSpec`, `PipelineSpec`, `PluginRegistry` и загрузчик entry points группы `evileye.plugins`; есть проверка API version, фабрик, видов модулей, режимов и идентификаторов.
 - Встроенные классы регистрируются через `register_module`; старый `EvilEyeBase.register` остаётся совместимым фасадом. Параллельный `EvilEyeBase._registry` удалён.
 - `event_registry` использует общий `PluginRegistry`; встроенные и внешние event detectors перечисляются и создаются через него.
-- Инвентарь закреплён тестом: 18 публичных config IDs (17 manifest modules и alias `ObjectDetectorYoloMp`); inventory test фиксирует один источник, который ещё заявляет `legacy_source_protocol`.
+- Инвентарь закреплён тестом: 18 публичных config IDs (17 manifest modules и alias `ObjectDetectorYoloMp`); inventory test фиксирует нулевое число встроенных `legacy_*_protocol`.
 - `PipelineSurveillance` принимает `modules.<group>.mode=extend|replace`, валидирует группы и виды модулей, а `ProcessorFrame` отправляет кадр каждому совместимому процессору. `module_id` принимается наряду со старым `type`.
 - `PreprocessingPipeline` и `RoiFeeder` используют `processor_item` runtime.
 - `parallel_items` включает общий ordered worker runtime: thread/process worker-ы получают изолированное состояние, runtime отдаёт результаты в порядке входа и помечает ошибки worker-ов как degraded. Для YOLO сохраняется старый `num_detection_threads` через перевод на `worker_count`.
@@ -23,7 +23,7 @@
 
 ### Что пока остаётся legacy или отдельной реализацией
 
-- `VideoCaptureOpencv` теперь реализует публичный source SPI `open/read/close`; его thread/process режимы делегируются capture backend-у с shared-frame transport. `VideoCaptureGStreamer` пока остаётся единственным source с legacy-протоколом.
+- `VideoCaptureOpencv` и `VideoCaptureGStreamer` реализуют общий source SPI `open/read/close`; их thread/process режимы делегируются capture backend-ам с shared-frame transport. Встроенный inventory больше не содержит `legacy_source_protocol`.
 - `ObjectMultiCameraTracking` переведён на `kind="batch_processor"` и публичный `IBatchProcessor.process_batch(batch, state)`. Общий адаптер создаёт модуль и вызывает batch-контракт; исполнение пока только потоковое.
 - Event detectors регистрируются через общий `PluginRegistry`, но жизненный цикл и подписки на `ObjectsHandler` всё ещё управляются `EventsService`; у этой стадии нет общего worker/health-контракта.
 - `PipelineSurveillance`, `PipelineCapture` и `PipelineDeclarative` уже регистрируются как встроенные `PipelineSpec`. `PipelineService` разрешает их через реестр; `pipeline_class` остаётся совместимым именем. Ошибка неизвестного класса не должна переключать запуск на другой пайплайн.
@@ -57,10 +57,10 @@
 
 ### Этап C. Мигрировать источники без потери capture-функций
 
-1. Вынести единый `Source` контракт `open/read/close` и стандартную модель frame metadata: source, timestamp/frame_id, размеры, reconnect state и диагностические ошибки.
-2. Перевести OpenCV source и затем GStreamer source на source runtime/backend, сохранив GStreamer codec fallback, reconnect, split/crop, запись сегментов, ограниченные очереди и shared-frame transport.
-3. Описать отдельные source backends для `thread`/`process`; не протаскивать `execution_mode` в модуль, который фактически не исполняется в выбранном режиме.
-4. При stop завершать источник и подтверждения IPC без ложных ошибок; worker failure переводит источник в visible degraded/reconnecting state.
+1. [частично] `VideoCaptureBase` предоставляет общий `open/read/close`, а кадры используют общий `CaptureImage`; единая модель размеров и reconnect state ещё не оформлена.
+2. [готово] OpenCV и GStreamer подключены к source SPI через `SourceModuleAdapter`. Их codec handling, reconnect, split/crop, запись сегментов, ограниченные очереди и shared-frame capture остаются в специализированных backend-ах.
+3. [частично] Для встроенных capture backend-ов режим `thread/process` исполняется их собственным backend-ом; сторонние source plugins используют общий thread/spawn runtime. Нужны общие диагностические метрики reconnect и worker health.
+4. [частично] Остановка проверена в thread/process тестах и полном unit suite без оставшихся worker-ов. Проверки RTSP/GStreamer зависят от доступности backend-а и камеры.
 
 **Проверки:** видеофайл, loop/reconnect, синтетический RTSP и доступные реальные камеры; запись и ffprobe; проверка отсутствия worker, сокетов и очередей после stop.
 
