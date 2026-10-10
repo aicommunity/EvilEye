@@ -97,7 +97,6 @@ def test_legacy_protocols_are_explicitly_tracked_during_migration():
         "evileye/ObjectDetectorRfdetr",
         "evileye/ObjectDetectorRtdetr",
         "evileye/ObjectDetectorYolo",
-        "evileye/ObjectTrackingBotsort",
         "evileye/VideoCaptureGStreamer",
         "evileye/VideoCaptureOpencv",
     }

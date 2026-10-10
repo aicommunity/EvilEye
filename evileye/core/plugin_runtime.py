@@ -296,6 +296,7 @@ class ItemModuleAdapter(EvilEyeBase):
         self.reports_model_class_mapping = (
             "model_class_mapping" in capabilities
         )
+        self.ResultType = getattr(factory, "ResultType", None)
         super().__init__()
         self.accepts_frame_handle = (
             "accepts_frame_handle" in capabilities

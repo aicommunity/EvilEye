@@ -309,13 +309,21 @@ class PipelineSurveillance(PipelineProcessors):
     def _init_encoders(self, tracker_params_list: List[Dict]):
         """Initialize encoders for tracking in surveillance pipeline"""
         self.encoders = {}
-        if self._trackers_use_process_mode(tracker_params_list):
-            self.logger.info(
-                "Skipping parent-process OnnxEncoder init "
-                "(trackers use process mode; encoder loads in worker)"
-            )
-            return
+        from ..core.plugins import plugin_registry
+
         for tracker_params in tracker_params_list:
+            module_id = ProcessorBase.configured_module_id(
+                tracker_params, "ObjectTrackingBotsort"
+            )
+            registered = plugin_registry.get_module(module_id)
+            if (
+                self._tracker_execution_mode(tracker_params) == "process"
+                or (
+                    registered is not None
+                    and registered.spec.kind == "processor_item"
+                )
+            ):
+                continue
             path = tracker_params.get("tracker_onnx", "models/osnet_ain_x1_0_M.onnx")
             if path not in self.encoders:
                 # Lazy import to avoid circular imports during module load time
@@ -336,13 +344,30 @@ class PipelineSurveillance(PipelineProcessors):
                     )
 
     @staticmethod
+    def _tracker_execution_mode(tracker_params: Dict) -> str:
+        from ..core.plugins import plugin_registry
+
+        module_id = ProcessorBase.configured_module_id(
+            tracker_params, "ObjectTrackingBotsort"
+        )
+        registered = plugin_registry.get_module(module_id)
+        if registered is not None:
+            default_mode = registered.spec.default_execution_mode
+            if default_mode is None:
+                default_mode = tuple(registered.spec.execution_modes)[0]
+        else:
+            default_mode = "process"
+        return str(
+            tracker_params.get("execution_mode", default_mode)
+        ).strip().lower()
+
+    @staticmethod
     def _trackers_use_process_mode(tracker_params_list: List[Dict]) -> bool:
-        for tracker_params in tracker_params_list or []:
-            if not isinstance(tracker_params, dict):
-                continue
-            if str(tracker_params.get("execution_mode", "process")).lower() == "process":
-                return True
-        return False
+        return any(
+            PipelineSurveillance._tracker_execution_mode(params) == "process"
+            for params in tracker_params_list or []
+            if isinstance(params, dict)
+        )
 
     def generate_default_structure(self, num_sources: int):
         """Generate default structure for pipeline"""

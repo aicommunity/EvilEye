@@ -22,7 +22,7 @@
 
 ### Что пока остаётся legacy или отдельной реализацией
 
-- Восемь manifest modules всё ещё заявляют `legacy_*_protocol` и используют специализированные внутренние worker/backend протоколы: два источника, три семейства детекторов (YOLO, RT-DETR, RF-DETR), BoT-SORT и два модуля атрибутов. `ObjectDetectorYoloMp` теперь только legacy config alias канонического YOLO модуля. SPI-адаптеры дают оставшимся модулям общий внешний контракт, но не заменяют их внутренние протоколы.
+- Семь manifest modules всё ещё заявляют `legacy_*_protocol` и используют специализированные внутренние worker/backend протоколы: два источника, три семейства детекторов (YOLO, RT-DETR, RF-DETR), два модуля атрибутов. `ObjectDetectorYoloMp` теперь только legacy config alias канонического YOLO модуля. SPI-адаптеры дают оставшимся модулям общий внешний контракт, но не заменяют их внутренние протоколы.
 - `ObjectMultiCameraTracking` переведён на `kind="batch_processor"` и публичный `IBatchProcessor.process_batch(batch, state)`. Общий адаптер создаёт модуль и вызывает batch-контракт; исполнение пока только потоковое.
 - Event detectors регистрируются через общий `PluginRegistry`, но жизненный цикл и подписки на `ObjectsHandler` всё ещё управляются `EventsService`; у этой стадии нет общего worker/health-контракта.
 - `PipelineSurveillance`, `PipelineCapture` и `PipelineDeclarative` уже регистрируются как встроенные `PipelineSpec`. `PipelineService` разрешает их через реестр; `pipeline_class` остаётся совместимым именем. Ошибка неизвестного класса не должна переключать запуск на другой пайплайн.
@@ -39,15 +39,15 @@
 2. [готово] `ModuleSpec.config_schema` проверяется и нормализуется до вызова фабрики item/batch/source runtime adapters; ошибка включает qualified module ID и причину валидации. Регрессионный тест подтверждает, что фабрика не вызывается для неверной конфигурации.
 3. [готово] Для `batch_processor` добавлен отдельный kind и `IBatchProcessor`; потоковая семантика явная, а `process` отвергается до запуска фабрики.
 4. [готово] Для `process` проверять импортируемость factory и сериализуемость config до старта; inputs и outputs передавать через явный pickle envelope с синхронной диагностикой ошибок, а state создавать только внутри worker. Неподдержанный режим отклоняется до запуска.
-6. [готово] `ModuleSpec.default_execution_mode` фиксирует режим по умолчанию; registry отвергает неподдерживаемое значение, а item/legacy/source adapters применяют заявленный режим.
-5. Для очередей определить поведение по виду данных: кадры могут иметь ограниченную политику drop-oldest, тревоги должны сообщать о переполнении и ошибке сохранения.
+5. [готово] `ModuleSpec.default_execution_mode` фиксирует режим по умолчанию; registry отвергает неподдерживаемое значение, а item/legacy/source adapters применяют заявленный режим.
+6. Для очередей определить поведение по виду данных: кадры могут иметь ограниченную политику drop-oldest, тревоги должны сообщать о переполнении и ошибке сохранения.
 
 **Проверки:** контрактные тесты создания, старта, остановки, ошибки init, исключения `process_item`, переполнения очереди, сериализации, отказа неподдерживаемого execution mode и schema errors.
 
 ### Этап B. Удалить legacy processor adapter по семействам
 
 1. [частично] Устранён отдельный YOLO-MP manifest: `ObjectDetectorYoloMp` разрешается как config alias на `ObjectDetectorYolo`, а `execution_mode` выбирает один канонический runtime. Сам `ObjectDetectorYolo` и семейства RT-DETR/RF-DETR ещё нужно перевести на общий item runtime: вход `Frame`/DTO, состояние worker, унифицированный выход detections/debug metadata.
-2. Перевести BoT-SORT на тот же контракт item processor; определить, где находится состояние трекера и как оно сбрасывается при потере/переподключении источника.
+2. [частично] BoT-SORT использует item runtime и хранит отдельный tracker на source_id; уменьшение frame_id сбрасывает состояние при rewind/loop. Capture пока не публикует единый признак reconnect, поэтому точный сброс по переподключению остаётся за этапом C.
 3. Перевести AttributeDetector и AttributeClassifier на item runtime после tracker stage; проверить передачу `track_id`, `source_id`, ROI и истории атрибутов.
 4. После каждой группы убрать `legacy_processor_protocol` у соответствующих manifests, не удаляя compatibility `type` aliases.
 5. Для каждого модуля сравнить старую и новую реализацию на фиксированных видео/кадрах: detection classes/confidence, track continuity, attributes, порядок кадров и сохранённые DTO.
@@ -109,6 +109,7 @@
   `tests/unit/core/test_plugin_registry.py`; весь тестовый файл прошёл, после него
   не осталось `pytest`, `resource_tracker` или `spawn_main` процессов.
 
+- BoT-SORT переведён на `processor_item`: thread и spawn process используют один контракт, runtime state изолирован по `source_id`, shared-frame handle читается без уничтожения. Unit-проверки подтверждают per-source state, reset на rewind, пустые результаты в thread/process и сериализацию реального tracking result в spawn worker. Pipeline загружает encoder только для legacy thread tracker; item worker создаёт его у себя. Полный `tests/unit` после миграции завершился с `exit=0` и дошёл до 100%; после прогона не осталось `pytest`, `resource_tracker` или `spawn_main` процессов.
 - Для item-модулей добавлен `IModelClassMappingProvider` с обязательной capability
   `model_class_mapping`: адаптер собирает таблицу классов из thread worker или
   передаёт metadata envelope из spawn worker. Controller принимает позднюю таблицу
