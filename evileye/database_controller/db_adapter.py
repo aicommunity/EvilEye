@@ -18,7 +18,12 @@ class DatabaseAdapterBase(EvilEyeBase, ABC):
         self.cameras_params: Dict[str, Any] = self.db_controller.get_cameras_params()
         self.query_thread: Thread = Thread(target=self._execute_query)
         self.run_flag: bool = False
-        self.queue_in: Queue = Queue()
+        self.queue_maxsize = 1024
+        self.queue_in: Queue = Queue(maxsize=self.queue_maxsize)
+        self.queue_failures = 0
+        self.processed_items = 0
+        self.degraded = False
+        self.last_error: Optional[str] = None
         self.table_name: Optional[str] = None
         self.event_name: Optional[str] = None
         # Батчинг: размер батча и таймаут для сбора запросов (секунды)
@@ -29,6 +34,14 @@ class DatabaseAdapterBase(EvilEyeBase, ABC):
 
     def set_params_impl(self) -> None:
         self.table_name = self.params['table_name']
+        queue_maxsize = int(self.params.get('queue_maxsize', self.queue_maxsize))
+        if queue_maxsize < 1:
+            raise ValueError('queue_maxsize must be a positive integer')
+        if queue_maxsize != self.queue_maxsize:
+            if not self.queue_in.empty() or self.run_flag:
+                raise RuntimeError('queue_maxsize cannot change while the adapter is active')
+            self.queue_maxsize = queue_maxsize
+            self.queue_in = Queue(maxsize=queue_maxsize)
         # Параметры батчинга (опционально)
         self.batch_size = self.params.get('batch_size', 10)
         self.batch_timeout = self.params.get('batch_timeout', 0.1)
@@ -36,6 +49,7 @@ class DatabaseAdapterBase(EvilEyeBase, ABC):
     def get_params_impl(self) -> Dict[str, Any]:
         params: Dict[str, Any] = dict()
         params['table_name'] = self.table_name
+        params['queue_maxsize'] = self.queue_maxsize
         return params
 
     def init_impl(self) -> None:
@@ -74,7 +88,9 @@ class DatabaseAdapterBase(EvilEyeBase, ABC):
         # JSON адаптеры не имеют db_controller с методом is_connected(), поэтому проверяем наличие метода
         if self.db_controller and hasattr(self.db_controller, 'is_connected'):
             if not self.db_controller.is_connected():
-                return  # БД недоступна, просто игнорируем операцию
+                exc = ConnectionError(f"Database adapter '{self.event_name}' is disconnected")
+                self._record_failure('insert', exc)
+                raise exc
         # Для JSON адаптеров (db_controller может быть None или self) всегда выполняем операцию
         self._insert_impl(data)
 
@@ -83,7 +99,9 @@ class DatabaseAdapterBase(EvilEyeBase, ABC):
         # JSON адаптеры не имеют db_controller с методом is_connected(), поэтому проверяем наличие метода
         if self.db_controller and hasattr(self.db_controller, 'is_connected'):
             if not self.db_controller.is_connected():
-                return  # БД недоступна, просто игнорируем операцию
+                exc = ConnectionError(f"Database adapter '{self.event_name}' is disconnected")
+                self._record_failure('update', exc)
+                raise exc
         # Для JSON адаптеров (db_controller может быть None или self) всегда выполняем операцию
         self._update_impl(data)
 
@@ -93,16 +111,51 @@ class DatabaseAdapterBase(EvilEyeBase, ABC):
     def get_cameras_params(self) -> Dict[str, Any]:
         return self.cameras_params
 
+    def _record_failure(self, operation: str, error: Exception) -> None:
+        self.queue_failures += 1
+        self.degraded = True
+        self.last_error = f"{operation}: {type(error).__name__}: {error}"
+        self.logger.error(
+            "Database adapter '%s' %s failed: %s",
+            self.event_name,
+            operation,
+            error,
+            exc_info=(type(error), error, error.__traceback__),
+        )
+
+    def get_runtime_stats(self) -> dict[str, Any]:
+        try:
+            pending = self.queue_in.qsize()
+        except Exception:
+            pending = None
+        return {
+            "event_name": self.event_name,
+            "queue_size": pending,
+            "queue_maxsize": self.queue_maxsize,
+            "queue_failures": self.queue_failures,
+            "processed_items": self.processed_items,
+            "worker_alive": bool(self.query_thread and self.query_thread.is_alive()),
+            "degraded": self.degraded,
+            "last_error": self.last_error,
+        }
+
     def _execute_query(self) -> None:
-        """Общая логика обработки запросов из очереди."""
-        while self.run_flag:
+        """Retry transient writes and report every item that cannot be saved."""
+        while self.run_flag or not self.queue_in.empty():
             try:
                 item = self.queue_in.get(timeout=0.1)
-                self._process_queue_item(item)
             except Empty:
                 continue
-            except ValueError:
-                break
+            _, error = self.error_handler.execute_with_retry(
+                lambda: self._process_queue_item(item),
+                max_retries=3,
+                initial_delay=0.1,
+                max_delay=0.5,
+            )
+            if error is not None:
+                self._record_failure('queued write', error)
+            else:
+                self.processed_items += 1
 
     @abstractmethod
     def _process_queue_item(self, item: Any) -> None:

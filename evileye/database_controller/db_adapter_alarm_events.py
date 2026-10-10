@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from queue import Full
+
 from psycopg2 import sql
 from psycopg2.extras import Json
 
@@ -16,6 +18,10 @@ class DatabaseAdapterAlarmEvents(DatabaseAdapterBase):
         self.event_name = "AlarmEvent"
 
     def _insert_impl(self, event):
+        if not self.run_flag or not self.query_thread.is_alive():
+            error = RuntimeError("Alarm database adapter worker is not running")
+            self._record_failure('enqueue alarm', error)
+            raise error
         fields = [
             "event_id", "alarm_id", "time_stamp", "alarm_type", "severity",
             "source_id", "source_name", "details", "project_id", "job_id",
@@ -37,13 +43,20 @@ class DatabaseAdapterAlarmEvents(DatabaseAdapterBase):
             sql.SQL(", ").join(map(sql.Identifier, fields)),
             sql.SQL(", ").join(sql.Placeholder() * len(fields)),
         )
-        self.queue_in.put((query, values))
+        try:
+            self.queue_in.put_nowait((query, values))
+        except Full as exc:
+            error = RuntimeError(
+                f"Alarm database queue is full (maxsize={self.queue_maxsize})"
+            )
+            self._record_failure('enqueue alarm', error)
+            raise error from exc
 
     def _update_impl(self, event):
         return None
 
     def _process_queue_item(self, item):
         query, values = item
-        self.db_controller.query(query, values)
+        self.db_controller.query_checked(query, values)
         threading_events.notify(EventType.NEW_EVENT)
 

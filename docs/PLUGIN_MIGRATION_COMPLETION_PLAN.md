@@ -68,8 +68,8 @@
 
 1. [готово] `ObjectMultiCameraTracking` использует batch SPI с явной синхронизацией и ограничением `thread`-режима; контракт покрыт unit-тестами.
 2. [готово для thread] Фабрики и lifecycle Event detectors используют `PluginRegistry`, `EventDetectorContext` и общий runtime-адаптер; `EventsService` остался управляющим слоем зависимостей, запуска и освобождения ресурсов. Event detectors пока не поддерживают process execution.
-3. [частично] `AlarmEvent` проходит от стороннего detector-а через контроллер, JSON adapter и модель журнала; закреплены type, severity, timestamp, source, details и stable ID. End-to-end проверка PostgreSQL adapter-а остаётся.
-4. [частично] Ошибка detector-а не останавливает сбор событий от соседних detector-ов и отражается в degraded diagnostics; переполнение очереди и временный сбой JSON-записи диагностируются, запись повторяется. Нужно проверить остановку/повтор с PostgreSQL и UI; долговечный outbox не реализован.
+3. [частично] `AlarmEvent` проходит от стороннего detector-а через контроллер и JSON adapter до модели журнала. PostgreSQL adapter использует параметризованный `INSERT`, `ON CONFLICT (alarm_id) DO NOTHING` и строгий `query_checked`; fake-PostgreSQL тест закрепляет поля и retry. Проверка против живой PostgreSQL и UI остаётся.
+4. [частично] Ошибка detector-а не останавливает соседние правила; очередь DB adapter-а ограничена, worker повторяет временные ошибки, дренирует очередь при stop и публикует degraded status в runtime-метриках event processor-а. Отказ/переполнение явно диагностируются. Проверка эксплуатации при длительном отказе PostgreSQL и долговечный outbox остаются.
 
 **Критерий:** внешний event/alarm detector не меняет ядро для нового события и проходит до выбранного хранилища и общего представления в журнале; режим исполнения и отказ detector-а диагностируются явно.
 

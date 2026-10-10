@@ -148,12 +148,29 @@ class EventsProcessor(EvilEyeBase):
             queue_size = self.queue.qsize()
         except Exception:
             queue_size = None
+        adapters = []
+        for adapter in self.db_adapters:
+            get_stats = getattr(adapter, "get_runtime_stats", None)
+            if callable(get_stats):
+                try:
+                    adapters.append({
+                        "adapter": adapter.__class__.__name__,
+                        **get_stats(),
+                    })
+                except Exception as exc:
+                    adapters.append({
+                        "adapter": adapter.__class__.__name__,
+                        "degraded": True,
+                        "last_error": f"runtime stats failed: {exc}",
+                    })
+        adapter_degraded = any(stats.get("degraded", False) for stats in adapters)
         return {
             "queue_size": queue_size,
             "queue_maxsize": self.queue_maxsize,
             "queue_rejections": self.queue_rejections,
             "adapter_failures": self.adapter_failures,
-            "degraded": self.degraded,
+            "adapters": adapters,
+            "degraded": self.degraded or adapter_degraded,
         }
 
     def _adapter_call(self, event, method_name: str, target=None):

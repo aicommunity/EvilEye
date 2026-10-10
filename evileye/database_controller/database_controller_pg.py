@@ -240,8 +240,18 @@ class DatabaseControllerPg(DatabaseControllerBase):
         return self.conn_pool is not None
 
     def query_impl(self, query_string, data=None):
-        if self.conn_pool is None:
+        try:
+            return self.query_checked(query_string, data)
+        except Exception as error:
+            self.logger.warning(
+                f'Transaction ({query_string}) failed: {error}'
+            )
             return None
+
+    def query_checked(self, query_string, data=None):
+        """Execute a query and raise after bounded retries if PostgreSQL fails."""
+        if self.conn_pool is None:
+            raise psycopg2.OperationalError("PostgreSQL connection pool is unavailable")
 
         def execute_query():
             connection = None
@@ -251,10 +261,9 @@ class DatabaseControllerPg(DatabaseControllerBase):
                     with connection.cursor() as curs:
                         curs.execute(query_string, data)
                         try:
-                            result = curs.fetchall()
+                            return curs.fetchall()
                         except psycopg2.ProgrammingError:
-                            result = None
-                return result
+                            return None
             finally:
                 if connection:
                     self.conn_pool.putconn(connection)
@@ -266,13 +275,8 @@ class DatabaseControllerPg(DatabaseControllerBase):
             max_delay=2.0,
             retryable_errors=(psycopg2.OperationalError,),
         )
-
-        if error:
-            self.logger.warning(
-                f'Transaction ({query_string}) failed after retries: {error}'
-            )
-            return None
-
+        if error is not None:
+            raise error
         return result
 
     def _insert_impl(self):
