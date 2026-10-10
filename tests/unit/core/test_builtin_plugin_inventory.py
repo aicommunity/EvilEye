@@ -68,15 +68,19 @@ def test_yolo_mp_config_name_resolves_to_canonical_yolo_module():
     assert compatibility.spec.factory.__name__ == "ObjectDetectorYolo"
     assert "evileye/ObjectDetectorYoloMp" not in plugin_registry.list_modules()
 
+    from evileye.core.plugin_runtime import ParallelItemModuleAdapter
+
     adapter = EvilEyeBase.create_instance("ObjectDetectorYoloMp")
+    assert isinstance(adapter, ParallelItemModuleAdapter)
     adapter.set_params(
         type="ObjectDetectorYoloMp",
         execution_mode="thread",
         source_ids=[0],
+        num_detection_threads=2,
     )
     assert adapter.execution_mode == "thread"
-    assert adapter._module.__class__.__name__ == "ObjectDetectorYolo"
-    assert adapter._module.execution_mode == "thread"
+    assert adapter.worker_count == 2
+    assert adapter.registered_module.spec.factory.__name__ == "ObjectDetectorYolo"
 
 
 def test_legacy_protocols_are_explicitly_tracked_during_migration():
@@ -94,7 +98,6 @@ def test_legacy_protocols_are_explicitly_tracked_during_migration():
     assert legacy_modules == {
         "evileye/ObjectDetectorRfdetr",
         "evileye/ObjectDetectorRtdetr",
-        "evileye/ObjectDetectorYolo",
         "evileye/VideoCaptureGStreamer",
         "evileye/VideoCaptureOpencv",
     }

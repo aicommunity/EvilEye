@@ -279,6 +279,7 @@ class ItemModuleAdapter(EvilEyeBase):
         self.module_id = registered_module.qualified_id
         self.execution_mode = "thread"
         self.source_ids: tuple[int, ...] = ()
+        self.worker_count = 1
         capabilities = set(registered_module.spec.capabilities or ())
         factory = registered_module.spec.factory
         self._config: dict[str, Any] = {}
@@ -327,7 +328,14 @@ class ItemModuleAdapter(EvilEyeBase):
         )
         self._queue_size = max(1, int(params.get("queue_size", 8)))
         self._config = dict(params.get("config") or {})
-        reserved = {"type", "module_id", "execution_mode", "source_ids", "queue_size", "ipc_mode"}
+        capabilities = set(self.registered_module.spec.capabilities or ())
+        requested_workers = int(params.get("worker_count", 1))
+        if requested_workers > 1 and "parallel_items" not in capabilities:
+            raise PluginError(
+                f"Module '{self.module_id}' must declare parallel_items to use "
+                "worker_count greater than one"
+            )
+        reserved = {"type", "module_id", "execution_mode", "source_ids", "queue_size", "ipc_mode", "worker_count"}
         for key, value in params.items():
             if key not in reserved:
                 self._config.setdefault(key, value)
@@ -368,6 +376,7 @@ class ItemModuleAdapter(EvilEyeBase):
             module_id=self.registered_module.qualified_id,
             execution_mode=self.execution_mode,
             source_ids=self.source_ids,
+            worker_count=self.worker_count,
         )
 
     def init_impl(self, **kwargs):
@@ -637,6 +646,316 @@ class ItemModuleAdapter(EvilEyeBase):
 
     def default(self):
         self.reset_impl()
+
+
+_ORDERED_THREAD_OUTPUT_MARKER = "__evileye_parallel_item_runtime__"
+_ORDERED_SKIP = object()
+
+
+class OrderedItemModuleWorker(ItemModuleWorker):
+    """Process worker that returns each item with its input sequence number."""
+
+    def worker_impl(self, data):
+        if not (
+            isinstance(data, tuple)
+            and len(data) == 3
+            and data[0] == _PROCESS_INPUT_MARKER
+        ):
+            self._stop_event.set()
+            return (_PROCESS_OUTPUT_MARKER, "error", "invalid ordered input envelope")
+        sequence = int(data[1])
+        try:
+            item = pickle.loads(data[2])
+            result = self.module.process_item(item, self.module_state)
+            self._publish_model_class_mapping()
+            if result is None:
+                return (_PROCESS_OUTPUT_MARKER, "skip", sequence, None)
+            payload = _serialize_process_value(
+                result, self.module_id, "process_item result"
+            )
+            return (_PROCESS_OUTPUT_MARKER, "output", sequence, payload)
+        except Exception as exc:
+            if self.logger:
+                self.logger.exception(
+                    "Plugin module %s failed while processing ordered item %s",
+                    self.module_id,
+                    sequence,
+                )
+            self._stop_event.set()
+            return (_PROCESS_OUTPUT_MARKER, "error", sequence, str(exc))
+
+
+class ParallelItemModuleAdapter(ItemModuleAdapter):
+    """Run explicitly parallel-safe item modules across ordered workers."""
+
+    def __init__(self, registered_module):
+        super().__init__(registered_module)
+        self.worker_count = 1
+        self._parallel_threads: list[threading.Thread] = []
+        self._parallel_modules: list[Any] = []
+        self._parallel_states: list[Any] = []
+        self._next_input_sequence = 0
+        self._next_output_sequence = 0
+        self._ordered_results: dict[int, Any] = {}
+
+    def set_params_impl(self):
+        super().set_params_impl()
+        params = dict(self.params or {})
+        capabilities = set(self.registered_module.spec.capabilities or ())
+        configured_count = params.get(
+            "worker_count",
+            params.get("num_detection_threads", self._config.get("worker_count", 1)),
+        )
+        self.worker_count = int(configured_count)
+        if self.worker_count < 1:
+            raise PluginError("worker_count must be a positive integer")
+        if self.worker_count > 1 and "parallel_items" not in capabilities:
+            raise PluginError(
+                f"Module '{self.module_id}' must declare parallel_items to use "
+                "worker_count greater than one"
+            )
+        self._config.pop("worker_count", None)
+        self._config.pop("num_detection_threads", None)
+        self._next_input_sequence = 0
+        self._next_output_sequence = 0
+        self._ordered_results.clear()
+
+    def start(self):
+        if self.worker_count == 1:
+            return super().start()
+        self._stop_event.clear()
+        self._failure_reported = False
+        if self.execution_mode == "process":
+            from .mp_control import MpControl
+
+            self._mp_control = MpControl(
+                max_input_size=self._queue_size,
+                max_output_size=self._queue_size,
+                name=f"Plugin-{self.module_id.replace('/', '-')}Pool",
+                restart_on_exit=False,
+            )
+            for _ in range(self.worker_count):
+                worker = self._mp_control.add_worker(OrderedItemModuleWorker)
+                worker.module_id = self.module_id
+                worker.config = self._config
+                worker.runtime_context = self._module_runtime_context()
+                worker.factory_module = self.registered_module.spec.factory.__module__
+                worker.factory_qualname = self.registered_module.spec.factory.__qualname__
+                worker.module = None
+                worker.module_state = None
+                worker.drop_oldest_on_full = False
+                worker.reports_model_class_mapping = self.reports_model_class_mapping
+            self._mp_control.start()
+            return
+
+        self._parallel_modules = [None] * self.worker_count
+        self._parallel_states = [None] * self.worker_count
+        self._parallel_threads = [
+            threading.Thread(
+                target=self._run_parallel_thread,
+                args=(index,),
+                name=f"Plugin-{self.module_id.replace('/', '-')}-{index}",
+                daemon=True,
+            )
+            for index in range(self.worker_count)
+        ]
+        for thread in self._parallel_threads:
+            thread.start()
+        self._thread = self._parallel_threads[0]
+
+    def _run_parallel_thread(self, worker_index: int):
+        module = None
+        state = None
+        try:
+            try:
+                module = _call_factory(
+                    self.registered_module.spec.factory, self._config
+                )
+                if not callable(getattr(module, "process_item", None)):
+                    raise PluginError(
+                        f"Module '{self.module_id}' must implement process_item(item, state)"
+                    )
+                _validate_model_class_mapping_capability(
+                    module, self.module_id, self.reports_model_class_mapping
+                )
+                state = _create_state(
+                    module, self._config, self._module_runtime_context()
+                )
+                self._parallel_modules[worker_index] = module
+                self._parallel_states[worker_index] = state
+                if worker_index == 0:
+                    self._module = module
+                    self._state = state
+                mapping = _get_model_class_mapping(module, self.module_id)
+                if mapping:
+                    self._set_model_class_mapping(mapping)
+            except Exception as exc:
+                self.degraded = True
+                self.logger.exception(
+                    "Plugin module %s worker %s failed during initialization",
+                    self.module_id,
+                    worker_index,
+                )
+                self._output_queue.put(
+                    (_ORDERED_THREAD_OUTPUT_MARKER, "error", str(exc))
+                )
+                return
+
+            while not self._stop_event.is_set():
+                try:
+                    sequence, item = self._input_queue.get(timeout=0.1)
+                except queue.Empty:
+                    continue
+                try:
+                    result = module.process_item(item, state)
+                    mapping = _get_model_class_mapping(module, self.module_id)
+                    if mapping:
+                        self._set_model_class_mapping(mapping)
+                    if result is None:
+                        envelope = (_ORDERED_THREAD_OUTPUT_MARKER, "skip", sequence, None)
+                    else:
+                        envelope = (_ORDERED_THREAD_OUTPUT_MARKER, "output", sequence, result)
+                except Exception as exc:
+                    self.degraded = True
+                    self.logger.exception(
+                        "Plugin module %s worker %s failed on item %s",
+                        self.module_id,
+                        worker_index,
+                        sequence,
+                    )
+                    envelope = (_ORDERED_THREAD_OUTPUT_MARKER, "error", sequence, str(exc))
+                    self._stop_event.set()
+                while not self._stop_event.is_set():
+                    try:
+                        self._output_queue.put(envelope, timeout=0.1)
+                        break
+                    except queue.Full:
+                        continue
+        finally:
+            _close_item_resources(module, state, self.logger, self.module_id)
+            self._parallel_modules[worker_index] = None
+            self._parallel_states[worker_index] = None
+            if worker_index == 0:
+                self._module = None
+                self._state = None
+
+    def put(self, item):
+        if self.worker_count == 1:
+            return super().put(item)
+        try:
+            sequence = self._next_input_sequence
+            if self.execution_mode == "process":
+                if self._mp_control is None:
+                    raise RuntimeError(
+                        f"Process module '{self.module_id}' is not started"
+                    )
+                payload = _serialize_process_value(item, self.module_id, "input item")
+                self._mp_control.put(
+                    (_PROCESS_INPUT_MARKER, sequence, payload), block=False
+                )
+            else:
+                self._input_queue.put_nowait((sequence, item))
+            self._next_input_sequence += 1
+        except queue.Full:
+            self.degraded = True
+            self.logger.error("Plugin module %s input queue is full", self.module_id)
+            raise RuntimeError(f"Plugin module '{self.module_id}' input queue is full")
+        except PluginError as exc:
+            self.degraded = True
+            self.logger.error("%s", exc)
+            raise
+
+    def _store_ordered_message(self, result, *, process_mode: bool) -> None:
+        expected_marker = _PROCESS_OUTPUT_MARKER if process_mode else _ORDERED_THREAD_OUTPUT_MARKER
+        if not isinstance(result, tuple) or not result or result[0] != expected_marker:
+            self.degraded = True
+            self.logger.error("Plugin module %s returned an invalid ordered envelope", self.module_id)
+            return
+        if process_mode and len(result) == 3 and result[1] == "metadata":
+            try:
+                self._set_model_class_mapping(pickle.loads(result[2]))
+            except Exception as exc:
+                self.degraded = True
+                self.logger.error("Plugin module %s returned invalid class mapping metadata: %s", self.module_id, exc)
+            return
+        if len(result) == 3 and result[1] == "error":
+            self.degraded = True
+            self.logger.error("Plugin module %s worker failed: %s", self.module_id, result[2])
+            return
+        if len(result) != 4:
+            self.degraded = True
+            self.logger.error("Plugin module %s returned malformed ordered output", self.module_id)
+            return
+        kind, sequence, payload = result[1], int(result[2]), result[3]
+        if sequence in self._ordered_results:
+            self.degraded = True
+            self.logger.error("Plugin module %s returned item %s more than once", self.module_id, sequence)
+            return
+        if kind == "skip":
+            self._ordered_results[sequence] = _ORDERED_SKIP
+        elif kind == "error":
+            self._ordered_results[sequence] = ("error", payload)
+        elif kind == "output":
+            try:
+                self._ordered_results[sequence] = pickle.loads(payload) if process_mode else payload
+            except Exception as exc:
+                self._ordered_results[sequence] = ("error", str(exc))
+        else:
+            self.degraded = True
+            self.logger.error("Plugin module %s returned unknown ordered output kind %s", self.module_id, kind)
+
+    def get(self):
+        if self.worker_count == 1:
+            return super().get()
+        if self.execution_mode == "process":
+            self._check_process_health()
+            if self._mp_control is None:
+                return None
+            for _ in range(max(16, self._queue_size * 2)):
+                try:
+                    self._store_ordered_message(
+                        self._mp_control.get_nowait(), process_mode=True
+                    )
+                except queue.Empty:
+                    break
+        else:
+            for _ in range(max(16, self._queue_size * 2)):
+                try:
+                    self._store_ordered_message(
+                        self._output_queue.get_nowait(), process_mode=False
+                    )
+                except queue.Empty:
+                    break
+        while self._next_output_sequence in self._ordered_results:
+            value = self._ordered_results.pop(self._next_output_sequence)
+            self._next_output_sequence += 1
+            if value is _ORDERED_SKIP:
+                continue
+            if isinstance(value, tuple) and len(value) == 2 and value[0] == "error":
+                self.degraded = True
+                self.logger.error("Plugin module %s failed on ordered item: %s", self.module_id, value[1])
+                return None
+            return value
+        return None
+
+    def stop(self):
+        if self.worker_count == 1 or self.execution_mode == "process":
+            return super().stop()
+        self._stop_event.set()
+        for thread in self._parallel_threads:
+            if thread.is_alive():
+                thread.join(timeout=2.0)
+        self._parallel_threads = []
+        self._thread = None
+
+    def get_runtime_stats(self) -> dict[str, Any]:
+        stats = super().get_runtime_stats()
+        stats["worker_count"] = self.worker_count
+        if self.execution_mode == "thread" and self.worker_count > 1:
+            stats["worker_running"] = sum(
+                thread.is_alive() for thread in self._parallel_threads
+            )
+        return stats
 
 
 class BatchProcessorModuleAdapter(EvilEyeBase):

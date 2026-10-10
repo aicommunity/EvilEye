@@ -40,6 +40,11 @@ class EvilEyeBase(ABC):
         registered = plugin_registry.get_module(class_name)
         if registered is not None:
             if registered.spec.kind == "processor_item":
+                capabilities = set(registered.spec.capabilities or ())
+                if "parallel_items" in capabilities:
+                    from .plugin_runtime import ParallelItemModuleAdapter
+
+                    return ParallelItemModuleAdapter(registered)
                 from .plugin_runtime import ItemModuleAdapter
 
                 return ItemModuleAdapter(registered)

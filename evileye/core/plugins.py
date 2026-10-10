@@ -44,6 +44,7 @@ class ModuleRuntimeContext:
     module_id: str
     execution_mode: str
     source_ids: tuple[int, ...] = ()
+    worker_count: int = 1
 
 
 @dataclass(frozen=True)
@@ -52,7 +53,10 @@ class ModuleSpec:
 
     ``module_id`` is local to the plugin and becomes ``plugin_id/module_id``
     after registration. ``factory`` should be importable at module scope when
-    ``process`` execution is advertised.
+    ``process`` execution is advertised. The ``parallel_items`` capability
+    means independent ``process_item`` calls may run concurrently with isolated
+    state per worker; the runtime restores output order. Modules must not depend
+    on shared mutable state between items or workers.
     """
 
     module_id: str

@@ -9,6 +9,7 @@ import pytest
 
 from evileye.attributes_detection.attribute_classifier import AttributeClassifier
 from evileye.attributes_detection.attribute_detector import AttributeDetector
+from evileye.object_detector.object_detection_yolo import ObjectDetectorYolo
 from evileye.core.base_class import EvilEyeBase
 from evileye.core.frame import Frame
 from evileye.core.frame_transport import SharedFrameTransport
@@ -121,6 +122,58 @@ def test_attribute_detector_runs_real_model_in_spawn_worker():
         assert output[0].source_id == 0
         assert output[0].frame_id == 2
         assert adapter.get_model_class_mapping() == {"hard_hat": 0, "no_hard_hat": 1}
+        assert output[1].frame_handle == handle
+        assert owner.get_frame_view(handle)[0, 0, 0] == 0
+    finally:
+        adapter.stop()
+        adapter.release()
+        owner.release_frame(handle)
+
+
+@pytest.mark.skipif(
+    not _RUN_REAL_MODEL_SMOKE or not _MODEL_PATH.is_file(),
+    reason="set EVILEYE_RUN_MODEL_PROCESS_SMOKE=1 and provide models/yolo11n.pt",
+)
+def test_yolo_detector_runs_real_model_with_parallel_spawn_workers():
+    owner = SharedFrameTransport()
+    handle = owner.alloc_frame(
+        np.zeros((64, 64, 3), dtype=np.uint8), frame_id=3, timestamp=3.0
+    )
+    adapter = EvilEyeBase.create_instance("ObjectDetectorYolo")
+    adapter.set_params(
+        module_id="ObjectDetectorYolo",
+        execution_mode="process",
+        source_ids=[0],
+        num_detection_threads=2,
+        model=str(_MODEL_PATH),
+        classes=["person"],
+        inference_size=64,
+        conf=0.25,
+    )
+    try:
+        assert adapter.init() is True
+        assert adapter.worker_count == 2
+        adapter.start()
+        frame = Frame()
+        frame.source_id = 0
+        frame.frame_id = 3
+        frame.frame_handle = handle
+        adapter.put(frame)
+
+        deadline = time.monotonic() + 90
+        output = None
+        while time.monotonic() < deadline:
+            output = adapter.get()
+            if output is not None:
+                break
+            if adapter.degraded:
+                raise AssertionError("ObjectDetectorYolo worker pool degraded")
+            time.sleep(0.05)
+
+        assert output is not None, adapter.get_debug_info({})
+        assert output[0].source_id == 0
+        assert output[0].frame_id == 3
+        assert adapter.get_model_class_mapping().get("person") == 0
         assert output[1].frame_handle == handle
         assert owner.get_frame_view(handle)[0, 0, 0] == 0
     finally:
