@@ -18,6 +18,7 @@ from evileye.core.processor_source import ProcessorSource
 from evileye.core.base_class import EvilEyeBase
 from evileye.core.interfaces import (
     IBatchProcessor,
+    IContextualStatefulItemProcessor,
     IItemProcessor,
     IRuntimeStatusProvider,
     ISource,
@@ -583,6 +584,7 @@ def test_item_module_input_queue_overflow_is_explicit_and_degraded():
 
 @pytest.mark.parametrize("execution_mode", ["thread", "process"])
 def test_item_module_adapter_passes_runtime_context_to_worker(execution_mode):
+    assert isinstance(_ContextItemModule(), IContextualStatefulItemProcessor)
     plugin_id = f"test.context-{execution_mode}"
     spec = ModuleSpec(
         "context",

@@ -32,6 +32,8 @@ from __future__ import annotations
 from abc import ABC, abstractmethod
 from typing import Any, Dict, Iterable, List, Mapping, Optional, Protocol, runtime_checkable
 
+from .plugins import ModuleRuntimeContext
+
 
 @runtime_checkable
 class IPipeline(Protocol):
@@ -91,6 +93,15 @@ class IStatefulItemProcessor(IItemProcessor, Protocol):
     """Item processor that constructs state inside its runtime worker."""
 
     def create_state(self, config: Mapping[str, Any]) -> Any: ...
+
+
+@runtime_checkable
+class IContextualStatefulItemProcessor(IItemProcessor, Protocol):
+    """Item processor whose worker-local state uses runtime context."""
+
+    def create_state(
+        self, config: Mapping[str, Any], context: ModuleRuntimeContext
+    ) -> Any: ...
 
 
 @runtime_checkable

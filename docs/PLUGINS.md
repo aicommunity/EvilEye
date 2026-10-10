@@ -29,8 +29,8 @@ installable package.
 ## Runtime contracts
 
 The structural protocols are in `evileye.core.interfaces`: `IItemProcessor`,
-`IStatefulItemProcessor`, `ISource`, `IBatchProcessor`, and
-`IEventDetector`. Plugins do not inherit from these protocols. The runtime
+`IStatefulItemProcessor`, `IContextualStatefulItemProcessor`, `ISource`,
+`IBatchProcessor`, and `IEventDetector`. Plugins do not inherit from these protocols. The runtime
 validates the required callable methods when the module is initialized.
 
 The common item, source, and batch adapters expose `get_runtime_stats()`
