@@ -51,7 +51,7 @@ class ObjectDetectorYolo(ModelBasedDetectorBase):
         worker_count = int(getattr(context, "worker_count", 1))
         if worker_count > 1 and self.stride > 1:
             raise ValueError(
-                "ObjectDetectorYolo requires vid_stride=1 when worker_count > 1"
+                f"{type(self).__name__} requires vid_stride=1 when worker_count > 1"
             )
         self.enabled = bool(config.get("enabled", True))
         self._plugin_confidence = float(config.get("conf", 0.25))
@@ -64,8 +64,8 @@ class ObjectDetectorYolo(ModelBasedDetectorBase):
         self._plugin_class_mapping = dict(config.get("model_class_mapping") or {})
         self._plugin_class_filter: list[int] | None = None
 
-        self._plugin_yolo_runtime = self._create_plugin_runtime()
-        self._plugin_yolo_runtime.configure(
+        self._plugin_model_runtime = self._create_plugin_runtime()
+        self._plugin_model_runtime.configure(
             self.model_name,
             [],
             {
@@ -78,23 +78,13 @@ class ObjectDetectorYolo(ModelBasedDetectorBase):
             },
         )
         if self.enabled:
-            self._plugin_yolo_runtime.load()
-            model = self._plugin_yolo_runtime.model
+            self._plugin_model_runtime.load()
+            model = self._plugin_model_runtime.model
             if model is None:
                 raise RuntimeError(
-                    f"ObjectDetectorYolo failed to load model '{self.model_name}'"
+                    f"{type(self).__name__} failed to load model '{self.model_name}'"
                 )
-            names = getattr(model, "names", None)
-            if isinstance(names, dict):
-                discovered_mapping = {
-                    str(name): int(class_id) for class_id, name in names.items()
-                }
-            elif isinstance(names, (list, tuple)):
-                discovered_mapping = {
-                    str(name): class_id for class_id, name in enumerate(names)
-                }
-            else:
-                discovered_mapping = {}
+            discovered_mapping = self._plugin_model_mapping(model)
             self._plugin_class_mapping = (
                 self._plugin_class_mapping or discovered_mapping
             )
@@ -111,7 +101,7 @@ class ObjectDetectorYolo(ModelBasedDetectorBase):
                     ]
                     if missing:
                         raise ValueError(
-                            "ObjectDetectorYolo class names are absent from model "
+                            f"{type(self).__name__} class names are absent from model "
                             f"mapping: {missing}"
                         )
                     self._plugin_class_filter = [
@@ -120,13 +110,21 @@ class ObjectDetectorYolo(ModelBasedDetectorBase):
                     ]
                 else:
                     raise ValueError(
-                        "ObjectDetectorYolo classes must contain only names or only IDs"
+                        f"{type(self).__name__} classes must contain only names or only IDs"
                     )
-            self._plugin_yolo_runtime.classes = (
+            self._plugin_model_runtime.classes = (
                 list(self._plugin_class_filter or [])
             )
         self.model_class_mapping = dict(self._plugin_class_mapping)
         return {"frame_counts": {}}
+
+    def _plugin_model_mapping(self, model):
+        names = getattr(model, "names", None)
+        if isinstance(names, dict):
+            return {str(name): int(class_id) for class_id, name in names.items()}
+        if isinstance(names, (list, tuple)):
+            return {str(name): class_id for class_id, name in enumerate(names)}
+        return {}
 
     def get_model_class_mapping(self):
         mapping = getattr(self, "_plugin_class_mapping", None)
@@ -143,7 +141,7 @@ class ObjectDetectorYolo(ModelBasedDetectorBase):
             handle = getattr(frame, "frame_ref", None)
         if handle is None:
             raise RuntimeError(
-                "ObjectDetectorYolo frame has neither image nor shared-frame handle"
+                f"{type(self).__name__} frame has neither image nor shared-frame handle"
             )
         if self._plugin_frame_transport is None:
             from ..core.frame_transport import SharedFrameTransport
@@ -152,7 +150,7 @@ class ObjectDetectorYolo(ModelBasedDetectorBase):
         image = self._plugin_frame_transport.get_frame_view(handle)
         if image is None or getattr(image, "size", 0) == 0:
             raise RuntimeError(
-                f"ObjectDetectorYolo could not read shared frame {handle.shm_name}"
+                f"{type(self).__name__} could not read shared frame {handle.shm_name}"
             )
         return image
 
@@ -167,7 +165,7 @@ class ObjectDetectorYolo(ModelBasedDetectorBase):
             index = 0
         else:
             raise ValueError(
-                f"ObjectDetectorYolo has no ROI configuration for source "
+                f"{type(self).__name__} has no ROI configuration for source "
                 f"{frame.source_id}"
             )
         source_rois = roi_groups[index] if index < len(roi_groups) else []
@@ -177,7 +175,7 @@ class ObjectDetectorYolo(ModelBasedDetectorBase):
         for roi in source_rois:
             if len(roi) != 4:
                 raise ValueError(
-                    f"ObjectDetectorYolo ROI must be [x, y, width, height]: {roi!r}"
+                    f"{type(self).__name__} ROI must be [x, y, width, height]: {roi!r}"
                 )
             x, y, roi_width, roi_height = (int(value) for value in roi)
             x1 = max(0, x)
@@ -188,22 +186,47 @@ class ObjectDetectorYolo(ModelBasedDetectorBase):
                 rois.append((x1, y1, x2 - x1, y2 - y1))
         return rois
 
+    def _plugin_roi_detections(self, crops, rois):
+        from .bbox_utils import roi_boxes_to_image_coords
+        from ..utils import utils
+
+        predictions = self._plugin_model_runtime.predict_raw(
+            crops,
+            classes=self._plugin_class_filter,
+        )
+        if predictions is None:
+            predictions = []
+        elif not isinstance(predictions, list):
+            predictions = [predictions]
+        boxes, confidences, class_ids = [], [], []
+        for index, roi in enumerate(rois):
+            prediction = predictions[index] if index < len(predictions) else None
+            roi_boxes, roi_confidences, roi_class_ids = roi_boxes_to_image_coords(
+                prediction, (roi[0], roi[1]), logger=self.logger
+            )
+            boxes.extend(roi_boxes)
+            confidences.extend(roi_confidences)
+            class_ids.extend(roi_class_ids)
+        if boxes:
+            boxes, confidences, class_ids = utils.non_max_sup(
+                boxes, confidences, class_ids
+            )
+        return boxes, confidences, class_ids
+
     def process_item(self, item, state):
         import numpy as np
 
         from ..core.frame import Frame
-        from .bbox_utils import roi_boxes_to_image_coords
         from .object_detection_base import DetectionResult, DetectionResultList
-        from ..utils import utils
 
         if isinstance(item, Frame):
             frame = item
         elif isinstance(item, (tuple, list)) and len(item) >= 2:
             frame = item[1]
         else:
-            raise TypeError("ObjectDetectorYolo expects Frame or (data, Frame)")
+            raise TypeError(f"{type(self).__name__} expects Frame or (data, Frame)")
         if not isinstance(frame, Frame):
-            raise TypeError("ObjectDetectorYolo input must contain a Frame")
+            raise TypeError(f"{type(self).__name__} input must contain a Frame")
 
         output = DetectionResultList()
         output.source_id = frame.source_id
@@ -223,29 +246,9 @@ class ObjectDetectorYolo(ModelBasedDetectorBase):
                 np.ascontiguousarray(image[y:y + height, x:x + width])
                 for x, y, width, height in rois
             ]
-            predictions = self._plugin_yolo_runtime.predict_raw(
-                crops,
-                classes=self._plugin_class_filter,
+            boxes, confidences, class_ids = self._plugin_roi_detections(
+                crops, rois
             )
-            if predictions is None:
-                predictions = []
-            elif not isinstance(predictions, list):
-                predictions = [predictions]
-            boxes, confidences, class_ids = [], [], []
-            for index, roi in enumerate(rois):
-                prediction = predictions[index] if index < len(predictions) else None
-                roi_boxes, roi_confidences, roi_class_ids = (
-                    roi_boxes_to_image_coords(
-                        prediction, (roi[0], roi[1]), logger=self.logger
-                    )
-                )
-                boxes.extend(roi_boxes)
-                confidences.extend(roi_confidences)
-                class_ids.extend(roi_class_ids)
-            if boxes:
-                boxes, confidences, class_ids = utils.non_max_sup(
-                    boxes, confidences, class_ids
-                )
             for bbox, confidence, class_id in zip(
                 boxes, confidences, class_ids
             ):
@@ -257,7 +260,7 @@ class ObjectDetectorYolo(ModelBasedDetectorBase):
         return output, frame
 
     def close(self):
-        runtime = getattr(self, "_plugin_yolo_runtime", None)
+        runtime = getattr(self, "_plugin_model_runtime", None)
         if runtime is not None:
             runtime.release()
         self._plugin_frame_transport = None

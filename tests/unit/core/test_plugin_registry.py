@@ -912,6 +912,7 @@ def test_builtin_model_tracker_and_attribute_modules_use_spi_adapter():
         if module_class in {
             detectors.ObjectDetectorYolo,
             detectors.ObjectDetectorRtdetr,
+            detectors.ObjectDetectorRfdetr,
             detectors.ObjectDetectorYoloMp,
             trackers.ObjectTrackingBotsort,
             attributes.AttributeClassifier,

@@ -9,6 +9,7 @@ from evileye.core.plugins import ModuleRuntimeContext
 from evileye.object_detector.object_detection_base import DetectionResultList
 from evileye.object_detector.object_detection_yolo import ObjectDetectorYolo
 from evileye.object_detector.object_detection_rtdetr import ObjectDetectorRtdetr
+from evileye.object_detector.object_detection_rfdetr import ObjectDetectorRfdetr
 
 
 class _FakeBox:
@@ -154,4 +155,60 @@ def test_rtdetr_plugin_uses_shared_item_contract(monkeypatch):
     assert output_frame.frame_id == 11
     assert len(result.detections) == 1
     assert result.detections[0].bounding_box == [11, 22, 15, 26]
+    module.close()
+
+
+class _FakeRfdetrRuntime:
+    def __init__(self, logger=None):
+        self.model = None
+        self.images = None
+
+    def configure(self, model, classes, params):
+        self.model_name = model
+        self.params = params
+
+    def load(self):
+        self.model = SimpleNamespace(class_names=["person", "car"])
+
+    def predict_raw(self, images, **kwargs):
+        self.images = images
+        return [
+            SimpleNamespace(
+                xyxy=np.asarray([[1, 2, 5, 6], [2, 3, 8, 9]], dtype=float),
+                confidence=np.asarray([0.82, 0.95]),
+                class_id=np.asarray([0, 1]),
+            )
+            for _ in images
+        ]
+
+    def release(self):
+        self.model = None
+
+
+def test_rfdetr_plugin_uses_native_results_and_shared_item_contract(monkeypatch):
+    import evileye.object_detector.rfdetr_runtime as rfdetr_runtime_module
+
+    monkeypatch.setattr(rfdetr_runtime_module, "RfdetrRuntime", _FakeRfdetrRuntime)
+    module = ObjectDetectorRfdetr()
+    state = module.create_state(
+        {
+            "model": "rfdetr-nano",
+            "classes": ["person"],
+            "conf": 0.3,
+            "source_ids": [4],
+            "roi": [[[10, 20, 30, 25]]],
+        },
+        ModuleRuntimeContext("evileye/ObjectDetectorRfdetr", "thread", (4,)),
+    )
+
+    result, output_frame = module.process_item(_frame(), state)
+
+    assert result.source_id == 4
+    assert result.frame_id == 11
+    assert output_frame.frame_id == 11
+    assert module.get_model_class_mapping() == {"person": 0, "car": 1}
+    assert len(result.detections) == 1
+    assert result.detections[0].class_id == 0
+    assert result.detections[0].bounding_box == [11, 22, 15, 26]
+    assert module._plugin_model_runtime.images[0].shape == (25, 30, 3)
     module.close()

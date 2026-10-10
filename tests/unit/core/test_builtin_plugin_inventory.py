@@ -96,7 +96,20 @@ def test_legacy_protocols_are_explicitly_tracked_during_migration():
         )
     }
     assert legacy_modules == {
-        "evileye/ObjectDetectorRfdetr",
         "evileye/VideoCaptureGStreamer",
         "evileye/VideoCaptureOpencv",
     }
+
+
+def test_rfdetr_legacy_thread_count_maps_to_ordered_item_workers():
+    from evileye.core.plugin_runtime import ParallelItemModuleAdapter
+
+    adapter = EvilEyeBase.create_instance("ObjectDetectorRfdetr")
+    assert isinstance(adapter, ParallelItemModuleAdapter)
+    adapter.set_params(
+        module_id="ObjectDetectorRfdetr",
+        execution_mode="thread",
+        source_ids=[0],
+        num_detection_threads=4,
+    )
+    assert adapter.worker_count == 4
