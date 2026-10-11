@@ -113,6 +113,14 @@ def _create_system_detector(context: EventDetectorContext):
     return SystemEventsDetector()
 
 
+def _create_process_system_detector(config):
+    from evileye.events_detectors.process_system_events_module import (
+        create_process_system_events_module,
+    )
+
+    return create_process_system_events_module(config)
+
+
 def register_builtins() -> None:
     """Idempotently register stock detector factories in the shared SPI."""
     plugin_manager.load()
@@ -122,26 +130,43 @@ def register_builtins() -> None:
     )
 
     builtin_factories = {
-        "CamEventsDetector": (_create_cam_detector, ("capture_sources",)),
-        "ZoneEventsDetector": (_create_zone_detector, ("object_handler",)),
-        "AttributeEventsDetector": (_create_attribute_detector, ("object_handler",)),
-        "SystemEventsDetector": (_create_system_detector, ()),
-        DETECTOR_CONFIG_KEY: (_create_schedule_alarm_detector, ("object_handler",)),
-        LEGACY_DETECTOR_CONFIG_KEY: (_create_schedule_alarm_detector, ("object_handler",)),
+        "CamEventsDetector": (
+            _create_cam_detector, ("capture_sources",), ("thread",), "thread",
+        ),
+        "ZoneEventsDetector": (
+            _create_zone_detector, ("object_handler",), ("thread",), "thread",
+        ),
+        "AttributeEventsDetector": (
+            _create_attribute_detector, ("object_handler",), ("thread",), "thread",
+        ),
+        "SystemEventsDetector": (
+            _create_process_system_detector, ("event_commands",), ("process",), "process",
+        ),
+        DETECTOR_CONFIG_KEY: (
+            _create_schedule_alarm_detector, ("object_handler",), ("thread",), "thread",
+        ),
+        LEGACY_DETECTOR_CONFIG_KEY: (
+            _create_schedule_alarm_detector, ("object_handler",), ("thread",), "thread",
+        ),
     }
-    for name, (factory, capabilities) in builtin_factories.items():
+    for name, (factory, capabilities, execution_modes, default_mode) in builtin_factories.items():
         existing = plugin_registry.get_module(name)
         if existing is None:
             plugin_registry.register_builtin_module(
                 name,
                 factory,
                 kind="event_detector",
-                execution_modes=("thread",),
+                execution_modes=execution_modes,
                 capabilities=capabilities,
+                default_execution_mode=default_mode,
                 legacy_ids=(name,),
             )
-        elif existing.spec.factory is not factory:
+        elif (
+            existing.spec.factory is not factory
+            or tuple(existing.spec.execution_modes) != tuple(execution_modes)
+            or tuple(existing.spec.capabilities) != tuple(capabilities)
+        ):
             raise PluginError(
                 f"Event detector id '{name}' is already registered by "
-                f"'{existing.qualified_id}'"
+                f"'{existing.qualified_id}' with a different manifest"
             )

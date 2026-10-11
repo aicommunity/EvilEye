@@ -216,7 +216,7 @@ def test_process_event_mode_requires_event_update_capability():
         EventDetectorContext(),
     )
 
-    with pytest.raises(PluginError, match="event_updates capability"):
+    with pytest.raises(PluginError, match="event_updates or event_commands"):
         adapter.set_params(execution_mode="process")
 
 
@@ -359,3 +359,73 @@ def test_events_service_fails_start_when_process_detector_contract_is_invalid():
         assert detector.get_runtime_stats()["degraded"] is True
     finally:
         service.release()
+
+
+def test_builtin_system_events_detector_uses_process_command_contract():
+    from evileye.controller.services.events_service import EventsService
+    from evileye.events_detectors.event_registry import register_builtins
+
+    register_builtins()
+    registered = plugin_registry.get_module("SystemEventsDetector")
+    assert tuple(registered.spec.execution_modes) == ("process",)
+    assert "event_commands" in registered.spec.capabilities
+
+    class _Pipeline:
+        def get_sources(self):
+            return []
+
+    class _ObjectsHandler:
+        def subscribe(self, *subscribers):
+            pass
+
+    service = EventsService()
+    service.initialize_detectors(
+        {"enabled": ["SystemEventsDetector"]},
+        _Pipeline(),
+        _ObjectsHandler(),
+        use_database=False,
+    )
+    service.initialize_controller({})
+    detector = service.get_detector("SystemEventsDetector")
+    detector.emit_started()  # queued before spawn worker startup
+    service.start_detectors()
+    controller = service.get_detectors_controller()
+
+    try:
+        deadline = time.monotonic() + 5.0
+        snapshot = {}
+        while time.monotonic() < deadline:
+            if controller.flush_once():
+                snapshot = controller.get()
+                break
+            time.sleep(0.02)
+
+        events = snapshot["SystemEventsDetector"]
+        assert len(events) == 1
+        assert events[0].event_type == "SystemStart"
+        assert events[0].get_name() == "SystemEvent"
+    finally:
+        service.release()
+
+
+def test_process_event_detector_drains_accepted_events_on_graceful_stop():
+    detector = _make_adapter()
+    try:
+        detector.put(
+            EventUpdate(
+                sequence=23,
+                kind="object_snapshot",
+                source_id=5,
+                timestamp="2026-10-11T12:00:00Z",
+                payload={"active": [{"object_id": 99}], "lost": []},
+            )
+        )
+        detector.stop()
+        events = detector.get()
+
+        assert len(events) == 1
+        assert events[0].details["object_ids"] == [99]
+        assert events[0].alarm_id == "ppe-23"
+        assert detector.get() == []
+    finally:
+        detector.stop()

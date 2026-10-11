@@ -212,9 +212,10 @@ objects uses the `object_handler` or `capture_sources` capability and stays
 in thread mode.
 
 A process event module declares
-`execution_modes=("process",)` and
-`capabilities=("event_updates",)`. Its top-level factory accepts a config
-mapping and returns an object implementing
+`execution_modes=("process",)` and either
+`capabilities=("event_updates",)` for object snapshots or
+`capabilities=("event_commands",)` for explicit controller commands. Its
+top-level factory accepts a config mapping and returns an object implementing
 `process_update(update: EventUpdate, state)`. The optional
 `create_state(config, context)` runs inside the spawned worker. Optional
 `start()` and `stop()` methods also run in that worker. The factory must be
@@ -228,6 +229,14 @@ frame pixels, live model objects, handlers, and locks do not cross the process
 boundary. Plugins can also accept explicit `EventUpdate` values through
 `put()`. Process modules cannot declare `object_handler` or
 `capture_sources`; the runtime rejects those live dependencies before start.
+Modules using `event_commands` receive explicit updates through `put()` and
+are not subscribed to object snapshots. Controller lifecycle messages that
+arrive before worker startup are buffered in a bounded queue and flushed after
+the child reports ready.
+The builtin `SystemEventsDetector` now uses this process contract. The adapter
+preserves the controller-facing `emit_message`, `emit_started`, and
+`emit_stopped` calls. During normal shutdown, accepted worker updates are
+processed and their output is retained for the final event-controller flush.
 
 ```python
 from evileye.core.contracts import EventUpdate
