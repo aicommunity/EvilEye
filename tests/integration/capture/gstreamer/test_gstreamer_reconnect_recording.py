@@ -112,10 +112,9 @@ def test_gstreamer_reconnect_loop_logic():
     assert hasattr(cap, '_rtsp_protocol'), "_rtsp_protocol attribute should exist"
     assert cap._rtsp_protocol == 'udp+tcp', "Default RTSP protocol should be 'udp+tcp' (try UDP first, then TCP if UDP fails)"
     
-    # Verify recording attributes are initialized
-    assert hasattr(cap, '_recording_elements'), "_recording_elements attribute should exist"
-    assert hasattr(cap, '_recording_check_thread'), "_recording_check_thread attribute should exist"
-    assert hasattr(cap, '_recording_check_stop'), "_recording_check_stop attribute should exist"
+    # Capture owns only the shared recorder and its recording-queue handle.
+    assert hasattr(cap, '_gst_continuous_recorder')
+    assert hasattr(cap, '_recording_queue_elem')
 
 
 def test_gstreamer_recording_branch_setup():

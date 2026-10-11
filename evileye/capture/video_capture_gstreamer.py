@@ -85,11 +85,6 @@ class VideoCaptureGStreamer(
         self._fps_times = []  # rolling timestamps to estimate FPS as fallback
 
         # Recording-related attributes
-        self._recording_elements = None
-        self._recording_check_thread = None
-        self._recording_check_stop = False
-        self._recording_out_dir = None
-        self._recording_checked_files = set()
         self._reconnecting = False
         self._rtsp_protocol = 'udp+tcp'  # Default: try UDP first, then TCP if UDP fails (GStreamer handles fallback)
         self._last_init_error = None
@@ -263,10 +258,6 @@ class VideoCaptureGStreamer(
                 # We'll verify it's actually working by checking for frames in _grab_frames
                 self.is_working = True
                 self.logger.info("GStreamer video capture initialized successfully")
-
-                # Start recording check thread after pipeline is PLAYING
-                if self._recording_check_thread and not self._recording_check_thread.is_alive():
-                    self._recording_check_thread.start()
 
                 return True
             except CaptureInitializationError as e:

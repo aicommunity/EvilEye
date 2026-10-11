@@ -381,3 +381,30 @@ RTSP integration tests используют реальные камеры и п�
 installation из тестов; подобрать воспроизводимую test dependency или проверяемый
 контейнерный fixture. Полный integration shutdown остаётся отдельным открытым
 пунктом.
+
+### Продолжение 2026-10-11: один GStreamer recording runtime
+
+- [готово] Удалена inline legacy recording branch из `GStreamerCaptureRecordingMixin`.
+  Continuous recording подключается только через `GstContinuousRecorder`; ошибка
+  setup больше не маскируется переходом к дублирующей реализации. Ошибки
+  подключения recording queue и создания элементов выходят как явный отказ.
+- [готово] Подключение branch стало транзакционным: частично добавленные элементы
+  переводятся в NULL и удаляются из capture pipeline при ошибке link/setup.
+  Cleanup и `VideoCaptureGStreamer` больше не содержат отдельного recorder
+  check-thread и legacy element state.
+- [готово] Recorder отслеживает поступление первого muxed buffer. При остановке
+  до первого кадра он отсоединяет branch без блокирующего EOS; при наличии видео
+  выполняет EOS и ждёт финализации MP4. Это также устраняет зависание decoder
+  fallback на файле без H.264, когда запись была включена, а ветка ещё не получила
+  ни одного кадра.
+- [готово] Локальный GStreamer video-file E2E прошёл: кадры получены, branch
+  подключён через общий recorder, создан MP4, `ffprobe` подтвердил video packets.
+  GStreamer capture/reconnect/frame integration группа — 8 passed; полный
+  `tests/unit` — exit code 0, оставшихся pytest/worker-процессов нет.
+- В процессе первый E2E обнаружил, что init fallback мог блокироваться на EOS до
+  первого кадра; добавлены отдельные regression tests на остановку пустой ветки
+  и rollback частично подключённых GStreamer элементов.
+
+Открытыми остаются локальный RTSP fixture (на сервере отсутствует
+`GstRtspServer`) и root-cause shutdown полного integration suite. Реальные камеры
+и защищённые Web UI требуют отдельной проверяемой конфигурации доступа.
