@@ -1,33 +1,65 @@
 #!/usr/bin/env python3
 
-import os
 import json
+
+from pathlib import Path
 
 from tests.integration.visualization.events_journal.helpers import (
     EXPECTED_JOURNAL_HEADERS,
-    journal_today_folder,
-    load_db_config,
     table_horizontal_headers,
-    write_json,
 )
 
 
-def test_journal_columns_with_db(journal_test_logger, qapp):
-    """Test Events Journal column structure with real database data"""
+def test_journal_columns_with_db(journal_test_logger, qapp, tmp_path):
+    """Test JSON journal columns against isolated event fixtures."""
     
     journal_test_logger.info("=== Test Events Journal Columns with Database ===")
     
     try:
-        # Try to load database config
-        try:
-            db_conf = load_db_config()
-            journal_test_logger.info("✅ Database config loaded")
-            db_available = True
-        except Exception as e:
-            journal_test_logger.warning(f"⚠️  Database config not available: {e}")
-            journal_test_logger.info("   Continuing with JSON data only")
-            db_available = False
-        
+        import datetime
+
+        # Use a private fixture tree: the repository's EvilEyeData may contain
+        # years of production recordings and must never be scanned or modified
+        # by this structural widget test.
+        base_dir = str(tmp_path)
+        today = datetime.date.today().strftime("%Y-%m-%d")
+        metadata_dir = Path(base_dir) / "Events" / today / "Metadata"
+        metadata_dir.mkdir(parents=True)
+
+        # Create representative events using the JSON journal's current file
+        # layout and record schemas.
+        test_data = {
+            "attribute_events_found.json": [{
+                "ts": datetime.datetime.now().isoformat(),
+                "source_id": 0,
+                "source_name": "Camera1",
+                "object_id": 1,
+                "class_name": "person",
+                "event_name": "test_attr",
+            }],
+            "zone_events_entered.json": [{
+                "ts": datetime.datetime.now().isoformat(),
+                "source_id": 1,
+                "source_name": "Camera2",
+                "object_id": 2,
+                "zone_id": "zone1",
+            }],
+            "camera_events.json": [{
+                "ts": datetime.datetime.now().isoformat(),
+                "camera_full_address": "rtsp://test-camera",
+                "connection_status": "connected",
+            }],
+            "system_events.json": [{
+                "ts": datetime.datetime.now().isoformat(),
+                "event_type": "SystemStart",
+            }],
+        }
+        for filename, events in test_data.items():
+            with (metadata_dir / filename).open("w", encoding="utf-8") as event_file:
+                json.dump(events, event_file, indent=2)
+
+        journal_test_logger.info("Created isolated JSON journal fixtures")
+
         from evileye.visualization_modules.events_journal_json import EventsJournalJson
         import datetime
         
@@ -37,79 +69,9 @@ def test_journal_columns_with_db(journal_test_logger, qapp):
         # Expected column order
         expected_headers = EXPECTED_JOURNAL_HEADERS
         
-        # Create test data directory
-        base_dir = 'EvilEyeData'
-        today, test_date_dir = journal_today_folder(base_dir)
-        
-        # Create test JSON data for different event types to test Source column
-        test_data = {
-            "metadata": {"version": "1.0", "created": datetime.datetime.now().isoformat()},
-            "events": [
-                {
-                    "event_type": "attr_found",
-                    "ts": datetime.datetime.now().isoformat(),
-                    "source_id": 0,
-                    "source_name": "Camera1",
-                    "object_id": 1,
-                    "class_name": "person",
-                    "event_name": "test_attr",
-                    "date_folder": today
-                },
-                {
-                    "event_type": "zone_entered",
-                    "ts": datetime.datetime.now().isoformat(),
-                    "source_id": 1,
-                    "object_id": 2,
-                    "zone_id": "zone1",
-                    "date_folder": today
-                },
-                {
-                    "event_type": "fov_found",
-                    "ts": datetime.datetime.now().isoformat(),
-                    "source_id": 2,
-                    "object_id": 3,
-                    "date_folder": today
-                },
-                {
-                    "event_type": "cam",
-                    "ts": datetime.datetime.now().isoformat(),
-                    "camera_full_address": "rtsp://test-camera",
-                    "connection_status": "connected",
-                    "date_folder": today
-                },
-                {
-                    "event_type": "sys",
-                    "ts": datetime.datetime.now().isoformat(),
-                    "event_type": "system_start",
-                    "date_folder": today
-                }
-            ]
-        }
-        
-        attr_path = os.path.join(test_date_dir, 'attribute_events.json')
-        with open(attr_path, 'w') as f:
-            json.dump(test_data, f, indent=2)
-        
-        zone_path = os.path.join(test_date_dir, 'zone_events.json')
-        with open(zone_path, 'w') as f:
-            json.dump(test_data, f, indent=2)
-        
-        fov_path = os.path.join(test_date_dir, 'fov_events.json')
-        with open(fov_path, 'w') as f:
-            json.dump(test_data, f, indent=2)
-        
-        cam_path = os.path.join(test_date_dir, 'camera_events.json')
-        with open(cam_path, 'w') as f:
-            json.dump(test_data, f, indent=2)
-        
-        sys_path = os.path.join(test_date_dir, 'system_events.json')
-        with open(sys_path, 'w') as f:
-            json.dump(test_data, f, indent=2)
-        
-        journal_test_logger.info("✅ Created test JSON data files for all event types")
-        
         # Create EventsJournalJson widget
         journal = EventsJournalJson(base_dir)
+        assert journal.update_timer.parent() is journal
         journal_test_logger.info("✅ Created EventsJournalJson widget")
         
         # Force reload to populate table

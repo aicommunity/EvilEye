@@ -7,6 +7,7 @@ import numpy as np
 
 from evileye.core.frame import CaptureImage
 from evileye.controller.services.preview_render_service import PreviewRenderJob, PreviewRenderService
+from evileye.controller.services.streaming_service import StreamingService
 from evileye.visualization_modules.preview_render import PreviewRenderContext, render_preview_frame
 
 
@@ -92,3 +93,21 @@ def test_preview_render_service_skips_frames_without_consumers():
         assert streaming_service.submitted == []
     finally:
         service.stop()
+
+
+def test_shutdown_all_stops_preview_and_streaming_workers():
+    streaming = StreamingService()
+    streaming.configure(pipeline_id="test", publish_fps=1.0, num_workers=2)
+    preview = PreviewRenderService()
+    preview.configure(streaming_service=streaming, num_workers=2)
+
+    workers = [*streaming._workers, *preview._workers]
+    assert len(workers) == 4
+    assert all(worker.is_alive() for worker in workers)
+
+    PreviewRenderService.shutdown_all()
+    StreamingService.shutdown_all()
+
+    assert all(not worker.is_alive() for worker in workers)
+    assert preview._workers == []
+    assert streaming._workers == []

@@ -1,16 +1,13 @@
 #!/usr/bin/env python3
 
-import os
-
 from tests.integration.visualization.events_journal.helpers import (
     EXPECTED_JOURNAL_HEADERS,
-    journal_today_folder,
     table_horizontal_headers,
-    write_json,
+    write_sample_event_metadata,
 )
 
 
-def test_journal_columns_structure(journal_test_logger, qapp):
+def test_journal_columns_structure(journal_test_logger, qapp, tmp_path):
     """Test that Events Journal has correct column structure matching Objects Journal"""
     
     journal_test_logger.info("=== Test Events Journal Columns Structure ===")
@@ -23,64 +20,9 @@ def test_journal_columns_structure(journal_test_logger, qapp):
         # Use QApplication from fixture
         app = qapp
         
-        # Create test directory structure
-        base_dir = 'EvilEyeData'
-        today, test_date_dir = journal_today_folder(base_dir)
-        
-        # Create test JSON data for different event types
-        test_data_found = {
-            "metadata": {
-                "version": "1.0",
-                "created": datetime.datetime.now().isoformat(),
-                "description": "Test data for column structure",
-                "total_objects": 1
-            },
-            "objects": [
-                {
-                    "object_id": 1,
-                    "frame_id": 1,
-                    "timestamp": datetime.datetime.now().isoformat(),
-                    "image_filename": "test_preview.jpeg",
-                    "bounding_box": {"x": 0.1, "y": 0.2, "width": 0.3, "height": 0.4},
-                    "class_id": 0,
-                    "class_name": "person",
-                    "confidence": 0.85,
-                    "source_id": 0,
-                    "source_name": "TestCamera1",
-                    "date_folder": today
-                }
-            ]
-        }
-        
-        # Create test attribute event data
-        test_data_attr = {
-            "metadata": {
-                "version": "1.0",
-                "created": datetime.datetime.now().isoformat()
-            },
-            "events": [
-                {
-                    "event_type": "attr_found",
-                    "ts": datetime.datetime.now().isoformat(),
-                    "source_id": 0,
-                    "source_name": "TestCamera1",
-                    "object_id": 1,
-                    "class_id": 0,
-                    "class_name": "person",
-                    "event_name": "test_attr",
-                    "attrs": {"attr1": "value1"},
-                    "preview_path": "test_attr_preview.jpeg",
-                    "date_folder": today
-                }
-            ]
-        }
-        
-        # Write test JSON files
-        write_json(os.path.join(test_date_dir, "objects_found.json"), test_data_found)
-        write_json(os.path.join(test_date_dir, "attribute_events.json"), test_data_attr)
-        
-        journal_test_logger.info(f"✅ Created test JSON data files")
-        
+        # Keep the test independent from production recordings.
+        base_dir = write_sample_event_metadata(tmp_path)
+
         # Create EventsJournalJson widget
         journal = EventsJournalJson(base_dir)
         

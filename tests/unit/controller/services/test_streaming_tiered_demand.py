@@ -1,5 +1,6 @@
 """Tiered preview demand levels (idle / grid / stream)."""
 
+import multiprocessing as mp
 import time
 
 from evileye.controller.services.streaming_service import StreamingService
@@ -144,3 +145,19 @@ def test_relay_without_server_process_publishes_at_fps():
         assert seen["fps_override"] == 5.0
     finally:
         service.set_frame_relay(None)
+
+
+def test_server_process_manager_stop_closes_queue_feeders():
+    manager = ServerProcessManager()
+    manager._frame_queue = mp.Queue(maxsize=4)
+    manager._demand_queue = mp.Queue(maxsize=4)
+    manager._frame_queue.put_nowait(("pipeline", b"frame", {}))
+    manager._demand_queue.put_nowait(("pipeline", time.time(), "grid"))
+    feeders = [manager._frame_queue._thread, manager._demand_queue._thread]
+    assert all(thread is not None and thread.is_alive() for thread in feeders)
+
+    manager.stop(timeout=0.1)
+
+    assert all(not thread.is_alive() for thread in feeders)
+    assert manager._frame_queue is None
+    assert manager._demand_queue is None

@@ -364,7 +364,7 @@ class EventsJournalJson(QWidget):
         self._is_closing = False  # Flag to prevent operations during closing
 
         # Real-time update timer
-        self.update_timer = QTimer()
+        self.update_timer = QTimer(self)
         self.update_timer.timeout.connect(self._check_for_updates)
         self.update_timer.start(500)  # Check every 0.5 seconds for better responsiveness
 

@@ -1,3 +1,4 @@
+import atexit
 import multiprocessing as mp
 import logging
 import logging.handlers
@@ -21,9 +22,12 @@ class MpControl:
     """Controller for a pool of MpWorker processes
 
     Manages input/output queues, process lifecycle, health monitoring,
-    and graceful shutdown.  Workers are added via add_worker() and
-    started together with start()
+    and graceful shutdown. Workers are added via add_worker() and
+    started together with start().
     """
+
+    _instances: set["MpControl"] = set()
+    _instances_lock = threading.Lock()
 
     def __init__(
             self,
@@ -80,6 +84,20 @@ class MpControl:
             "worker_restart_total": 0,
             "restart_suppressed_total": 0,
         }
+        self._released = False
+        with self._instances_lock:
+            self._instances.add(self)
+
+    @classmethod
+    def shutdown_all(cls, timeout: float = 2.0) -> None:
+        """Release all live worker pools during test or process shutdown."""
+        with cls._instances_lock:
+            instances = list(cls._instances)
+        for control in instances:
+            try:
+                control.release(timeout=timeout)
+            except Exception as exc:
+                control.logger.error("Failed to release MpControl '%s': %s", control.name, exc, exc_info=True)
 
     # -- Logging bridge --------------------------------------------------
 
@@ -198,6 +216,8 @@ class MpControl:
 
     def start(self):
         """Spawn all registered workers as daemon processes"""
+        if self._released:
+            raise RuntimeError(f"MpControl '{self.name}' has been released")
         self._stopping.clear()
         self._suppressed_restart_pids.clear()
         self._fatal_shutdown = False
@@ -227,12 +247,9 @@ class MpControl:
         self._start_health_monitor()
 
     def stop(self, timeout=5.0):
-        """Gracefully stop all worker processes
-
-        Sends a poison pill (None) for each worker, then waits up to
-        *timeout* seconds for each process to finish.  Processes that
-        do not exit in time are terminated forcefully
-        """
+        """Stop workers and permanently close this pool's IPC resources."""
+        if self._released:
+            return
         self._stopping.set()
         self._monitor_stop.set()
 
@@ -270,8 +287,32 @@ class MpControl:
 
         if self._monitor_thread and self._monitor_thread.is_alive():
             self._monitor_thread.join(timeout=2.0)
+            if self._monitor_thread.is_alive():
+                self.logger.error("MpControl health monitor did not stop: %s", self.name)
 
+        if self._log_listener and self._log_listener.is_alive():
+            self._log_listener.join(timeout=2.0)
+            if self._log_listener.is_alive():
+                self.logger.error("MpControl log listener did not stop: %s", self.name)
+
+        self.drain_ipc_queues()
+        for ipc_queue in (self.input_queue, self.output_queue, self._log_queue):
+            try:
+                ipc_queue.close()
+                ipc_queue.join_thread()
+            except (AttributeError, OSError, ValueError):
+                pass
+            except Exception as exc:
+                self.logger.error("Failed to close IPC queue for '%s': %s", self.name, exc)
+
+        self._released = True
+        with self._instances_lock:
+            self._instances.discard(self)
         self.logger.info(f"MpControl '{self.name}' stopped")
+
+    def release(self, timeout: float = 2.0) -> None:
+        """Stop workers and release the pool's IPC resources."""
+        self.stop(timeout=timeout)
 
     # -- Health monitoring -----------------------------------------------
 
@@ -438,3 +479,6 @@ def parse_mp_restart_policy(
         except Exception:
             codes = set(default_no_restart_exit_codes or {-15})
     return restart_on_exit, codes
+
+
+atexit.register(MpControl.shutdown_all)

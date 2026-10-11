@@ -3,8 +3,10 @@ import argparse
 import json
 import sys
 import multiprocessing as mp
+import queue
 import threading
 import time
+import weakref
 from pathlib import Path
 import os
 import signal
@@ -114,11 +116,14 @@ def _run_server_in_process(host, port, log_level, frame_queue, demand_queue, ssl
 
 
 class ServerProcessManager:
-    """Manages the web server as a separate OS process
+    """Manages the web server as a separate OS process.
 
     The main process creates a ``frame_queue`` and passes it to the
-    child.  Frames are published by calling ``publish_frame()``
+    child. Frames are published by calling ``publish_frame()``.
     """
+
+    _instances: "weakref.WeakSet[ServerProcessManager]" = weakref.WeakSet()
+    _instances_lock = threading.Lock()
 
     def __init__(self):
         self.logger = get_module_logger("server_process_manager")
@@ -130,6 +135,37 @@ class ServerProcessManager:
         self._preview_demand: dict[str, tuple[float, str]] = {}
         self._dropped_frames = 0
         self._published_frames = 0
+        with self._instances_lock:
+            self._instances.add(self)
+
+    @classmethod
+    def shutdown_all(cls, timeout: float = 2.0) -> None:
+        """Stop live server managers before Qt/process teardown."""
+        with cls._instances_lock:
+            managers = list(cls._instances)
+        for manager in managers:
+            try:
+                manager.stop(timeout=timeout)
+            except Exception as exc:
+                manager.logger.error("Failed to stop server process manager: %s", exc, exc_info=True)
+
+    def _close_ipc_queue(self, ipc_queue, name: str) -> None:
+        if ipc_queue is None:
+            return
+        try:
+            while True:
+                ipc_queue.get_nowait()
+        except (queue.Empty, EOFError, OSError, ValueError):
+            pass
+        except Exception as exc:
+            self.logger.warning("Failed to drain server %s queue: %s", name, exc)
+        try:
+            ipc_queue.close()
+            ipc_queue.join_thread()
+        except (AttributeError, OSError, ValueError):
+            pass
+        except Exception as exc:
+            self.logger.warning("Failed to close server %s queue: %s", name, exc)
 
     def start(self, host="127.0.0.1", port=8181, log_level="info", ssl_certfile=None, ssl_keyfile=None):
         if self._process is not None and self._process.is_alive():
@@ -285,6 +321,8 @@ class ServerProcessManager:
         self._demand_stop.set()
         if self._demand_thread is not None and self._demand_thread.is_alive():
             self._demand_thread.join(timeout=2.0)
+            if self._demand_thread.is_alive():
+                self.logger.error("Server demand listener did not stop")
         self._demand_thread = None
 
         if self._process is not None:
@@ -301,7 +339,10 @@ class ServerProcessManager:
                 self._process.join(timeout=2.0)
                 if self._process.is_alive():
                     self._process.kill()
+                    self._process.join(timeout=1.0)
             self._process = None
+        self._close_ipc_queue(self._frame_queue, "frame")
+        self._close_ipc_queue(self._demand_queue, "demand")
         self._frame_queue = None
         self._demand_queue = None
         self._preview_demand.clear()
@@ -470,3 +511,6 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
+
+
+atexit.register(ServerProcessManager.shutdown_all)

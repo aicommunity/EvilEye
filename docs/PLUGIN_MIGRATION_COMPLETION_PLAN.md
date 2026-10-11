@@ -477,3 +477,35 @@ installation из тестов; подобрать воспроизводиму�
   из pool.
 - DB unit/integration группы завершились успешно; полный `tests/unit` завершён
   с exit code 0. После прогона не осталось pytest или multiprocessing worker-ов.
+
+### Продолжение 2026-10-11: lifecycle тестов и UI workers
+
+- [готово] `JournalInitThread` хранится в сильном реестре до тех пор, пока
+  session/per-test shutdown не подтвердит завершение `QThread`; worker
+  проверяет отмену между этапами и закрывает DB connection при отмене.
+  Регрессионный тест удерживает thread в `run()` и проверяет, что реестр
+  очищается только после `wait()`.
+- [готово] Тестовая `QApplication` fixture стала session-scoped с сильной
+  ссылкой на один wrapper. Это устранило преждевременное освобождение wrapper
+  между GUI-тестами. Общий обход/удаление Qt-виджетов на каждом тесте удалён:
+  он сам приводил к native crash при работе с устаревшими QObject wrappers.
+- [готово] Per-test и session cleanup останавливают preview/streaming services,
+  `MpControl`, `ServerProcessManager`, recorder и journal init workers до конца
+  тестовой сессии. `MpControl.stop()` закрывает IPC queues и join-ит feeder
+  threads; server manager выполняет аналогичный cleanup.
+- [готово] Тесты journal columns теперь используют private `tmp_path` fixtures,
+  а не каталог `EvilEyeData` с пользовательскими/производственными записями.
+  Исправлен устаревший DB fake zone adapter: он реализует `query_once()`, как
+  требует production adapter.
+- Проверки на сервере: полный `tests/unit` — 100%, exit code 0; целевые тесты
+  сервисов, MpControl, journal lifecycle, zone DB adapter и journal UI — 25
+  passed; полный `tests/integration` — 100%, exit code 0 с предусмотренным
+  режимом `EVILEYE_PYTEST_FORCE_EXIT=1`.
+- Остаётся ограничение окружения: обычный запуск integration доходит до 100%,
+  но PyQt 6.11 получает SIGSEGV в `cleanup_on_exit()` при `Py_FinalizeEx`.
+  Это подтверждено нативным backtrace под gdb; все assertions перед завершением
+  проходят. Для полного набора используется существующий opt-in force-exit
+  режим, который срабатывает после session fixture cleanup и сохраняет exit
+  status pytest. Устранение зависимости shutdown от PyQt/SIP финализации —
+  отдельная открытая задача; автоматическое удаление Qt wrappers не добавлено,
+  так как оно воспроизводимо падало на старых test-owned QObject.

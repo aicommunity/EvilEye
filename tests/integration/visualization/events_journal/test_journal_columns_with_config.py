@@ -1,25 +1,21 @@
 #!/usr/bin/env python3
 
-import json
-import os
 from pathlib import Path
 
 from tests.integration.visualization.events_journal.helpers import (
     EXPECTED_JOURNAL_HEADERS,
-    journal_today_folder,
     table_horizontal_headers,
-    write_json,
+    write_sample_event_metadata,
 )
 
 
-def test_journal_columns_with_config(journal_test_logger, qapp):
+def test_journal_columns_with_config(journal_test_logger, qapp, tmp_path):
     """Test Events Journal column structure with data from config files"""
     
     journal_test_logger.info("=== Test Events Journal Columns with Config Data ===")
     
     try:
         from evileye.visualization_modules.events_journal_json import EventsJournalJson
-        import datetime
         
         # Use QApplication from fixture
         app = qapp
@@ -47,77 +43,9 @@ def test_journal_columns_with_config(journal_test_logger, qapp):
         else:
             journal_test_logger.warning(f"⚠️  Configs directory not found: {configs_dir}")
         
-        # Create test data directory
-        base_dir = 'EvilEyeData'
-        today, test_date_dir = journal_today_folder(base_dir)
-        
-        # Create comprehensive test data based on typical config structure
-        test_data_found = {
-            "metadata": {
-                "version": "1.0",
-                "created": datetime.datetime.now().isoformat(),
-                "description": "Test data from config",
-                "total_objects": 2
-            },
-            "objects": [
-                {
-                    "object_id": 1,
-                    "frame_id": 1,
-                    "timestamp": datetime.datetime.now().isoformat(),
-                    "image_filename": "test_preview_1.jpeg",
-                    "bounding_box": {"x": 0.1, "y": 0.2, "width": 0.3, "height": 0.4},
-                    "class_id": 0,
-                    "class_name": "person",
-                    "confidence": 0.85,
-                    "source_id": 0,
-                    "source_name": "ConfigCamera1",
-                    "date_folder": today
-                },
-                {
-                    "object_id": 2,
-                    "frame_id": 2,
-                    "timestamp": datetime.datetime.now().isoformat(),
-                    "image_filename": "test_preview_2.jpeg",
-                    "bounding_box": {"x": 0.2, "y": 0.3, "width": 0.4, "height": 0.5},
-                    "class_id": 1,
-                    "class_name": "car",
-                    "confidence": 0.92,
-                    "source_id": 1,
-                    "source_name": "ConfigCamera2",
-                    "date_folder": today
-                }
-            ]
-        }
-        
-        # Create attribute events
-        test_data_attr = {
-            "metadata": {"version": "1.0", "created": datetime.datetime.now().isoformat()},
-            "events": [
-                {
-                    "event_type": "attr_found",
-                    "ts": datetime.datetime.now().isoformat(),
-                    "source_id": 0,
-                    "source_name": "ConfigCamera1",
-                    "object_id": 1,
-                    "class_name": "person",
-                    "event_name": "config_attr",
-                    "attrs": {"attr1": "value1"},
-                    "date_folder": today
-                }
-            ]
-        }
-        
-        # Write test JSON files
-        found_path = os.path.join(test_date_dir, 'objects_found.json')
-        with open(found_path, 'w') as f:
-            json.dump(test_data_found, f, indent=2)
-        
-        attr_path = os.path.join(test_date_dir, 'attribute_events.json')
-        with open(attr_path, 'w') as f:
-            json.dump(test_data_attr, f, indent=2)
-        
-        journal_test_logger.info(f"✅ Created test JSON data files in {test_date_dir}")
-        
+        # Keep the test independent from production recordings.
+        base_dir = write_sample_event_metadata(tmp_path)
+
         # Create EventsJournalJson widget
         journal = EventsJournalJson(base_dir)
         journal_test_logger.info("✅ Created EventsJournalJson widget")

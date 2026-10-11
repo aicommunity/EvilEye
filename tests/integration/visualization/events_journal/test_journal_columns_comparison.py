@@ -4,13 +4,12 @@ import os
 
 from tests.integration.visualization.events_journal.helpers import (
     EXPECTED_JOURNAL_HEADERS,
-    journal_today_folder,
     table_horizontal_headers,
-    write_json,
+    write_sample_event_metadata,
 )
 
 
-def test_journal_columns_comparison(journal_test_logger, qapp):
+def test_journal_columns_comparison(journal_test_logger, qapp, tmp_path):
     """Test that Events Journal columns match Objects Journal (database) structure"""
     
     journal_test_logger.info("=== Test Events Journal vs Objects Journal Columns Comparison ===")
@@ -18,8 +17,6 @@ def test_journal_columns_comparison(journal_test_logger, qapp):
     try:
         from evileye.visualization_modules.events_journal_json import EventsJournalJson
         from evileye.visualization_modules.handler_journal_view import HandlerJournal
-        import datetime
-        import json
         
         # Use QApplication from fixture
         app = qapp
@@ -27,29 +24,8 @@ def test_journal_columns_comparison(journal_test_logger, qapp):
         # Expected column order (from database Objects Journal)
         expected_headers = EXPECTED_JOURNAL_HEADERS
         
-        # Test 1: Check Events Journal structure
-        journal_test_logger.info("\n1. Testing Events Journal structure:")
-        base_dir = 'EvilEyeData'
-        today, test_date_dir = journal_today_folder(base_dir)
-        
-        # Create minimal test data
-        test_data = {
-            "metadata": {"version": "1.0", "created": datetime.datetime.now().isoformat()},
-            "events": [
-                {
-                    "event_type": "attr_found",
-                    "ts": datetime.datetime.now().isoformat(),
-                    "source_id": 0,
-                    "source_name": "TestCamera",
-                    "object_id": 1,
-                    "class_name": "person",
-                    "event_name": "test",
-                    "date_folder": today
-                }
-            ]
-        }
-        
-        write_json(os.path.join(test_date_dir, "attribute_events.json"), test_data)
+        # Test 1: Check Events Journal structure using isolated fixture data.
+        base_dir = write_sample_event_metadata(tmp_path)
 
         events_journal = EventsJournalJson(base_dir)
         journal_test_logger.info("✅ Created EventsJournalJson widget")
