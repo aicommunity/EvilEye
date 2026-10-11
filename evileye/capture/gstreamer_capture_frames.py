@@ -842,7 +842,7 @@ class GStreamerCaptureFramesMixin:
                         total_str = ("∞" if max_attempts == 0 else str(max_attempts))
                         self.logger.info(
                             f"Reconnecting to source {self.source_names} (attempt {attempt}/{total_str}), backoff={wait_time:.1f}s")
-                        # Release old pipeline (with timeout to prevent blocking)
+                        # Reconnect must not reuse a pipeline while its native teardown is active.
                         try:
                             import threading as _thr_rel
                             release_done = _thr_rel.Event()
@@ -857,12 +857,21 @@ class GStreamerCaptureFramesMixin:
 
                             release_thread = _thr_rel.Thread(target=_release_worker, daemon=True)
                             release_thread.start()
-                            # Wait up to 2 seconds for release
                             if not release_done.wait(2.0):
-                                self.logger.warning(
-                                    f"Release timeout after 2s for {self.source_names}; continuing anyway")
+                                self.logger.error(
+                                    "GStreamer teardown is still running for %s; reconnect is waiting",
+                                    self.source_names,
+                                )
+                                while not release_done.wait(0.25):
+                                    if not self.run_flag or self.stop_event.is_set():
+                                        break
+                            if not release_done.is_set():
+                                break
                         except Exception as e:
-                            self.logger.debug(f"Error starting release thread: {e}")
+                            self.logger.error("Cannot release GStreamer source before reconnect: %s", e)
+                            break
+                        if not self.run_flag or self.stop_event.is_set():
+                            break
                         # Wait a bit before retry
                         if self.stop_event.wait(2.0):
                             break

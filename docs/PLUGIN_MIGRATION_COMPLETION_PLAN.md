@@ -408,3 +408,39 @@ installation из тестов; подобрать воспроизводиму�
 Открытыми остаются локальный RTSP fixture (на сервере отсутствует
 `GstRtspServer`) и root-cause shutdown полного integration suite. Реальные камеры
 и защищённые Web UI требуют отдельной проверяемой конфигурации доступа.
+
+### Продолжение 2026-10-11: RTSP startup и единый GStreamer teardown
+
+- [готово] IP-camera pipeline больше не ждёт `get_state(CLOCK_TIME_NONE)` до
+  запуска GLib loop: RTSP state transition асинхронен, ошибки приходят через bus,
+  работоспособность подтверждается первым кадром. Для finite source оставлен
+  bounded preroll с пределом 10 секунд.
+- [готово] `VideoCaptureGStreamer.release()` использует общий teardown pipeline
+  вместо второго списка переходов PAUSED/READY/NULL. Повторный release
+  сериализован, а reconnect не запускает новый pipeline, пока предыдущий native
+  teardown ещё выполняется.
+- [готово] Добавлены unit tests для bounded/async state startup и единственного
+  serialized teardown. Live RTSP проверки вынесены в дочерний процесс и
+  редактируют credentials из stdout/stderr, чтобы native crash не завершал
+  основной pytest процесс и не раскрывал пароль.
+- На сервере unit tests для GStreamer startup/release/recorder прошли (11 passed),
+  RTSP pipeline contract tests прошли (2 passed), локальный MP4 recorder E2E
+  прошёл и `ffprobe` увидел packets.
+- Реальная камера `.199`: live child завершился с `SIGSEGV` (`exit=-11`) до
+  получения BGR кадра; stdout/stderr процесса пустые. Следовательно, RTSP
+  camera/backend runtime всё ещё не подтверждён, а live recording test на камере
+  не запускался. Наблюдение не позволяет приписать сбой только камере или
+  GStreamer plugin; нужен core dump с symbols или локальный RTSP fixture для
+  разделения причин.
+
+- Повторное расследование показало, что crash камеры `.200` до исправления
+  проходил через `libproxy` (`px_proxy_factory_get_proxies`) при загрузке GIO
+  системного proxy resolver. Для прямых RTSP источников GStreamer теперь
+  устанавливает `GIO_USE_PROXY_RESOLVER=dummy` через `setdefault` до импорта GI;
+  явно заданное пользователем значение сохраняется.
+- После этого изменения обе live-камеры `.199` и `.200` прошли проверки без
+  ручной установки переменной: изолированный процесс получил BGR кадр, а
+  shared recorder записал MP4. `ffprobe` подтвердил наличие пакетов в каждой
+  записи.
+- Старые наблюдения о crash обеих камер относятся к запуску до настройки
+  resolver; повторные live-проверки подтверждают исправление в текущей среде.

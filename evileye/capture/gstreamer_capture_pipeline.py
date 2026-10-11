@@ -296,11 +296,30 @@ class GStreamerCapturePipelineMixin:
                 details = details.replace(str(secret), "****")
         return self._mask_credentials_in_pipeline(details)
 
+    def _set_pipeline_playing(self, *, wait_for_async: bool) -> None:
+        """Start a pipeline without waiting indefinitely on a source.
+
+        Live RTSP state changes depend on network negotiation and are observed
+        asynchronously through the bus and first-frame health. Finite sources
+        may wait briefly for preroll, but initialization has a hard bound.
+        """
+        result = self.pipeline.set_state(Gst.State.PLAYING)
+        if result == Gst.StateChangeReturn.FAILURE:
+            raise RuntimeError("Failed to start GStreamer pipeline")
+        if result != Gst.StateChangeReturn.ASYNC or not wait_for_async:
+            return
+
+        result, _state, _pending = self.pipeline.get_state(10 * Gst.SECOND)
+        if result == Gst.StateChangeReturn.FAILURE:
+            raise RuntimeError("GStreamer pipeline failed during startup")
+        if result == Gst.StateChangeReturn.ASYNC:
+            raise TimeoutError("GStreamer pipeline startup exceeded 10 seconds")
+
     def _init_pipeline(self):
         """
         Initialize GStreamer pipeline.
         For IP cameras, tries multiple pipeline candidates (H265, H264) until one works.
-        Uses simple approach from api-refactoring with get_state(Gst.CLOCK_TIME_NONE).
+        Live RTSP transitions start asynchronously; finite sources use a bounded preroll wait.
         """
         pipeline_str = None
         try:
@@ -438,46 +457,13 @@ class GStreamerCapturePipelineMixin:
                             if not self.pipeline:
                                 continue
 
-                            # Set pipeline to playing state - simple approach from api-refactoring
-                            # Recording branch must be fully set up before this point
-                            ret = self.pipeline.set_state(Gst.State.PLAYING)
-                            if ret == Gst.StateChangeReturn.FAILURE:
-                                # Get error message from bus
-                                msg = self.bus.pop_filtered(Gst.MessageType.ERROR | Gst.MessageType.WARNING)
-                                if msg:
-                                    if msg.type == Gst.MessageType.ERROR:
-                                        err, debug = msg.parse_error()
-                                        details = self._format_gst_diagnostic(err, debug)
-                                        self.logger.warning(
-                                            f"GStreamer pipeline ERROR (candidate {i}): {details}")
-                                        last_error = f"Failed to start pipeline candidate {i}: {details}"
-                                    elif msg.type == Gst.MessageType.WARNING:
-                                        warn, debug = msg.parse_warning()
-                                        details = self._format_gst_diagnostic(warn, debug)
-                                        self.logger.warning(
-                                            f"GStreamer pipeline WARNING (candidate {i}): {details}")
-                                last_error = f"Failed to start pipeline candidate {i}"
+                            # RTSP negotiation is asynchronous. Do not block before
+                            # the GLib bus loop is running.
+                            try:
+                                self._set_pipeline_playing(wait_for_async=False)
+                            except RuntimeError as e:
+                                last_error = f"Failed to start pipeline candidate {i}: {self._format_gst_diagnostic(e)}"
                                 continue
-                            elif ret == Gst.StateChangeReturn.ASYNC:
-                                # Wait for state change to complete - use CLOCK_TIME_NONE like api-refactoring
-                                ret = self.pipeline.get_state(Gst.CLOCK_TIME_NONE)
-                                if ret[0] == Gst.StateChangeReturn.FAILURE:
-                                    # Get error message from bus
-                                    msg = self.bus.pop_filtered(Gst.MessageType.ERROR | Gst.MessageType.WARNING)
-                                    if msg:
-                                        if msg.type == Gst.MessageType.ERROR:
-                                            err, debug = msg.parse_error()
-                                            details = self._format_gst_diagnostic(err, debug)
-                                            self.logger.warning(
-                                                f"GStreamer pipeline ERROR (candidate {i} async): {details}")
-                                            last_error = f"Failed to start pipeline candidate {i} (async): {details}"
-                                        elif msg.type == Gst.MessageType.WARNING:
-                                            warn, debug = msg.parse_warning()
-                                            details = self._format_gst_diagnostic(warn, debug)
-                                            self.logger.warning(
-                                                f"GStreamer pipeline WARNING (candidate {i} async): {details}")
-                                    last_error = f"Failed to start pipeline candidate {i} (async)"
-                                    continue
 
                             # Success! This candidate works
                             pipeline_str = candidate_str
@@ -595,16 +581,9 @@ class GStreamerCapturePipelineMixin:
                             # Don't continue - recording branch must be set up before pipeline goes to PLAYING
                             raise
 
-                    # Set pipeline to playing state - simple approach from api-refactoring
-                    # Recording branch must be fully set up before this point
-                    ret = self.pipeline.set_state(Gst.State.PLAYING)
-                    if ret == Gst.StateChangeReturn.FAILURE:
-                        raise RuntimeError("Failed to start GStreamer pipeline")
-                    elif ret == Gst.StateChangeReturn.ASYNC:
-                        # Wait for state change to complete - use CLOCK_TIME_NONE like api-refactoring
-                        ret = self.pipeline.get_state(Gst.CLOCK_TIME_NONE)
-                        if ret[0] == Gst.StateChangeReturn.FAILURE:
-                            raise RuntimeError("Failed to start GStreamer pipeline")
+                    # Finite sources can preroll synchronously, with a hard timeout.
+                    # Recording branch must be fully set up before this point.
+                    self._set_pipeline_playing(wait_for_async=True)
 
                 # Query duration for VideoFile
                 if self.source_type == CaptureDeviceType.VideoFile:
