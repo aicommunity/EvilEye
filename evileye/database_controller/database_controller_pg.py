@@ -268,22 +268,62 @@ class DatabaseControllerPg(DatabaseControllerBase):
 
     def query_once(self, query_string, data=None):
         """Execute one checked SQL attempt; the caller owns any retry policy."""
-        if self.conn_pool is None:
+        pool = self.conn_pool
+        if pool is None:
             raise psycopg2.OperationalError("PostgreSQL connection pool is unavailable")
 
-        connection = None
+        connection = pool.getconn()
+        cursor = None
         try:
-            connection = self.conn_pool.getconn()
-            with connection:
-                with connection.cursor() as curs:
-                    curs.execute(query_string, data)
-                    try:
-                        return curs.fetchall()
-                    except psycopg2.ProgrammingError:
-                        return None
-        finally:
-            if connection:
-                self.conn_pool.putconn(connection)
+            cursor = connection.cursor()
+            cursor.execute(query_string, data)
+            try:
+                result = cursor.fetchall()
+            except psycopg2.ProgrammingError:
+                result = None
+            connection.commit()
+        except Exception:
+            if cursor is not None:
+                try:
+                    cursor.close()
+                except Exception:
+                    pass
+                cursor = None
+
+            discard_connection = bool(connection.closed)
+            if not discard_connection:
+                try:
+                    connection.rollback()
+                except Exception:
+                    discard_connection = True
+            try:
+                pool.putconn(connection, close=discard_connection)
+            except Exception:
+                self.logger.exception(
+                    "Failed to return a PostgreSQL connection after query failure"
+                )
+            raise
+
+        if cursor is not None:
+            try:
+                cursor.close()
+            except Exception:
+                try:
+                    pool.putconn(connection, close=True)
+                except Exception:
+                    self.logger.exception(
+                        "Failed to discard a PostgreSQL connection with a bad cursor"
+                    )
+                raise
+        try:
+            pool.putconn(connection)
+        except Exception:
+            try:
+                connection.close()
+            except Exception:
+                pass
+            raise
+        return result
 
     def query_checked(self, query_string, data=None):
         """Execute a query and raise after bounded retries if PostgreSQL fails."""

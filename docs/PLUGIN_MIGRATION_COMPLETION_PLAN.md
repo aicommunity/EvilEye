@@ -164,9 +164,9 @@
 
 ### 2. Закрыть source lifecycle и end-to-end конечную видеозапись
 
-- [частично] Согласовать документированную модель кадра: размеры/цветовой формат, timestamp, sequence, connection generation и владение shared-frame handle; descriptor round-trip и внешний `open/read/close` source проверяются в thread/process. GStreamer MP4 integration test проверяет BGR payload, уникальные frame IDs, сохранение PTS при копировании и новый connection generation при file-loop EOS. Остаются RTSP transport/backend и reconnect тесты на реальных камерах.
+- [частично] Согласовать документированную модель кадра: размеры/цветовой формат, timestamp, sequence, connection generation и владение shared-frame handle; descriptor round-trip и внешний `open/read/close` source проверяются в thread/process. GStreamer MP4 integration test проверяет BGR payload, уникальные frame IDs, сохранение PTS при копировании и новый connection generation при file-loop EOS. Остаются failure/reconnect тесты для поддерживаемых transport/backend вариантов; live кадр и запись уже проверены на двух камерах.
 - [готово] Полный `PipelineSurveillance` finite-video test считает уникальные frame IDs на source/detector/tracker stage и проверяет равенство множеств без повторной выдачи последнего кадра. Записанный сегмент читается `ffprobe`; detector/tracker проверены в thread и spawn-process после дедупликации source SPI.
-- [частично] Добавить deterministic file-loop/reconnect сценарии для встроенного capture. GStreamer local MP4 loop теперь проверяет новый connection generation и уникальные frame IDs; остаются RTSP transport и reconnect проверки на камерах.
+- [частично] Добавить deterministic file-loop/reconnect сценарии для встроенного capture. GStreamer local MP4 loop теперь проверяет новый connection generation и уникальные frame IDs; остаются RTSP failure/reconnect проверки на камерах.
   Синтетический RTSP прогонять независимо от доступности реальных камер; реальные
   RTSP результаты фиксировать отдельно для каждого backend и transport.
 
@@ -236,7 +236,7 @@
   attribute-модулей на общий mapping resolver полный `QT_QPA_PLATFORM=offscreen
   pytest -q tests/unit` повторно завершился с exit code 0 и дошёл до 100%;
   orphan worker-процессов после прогона не осталось.
-- Полный integration suite, RTSP backend-проверки и авторизованный просмотр Web UI остаются открытыми. AttributeClassifier parity и process smoke
+- Полный integration suite, локальный RTSP fixture/reconnect и авторизованный просмотр Web UI остаются открытыми. Live RTSP кадр и запись проверены; AttributeClassifier parity и process smoke
   добавлены и проходят; общая миграция не завершена.
 
 ## Условие завершения миграции
@@ -285,27 +285,28 @@
 проверяемые границы версии 1; только после этого имеет смысл отдельно принимать
 решение о DAG, hot-plug и долговечной очереди.
 
-1. **Закрыть runtime тревог.** Счётчики отказа приёма и terminal write уже
-   разделены, `queue_failures` сохранён как совместимый агрегат. Осталось
-   проверить переход соединения PostgreSQL down/up в отдельном контролируемом
-   integration fixture и повтор с тем же `alarm_id`; текущая integration
-   проверяет реальную идемпотентную запись в доступную БД, а длительный outage
-   пока моделируется unit fake-ом. Проверить, что runtime/API показывает latched
-   degraded после окончательной потери. Уточнить границу shutdown: `stop()` теперь
-   ограничивает join и сообщает о живом worker-е, но не может прервать блокирующий
-   вызов драйвера; в `DatabaseControllerPg` сейчас нет явных connect/statement
-   deadlines. Добавить и проверить конечные libpq/SQL timeouts либо безопасную
-   отмену запроса, чтобы worker действительно завершался. Не добавлять
-   event-detector `process` режим без сериализуемого контракта доставки объектов
-   и событий.
-2. **Закрыть source transport.** Добавить независимый локальный RTSP fixture
-   (предпочтительно проектный test dependency или воспроизводимый контейнерный
-   сервис, без скачивания бинарника во время теста); проверять DESCRIBE/SETUP/PLAY,
-   таймаут, EOF/reconnect и смену `connection_generation` отдельно для OpenCV и
-   GStreamer. Затем повторить реальные камеры и записать результат по каждой
-   камере/backend/transport. Текущий блокер: локальный RTSP server fixture на
-   сервере отсутствует; камеры `.199`/`.202` возвращают `RTSP 250` на PLAY в
-   GStreamer.
+1. **Закрыть runtime тревог.**
+   - [готово] Счётчики enqueue rejection и terminal write разделены;
+     `queue_failures` сохранён как совместимый агрегат.
+   - [готово] PostgreSQL down/up проверен через локальный TCP forwarding proxy:
+     сброс существующего соединения вызывает retry, восстановление forwarding
+     сохраняет принятую тревогу, повтор того же `alarm_id` оставляет одну строку.
+   - [готово] `query_once` удаляет сломанное соединение из пула и сохраняет
+     исходный `OperationalError`, чтобы общий retry-контур мог восстановиться.
+   - [готово] Ограничения `connect_timeout_secs` и `statement_timeout_ms`
+     проверяются unit и PostgreSQL integration тестами.
+   - [готово] `EventsProcessor.get_runtime_stats()` включает health и counters
+     DB adapters; unit tests закрепляют degraded после terminal write/overflow.
+     Публичный HTTP endpoint и отображение этих stats в Web UI ещё не проверены.
+   - [ограничение v1] Event detectors остаются thread-only: process режим не
+     добавляется без сериализуемого протокола доставки событий.
+2. **Закрыть source transport.**
+   - [готово] Live frame tests проходят через GStreamer и OpenCV SPI на камерах
+     `.199` и `.200`; GStreamer shared recorder записал MP4 с пакетами на обеих
+     камерах. OpenCV проверки используют CAP_FFMPEG.
+   - [осталось] Добавить локальный воспроизводимый RTSP fixture и без реальных
+     камер проверять DESCRIBE/SETUP/PLAY, timeout и reconnect для OpenCV и
+     GStreamer. Текущие live smoke не заменяют детерминированный transport test.
 3. **Закрыть полный integration shutdown.** Разбить suite на независимые группы,
    для каждой сохранять exit code и список живых потоков/процессов; найти владельца
    ресурсов, из-за которых общий прогон зависал после summary. После фикса пройти
@@ -457,3 +458,22 @@ installation из тестов; подобрать воспроизводиму�
 - Локальный воспроизводимый RTSP server fixture и reconnect/transport contract
   без реальных камер остаются открытой задачей. Успешный live smoke не заменяет
   детерминированные DESCRIBE/SETUP/PLAY, timeout и reconnect проверки.
+
+
+### Продолжение 2026-10-11: восстановление PostgreSQL после TCP outage
+
+- Контролируемый сброс TCP proxy выявил, что `query_once()` возвращал закрытое
+  соединение в pool; rollback на закрытом соединении маскировал сетевой
+  `OperationalError` как `InterfaceError`, из-за чего retry прекращался.
+- [готово] `query_once()` теперь явно завершает транзакцию, пытается rollback при
+  ошибке и передаёт закрытое/неисправное соединение в `putconn(close=True)`.
+  Ошибка возврата в pool не маскирует первичный сбой запроса.
+- [готово] Новая PostgreSQL integration проверка включает и отключает только
+  свой локальный forwarding proxy, не останавливая общую БД. После обрыва
+  worker повторяет запрос, сохраняет тревогу после восстановления, а повтор с
+  тем же `alarm_id` даёт одну запись.
+- [готово] Добавлен unit test на случай, когда rollback выдаёт `InterfaceError`;
+  он проверяет сохранение исходного `OperationalError` и удаление соединения
+  из pool.
+- DB unit/integration группы завершились успешно; полный `tests/unit` завершён
+  с exit code 0. После прогона не осталось pytest или multiprocessing worker-ов.

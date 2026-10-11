@@ -123,12 +123,6 @@ def test_postgres_checked_query_retries_operational_failure():
         def __init__(self, pool):
             self.pool = pool
 
-        def __enter__(self):
-            return self
-
-        def __exit__(self, *args):
-            return False
-
         def execute(self, query, values):
             self.pool.attempts += 1
             if self.pool.attempts == 1:
@@ -137,15 +131,23 @@ def test_postgres_checked_query_retries_operational_failure():
         def fetchall(self):
             return [(1,)]
 
+        def close(self):
+            pass
+
     class _Connection:
+        closed = 0
+
         def __init__(self, pool):
             self.pool = pool
 
-        def __enter__(self):
-            return self
+        def commit(self):
+            pass
 
-        def __exit__(self, *args):
-            return False
+        def rollback(self):
+            pass
+
+        def close(self):
+            self.closed = 1
 
         def cursor(self):
             return _Cursor(self.pool)
@@ -158,8 +160,10 @@ def test_postgres_checked_query_retries_operational_failure():
         def getconn(self):
             return _Connection(self)
 
-        def putconn(self, connection):
+        def putconn(self, connection, close=False):
             self.returned += 1
+            if close:
+                connection.close()
 
     pool = _Pool()
     database = object.__new__(DatabaseControllerPg)
