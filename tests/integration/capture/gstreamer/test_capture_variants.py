@@ -88,7 +88,8 @@ def test_gstreamer_capture_and_record_variants(
 
     # Подождать и получить несколько кадров
     frames_received = 0
-    for _ in range(60):
+    deadline = time.monotonic() + (15.0 if variant == "IpCamera" else 3.0)
+    while time.monotonic() < deadline:
         frames = cap.get()
         if frames:
             frames_received += len(frames)

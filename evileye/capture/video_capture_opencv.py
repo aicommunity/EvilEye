@@ -432,11 +432,14 @@ class VideoCaptureOpencv(VideoCaptureBase):
                 # Verify reset was successful
                 if not (self.is_inited and self.is_opened()):
                     self.logger.warning(
-                        f"Reset may have failed for {self.source_names} "
-                        f"(is_inited={self.is_inited}, is_opened={self.is_opened()})"
+                        "Reset did not reopen %s (is_inited=%s, is_opened=%s); "
+                        "capture loop will retry with reconnect backoff",
+                        self.source_names,
+                        self.is_inited,
+                        self.is_opened(),
                     )
-                    self.run_flag = False
-                    self.stop_event.set()
+                    self._reconnect_attempt += 1
+                    continue
 
             end_it = timer()
             elapsed_seconds = end_it - begin_it

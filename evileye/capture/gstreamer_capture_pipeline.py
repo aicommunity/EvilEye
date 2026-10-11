@@ -266,16 +266,22 @@ class GStreamerCapturePipelineMixin:
         else:
             common_tail += " ! queue max-size-buffers=10 max-size-bytes=0 max-size-time=0 ! video/x-raw,format=BGR ! appsink name=sink emit-signals=true wait-on-eos=false enable-last-sample=false sync=true max-buffers=3 drop=true"
 
-        # Candidate 1: H265 (if username/password provided, try H265 first)
+        h264_candidate = (
+            f"{base_rtsp} ! rtph264depay ! h264parse ! avdec_h264{common_tail}"
+        )
+        h265_candidate = (
+            f"{base_rtsp} ! rtph265depay ! h265parse ! avdec_h265{common_tail}"
+        )
+
+        # Starting PLAYING is asynchronous for RTSP, so the first candidate must
+        # match the common codec or the pipeline can reconnect forever before a
+        # later candidate gets a chance. Prefer H.264 when no camera credentials
+        # identify the H.265-oriented camera configuration; keep the established
+        # H.265-first order for authenticated cameras.
         if self.username and self.password:
-            candidates.append(f"{base_rtsp} ! rtph265depay ! h265parse ! avdec_h265{common_tail}")
-
-        # Candidate 2: H264 (always try H264)
-        candidates.append(f"{base_rtsp} ! rtph264depay ! h264parse ! avdec_h264{common_tail}")
-
-        # Candidate 3: H265 without auth (if no username/password, try H265)
-        if not self.username or not self.password:
-            candidates.insert(0, f"{base_rtsp} ! rtph265depay ! h265parse ! avdec_h265{common_tail}")
+            candidates.extend((h265_candidate, h264_candidate))
+        else:
+            candidates.extend((h264_candidate, h265_candidate))
 
         return candidates
 

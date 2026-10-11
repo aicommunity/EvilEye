@@ -56,7 +56,8 @@ def test_opencv_capture_and_record_variants(variant, tmp_path: Path, request: py
 
     # Подождать и получить несколько кадров
     frames_received = 0
-    for _ in range(50):
+    deadline = time.monotonic() + (15.0 if variant == "IpCamera" else 2.5)
+    while time.monotonic() < deadline:
         frames = cap.get()
         if frames:
             frames_received += len(frames)

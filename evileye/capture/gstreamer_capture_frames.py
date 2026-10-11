@@ -280,6 +280,21 @@ class GStreamerCaptureFramesMixin:
                                         # Убрано отладочное сообщение для уменьшения флуда
                                         self.is_working = False
                             # Если _init_time нет, это может быть старая инициализация - не трогаем is_working
+                    elif (
+                        self.source_type == CaptureDeviceType.IpCamera
+                        and ret == Gst.StateChangeReturn.ASYNC
+                        and pending == Gst.State.PLAYING
+                    ):
+                        # RTSP negotiation is asynchronous. Keep the source in
+                        # its initializing state until the configured startup
+                        # grace period expires; otherwise the monitor tears down
+                        # rtspsrc while it is still negotiating SETUP/PLAY.
+                        if (
+                            not self._init_time
+                            or time.time() - self._init_time
+                            > CaptureConstants.INIT_GRACE_PERIOD_SECONDS
+                        ):
+                            self.is_working = False
                     else:
                         # Pipeline not in PLAYING state или ret != SUCCESS и state != PLAYING
                         if self.is_working:

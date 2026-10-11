@@ -802,7 +802,11 @@ class VideoCaptureBase(EvilEyeBase):
             parsed = urlparse(self.source_address)
             self.username = parsed.username
             self.password = parsed.password
-            replaced_url = parsed._replace(netloc=f"{parsed.hostname}")
+            # Remove only the authority's userinfo. Keep the explicit port and
+            # IPv6 brackets: local RTSP servers and non-default camera ports
+            # otherwise silently fall back to port 554.
+            authority = parsed.netloc.rsplit("@", 1)[-1]
+            replaced_url = parsed._replace(netloc=authority)
             self.pure_url = replaced_url.geturl()
             self.username = self.params.get('username', self.username)
             self.password = self.params.get('password', self.password)
@@ -911,12 +915,15 @@ class VideoCaptureBase(EvilEyeBase):
         if not processed_password and not processed_username:
             return url_parsed_info.geturl()
 
-        if not processed_password:
-            reconstructed_url = url_parsed_info._replace(netloc=f"{processed_username}@{url_parsed_info.hostname}")
-            return reconstructed_url.geturl()
-
+        # Keep the original host authority intact. Rebuilding it from .hostname
+        # drops both non-default ports and IPv6 brackets.
+        authority = url_parsed_info.netloc.rsplit("@", 1)[-1]
+        userinfo = processed_username or ""
+        if processed_password is not None:
+            userinfo = f"{userinfo}:{processed_password}"
         reconstructed_url = url_parsed_info._replace(
-            netloc=f"{processed_username}:{processed_password}@{url_parsed_info.hostname}")
+            netloc=f"{userinfo}@{authority}"
+        )
         return reconstructed_url.geturl()
 
     def get_ip_camera_init_hint(self, last_error: Exception | str | None = None) -> str:

@@ -2,11 +2,7 @@ import os
 import shutil
 import socket
 import subprocess
-import sys
-import tarfile
-import tempfile
 import time
-import urllib.request
 from pathlib import Path
 
 import pytest
@@ -30,63 +26,88 @@ def _has_gi_and_gst() -> bool:
         return False
 
 
-def _has_gst_rtsp_server() -> bool:
-    try:
-        import gi  # noqa: F401
-        gi.require_version('Gst', '1.0')
-        gi.require_version('GstRtspServer', '1.0')
-        from gi.repository import GstRtspServer  # noqa: F401
-        return True
-    except Exception:
-        return False
+def _find_rtsp_server_binary() -> Path | None:
+    """Return an explicitly provisioned MediaMTX test server binary."""
+    configured = os.environ.get("EVILEYE_TEST_RTSP_SERVER_BIN")
+    if configured:
+        binary = Path(configured).expanduser()
+        if not binary.is_file() or not os.access(binary, os.X_OK):
+            pytest.fail(
+                "EVILEYE_TEST_RTSP_SERVER_BIN must point to an executable MediaMTX binary"
+            )
+        return binary
+    discovered = shutil.which("mediamtx")
+    return Path(discovered) if discovered else None
 
 
-def _ensure_rtsp_simple_server_binary() -> Path | None:
-    """
-    Возвращает путь к исполняемому файлу rtsp-simple-server.
-    Если бинарника нет, пытается скачать его в системный временный каталог.
-    """
-    existing = shutil.which("rtsp-simple-server")
-    if existing:
-        return Path(existing)
+def _free_tcp_port() -> int:
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
+        sock.bind(("127.0.0.1", 0))
+        return int(sock.getsockname()[1])
 
-    cache_dir = Path(tempfile.gettempdir()) / "rtsp_simple_server_cache"
-    cache_dir.mkdir(parents=True, exist_ok=True)
-    binary_path = cache_dir / "rtsp-simple-server"
-    if binary_path.exists():
-        binary_path.chmod(0o755)
-        return binary_path
 
-    url = "https://github.com/aler9/rtsp-simple-server/releases/download/v0.22.3/rtsp-simple-server_v0.22.3_linux_amd64.tar.gz"
-    archive_path = cache_dir / "rtsp-simple-server.tar.gz"
-    try:
-        urllib.request.urlretrieve(url, archive_path)
-    except Exception:
-        return None
+class LocalRtspFixture:
+    """Owns the RTSP server and a restartable synthetic H.264 publisher."""
 
-    try:
-        with tarfile.open(archive_path, "r:gz") as tar:
-            for member in tar.getmembers():
-                if member.isfile() and member.name.endswith("/rtsp-simple-server"):
-                    member.name = Path(member.name).name  # strip path
-                    tar.extract(member, cache_dir)
-                    extracted = cache_dir / member.name
-                    extracted.chmod(0o755)
-                    binary_path = extracted
-                    break
-        if not binary_path.exists():
-            return None
-        return binary_path
-    finally:
-        if archive_path.exists():
-            archive_path.unlink(missing_ok=True)
-    return None
+    def __init__(self, url, server_proc, publisher_cmd, log_path):
+        self.url = url
+        self.server_proc = server_proc
+        self.publisher_cmd = publisher_cmd
+        self.publisher_proc = None
+        self.log_path = Path(log_path)
 
+    def start_publisher(self, *, wait_ready=True):
+        self.stop_publisher()
+        self.publisher_proc = subprocess.Popen(
+            self.publisher_cmd,
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+        )
+        if not wait_ready:
+            return
+        deadline = time.monotonic() + 8.0
+        while time.monotonic() < deadline:
+            if self.publisher_proc.poll() is not None:
+                raise RuntimeError("FFmpeg RTSP publisher exited before publishing")
+            if _probe_rtsp_stream(self.url):
+                return
+            time.sleep(0.25)
+        raise RuntimeError("Synthetic RTSP stream did not become readable")
+
+    def stop_publisher(self):
+        proc = self.publisher_proc
+        self.publisher_proc = None
+        if proc is None or proc.poll() is not None:
+            return
+        proc.terminate()
+        try:
+            proc.wait(timeout=3.0)
+        except subprocess.TimeoutExpired:
+            proc.kill()
+            proc.wait(timeout=2.0)
+
+    def close(self):
+        self.stop_publisher()
+        proc = self.server_proc
+        if proc.poll() is None:
+            proc.terminate()
+            try:
+                proc.wait(timeout=3.0)
+            except subprocess.TimeoutExpired:
+                proc.kill()
+                proc.wait(timeout=2.0)
+
+    def log_tail(self, limit=2000):
+        try:
+            return self.log_path.read_text(errors="replace")[-limit:]
+        except OSError:
+            return ""
 
 def _probe_rtsp_stream(url: str) -> bool:
     ffprobe_bin = shutil.which("ffprobe")
     if not ffprobe_bin:
-        return True
+        return False
     try:
         result = subprocess.run(
             [
@@ -95,12 +116,11 @@ def _probe_rtsp_stream(url: str) -> bool:
                 "error",
                 "-rtsp_transport",
                 "tcp",
-                "-timeout",
-                "2000000",
                 "-show_entries",
                 "stream=codec_name",
                 "-of",
                 "default=noprint_wrappers=1",
+                "-i",
                 url,
             ],
             stdout=subprocess.PIPE,
@@ -196,34 +216,67 @@ def images_sequence(tmp_path_factory, ensure_gst_initialized):
 
 
 @pytest.fixture(scope="session")
-def local_rtsp_server(ensure_gst_initialized):
+def local_rtsp_fixture(tmp_path_factory):
+    """Run a local MediaMTX server with a restartable synthetic H.264 stream.
+
+    The server is a test-only dependency. Tests never download or install it;
+    configure EVILEYE_TEST_RTSP_SERVER_BIN or put ``mediamtx`` on PATH.
     """
-    Поднимает локальный RTSP-сервер на 127.0.0.1:8554/test.
-    Сначала пытаемся использовать GstRtspServer напрямую, при отсутствии — пробуем rtsp-simple-server+ffmpeg.
-    """
-    # Попытка 1: rtsp-simple-server (+ ffmpeg) — более надёжная для CI
-    simple_server_bin = _ensure_rtsp_simple_server_binary()
+    server_bin = _find_rtsp_server_binary()
+    if server_bin is None:
+        pytest.skip(
+            "MediaMTX test binary is unavailable; see tests/RTSP_FIXTURE.md"
+        )
     ffmpeg_bin = shutil.which("ffmpeg")
-    if simple_server_bin and ffmpeg_bin:
-        print("Using rtsp-simple-server fallback for RTSP fixture")
-        server_proc = subprocess.Popen([str(simple_server_bin)], stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-        # Дождаться старта порта
-        end_time = time.time() + 5.0
-        while time.time() < end_time:
+    if not ffmpeg_bin:
+        pytest.skip("ffmpeg is required for the local RTSP fixture")
+    if not shutil.which("ffprobe"):
+        pytest.skip("ffprobe is required to verify the local RTSP publisher")
+
+    work_dir = tmp_path_factory.mktemp("local_rtsp")
+    port = _free_tcp_port()
+    config_path = work_dir / "mediamtx.yml"
+    config_path.write_text(
+        f"rtsp: true\n"
+        f"rtspTransports: [tcp]\n"
+        f"rtspAddress: 127.0.0.1:{port}\n"
+        "rtmp: false\n"
+        "hls: false\n"
+        "webrtc: false\n"
+        "srt: false\n"
+        "moq: false\n"
+        "paths:\n  all_others: {}\n",
+        encoding="utf-8",
+    )
+    log_path = work_dir / "mediamtx.log"
+    log_file = log_path.open("wb")
+    server_proc = subprocess.Popen(
+        [str(server_bin), str(config_path)],
+        stdin=subprocess.DEVNULL,
+        stdout=log_file,
+        stderr=subprocess.STDOUT,
+        cwd=work_dir,
+    )
+    url = f"rtsp://127.0.0.1:{port}/test"
+    fixture = LocalRtspFixture(url, server_proc, [], log_path)
+    try:
+        deadline = time.monotonic() + 8.0
+        while time.monotonic() < deadline:
+            if server_proc.poll() is not None:
+                pytest.fail(
+                    "MediaMTX exited during startup: " + fixture.log_tail()
+                )
             with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
                 sock.settimeout(0.2)
-                if sock.connect_ex(("127.0.0.1", 8554)) == 0:
+                if sock.connect_ex(("127.0.0.1", port)) == 0:
                     break
-            if server_proc.poll() is not None:
-                stdout, stderr = server_proc.communicate(timeout=1)
-                pytest.skip(f"rtsp-simple-server не запустился: {stderr.decode(errors='ignore')}")
             time.sleep(0.1)
         else:
-            server_proc.terminate()
-            pytest.skip("rtsp-simple-server не открыл порт 8554")
+            pytest.fail(
+                "MediaMTX did not open its RTSP port: " + fixture.log_tail()
+            )
 
-        stream_url = "rtsp://127.0.0.1:8554/test"
-        ffmpeg_cmd = [
+        fixture.publisher_cmd = [
             ffmpeg_bin,
             "-hide_banner",
             "-loglevel", "error",
@@ -235,91 +288,21 @@ def local_rtsp_server(ensure_gst_initialized):
             "-tune", "zerolatency",
             "-g", "30",
             "-f", "rtsp",
-            stream_url,
+            url,
         ]
-        stream_proc = subprocess.Popen(ffmpeg_cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-        time.sleep(1.0)
-        if stream_proc.poll() is not None:
-            stdout, stderr = stream_proc.communicate(timeout=1)
-            server_proc.terminate()
-            pytest.skip(f"ffmpeg не смог запустить RTSP поток: {stderr.decode(errors='ignore')}")
-        if not _probe_rtsp_stream(stream_url):
-            for proc in (stream_proc, server_proc):
-                if proc.poll() is None:
-                    proc.terminate()
-                    try:
-                        proc.wait(timeout=2.0)
-                    except subprocess.TimeoutExpired:
-                        proc.kill()
-            pytest.skip("RTSP поток через rtsp-simple-server не отвечает на ffprobe")
+        fixture.start_publisher()
+        yield fixture
+    except RuntimeError as exc:
+        pytest.fail(f"Could not start synthetic RTSP publisher: {exc}; {fixture.log_tail()}")
+    finally:
+        fixture.close()
+        log_file.close()
 
-        try:
-            yield stream_url
-        finally:
-            for proc in (stream_proc, server_proc):
-                if proc.poll() is None:
-                    proc.terminate()
-                    try:
-                        proc.wait(timeout=2.0)
-                    except subprocess.TimeoutExpired:
-                        proc.kill()
-        return
 
-    # Попытка 2: GstRtspServer через gi
-    if _has_gst_rtsp_server():
-        import gi
-        gi.require_version('Gst', '1.0')
-        gi.require_version('GstRtspServer', '1.0')
-        from gi.repository import Gst, GstRtspServer, GLib
-
-        print("Using GstRtspServer for RTSP fixture")
-        loop = GLib.MainLoop()
-        server = GstRtspServer.RTSPServer.new()
-        server.props.service = "8554"
-        server.props.address = "127.0.0.1"
-        mount_points = server.get_mount_points()
-        factory = GstRtspServer.RTSPMediaFactory.new()
-        factory.set_shared(True)
-        factory.set_launch(
-            "( videotestsrc is-live=true ! x264enc tune=zerolatency speed-preset=ultrafast bitrate=512 key-int-max=15 "
-            "! rtph264pay name=pay0 pt=96 )"
-        )
-        mount_points.add_factory("/test", factory)
-        server.attach(None)
-
-        import threading
-        t = threading.Thread(target=loop.run, daemon=True)
-        t.start()
-        # Дать серверу стартовать, проверяя порт
-        import socket
-        end_time = time.time() + 5.0
-        while time.time() < end_time:
-            with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
-                sock.settimeout(0.2)
-                if sock.connect_ex(("127.0.0.1", 8554)) == 0:
-                    break
-            time.sleep(0.1)
-        else:
-            loop.quit()
-            pytest.skip("GstRtspServer не открыл порт 8554")
-        url = "rtsp://127.0.0.1:8554/test"
-        if not _probe_rtsp_stream(url):
-            try:
-                loop.quit()
-            except Exception:
-                pass
-            pytest.skip("GstRtspServer не смог предоставить поток (ffprobe)")
-        try:
-            yield url
-        finally:
-            try:
-                loop.quit()
-            except Exception:
-                pass
-        return
-
-    pytest.skip("Нет подходящего способа запустить локальный RTSP сервер (ни GstRtspServer, ни rtsp-simple-server)")
-
+@pytest.fixture(scope="session")
+def local_rtsp_server(local_rtsp_fixture):
+    """Compatibility URL fixture for existing capture integration tests."""
+    return local_rtsp_fixture.url
 
 def skip_if_missing_gst_recording_elements():
     missing = []

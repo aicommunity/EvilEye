@@ -509,3 +509,15 @@ installation из тестов; подобрать воспроизводиму�
   status pytest. Устранение зависимости shutdown от PyQt/SIP финализации —
   отдельная открытая задача; автоматическое удаление Qt wrappers не добавлено,
   так как оно воспроизводимо падало на старых test-owned QObject.
+
+
+### Продолжение 2026-10-11: локальный RTSP и reconnect встроенных источников
+
+- [готово] Интеграционная RTSP-фикстура использует явно provisioned MediaMTX и FFmpeg, не загружает бинарник из теста, проверяет готовность publisher через `ffprobe` и пишет служебные файлы только во временный каталог. MediaMTX слушает loopback на динамическом TCP-порту; остальные listeners выключены.
+- [готово] Документированы проверенная версия и checksum MediaMTX, инструменты и запуск тестов в `tests/RTSP_FIXTURE.md`.
+- [готово] Локальные RTSP-тесты проверяют OpenCV и GStreamer в `thread` и `process` режимах, получение BGR-кадра с исходным `source_id`, потерю publisher и восстановление потока после его перезапуска.
+- [готово] GStreamer thread monitor больше не считает `ASYNC/pending=PLAYING` отказом во время RTSP согласования. Он ждёт завершения startup в пределах init grace period; зависшее согласование после таймаута остаётся диагностируемым и запускает reconnect.
+- [готово] После неудачного OpenCV reopen capture loop сохраняет работу и повторяет инициализацию с reconnect backoff. Ранее первая попытка во время отсутствия RTSP path останавливала поток и запрещала восстановление после появления path.
+- [готово] Нормализация RTSP URL сохраняет нестандартный порт и IPv6 authority при подстановке userinfo. Тесты покрывают URL credentials, config credentials и IPv6.
+- Проверки на сервере: `tests/unit/capture` — 70 passed; локальный RTSP source/reconnect набор — 8 passed; прежние RTSP capture-and-record тесты OpenCV и GStreamer — 2 passed.
+- Следующий шаг: инвентаризировать встроенные processor/source/event компоненты, которые ещё запускаются в обход SPI, и проверить общий путь пользовательских тревог от detector до журнала. Отдельно остаётся выяснить и устранить native SIGSEGV PyQt при обычном завершении полного integration suite, описанный выше.
