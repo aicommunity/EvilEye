@@ -210,3 +210,132 @@ def test_rtsp_camera_writes_mp4_with_shared_recorder(tmp_path):
         timeout=20,
     )
     assert int(probe.stdout.strip()) > 0
+
+
+
+def _run_live_source_adapter_in_process(record_dir=None):
+    """Exercise the built-in source SPI while its capture backend runs in spawn."""
+    camera_url, username, password = _rtsp_credentials()
+    import evileye.capture.video_capture_gstreamer  # noqa: F401
+    from evileye.core.base_class import EvilEyeBase
+    from evileye.core.plugin_runtime import SourceModuleAdapter
+
+    source = EvilEyeBase.create_instance("VideoCaptureGStreamer")
+    assert isinstance(source, SourceModuleAdapter)
+
+    params = {
+        "module_id": "VideoCaptureGStreamer",
+        "execution_mode": "process",
+        "source": "IpCamera",
+        "camera": camera_url,
+        "username": username,
+        "password": password,
+        "source_ids": [0],
+        "source_names": ["rtsp-process-contract"],
+        "loop_play": False,
+    }
+    if record_dir is not None:
+        params["record"] = _recording_config(Path(record_dir))
+    source.set_params(**params)
+
+    frame_count = 0
+    try:
+        assert source.init() is True
+        source.start()
+
+        deadline = time.monotonic() + 20.0
+        while frame_count == 0 and time.monotonic() < deadline:
+            frame_count += len(source.get() or [])
+            if frame_count == 0:
+                time.sleep(0.05)
+        assert frame_count > 0, "source SPI process backend produced no RTSP frame"
+
+        runtime = source.get_runtime_stats()
+        assert runtime["backend_execution_mode"] == "process"
+        assert runtime["backend_worker_running"] is True
+        assert runtime["degraded"] is False
+
+        if record_dir is not None:
+            record_deadline = time.monotonic() + 3.0
+            while time.monotonic() < record_deadline:
+                frame_count += len(source.get() or [])
+                time.sleep(0.05)
+    finally:
+        source.stop()
+        source.release()
+
+    runtime = source.get_runtime_stats()
+    frame_count += len(source.get() or [])
+    assert frame_count > 0
+    assert source.is_running() is False
+    assert runtime["backend_worker_running"] in (False, None)
+    assert runtime["degraded"] is False
+
+
+def _run_isolated_source_adapter_process_check(record_dir=None):
+    worker_code = (
+        "import runpy, sys; "
+        "ns=runpy.run_path(sys.argv[1]); "
+        "ns['_run_live_source_adapter_in_process'](sys.argv[2] or None)"
+    )
+    try:
+        result = subprocess.run(
+            [
+                sys.executable,
+                "-c",
+                worker_code,
+                str(Path(__file__).resolve()),
+                str(record_dir or ""),
+            ],
+            capture_output=True,
+            text=True,
+            timeout=90,
+            env=os.environ.copy(),
+        )
+    except subprocess.TimeoutExpired:
+        pytest.fail("Isolated source SPI process smoke exceeded 90 seconds")
+    if result.returncode == 0:
+        return
+
+    stdout = result.stdout
+    stderr = result.stderr
+    for secret in (
+        os.environ.get("EVILEYE_TEST_RTSP_USER", ""),
+        os.environ.get("EVILEYE_TEST_RTSP_PASSWORD", ""),
+    ):
+        if secret:
+            stdout = stdout.replace(secret, "****")
+            stderr = stderr.replace(secret, "****")
+    pytest.fail(
+        f"Source SPI process smoke exited with code {result.returncode}. "
+        f"stdout={stdout[-1000:]!r}; stderr={stderr[-2000:]!r}"
+    )
+
+
+def test_rtsp_source_spi_process_backend_records_video(tmp_path):
+    ffprobe = shutil.which("ffprobe")
+    if ffprobe is None:
+        pytest.skip("ffprobe is required to inspect the recorded segment")
+
+    _rtsp_credentials()
+    output_dir = tmp_path / "Recording"
+    _run_isolated_source_adapter_process_check(output_dir)
+
+    segments = list((output_dir / "Streams").rglob("*.mp4"))
+    assert segments, f"RTSP process source produced no MP4 under {output_dir}"
+    probe = subprocess.run(
+        [
+            ffprobe,
+            "-v", "error",
+            "-select_streams", "v:0",
+            "-count_packets",
+            "-show_entries", "stream=nb_read_packets",
+            "-of", "default=noprint_wrappers=1:nokey=1",
+            str(segments[0]),
+        ],
+        check=True,
+        capture_output=True,
+        text=True,
+        timeout=20,
+    )
+    assert int(probe.stdout.strip()) > 0

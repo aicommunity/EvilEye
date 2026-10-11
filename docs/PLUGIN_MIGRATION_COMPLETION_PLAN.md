@@ -57,25 +57,25 @@
    добавлены opt-in golden parity тесты против прежнего поведения: совпадают
    class IDs, bbox и confidence на фиксированных реальных входах.
 4. После каждой группы убрать `legacy_processor_protocol` у соответствующих manifests, не удаляя compatibility `type` aliases.
-5. [частично] Для YOLO, RT-DETR, AttributeDetector и AttributeClassifier добавлены opt-in golden parity tests против legacy thread реализаций на фиксированных реальных входах; классы, bbox и confidence совпадают. Проверка RT-DETR выявила и устранила регрессию округления/clip координат. Оба attribute-модуля теперь разрешают ID из checkpoint labels и требуют явный mapping для псевдонимов. BoT-SORT parity теперь закреплён отдельным golden-тестом; остаются тесты DTO/order для модулей, где их поведение отличается от inference.
+5. [готово] Golden parity закрепляет YOLO, RT-DETR, AttributeDetector, AttributeClassifier и BoT-SORT. Для AttributeClassifier bbox допускает 0.01 px и confidence 1e-4 из-за измеренного влияния глобального CPU thread count Ultralytics; class ID проверяется точно. Отдельные контракты проверяют ordered output в thread/process, TrackingDTO из dict/wrapper, inference DTO в tracker и batch metadata.
 
 **Критерий:** ни один штатный детектор, tracker или attribute module не требует `LegacyProcessorModuleAdapter`; thread/process режимы проходят один набор контрактных сценариев.
 
 ### Этап C. Мигрировать источники без потери capture-функций
 
-1. [частично] `VideoCaptureBase` предоставляет общий `open/read/close`; контракт `Frame` документирует HxWx3 BGR `uint8`, source/frame ID, wall-clock timestamp, optional PTS, file position и connection generation. Descriptor IPC round-trip, внешний source lifecycle в thread/process и реальный GStreamer MP4 payload/PTS проверены; остаются RTSP и camera reconnect сценарии.
+1. [частично] Контракт Frame документирует размеры/цветовой формат, timestamp, sequence, connection generation и владение shared-frame handle; descriptor round-trip, внешний open/read/close, GStreamer MP4 PTS/file-loop и синтетический RTSP recovery проверены в thread/process. На сервере кадры получены с трёх доступных камер через OpenCV и GStreamer. Принудительное сетевое отключение физических камер не выполнялось; reconnect проверяется синтетическим RTSP fixture.
 2. [готово] OpenCV и GStreamer подключены к source SPI через `SourceModuleAdapter`. Их codec handling, reconnect, split/crop, запись сегментов, ограниченные очереди и shared-frame capture остаются в специализированных backend-ах.
-3. [частично] Для встроенных capture backend-ов режим `thread/process` исполняется их собственным backend-ом; сторонние source plugins используют общий thread/spawn runtime. `SourceModuleAdapter` публикует capture health и worker status. Тесты закрепляют ровно один `open/close` при EOF, process shutdown и то, что зависший thread не скрывается и не может быть перезапущен поверх живого worker-а; blocking process завершается с явной degraded-диагностикой. В process-режиме parent proxy отдельно публикует наблюдаемые переходы доступности кадров и `backend_connection_generation`, который приходит в metadata кадра от дочернего backend-а и фиксирует быстрые reconnect без паузы кадров.
-4. [частично] Остановка проверена в thread/process тестах и полном unit suite без оставшихся worker-ов. Проверки RTSP/GStreamer зависят от доступности backend-а и камеры.
+3. [готово] Встроенные capture backend-ы исполняют захват в заявленном thread/process режиме; сторонние source plugins используют общий thread/spawn runtime. SourceModuleAdapter публикует capture health и worker status. Тесты закрепляют open/close при EOF, process shutdown, диагностику зависшего thread и blocking process. Для встроенного GStreamer проверены получение кадра и запись MP4 через SourceModuleAdapter с backend process; дочерние worker-ы завершаются штатно. Parent proxy передаёт в metadata кадра переходы доступности и backend_connection_generation.
+4. [готово для доступных backend-ов] Остановка проверена в thread/process тестах, полном unit suite и live RTSP smoke без оставшихся worker-ов. Локальный RTSP fixture прошёл 8 тестов на OpenCV/GStreamer в thread/process; доступные физические камеры выдали кадры через оба backend-а. Принудительное отключение работающей физической камеры оставлено вне проверки.
 
 **Проверки:** видеофайл, loop/reconnect, синтетический RTSP и доступные реальные камеры; запись и ffprobe; проверка отсутствия worker, сокетов и очередей после stop.
 
 ### Этап D. Завершить batch и event/alarm lifecycle
 
 1. [готово] `ObjectMultiCameraTracking` использует batch SPI с явной синхронизацией и ограничением `thread`-режима; контракт покрыт unit-тестами.
-2. [готово для thread] Фабрики и lifecycle Event detectors используют `PluginRegistry`, `EventDetectorContext` и общий runtime-адаптер; `EventsService` остался управляющим слоем зависимостей, запуска и освобождения ресурсов. Event detectors пока не поддерживают process execution.
-3. [готово для JSON и PostgreSQL] `AlarmEvent` проходит от стороннего detector-а через контроллер, оба persistence adapter-а и модель журнала. PostgreSQL integration test проверяет реальную запись, уникальность по `alarm_id` и удаляет тестовую запись; unit test проверяет параметры и retry. Формирование строки общего формата журнала проверяет unit test; авторизованный live экран Web UI не проверен.
-4. [частично] Ошибка detector-а не останавливает соседние правила; очередь DB adapter-а ограничена, worker повторяет временные ошибки. `EventsProcessor.stop()` закрывает приём новых batch-ей и дренирует уже принятые; чистый restart создаёт новый worker. Timeout и наличие живого worker-а/ожидающих batch-ей публикуются в runtime stats, постоянный отказ адаптера и переполнение очереди выставляют degraded с причиной. Проверка длительного отказа PostgreSQL, восстановления под нагрузкой и долговечный outbox остаются.
+2. [готово] Фабрики и lifecycle Event detectors используют PluginRegistry, EventDetectorContext и общий runtime-адаптер. Все встроенные event detectors работают в process через сериализуемые capabilities event_updates, source_updates, event_commands и event_frames; EventsService управляет зависимостями, запуском и освобождением. Для пользовательского process detector-а обязательно объявить совместимую capability и сериализуемый контракт.
+3. [готово для JSON и PostgreSQL] AlarmEvent проходит от стороннего detector-а через контроллер, оба persistence adapter-а и модель журнала. PostgreSQL integration tests проверяют запись, уникальность по alarm_id, retry и восстановление после управляемого сетевого отказа; unit tests проверяют общий формат строки журнала. Авторизованный live экран Web UI остаётся непроверенным из-за отсутствия пароля пользователя.
+4. [готово для v1] Регрессии проверяют изоляцию упавшего detector-а от соседнего правила, в том числе process worker: соседний detector публикует тревогу, а упавший остаётся degraded. Проверены ограничение очереди, retry и восстановление PostgreSQL после управляемого отказа, drain принятых batch-ей, restart, timeout и degraded при постоянной потере/переполнении. Durable outbox после исчерпания retries не реализуется в v1: событие не гарантируется при аварийном падении до записи.
 
 **Критерий:** внешний event/alarm detector не меняет ядро для нового события и проходит до выбранного хранилища и общего представления в журнале; режим исполнения и отказ detector-а диагностируются явно.
 
@@ -91,11 +91,11 @@
 
 ### Этап F. Полный regression и эксплуатационная проверка
 
-1. Запускать `tests/unit`, затем интеграционные группы последовательно; после каждой проверки убеждаться, что дочерние multiprocessing workers завершились.
-2. Обеспечить headless режим Qt тестов: при отсутствии `DISPLAY`/`WAYLAND_DISPLAY` использовать `QT_QPA_PLATFORM=offscreen`.
-3. Проверить штатный видеофайл с детекцией/трекером, запись сегментов и остановку; провести отдельный запуск с RTSP камерами, не выводя URL и пароли в логи аудита.
-4. Проверить Web UI и API: публичную загрузку, доступные экраны после входа и просмотр live/recorded video. Для защищённых маршрутов нужны валидные пользовательские учётные данные.
-5. Снять финальный инвентарь legacy capabilities и считать миграцию завершённой только при нуле legacy протоколов либо с документированным, владельцем согласованным исключением.
+1. [готово] tests/unit (1 039 тестов) и полный tests/integration (373 теста) завершились с exit 0; после прогонов дочерних worker-ов не осталось.
+2. [готово] Headless Qt suite работает с QT_QPA_PLATFORM=offscreen; весь tests/integration/visualization завершился обычным exit 0 без принудительного выхода.
+3. [готово для проверенных сценариев] Finite-video PipelineSurveillance с детектором, tracker-ом и ffprobe прошёл в thread/spawn-process. Все три доступные RTSP камеры выдали BGR кадры через OpenCV и GStreamer; live запись MP4 прошла и в обычном backend, и через process-режим SourceModuleAdapter. Синтетический RTSP recovery проверен отдельно.
+4. [частично] Web backend /ready и SPA /live отдают HTTP 200; в браузере через SSH-туннель отображается форма входа. Рабочая станция не имеет прямого маршрута к серверному порту. Защищённые экраны/API и playback не проверены: в серверном credentials.json хранится только hash, пароль Web UI не предоставлен.
+5. [готово] Inventory gate фиксирует все 17 builtin manifest IDs и alias ObjectDetectorYoloMp; встроенных legacy_processor_protocol и legacy_source_protocol нет. Thread-only исключение ObjectMultiCameraTracking задекларировано как batch_processor.
 
 ## Проверки на сервере 2026-10-10
 
@@ -648,3 +648,11 @@ installation из тестов; подобрать воспроизводиму�
 - [готово] В браузере через временный SSH-туннель отобразилась страница «EvilEye — Операционная консоль» и форма входа. Прямой доступ браузера рабочей станции к 10.245.1.12:8181 заблокирован сетевым маршрутом; через SSH-туннель интерфейс загрузился.
 - Авторизованные страницы, камеры и playback этим smoke не проверялись: в credentials.json сохранён только password hash, пароль Web UI не предоставлен. Не использовались значения по умолчанию и не менялись учётные данные.
 - Временный backend и SSH-туннель остановлены; порт 8181 закрыт, дочерних процессов сервера не осталось.
+
+
+### Продолжение 2026-10-12: live RTSP через source SPI
+
+- [готово] В opt-in GStreamer live suite добавлен контрактный сценарий, который запускает встроенный VideoCaptureGStreamer через EvilEyeBase и SourceModuleAdapter, выбирает backend process, получает кадры и записывает сегмент MP4. ffprobe подтверждает, что в файле есть видеопакеты. Smoke прошёл с exit 0; worker после stop штатно завершился, degraded=false.
+- [готово] Секреты берутся в памяти из credentials.json, передаются только дочернему тесту через environment и маскируются при выводе ошибок. Обычный запуск файла без live env прошёл: 2 passed, 3 live-теста корректно skipped.
+- [готово] Текущая live-проверка кадра прошла для трёх доступных RTSP источников через OpenCV и GStreamer. На одном источнике дополнительно проверена запись в thread и process backend; ffprobe подтвердил содержимое обоих сегментов.
+- Остаются авторизованные Web UI проверки и физическое отключение/повторное соединение работающей камеры; последнее нельзя считать безопасным для совместно используемых камер. Переходы reconnect покрыты локальным MediaMTX fixture.

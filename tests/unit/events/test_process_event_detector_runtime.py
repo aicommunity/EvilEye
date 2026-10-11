@@ -851,3 +851,82 @@ def test_process_event_worker_exit_during_shutdown_is_not_reported_as_failure():
 
     assert detector.degraded is False
     assert detector.last_error is None
+
+
+
+def test_process_detector_failure_does_not_block_healthy_sibling():
+    from evileye.events_control.events_controller import EventsDetectorsController
+
+    plugin_id = "tests.process_event_isolation"
+    if plugin_registry.get_module(f"{plugin_id}/broken") is None:
+        plugin_registry.register_plugin(
+            PluginSpec(
+                plugin_id,
+                PLUGIN_API_VERSION,
+                modules=tuple(
+                    ModuleSpec(
+                        module_id=module_id,
+                        kind="event_detector",
+                        factory=make_process_event_module,
+                        execution_modes=("process",),
+                        capabilities=("event_updates",),
+                        config_schema=_validate_process_event_config,
+                        default_execution_mode="process",
+                    )
+                    for module_id in ("broken", "healthy")
+                ),
+            )
+        )
+
+    broken = EventDetectorModuleAdapter(
+        plugin_registry.get_module(f"{plugin_id}/broken"),
+        EventDetectorContext(),
+    )
+    healthy = EventDetectorModuleAdapter(
+        plugin_registry.get_module(f"{plugin_id}/healthy"),
+        EventDetectorContext(),
+    )
+    detectors = (broken, healthy)
+    for detector, fail, rule in (
+        (broken, True, "broken_rule"),
+        (healthy, False, "healthy_rule"),
+    ):
+        detector.set_params(
+            execution_mode="process",
+            fail=fail,
+            rule=rule,
+        )
+        assert detector.init() is True
+        detector.start()
+
+    controller = EventsDetectorsController(list(detectors))
+    controller.init()
+    update = EventUpdate(
+        sequence=1,
+        kind="object_snapshot",
+        source_id=5,
+        timestamp="2026-10-12T00:00:00Z",
+        payload={"active": [], "lost": []},
+    )
+    try:
+        for detector in detectors:
+            detector.put(update)
+
+        deadline = time.monotonic() + 5.0
+        snapshot = {}
+        while time.monotonic() < deadline:
+            controller.flush_once()
+            snapshot = controller.get()
+            if snapshot.get("healthy"):
+                break
+            time.sleep(0.02)
+
+        healthy_events = snapshot.get("healthy", [])
+        assert len(healthy_events) == 1
+        assert healthy_events[0].details["rule"] == "healthy_rule"
+        assert broken.get_runtime_stats()["degraded"] is True
+        assert healthy.get_runtime_stats()["degraded"] is False
+    finally:
+        controller.stop()
+        for detector in detectors:
+            detector.stop()
