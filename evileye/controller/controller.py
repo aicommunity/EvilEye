@@ -1175,23 +1175,29 @@ class Controller(ControllerProcessingMixin):
         detector = self.zone_events_detector
         if detector is None:
             return {"ok": False, "error": "zone_detector_unavailable"}
-        detector.replace_zones_for_source(source_id, zones)
-        try:
-            events_cfg = self.params.setdefault("events_detectors", {})
-            if isinstance(events_cfg, dict):
-                zone_cfg = events_cfg.setdefault("ZoneEventsDetector", {})
-                if isinstance(zone_cfg, dict):
-                    sources = zone_cfg.setdefault("sources", {})
-                    if isinstance(sources, dict):
-                        sources[str(source_id)] = detector.sources_list.get(str(source_id), zones)
-        except Exception:
-            pass
+        from evileye.events_detectors.zone_events_detector import ZoneEventsDetector
+
+        normalized_zones = ZoneEventsDetector._normalize_zone_coords_list(zones)
+        current_config = detector.get_params() or {}
+        sources = dict(current_config.get("sources") or {})
+        sources[str(source_id)] = normalized_zones
+        detector.submit_command(
+            "replace_zones_for_source",
+            source_id=source_id,
+            zone_coords_list=normalized_zones,
+            config_patch={"sources": sources},
+        )
+        events_cfg = self.params.setdefault("events_detectors", {})
+        if isinstance(events_cfg, dict):
+            zone_cfg = events_cfg.setdefault("ZoneEventsDetector", {})
+            if isinstance(zone_cfg, dict):
+                zone_cfg["sources"] = sources
         try:
             self._preview_zones_by_source = self._extract_preview_zones()
         except Exception:
             pass
         self._publish_runtime_snapshot(state="running")
-        return {"ok": True, "source_id": source_id, "zone_count": len(zones)}
+        return {"ok": True, "source_id": source_id, "zone_count": len(normalized_zones)}
 
     def _control_apply_zone_detector_params(self, command: dict) -> dict:
         detector = self.zone_events_detector
@@ -1206,23 +1212,28 @@ class Controller(ControllerProcessingMixin):
             zlt = int(zone_left_threshold) if zone_left_threshold is not None else None
         except (TypeError, ValueError):
             return {"ok": False, "error": "invalid_params"}
-        detector.apply_thresholds(event_threshold=et, zone_left_threshold=zlt)
-        try:
-            events_cfg = self.params.setdefault("events_detectors", {})
-            if isinstance(events_cfg, dict):
-                zone_cfg = events_cfg.setdefault("ZoneEventsDetector", {})
-                if isinstance(zone_cfg, dict):
-                    if et is not None:
-                        zone_cfg["event_threshold"] = max(0, et)
-                    if zlt is not None:
-                        zone_cfg["zone_left_threshold"] = max(0, zlt)
-        except Exception:
-            pass
+        config_patch = {}
+        if et is not None:
+            config_patch["event_threshold"] = max(0, et)
+        if zlt is not None:
+            config_patch["zone_left_threshold"] = max(0, zlt)
+        detector.submit_command(
+            "apply_thresholds",
+            event_threshold=et,
+            zone_left_threshold=zlt,
+            config_patch=config_patch,
+        )
+        events_cfg = self.params.setdefault("events_detectors", {})
+        if isinstance(events_cfg, dict):
+            zone_cfg = events_cfg.setdefault("ZoneEventsDetector", {})
+            if isinstance(zone_cfg, dict):
+                zone_cfg.update(config_patch)
+        updated_config = detector.get_params()
         self._publish_runtime_snapshot(state="running")
         return {
             "ok": True,
-            "event_threshold": detector.event_threshold,
-            "zone_left_threshold": detector.zone_left_threshold,
+            "event_threshold": updated_config.get("event_threshold"),
+            "zone_left_threshold": updated_config.get("zone_left_threshold"),
         }
 
     def _control_apply_roi(self, command: dict) -> dict:

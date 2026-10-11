@@ -1436,6 +1436,7 @@ class EventDetectorModuleAdapter(EvilEyeBase):
         self._notifications_dropped = 0
         self._process_updates_dropped = 0
         self._sequence = 0
+        self._sequence_lock = threading.Lock()
         self._updates_submitted = 0
         self._events_received = 0
         self._failure_reported = False
@@ -1812,6 +1813,12 @@ class EventDetectorModuleAdapter(EvilEyeBase):
             )
         return snapshot
 
+    def _next_event_sequence(self) -> int:
+        with self._sequence_lock:
+            sequence = self._sequence
+            self._sequence += 1
+            return sequence
+
     def _build_context_updates(self) -> list[EventUpdate]:
         import datetime
 
@@ -1841,7 +1848,7 @@ class EventDetectorModuleAdapter(EvilEyeBase):
                     if include_frames else {}
                 )
                 update = EventUpdate(
-                    sequence=self._sequence,
+                    sequence=self._next_event_sequence(),
                     kind="object_snapshot",
                     source_id=int(source_id),
                     timestamp=datetime.datetime.now(datetime.timezone.utc).isoformat(),
@@ -1857,7 +1864,6 @@ class EventDetectorModuleAdapter(EvilEyeBase):
                     },
                     frames=tuple(frame_store),
                 )
-                self._sequence += 1
                 updates.append(update)
 
         if "source_updates" in capabilities:
@@ -1877,7 +1883,7 @@ class EventDetectorModuleAdapter(EvilEyeBase):
 
                 updates.append(
                     EventUpdate(
-                        sequence=self._sequence,
+                        sequence=self._next_event_sequence(),
                         kind="source_status",
                         source_id=source_index,
                         timestamp=datetime.datetime.now(datetime.timezone.utc).isoformat(),
@@ -1887,7 +1893,6 @@ class EventDetectorModuleAdapter(EvilEyeBase):
                         },
                     )
                 )
-                self._sequence += 1
         return updates
 
     def _dispatch_context_updates(self):
@@ -1962,6 +1967,36 @@ class EventDetectorModuleAdapter(EvilEyeBase):
         if self.execution_mode == "process":
             return self._enqueue_process_update(data)
         return self._call_module("put", data)
+
+    def submit_command(self, command: str, *, config_patch=None, **kwargs):
+        """Submit a named module command through the detector execution boundary."""
+        command = str(command).strip()
+        if not command:
+            raise PluginError(f"Event detector '{self.module_id}' command must not be empty")
+        if self.execution_mode != "process":
+            result = self._call_module(command, **kwargs)
+        else:
+            if "event_commands" not in self.registered_module.spec.capabilities:
+                raise PluginError(
+                    f"Process event detector '{self.module_id}' does not accept module commands"
+                )
+            import datetime
+
+            update = EventUpdate(
+                sequence=self._next_event_sequence(),
+                kind="module_command",
+                timestamp=datetime.datetime.now(datetime.timezone.utc).isoformat(),
+                payload={
+                    "command": command,
+                    "kwargs": self._snapshot_value(kwargs),
+                },
+            )
+            result = self.put(update)
+        if config_patch is not None:
+            if not isinstance(config_patch, Mapping):
+                raise PluginError("Event detector config_patch must be a mapping")
+            self._config.update(self._snapshot_value(config_patch))
+        return result
 
     def _collect_process_output(self, control) -> list[Any]:
         events = []
@@ -2099,7 +2134,7 @@ class EventDetectorModuleAdapter(EvilEyeBase):
         import datetime
 
         update = EventUpdate(
-            sequence=self._sequence,
+            sequence=self._next_event_sequence(),
             kind="system_message",
             timestamp=datetime.datetime.now().isoformat(),
             payload={
@@ -2107,7 +2142,6 @@ class EventDetectorModuleAdapter(EvilEyeBase):
                 "message": str(message),
             },
         )
-        self._sequence += 1
         return self.put(update)
 
     def emit_started(self):

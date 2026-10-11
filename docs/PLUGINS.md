@@ -245,12 +245,18 @@ reports ready.
 The builtin `SystemEventsDetector` uses `event_commands`; the builtin
 `CamEventsDetector` uses `source_updates`; and
 `ScheduleAlarmEventsDetector` uses `event_updates`; `AttributeEventsDetector`
-uses `event_updates` and `event_frames` to preserve evidence images. The
-schedule detector uses timestamp and class metadata from object history to
-preserve its existing start/finish behavior; it does not need frame pixels. The adapter preserves the
+uses `event_updates` and `event_frames` to preserve evidence images.
+`ZoneEventsDetector` uses `event_updates`, `event_frames`, and
+`event_commands`; the `zone_commands` capability connects UI edits to the
+worker. It retains the existing geometry, dwell/exit thresholds, return-to-zone
+handling, and enter/exit evidence. The schedule detector uses timestamp and
+class metadata from object history to preserve its existing start/finish
+behavior; it does not need frame pixels. The adapter preserves the
 controller-facing `emit_message`, `emit_started`, and `emit_stopped` calls.
-During normal shutdown, accepted worker updates are processed and their output
-is retained for the final event-controller flush.
+Modules that declare `event_commands` can receive named commands through
+`EventDetectorModuleAdapter.submit_command()`; command names and payloads must
+be validated by that module. During normal shutdown, accepted worker updates
+are processed and their output is retained for the final event-controller flush.
 
 ```python
 from evileye.core.contracts import EventUpdate

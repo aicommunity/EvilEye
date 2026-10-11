@@ -60,6 +60,7 @@ class EventsService:
         # owns the adapters passed into build_event_adapters.
         self._owned_adapters: List[Any] = []
         self._started_adapters: List[Any] = []
+        self._zone_event_subscriptions: list[tuple[str, Any]] = []
 
     def initialize_detectors(
             self,
@@ -151,11 +152,95 @@ class EventsService:
             except Exception as exc:
                 self.logger.warning("objects_handler.subscribe failed: %s", exc)
 
+        self._register_zone_event_bridge(enabled_list)
+
         self.logger.info(
             "Initialized %s event detectors (use_database=%s)",
             len(self._detectors),
             use_database,
         )
+
+    def _register_zone_event_bridge(self, enabled_list: list[str]) -> None:
+        from evileye.utils import threading_events
+
+        self._unregister_zone_event_bridge()
+        for name in enabled_list:
+            registered = plugin_registry.get_module(name)
+            detector = self._detectors.get(name)
+            if (
+                registered is None
+                or detector is None
+                or "zone_commands" not in registered.spec.capabilities
+                or not callable(getattr(detector, "submit_command", None))
+            ):
+                continue
+
+            def _config_with_zone(source_id, zones, _detector=detector):
+                params = _detector.get_params() or {}
+                sources = dict(params.get("sources") or {})
+                sources[str(int(source_id))] = zones
+                return {"sources": sources}
+
+            def _add_zone(
+                source_id, zone_coords, zone_form,
+                _detector=detector, _config_patch=_config_with_zone,
+            ):
+                try:
+                    from evileye.events_detectors.zone_events_detector import ZoneEventsDetector
+
+                    normalized = ZoneEventsDetector._normalize_polygon_coords(zone_coords)
+                    if normalized is None:
+                        raise ValueError("zone coordinates are invalid")
+                    params = _detector.get_params() or {}
+                    current = list((params.get("sources") or {}).get(str(int(source_id)), []))
+                    current.append(normalized)
+                    _detector.submit_command(
+                        "add_zone",
+                        source_id=int(source_id),
+                        zone_coords=normalized,
+                        zone_form=str(getattr(zone_form, "value", zone_form)),
+                        config_patch=_config_patch(source_id, current, _detector),
+                    )
+                except Exception as exc:
+                    self.logger.error("Could not submit new zone command: %s", exc)
+
+            def _delete_zone(
+                source_id, zone_coords,
+                _detector=detector, _config_patch=_config_with_zone,
+            ):
+                try:
+                    from evileye.events_detectors.zone_events_detector import ZoneEventsDetector
+
+                    normalized = ZoneEventsDetector._normalize_polygon_coords(zone_coords)
+                    if normalized is None:
+                        raise ValueError("zone coordinates are invalid")
+                    params = _detector.get_params() or {}
+                    current = list((params.get("sources") or {}).get(str(int(source_id)), []))
+                    for index, coords in enumerate(current):
+                        if ZoneEventsDetector._normalize_polygon_coords(coords) == normalized:
+                            del current[index]
+                            break
+                    _detector.submit_command(
+                        "delete_zone",
+                        source_id=int(source_id),
+                        zone_coords=normalized,
+                        config_patch=_config_patch(source_id, current, _detector),
+                    )
+                except Exception as exc:
+                    self.logger.error("Could not submit deleted zone command: %s", exc)
+
+            threading_events.subscribe("new zone", _add_zone)
+            threading_events.subscribe("zone deleted", _delete_zone)
+            self._zone_event_subscriptions.extend(
+                [("new zone", _add_zone), ("zone deleted", _delete_zone)]
+            )
+
+    def _unregister_zone_event_bridge(self) -> None:
+        from evileye.utils import threading_events
+
+        for event_name, callback in self._zone_event_subscriptions:
+            threading_events.unsubscribe(event_name, callback)
+        self._zone_event_subscriptions.clear()
 
     def _instantiate_detector(self, name: str, *, context: EventDetectorContext):
         """Create any registered event detector with the shared dependency context."""
@@ -498,6 +583,7 @@ class EventsService:
                 self.logger.error(f"Failed to stop detector {name}: {e}")
 
     def release(self) -> None:
+        self._unregister_zone_event_bridge()
         if self._detectors_controller is not None:
             try:
                 self._detectors_controller.release()

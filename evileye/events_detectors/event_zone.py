@@ -1,6 +1,7 @@
 from .event import Event
 import copy
 from evileye.core.event_time import datetime_from_ts
+from evileye.core.contracts import EventFrameSnapshot
 
 
 class LazyJpegFrame:
@@ -18,7 +19,11 @@ class LazyJpegFrame:
         self._decoded = None
 
     def __getattr__(self, name):
-        return getattr(self._proxy, name)
+        try:
+            proxy = object.__getattribute__(self, "_proxy")
+        except AttributeError:
+            raise AttributeError(name) from None
+        return getattr(proxy, name)
 
     @property
     def image(self):
@@ -47,6 +52,8 @@ def _copy_frame_image(frame):
     """
     if frame is None:
         return None
+    if isinstance(frame, EventFrameSnapshot):
+        frame = frame.to_capture_image()
     if not hasattr(frame, "image") or frame.image is None:
         return frame
     copied = copy.copy(frame)

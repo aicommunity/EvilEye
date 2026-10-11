@@ -90,20 +90,20 @@ def _create_process_schedule_alarm_detector(config):
     return create_process_schedule_alarm_module(config)
 
 
+def _create_process_zone_detector(config):
+    from evileye.events_detectors.process_zone_events_module import (
+        create_process_zone_events_module,
+    )
+
+    return create_process_zone_events_module(config)
+
+
 def _create_process_attribute_detector(config):
     from evileye.events_detectors.process_attribute_events_module import (
         create_process_attribute_events_module,
     )
 
     return create_process_attribute_events_module(config)
-
-
-def _create_zone_detector(context: EventDetectorContext):
-    from evileye.events_detectors.zone_events_detector import ZoneEventsDetector
-
-    if context.objects_handler is None:
-        raise PluginError("ZoneEventsDetector requires objects_handler")
-    return ZoneEventsDetector(context.objects_handler)
 
 
 def _create_process_system_detector(config):
@@ -127,7 +127,10 @@ def register_builtins() -> None:
             _create_process_cam_detector, ("source_updates",), ("process",), "process",
         ),
         "ZoneEventsDetector": (
-            _create_zone_detector, ("object_handler",), ("thread",), "thread",
+            _create_process_zone_detector,
+            ("event_updates", "event_frames", "event_commands", "zone_commands"),
+            ("process",),
+            "process",
         ),
         "AttributeEventsDetector": (
             _create_process_attribute_detector,

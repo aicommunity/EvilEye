@@ -12,7 +12,7 @@ _DEFAULT_FRAME_SIZE = (1920, 1080)
 
 
 class ZoneEventsDetector(EventsDetector):
-    def __init__(self, objects_handler):
+    def __init__(self, objects_handler, *, listen_for_ui_events=True):
         super().__init__()
         self.sources = set()
         self.sources_list = dict()
@@ -29,8 +29,10 @@ class ZoneEventsDetector(EventsDetector):
         self.zone_left_threshold = 0
 
         self.obj_ids_zone = dict()  # Словарь для хранения айди активных объектов
-        threading_events.subscribe('new zone', self.add_zone)
-        threading_events.subscribe('zone deleted', self.delete_zone)
+        self._listen_for_ui_events = bool(listen_for_ui_events)
+        if self._listen_for_ui_events:
+            threading_events.subscribe('new zone', self.add_zone)
+            threading_events.subscribe('zone deleted', self.delete_zone)
         self.event = Event()
 
     def add_zone(self, source_id, zone_coords, zone_form):
@@ -47,111 +49,121 @@ class ZoneEventsDetector(EventsDetector):
             self.event.wait()
             if not self.run_flag:
                 break
-            events = []
-            objects = []
-            lost_objects = []
-            for source_id in self.sources:
-                objects.append((source_id, self.obj_handler.get('active', source_id)))
-                lost_objects.append((source_id, self.obj_handler.get('lost', source_id)))
-
-            self._update_zones()
-
-            for source_id, source_objects in objects:  # Проходим по объектам от каждого источника в отдельности
-                if source_id not in self.sources or not source_objects.objects:
-                    continue
-
-                zones = self.sources_zones[source_id]
-                img_width, img_height = self._resolve_frame_size(source_objects.objects)
-                if not img_height or not img_width:
-                    continue
-                for cur_zone in zones:
-                    for obj in source_objects.objects:
-                        # Если объект ранее не появлялся в зоне
-                        if (obj.object_id not in self.obj_ids_zone or
-                                cur_zone.get_zone_id() not in self.obj_ids_zone[obj.object_id]):
-                            # Находим в истории объекта момент попадания в зону
-                            zone_id = cur_zone.get_zone_id()
-                            idx = self._check_event_in_history(obj, cur_zone, img_width, img_height)
-                            if idx == -1:
-                                continue
-                            hist_obj = obj.history[idx]
-                            # Если айди кадра нового попадания в зону меньше айди выхода из этой зоны в первый раз, пропускаем
-                            if (hist_obj.object_id in self.left_frame_id[source_id] and
-                                    zone_id in self.left_frame_id[source_id][hist_obj.object_id] and
-                                    hist_obj.frame_id <= self.left_frame_id[source_id][hist_obj.object_id][zone_id]):
-                                continue
-                            # Проверяем, находится ли объект в зоне дольше указанного времени
-                            if not self._is_threshold_passed(idx, obj, cur_zone, img_width, img_height):
-                                continue
-                            if obj.object_id not in self.entered_frame_id[source_id]:
-                                self.entered_frame_id[source_id][obj.object_id] = {}
-                            self.entered_frame_id[source_id][obj.object_id][zone_id] = hist_obj.frame_id
-                            if hist_obj.object_id not in self.obj_ids_zone:
-                                self.obj_ids_zone[hist_obj.object_id] = {}
-                            self.obj_ids_zone[hist_obj.object_id][zone_id] = cur_zone
-                            # Передаём текущий объект (с актуальным изображением),
-                            # а метку времени берём из истории попадания в зону
-                            event = ZoneEvent(obj_found_datetime(hist_obj), 'Alarm', obj, cur_zone)
-                            self.zone_id_people[zone_id] += 1
-                            # print(f'New event: {obj.last_image.frame_id}, Event: {event}')
-                            events.append(event)
-                        else:
-                            # Иначе проверяем, остался ли объект в зоне, завершаем события
-                            zone = self.obj_ids_zone[obj.object_id][cur_zone.get_zone_id()]
-                            zone_id = zone.get_zone_id()
-                            # Находим в истории момент выхода из зоны
-                            idx = self._check_finished_event_in_history(obj, zone, img_width, img_height)
-                            if idx == -1:
-                                continue
-                            hist_obj = obj.history[idx]
-                            is_returned, return_idx = self._get_zone_return_idx(idx, obj, zone, img_width, img_height)
-                            if is_returned:
-                                # Если объект вернулся, то изменяем кадр его попадания в зону на более поздний
-                                # для облегчения поиска дальнейшего выхода из зоны
-                                if return_idx != -1:
-                                    self.entered_frame_id[source_id][obj.object_id][zone_id] = obj.history[
-                                        return_idx].frame_id
-                                continue
-                            # Передаём текущий объект (с актуальным изображением),
-                            # а метку времени выхода берём из истории
-                            event = ZoneEvent(
-                                obj_found_datetime(hist_obj),
-                                'Alarm',
-                                obj,
-                                zone,
-                                is_finished=True,
-                                hist_obj=hist_obj,
-                            )
-                            if obj.object_id not in self.left_frame_id[source_id]:
-                                self.left_frame_id[source_id][obj.object_id] = {}
-                            self.left_frame_id[source_id][obj.object_id][zone_id] = hist_obj.frame_id
-                            self.zone_id_people[zone_id] -= 1
-                            del self.entered_frame_id[source_id][obj.object_id][zone_id]
-                            del self.obj_ids_zone[obj.object_id][zone_id]
-                            # print(f'Finished event: {obj.last_image.frame_id}, Event: {event}')
-                            events.append(event)
-
-            for source_id, source_objects in lost_objects:  # Определяем завершившиеся события среди потерянных объектов
-                if source_id not in self.sources or not source_objects.objects:
-                    continue
-                for obj in source_objects.objects:
-                    if obj.object_id in self.obj_ids_zone:  # Если объект был в запрещенной зоне
-                        timestamp = obj_lost_datetime(obj)
-                        for zone_id in self.obj_ids_zone[obj.object_id]:
-                            zone = self.obj_ids_zone[obj.object_id][zone_id]
-                            event = ZoneEvent(timestamp, 'Alarm', obj, zone, is_finished=True)
-                            self.zone_id_people[zone.get_zone_id()] -= 1
-                            # print(f'Finished event: {obj.last_image.frame_id}, Event: {event}')
-                            events.append(event)
-                        del self.obj_ids_zone[obj.object_id]
-                    # После того как объект был потерян
-                    if obj.object_id in self.left_frame_id[source_id]:
-                        del self.left_frame_id[source_id][obj.object_id]
-                    if obj.object_id in self.entered_frame_id[source_id]:
-                        del self.entered_frame_id[source_id][obj.object_id]
+            events = self._process_once()
             if events:
                 self.queue_out.put(events)
             self.event.clear()
+
+    def _process_once(self, source_ids=None):
+        """Process the current active/lost snapshots without owning a thread."""
+        sources = self.sources if source_ids is None else self.sources.intersection(
+            {int(source_id) for source_id in source_ids}
+        )
+        events = []
+        objects = []
+        lost_objects = []
+        for source_id in sources:
+            objects.append((source_id, self.obj_handler.get('active', source_id)))
+            lost_objects.append((source_id, self.obj_handler.get('lost', source_id)))
+
+        self._update_zones()
+
+        for source_id, source_objects in objects:  # Проходим по объектам от каждого источника в отдельности
+            if source_id not in self.sources or not source_objects.objects:
+                continue
+
+            zones = self.sources_zones[source_id]
+            img_width, img_height = self._resolve_frame_size(source_objects.objects)
+            if not img_height or not img_width:
+                continue
+            for cur_zone in zones:
+                for obj in source_objects.objects:
+                    obj_key = (source_id, obj.object_id)
+                    # Если объект ранее не появлялся в зоне
+                    if (obj_key not in self.obj_ids_zone or
+                            cur_zone.get_zone_id() not in self.obj_ids_zone[obj_key]):
+                        # Находим в истории объекта момент попадания в зону
+                        zone_id = cur_zone.get_zone_id()
+                        idx = self._check_event_in_history(obj, cur_zone, img_width, img_height)
+                        if idx == -1:
+                            continue
+                        hist_obj = obj.history[idx]
+                        # Если айди кадра нового попадания в зону меньше айди выхода из этой зоны в первый раз, пропускаем
+                        if (hist_obj.object_id in self.left_frame_id[source_id] and
+                                zone_id in self.left_frame_id[source_id][hist_obj.object_id] and
+                                hist_obj.frame_id <= self.left_frame_id[source_id][hist_obj.object_id][zone_id]):
+                            continue
+                        # Проверяем, находится ли объект в зоне дольше указанного времени
+                        if not self._is_threshold_passed(idx, obj, cur_zone, img_width, img_height):
+                            continue
+                        if obj.object_id not in self.entered_frame_id[source_id]:
+                            self.entered_frame_id[source_id][obj.object_id] = {}
+                        self.entered_frame_id[source_id][obj.object_id][zone_id] = hist_obj.frame_id
+                        self.obj_ids_zone.setdefault(obj_key, {})[zone_id] = cur_zone
+                        # Передаём текущий объект (с актуальным изображением),
+                        # а метку времени берём из истории попадания в зону
+                        event = ZoneEvent(obj_found_datetime(hist_obj), 'Alarm', obj, cur_zone)
+                        self.zone_id_people[zone_id] += 1
+                        # print(f'New event: {obj.last_image.frame_id}, Event: {event}')
+                        events.append(event)
+                    else:
+                        # Иначе проверяем, остался ли объект в зоне, завершаем события
+                        zone = self.obj_ids_zone[obj_key][cur_zone.get_zone_id()]
+                        zone_id = zone.get_zone_id()
+                        # Находим в истории момент выхода из зоны
+                        idx = self._check_finished_event_in_history(obj, zone, img_width, img_height)
+                        if idx == -1:
+                            continue
+                        hist_obj = obj.history[idx]
+                        is_returned, return_idx = self._get_zone_return_idx(idx, obj, zone, img_width, img_height)
+                        if is_returned:
+                            # Если объект вернулся, то изменяем кадр его попадания в зону на более поздний
+                            # для облегчения поиска дальнейшего выхода из зоны
+                            if return_idx != -1:
+                                self.entered_frame_id[source_id][obj.object_id][zone_id] = obj.history[
+                                    return_idx].frame_id
+                            continue
+                        # Передаём текущий объект (с актуальным изображением),
+                        # а метку времени выхода берём из истории
+                        event = ZoneEvent(
+                            obj_found_datetime(hist_obj),
+                            'Alarm',
+                            obj,
+                            zone,
+                            is_finished=True,
+                            hist_obj=hist_obj,
+                        )
+                        if obj.object_id not in self.left_frame_id[source_id]:
+                            self.left_frame_id[source_id][obj.object_id] = {}
+                        self.left_frame_id[source_id][obj.object_id][zone_id] = hist_obj.frame_id
+                        self.zone_id_people[zone_id] -= 1
+                        del self.entered_frame_id[source_id][obj.object_id][zone_id]
+                        del self.obj_ids_zone[obj_key][zone_id]
+                        if not self.obj_ids_zone[obj_key]:
+                            del self.obj_ids_zone[obj_key]
+                        # print(f'Finished event: {obj.last_image.frame_id}, Event: {event}')
+                        events.append(event)
+
+        for source_id, source_objects in lost_objects:  # Определяем завершившиеся события среди потерянных объектов
+            if source_id not in self.sources or not source_objects.objects:
+                continue
+            for obj in source_objects.objects:
+                obj_key = (source_id, obj.object_id)
+                if obj_key in self.obj_ids_zone:  # Если объект был в запрещенной зоне
+                    timestamp = obj_lost_datetime(obj)
+                    for zone_id in self.obj_ids_zone[obj_key]:
+                        zone = self.obj_ids_zone[obj_key][zone_id]
+                        event = ZoneEvent(timestamp, 'Alarm', obj, zone, is_finished=True)
+                        self.zone_id_people[zone.get_zone_id()] -= 1
+                        # print(f'Finished event: {obj.last_image.frame_id}, Event: {event}')
+                        events.append(event)
+                    del self.obj_ids_zone[obj_key]
+                # После того как объект был потерян
+                if obj.object_id in self.left_frame_id[source_id]:
+                    del self.left_frame_id[source_id][obj.object_id]
+                if obj.object_id in self.entered_frame_id[source_id]:
+                    del self.entered_frame_id[source_id][obj.object_id]
+        return events
 
     def _check_event_in_history(self, obj, zone, img_width, img_height) -> int:
         history = obj.history
@@ -408,7 +420,10 @@ class ZoneEventsDetector(EventsDetector):
         pass
 
     def release_impl(self):
-        pass
+        if self._listen_for_ui_events:
+            threading_events.unsubscribe('new zone', self.add_zone)
+            threading_events.unsubscribe('zone deleted', self.delete_zone)
+            self._listen_for_ui_events = False
 
     def default(self):
         pass
