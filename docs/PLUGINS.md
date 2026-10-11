@@ -228,7 +228,7 @@ sends serialized disconnect/reconnect transitions as
 `EventUpdate(kind="source_status")`. Capture sources notify subscribers when
 they record a connection transition. The object snapshot `payload` contains
 primitive `active` and `lost` object summaries with ids, class id, timestamp,
-bounding box, attributes, and history summaries; frame pixels, live model
+`time_detected`/`time_lost`, bounding box, attributes, and history summaries; frame pixels, live model
 objects, handlers, and locks do not cross the process boundary. Plugins can
 also accept explicit `EventUpdate` values through `put()`. Process modules
 cannot declare `object_handler` or `capture_sources`; the runtime rejects those
@@ -237,7 +237,10 @@ updates through `put()`. Controller lifecycle messages that arrive before
 worker startup are buffered in a bounded queue and flushed after the child
 reports ready.
 The builtin `SystemEventsDetector` uses `event_commands`; the builtin
-`CamEventsDetector` uses `source_updates`. The adapter preserves the
+`CamEventsDetector` uses `source_updates`; and
+`ScheduleAlarmEventsDetector` uses `event_updates`. The schedule detector
+uses timestamp and class metadata from object history to preserve its existing
+start/finish behavior; it does not need frame pixels. The adapter preserves the
 controller-facing `emit_message`, `emit_started`, and `emit_stopped` calls.
 During normal shutdown, accepted worker updates are processed and their output
 is retained for the final event-controller flush.

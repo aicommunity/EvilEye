@@ -555,3 +555,126 @@ def test_capture_source_connection_transitions_notify_subscribers():
     assert source.subscribers[0].updates == 2
     assert source.get_disconnects_info() == [("camera-1", timestamp, False)]
     assert source.get_reconnects_info() == [("camera-1", timestamp, False)]
+
+
+def test_builtin_schedule_alarm_detector_uses_object_update_process_contract():
+    from evileye.controller.services.events_service import EventsService
+    from evileye.events_detectors.event_schedule_alarm import ScheduleAlarmEvent
+    from evileye.events_detectors.event_registry import register_builtins
+
+    register_builtins()
+
+    class _Pipeline:
+        def get_sources(self):
+            return [object()]
+
+    history_timestamp = datetime.now().replace(microsecond=0)
+
+    class _ObjectsHandler:
+        def __init__(self):
+            now = history_timestamp
+            self.subscribers = []
+            history = SimpleNamespace(
+                object_id=42,
+                global_id=8,
+                source_id=0,
+                class_id=2,
+                frame_id=17,
+                time_stamp=now,
+                time_detected=now,
+                time_lost=None,
+            )
+            self.active = SimpleNamespace(
+                objects=[
+                    SimpleNamespace(
+                        object_id=42,
+                        global_id=8,
+                        source_id=0,
+                        class_id=2,
+                        frame_id=17,
+                        time_stamp=now,
+                        time_detected=now,
+                        time_lost=None,
+                        track=SimpleNamespace(bounding_box=[1.0, 2.0, 3.0, 4.0]),
+                        attributes={},
+                        history=[history],
+                    )
+                ]
+            )
+            self.lost = SimpleNamespace(objects=[])
+
+        def subscribe(self, *subscribers):
+            self.subscribers.extend(subscribers)
+
+        def get(self, kind, source_id):
+            return getattr(self, kind)
+
+        def notify(self):
+            for subscriber in self.subscribers:
+                subscriber.update()
+
+    handler = _ObjectsHandler()
+    service = EventsService()
+    service.initialize_detectors(
+        {
+            "enabled": ["ScheduleAlarmEventsDetector"],
+            "ScheduleAlarmEventsDetector": {
+                "default_schedule": {
+                    "enabled": True,
+                    "weekdays": list(range(7)),
+                    "periods": [["00:00:00", "23:59:59"]],
+                    "class_ids": [2],
+                }
+            },
+        },
+        _Pipeline(),
+        handler,
+        use_database=False,
+    )
+    service.initialize_controller({})
+    detector = service.get_detector("ScheduleAlarmEventsDetector")
+    assert detector.execution_mode == "process"
+    assert handler.subscribers == [detector]
+    service.start_detectors()
+    handler.notify()
+    controller = service.get_detectors_controller()
+
+    try:
+        deadline = time.monotonic() + 5.0
+        events = []
+        while time.monotonic() < deadline:
+            controller.flush_once()
+            events = controller.get().get("ScheduleAlarmEventsDetector", [])
+            if events:
+                break
+            time.sleep(0.02)
+
+        assert len(events) == 1
+        assert isinstance(events[0], ScheduleAlarmEvent)
+        assert events[0].source_id == 0
+        assert events[0].object_id == 42
+        assert events[0].finished is False
+        assert events[0].time_obj_detected == history_timestamp
+
+        lost_timestamp = datetime.now().replace(microsecond=0)
+        lost_object = handler.active.objects[0]
+        lost_object.time_lost = lost_timestamp
+        handler.active = SimpleNamespace(objects=[])
+        handler.lost = SimpleNamespace(objects=[lost_object])
+        handler.notify()
+
+        finished_events = []
+        deadline = time.monotonic() + 5.0
+        while time.monotonic() < deadline:
+            controller.flush_once()
+            finished_events = controller.get().get("ScheduleAlarmEventsDetector", [])
+            if finished_events:
+                break
+            time.sleep(0.02)
+
+        assert len(finished_events) == 1
+        assert finished_events[0].finished is True
+        assert finished_events[0].object_id == 42
+        assert finished_events[0].time_lost == lost_timestamp
+    finally:
+        service.release()

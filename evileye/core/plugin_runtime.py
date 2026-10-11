@@ -1688,6 +1688,8 @@ class EventDetectorModuleAdapter(EvilEyeBase):
                 "class_id": self._snapshot_value(getattr(value, "class_id", None)),
                 "frame_id": self._snapshot_value(getattr(value, "frame_id", None)),
                 "timestamp": self._snapshot_value(getattr(value, "time_stamp", None)),
+                "time_detected": self._snapshot_value(getattr(value, "time_detected", None)),
+                "time_lost": self._snapshot_value(getattr(value, "time_lost", None)),
                 "bbox": self._snapshot_value(bbox) if bbox is not None else None,
             }
 
@@ -1701,6 +1703,8 @@ class EventDetectorModuleAdapter(EvilEyeBase):
             "class_id": self._snapshot_value(getattr(obj, "class_id", None)),
             "frame_id": self._snapshot_value(getattr(obj, "frame_id", None)),
             "timestamp": self._snapshot_value(getattr(obj, "time_stamp", None)),
+            "time_detected": self._snapshot_value(getattr(obj, "time_detected", None)),
+            "time_lost": self._snapshot_value(getattr(obj, "time_lost", None)),
             "bbox": self._snapshot_value(bbox) if bbox is not None else None,
             "attributes": self._snapshot_value(getattr(obj, "attributes", {}) or {}),
             "history": [_entry(item) for item in history],

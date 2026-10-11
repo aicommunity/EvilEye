@@ -74,18 +74,20 @@ def create_event_detector(name: str, context: EventDetectorContext) -> Any:
     return EvilEyeBase.create_instance(registered.qualified_id, context)
 
 
-def _create_cam_detector(context: EventDetectorContext):
-    from evileye.events_detectors.cam_events_detector import CamEventsDetector
-
-    return CamEventsDetector(list(context.sources))
-
-
 def _create_process_cam_detector(config):
     from evileye.events_detectors.process_cam_events_module import (
         create_process_cam_events_module,
     )
 
     return create_process_cam_events_module(config)
+
+
+def _create_process_schedule_alarm_detector(config):
+    from evileye.events_detectors.process_schedule_alarm_module import (
+        create_process_schedule_alarm_module,
+    )
+
+    return create_process_schedule_alarm_module(config)
 
 
 def _create_zone_detector(context: EventDetectorContext):
@@ -102,23 +104,6 @@ def _create_attribute_detector(context: EventDetectorContext):
     if context.objects_handler is None:
         raise PluginError("AttributeEventsDetector requires objects_handler")
     return AttributeEventsDetector(context.objects_handler)
-
-
-def _create_schedule_alarm_detector(context: EventDetectorContext):
-    from evileye.events_detectors.schedule_alarm_events_detector import ScheduleAlarmEventsDetector
-
-    if context.objects_handler is None:
-        raise PluginError("ScheduleAlarmEventsDetector requires objects_handler")
-    return ScheduleAlarmEventsDetector(
-        context.objects_handler,
-        pipeline_source_ids=list(context.pipeline_source_ids),
-    )
-
-
-def _create_system_detector(context: EventDetectorContext):
-    from evileye.events_detectors.system_events_detector import SystemEventsDetector
-
-    return SystemEventsDetector()
 
 
 def _create_process_system_detector(config):
@@ -151,10 +136,10 @@ def register_builtins() -> None:
             _create_process_system_detector, ("event_commands",), ("process",), "process",
         ),
         DETECTOR_CONFIG_KEY: (
-            _create_schedule_alarm_detector, ("object_handler",), ("thread",), "thread",
+            _create_process_schedule_alarm_detector, ("event_updates",), ("process",), "process",
         ),
         LEGACY_DETECTOR_CONFIG_KEY: (
-            _create_schedule_alarm_detector, ("object_handler",), ("thread",), "thread",
+            _create_process_schedule_alarm_detector, ("event_updates",), ("process",), "process",
         ),
     }
     for name, (factory, capabilities, execution_modes, default_mode) in builtin_factories.items():
