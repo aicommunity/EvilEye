@@ -63,7 +63,7 @@
 
 ### Этап C. Мигрировать источники без потери capture-функций
 
-1. [частично] `VideoCaptureBase` предоставляет общий `open/read/close`, а кадры используют общий `CaptureImage`. `get_capture_health()` публикует состояние, persistent disconnect/reconnect counters, последнюю смену состояния и dropped frames; единая модель размеров ещё не оформлена.
+1. [частично] `VideoCaptureBase` предоставляет общий `open/read/close`; контракт `Frame` документирует HxWx3 BGR `uint8`, source/frame ID, wall-clock timestamp, optional PTS, file position и connection generation. Descriptor IPC тест проверяет round-trip этих полей. Остаётся проверить формат/PTS на GStreamer и внешний `open/read/close` source.
 2. [готово] OpenCV и GStreamer подключены к source SPI через `SourceModuleAdapter`. Их codec handling, reconnect, split/crop, запись сегментов, ограниченные очереди и shared-frame capture остаются в специализированных backend-ах.
 3. [частично] Для встроенных capture backend-ов режим `thread/process` исполняется их собственным backend-ом; сторонние source plugins используют общий thread/spawn runtime. `SourceModuleAdapter` публикует capture health и `MpControl` worker metrics. В process-режиме parent proxy отдельно публикует наблюдаемые переходы доступности кадров и `backend_connection_generation`, который приходит в metadata кадра от дочернего backend-а и фиксирует быстрые reconnect без паузы кадров.
 4. [частично] Остановка проверена в thread/process тестах и полном unit suite без оставшихся worker-ов. Проверки RTSP/GStreamer зависят от доступности backend-а и камеры.
@@ -248,3 +248,5 @@
 - BoT-SORT: `tests/unit/object_tracker/test_botsort_plugin_runtime.py::test_botsort_matches_legacy_frame_sequence_golden` проверяет 8 кадров с потерянными detections, восстановлением track_id и bbox относительно legacy worker; thread и spawn-process варианты прошли.
 
 - PipelineSurveillance finite-video E2E: `tests/integration/pipeline/test_pipeline_surveillance_video_e2e.py` прогоняет 20 кадров через встроенный OpenCV capture, YOLO и BoT-SORT. Счётчики stage outputs сравнивают frame IDs, output recording проверяется `ffprobe`; thread и spawn-process варианты прошли (2 passed), degraded=false, после shutdown worker-ов нет. Запуск opt-in через `EVILEYE_RUN_SURVEILLANCE_VIDEO_E2E=1`.
+
+- Source contract: `Frame` получил API docstring; `docs/PLUGINS.md` описывает payload и ownership shared-memory handle. `test_capture_descriptor_payload` закрепляет передачу frame metadata при decode descriptor. Source health, frame PTS и descriptor IPC unit tests прошли (6 passed).

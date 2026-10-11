@@ -104,6 +104,25 @@ A source plugin uses `kind="source"` and implements `open()`, `read()`, and
 stream. It may advertise `thread`, `process`, or both. Process mode recreates
 the source in a spawn child from its importable factory and config.
 
+For `PipelineSurveillance`, each source item must be an `evileye.core.frame.Frame`:
+
+- `source_id` is the configured logical source ID. `frame_id` is a per-source
+  sequence ID and must be preserved across detector/tracker stages. If the
+  source resets that sequence on reconnect or rewind, it must increment
+  `connection_generation`; built-in capture starts at generation zero.
+- `image` is the HxWx3 BGR NumPy image used by both built-in capture backends.
+  Treat emitted image data as immutable. `time_stamp` is acquisition wall time
+  in seconds; `pts_ns` and `media_pts_sec` are optional source media-clock data.
+  Video-file index, position (milliseconds), and duration fields are optional.
+- Runtime transport may attach a `frame_handle` for shared-memory delivery.
+  Modules that declare `accepts_frame_handle` must read it through
+  `SharedFrameTransport`; the runtime owns descriptor release. Ordinary source
+  plugins return a materialized `image` and do not manage shared memory.
+
+`CaptureImage` is a compatibility alias for `Frame`. General-purpose source SPI
+implementations may return other item types, but the surveillance pipeline's
+source stage expects `Frame` values.
+
 ## Built-in migration
 
 `PreprocessingPipeline` and `RoiFeeder` are now registered as item processors
