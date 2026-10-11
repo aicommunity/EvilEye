@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import time
+from types import SimpleNamespace
 
 import numpy as np
 import pytest
@@ -14,6 +15,8 @@ from evileye.object_tracker.tracking_results import TrackingResultList
 
 
 class _FakeYoloRuntime:
+    model_names = {0: "helmet", 39: "bottle"}
+
     def __init__(self, logger=None):
         self.model = None
         self.config = None
@@ -22,7 +25,7 @@ class _FakeYoloRuntime:
         self.config = (model, classes, params)
 
     def load(self):
-        self.model = object()
+        self.model = SimpleNamespace(names=dict(type(self).model_names))
 
     def release(self):
         self.model = None
@@ -69,6 +72,35 @@ def test_attribute_classifier_process_item_preserves_roi_and_track_identity(monk
     module.close()
 
 
+def test_attribute_classifier_resolves_class_ids_from_checkpoint_names(monkeypatch):
+    import evileye.object_detector.yolo_runtime as yolo_runtime_module
+
+    monkeypatch.setattr(yolo_runtime_module, "YoloRuntime", _FakeYoloRuntime)
+    _FakeYoloRuntime.model_names = {0: "person", 39: "bottle"}
+    module = AttributeClassifier()
+    try:
+        module.create_state({"attrs": ["person", "bottle"]})
+        assert module.attr_class_mapping == {0: "person", 39: "bottle"}
+    finally:
+        module.close()
+        _FakeYoloRuntime.model_names = {0: "helmet", 39: "bottle"}
+
+
+def test_attribute_classifier_requires_explicit_mapping_for_unknown_labels(monkeypatch):
+    import evileye.object_detector.yolo_runtime as yolo_runtime_module
+
+    monkeypatch.setattr(yolo_runtime_module, "YoloRuntime", _FakeYoloRuntime)
+    _FakeYoloRuntime.model_names = {0: "helmet", 39: "bottle"}
+    module = AttributeClassifier()
+    try:
+        with pytest.raises(ValueError, match="configure class_mapping explicitly"):
+            module.create_state({"attrs": ["hard_hat"]})
+        assert module._yolo_runtime.model is None
+    finally:
+        module.close()
+        _FakeYoloRuntime.model_names = {0: "helmet", 39: "bottle"}
+
+
 def test_attribute_classifier_reads_shared_frame_without_consuming_handle(monkeypatch):
     import evileye.object_detector.yolo_runtime as yolo_runtime_module
     from evileye.core.frame_transport import SharedFrameTransport
@@ -102,6 +134,8 @@ def test_attribute_classifier_reads_shared_frame_without_consuming_handle(monkey
 
 @pytest.mark.parametrize("execution_mode", ["thread", "process"])
 def test_attribute_classifier_plugin_uses_item_runtime(execution_mode):
+    assert not issubclass(AttributeClassifier, EvilEyeBase)
+    assert not callable(getattr(AttributeClassifier, "put", None))
     registered = plugin_registry.get_module("AttributeClassifier")
     assert registered is not None
     assert registered.spec.kind == "processor_item"

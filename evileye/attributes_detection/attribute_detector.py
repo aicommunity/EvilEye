@@ -7,6 +7,7 @@ import numpy as np
 from ..core.frame import Frame
 from ..core.frame_transport import SharedFrameTransport
 from ..core.plugins import register_module
+from ..object_detector.model_class_mapping import resolve_model_class_mapping
 from ..object_detector.object_detection_base import DetectionResult, DetectionResultList
 
 
@@ -101,7 +102,11 @@ class AttributeDetector:
                 )
             if not configured_mapping:
                 try:
-                    self.class_mapping = self._class_mapping_from_model_names()
+                    self.class_mapping = resolve_model_class_mapping(
+                        self.attrs,
+                        getattr(self._yolo_runtime.model, "names", None),
+                        module_name=type(self).__name__,
+                    )
                 except Exception:
                     self._yolo_runtime.release()
                     raise
@@ -109,35 +114,6 @@ class AttributeDetector:
                     class_id: name for name, class_id in self.class_mapping.items()
                 }
         return {"frame_counts": {}}
-
-    def _class_mapping_from_model_names(self) -> dict[str, int]:
-        """Resolve attribute names against checkpoint labels.
-
-        Class IDs are model-specific. Assigning IDs by the order of ``attrs``
-        silently selects unrelated classes for checkpoints such as COCO YOLO,
-        where ``bottle`` is class 39 rather than class 1. A non-matching custom
-        label must be mapped explicitly in the module config.
-        """
-        names = getattr(self._yolo_runtime.model, "names", None)
-        if isinstance(names, dict):
-            entries = names.items()
-        elif isinstance(names, (list, tuple)):
-            entries = enumerate(names)
-        else:
-            entries = ()
-
-        model_ids = {str(name): int(class_id) for class_id, name in entries}
-        missing = [name for name in self.attrs if name not in model_ids]
-        if missing:
-            if not model_ids:
-                reason = "checkpoint does not expose class names"
-            else:
-                reason = f"checkpoint has no classes {missing!r}"
-            raise ValueError(
-                "AttributeDetector cannot resolve attribute classes: "
-                f"{reason}; configure class_mapping explicitly"
-            )
-        return {name: model_ids[name] for name in self.attrs}
 
     def get_model_class_mapping(self) -> dict[str, int]:
         return dict(self.class_mapping)

@@ -1,20 +1,16 @@
 from __future__ import annotations
 
-import threading
-from queue import Queue, Empty, Full
-from typing import Any, Dict
+from typing import Any
+
 import numpy as np
 
-from ..core.base_class import EvilEyeBase
+from ..core.frame import Frame
+from ..core.frame_transport import SharedFrameTransport
+from ..core.logger import get_module_logger
 from ..core.plugins import register_module
 from ..core.tracking_dto import ensure_tracking_result_list
+from ..object_detector.model_class_mapping import resolve_model_class_mapping
 from ..object_tracker.tracking_results import TrackingResultList
-
-from ..core.processor_base import (
-    DEFAULT_EXECUTION_MODE,
-    EXEC_MODE_PROCESS,
-    EXEC_MODE_THREAD,
-)
 
 
 @register_module(
@@ -24,59 +20,43 @@ from ..core.processor_base import (
     execution_modes=("thread", "process"),
     default_execution_mode="process",
 )
-class AttributeClassifier(EvilEyeBase):
-    """Attribute classifier that runs YOLO inference on ROI crops
-
-    Supports both thread and process execution modes via the
-    ``execution_mode`` configuration parameter
-    """
+class AttributeClassifier:
+    """Classify attributes in tracker ROIs through the processor-item SPI."""
 
     ResultType = TrackingResultList
 
     def __init__(self):
-        super().__init__()
-        self.enabled = True
-        self.execution_mode = DEFAULT_EXECUTION_MODE
-
-        self.model_path = 'models/yolo11n.pt'
         from ..object_detector.yolo_runtime import YoloRuntime
 
-        self._yolo_runtime: YoloRuntime = YoloRuntime(logger=self.logger)
-        self._yolo_runtime.model = None
-        self.attrs = []
-        self.attr_class_mapping = {}
+        self.logger = get_module_logger("attribute_classifier")
+        self.enabled = True
+        self.model_path = "models/yolo11n.pt"
+        self._yolo_runtime = YoloRuntime(logger=self.logger)
+        self.attrs: list[str] = []
+        self.attr_class_mapping: dict[int, str] = {}
         self.conf_threshold = 0.5
         self.inference_size = 224
-
-        self.run_flag = False
-        self.queue_in = Queue(maxsize=2)
-        self.queue_out = Queue(maxsize=4)
-        self.queue_dropped_id = Queue()
-        self.processing_thread = None
-
-        self._mp_control = None
         self._plugin_frame_transport = None
 
     def create_state(self, config, context=None):
-        """Initialize the classifier and model inside its runtime worker."""
+        """Load model and module state inside the selected runtime worker."""
         config = dict(config or {})
         self.enabled = bool(config.get("enabled", True))
         self.model_path = config.get("model", "models/yolo11n.pt")
-        self.attrs = list(config.get("attrs", []) or [])
+        self.attrs = [str(name) for name in (config.get("attrs", []) or [])]
         self.conf_threshold = float(config.get("conf_threshold", 0.5))
         self.inference_size = int(config.get("inference_size", 224))
-        self.attr_class_mapping = {}
-        class_mapping = config.get("class_mapping") or {}
-        if class_mapping:
-            for attr_name, class_id in class_mapping.items():
-                if attr_name in self.attrs:
-                    self.attr_class_mapping[int(class_id)] = attr_name
-        else:
-            self.attr_class_mapping = {
-                class_id: attr_name
-                for class_id, attr_name in enumerate(self.attrs)
-            }
 
+        class_mapping = config.get("class_mapping") or {}
+        configured_mapping = {
+            str(attr_name): int(class_id)
+            for attr_name, class_id in class_mapping.items()
+            if str(attr_name) in self.attrs
+        }
+        self.attr_class_mapping = {
+            class_id: attr_name
+            for attr_name, class_id in configured_mapping.items()
+        }
         self._plugin_frame_transport = None
         self._yolo_runtime.release()
         if self.enabled:
@@ -94,6 +74,20 @@ class AttributeClassifier(EvilEyeBase):
                 raise RuntimeError(
                     f"AttributeClassifier failed to load model '{self.model_path}'"
                 )
+            if not configured_mapping:
+                try:
+                    name_to_id = resolve_model_class_mapping(
+                        self.attrs,
+                        getattr(self._yolo_runtime.model, "names", None),
+                        module_name=type(self).__name__,
+                    )
+                except Exception:
+                    self._yolo_runtime.release()
+                    raise
+                self.attr_class_mapping = {
+                    class_id: attr_name
+                    for attr_name, class_id in name_to_id.items()
+                }
         return self
 
     def _plugin_frame_image(self, frame):
@@ -108,8 +102,6 @@ class AttributeClassifier(EvilEyeBase):
                 "AttributeClassifier frame has neither image nor shared-frame handle"
             )
         if self._plugin_frame_transport is None:
-            from ..core.frame_transport import SharedFrameTransport
-
             self._plugin_frame_transport = SharedFrameTransport()
         image = self._plugin_frame_transport.get_frame_view(handle)
         if image is None or getattr(image, "size", 0) == 0:
@@ -123,12 +115,10 @@ class AttributeClassifier(EvilEyeBase):
         if not isinstance(item, (list, tuple)) or len(item) < 2:
             raise TypeError("AttributeClassifier expects (tracking_data, frame)")
         tracking_data, frame = item[0], item[1]
-        if frame is None:
-            raise ValueError("AttributeClassifier received an empty frame")
+        if not isinstance(frame, Frame):
+            raise TypeError("AttributeClassifier input must contain a Frame")
         if not state.enabled:
-            if isinstance(item, tuple):
-                return tracking_data, frame
-            return [tracking_data, frame]
+            return (tracking_data, frame) if isinstance(item, tuple) else [tracking_data, frame]
 
         tracking_data = ensure_tracking_result_list(tracking_data)
         roi_data = getattr(tracking_data, "roi_data", None) or []
@@ -147,249 +137,19 @@ class AttributeClassifier(EvilEyeBase):
                     tracking_data.attr_results = {}
                 tracking_data.attr_results[track_id] = attr_results
 
-        if isinstance(item, tuple):
-            return tracking_data, frame
-        return [tracking_data, frame]
+        return (tracking_data, frame) if isinstance(item, tuple) else [tracking_data, frame]
 
     def close(self):
         self._yolo_runtime.release()
         self._plugin_frame_transport = None
 
-    def set_params_impl(self):
-        self.enabled = self.params.get('enabled', True)
-        self.execution_mode = self.params.get('execution_mode', DEFAULT_EXECUTION_MODE)
-
-        if self.enabled:
-            self.model_path = self.params.get('model', 'models/yolo11n.pt')
-            self.attrs = self.params.get('attrs', [])
-            self.conf_threshold = self.params.get('conf_threshold', 0.5)
-            self.inference_size = self.params.get('inference_size', 224)
-
-            class_mapping = self.params.get('class_mapping', {})
-            if not class_mapping:
-                for i, attr_name in enumerate(self.attrs):
-                    self.attr_class_mapping[i] = attr_name
-            else:
-                for attr_name, class_id in class_mapping.items():
-                    if attr_name in self.attrs:
-                        self.attr_class_mapping[class_id] = attr_name
-
-    def get_params_impl(self):
-        params = super().get_params_impl()
-        params['enabled'] = self.enabled
-        params['model'] = getattr(self, 'model_path', 'models/yolo11n.pt')
-        params['attrs'] = getattr(self, 'attrs', [])
-        params['conf_threshold'] = getattr(self, 'conf_threshold', 0.5)
-        params['inference_size'] = getattr(self, 'inference_size', 224)
-        params['execution_mode'] = self.execution_mode
-        return params
-
-    def init_impl(self, **kwargs):
-        if not self.enabled:
-            return True
-
-        if self.execution_mode == EXEC_MODE_PROCESS:
-            return self._init_process_mode()
-        return self._init_thread_mode()
-
-    @property
-    def yolo_model(self):
-        return self._yolo_runtime.model
-
-    @yolo_model.setter
-    def yolo_model(self, value) -> None:
-        self._yolo_runtime.model = value
-
-    def _init_thread_mode(self):
-        self._yolo_runtime.release()
-        self.processing_thread = threading.Thread(target=self._process_impl, daemon=True)
-        self.logger.info(
-            "AttributeClassifier thread mode ready (model loads in processing thread): %s",
-            self.model_path,
-        )
-        return True
-
-    def _ensure_yolo_model_in_worker_thread(self) -> bool:
-        if self._yolo_runtime.model is not None:
-            return True
-        try:
-            self._yolo_runtime.configure(
-                self.model_path,
-                list(self.attr_class_mapping.keys()),
-                {
-                    "conf": self.conf_threshold,
-                    "imgsz": self.inference_size,
-                    "half": False,
-                },
-            )
-            self._yolo_runtime.load()
-            self.logger.info(
-                "AttributeClassifier YOLO loaded in processing thread: %s", self.model_path
-            )
-            return self._yolo_runtime.model is not None
-        except Exception as e:
-            self.logger.error("Failed to load AttributeClassifier YOLO: %s", e)
-            return False
-
-    def _init_process_mode(self):
-        from ..core.mp_control import MpControl, parse_mp_restart_policy
-        from .mp_worker_attributes import MpWorkerAttributeClassifier
-        restart_on_exit, no_restart_exit_codes = parse_mp_restart_policy(
-            self.params,
-            default_restart_on_exit=True,
-        )
-
-        self._mp_control = MpControl(
-            max_input_size=4,
-            name="attr-classifier",
-            restart_on_exit=restart_on_exit,
-            no_restart_exit_codes=no_restart_exit_codes,
-        )
-        worker = self._mp_control.add_worker(MpWorkerAttributeClassifier)
-        worker.set_params(self.params if self.params else {})
-        self._mp_control.start()
-        self.processing_thread = threading.Thread(
-            target=self._process_dispatch_loop, daemon=True,
-        )
-        self.logger.info("AttributeClassifier initialized in PROCESS mode")
-        return True
-
-    def release_impl(self):
-        self._yolo_runtime.release()
-        if self._mp_control is not None:
-            self._mp_control.stop()
-            self._mp_control = None
-        if self.processing_thread is not None:
-            del self.processing_thread
-            self.processing_thread = None
-
-    def reset_impl(self):
-        while not self.queue_in.empty():
-            try:
-                self.queue_in.get_nowait()
-            except Exception:
-                break
-        while not self.queue_out.empty():
-            try:
-                self.queue_out.get_nowait()
-            except Exception:
-                break
-
-    def start(self):
-        if not self.run_flag:
-            self.run_flag = True
-            if self.processing_thread and not self.processing_thread.is_alive():
-                self.processing_thread.start()
-
-    def stop(self):
-        self.run_flag = False
-        self.queue_in.put(None)
-        if self.processing_thread and self.processing_thread.is_alive():
-            self.processing_thread.join()
-        if self._mp_control is not None:
-            self._mp_control.stop()
-            self._mp_control = None
-
-    # -- Thread mode processing ------------------------------------------
-
-    def _process_impl(self):
-        while self.run_flag:
-            try:
-                detections = self.queue_in.get(timeout=0.5)
-            except Empty:
-                continue
-            if detections is None:
-                continue
-
-            if self.enabled and self.yolo_model is None:
-                self._ensure_yolo_model_in_worker_thread()
-
-            if not self.enabled or self.yolo_model is None:
-                self._put_out_drop_oldest(detections)
-                continue
-
-            tracking_data, frame = detections
-            tracking_data = ensure_tracking_result_list(tracking_data)
-
-            if hasattr(tracking_data, 'roi_data') and tracking_data.roi_data:
-                try:
-                    for roi_info in tracking_data.roi_data:
-                        track_id = roi_info.get('track_id')
-                        roi_bbox = roi_info.get('roi_bbox')
-                        roi_image = self._crop_roi(frame.image, roi_bbox) if roi_bbox is not None else None
-                        if roi_image is not None and track_id is not None:
-                            attr_results = self._classify_roi_with_detector(roi_image)
-                            if not hasattr(tracking_data, 'attr_results'):
-                                tracking_data.attr_results = {}
-                            tracking_data.attr_results[track_id] = attr_results
-                except Exception:
-                    pass
-
-            self._put_out_drop_oldest((tracking_data, frame))
-
-    # -- Process mode dispatch -------------------------------------------
-
-    def _pack_attr_job(self, detections):
-        """Send ROI crops only — avoid pickling the full BGR frame (audit A3)."""
-        tracking_data, frame = detections
-        tracking_data = ensure_tracking_result_list(tracking_data)
-        crops: list[dict] = []
-        if hasattr(tracking_data, "roi_data") and tracking_data.roi_data and frame is not None:
-            image = getattr(frame, "image", None)
-            for roi_info in tracking_data.roi_data:
-                track_id = roi_info.get("track_id")
-                roi_bbox = roi_info.get("roi_bbox")
-                roi_image = self._crop_roi(image, roi_bbox) if image is not None and roi_bbox is not None else None
-                if roi_image is not None and track_id is not None:
-                    # Contiguous copy so child does not share parent memory views.
-                    crops.append({
-                        "track_id": track_id,
-                        "crop": np.ascontiguousarray(roi_image),
-                    })
-        meta = {
-            "source_id": getattr(frame, "source_id", None),
-            "frame_id": getattr(frame, "frame_id", None),
-        }
-        return {"tracking_data": tracking_data, "crops": crops, "meta": meta, "frame": frame}
-
-    def _process_dispatch_loop(self):
-        while self.run_flag:
-            if self._mp_control is None:
-                break
-            try:
-                detections = self.queue_in.get(timeout=0.5)
-            except Empty:
-                continue
-            if detections is None:
-                continue
-            try:
-                packed = self._pack_attr_job(detections)
-                # Drop full-frame pixels from the IPC payload; keep local frame for output.
-                frame = packed.pop("frame", None)
-                self._mp_control.put(packed)
-                result = self._mp_control.get(timeout=10.0)
-                if isinstance(result, dict) and "tracking_data" in result:
-                    tracking_data = result["tracking_data"]
-                    out_frame = frame if frame is not None else detections[1]
-                    self._put_out_drop_oldest((tracking_data, out_frame))
-                else:
-                    self._put_out_drop_oldest(result if result is not None else detections)
-            except Empty:
-                continue
-            except Exception as e:
-                if self.run_flag:
-                    self.logger.error(f"Error in attribute classifier dispatch: {e}")
-                self._put_out_drop_oldest(detections)
-
-    # -- Direct YOLO classification (thread mode) ------------------------
-
-    def _classify_roi_with_detector(self, roi_image: np.ndarray) -> Dict[str, Dict[str, Any]]:
-        if self.yolo_model is None:
+    def _classify_roi_with_detector(self, roi_image: np.ndarray) -> dict[str, dict[str, Any]]:
+        if self._yolo_runtime.model is None:
             return {}
         try:
             results = self._yolo_runtime.predict_raw(
                 [roi_image],
-                classes=list(self.attr_class_mapping.keys()),
+                classes=list(self.attr_class_mapping),
                 conf=self.conf_threshold,
                 imgsz=self.inference_size,
             )
@@ -401,9 +161,12 @@ class AttributeClassifier(EvilEyeBase):
                 return {}
             result = results[0]
             if result.boxes is None or len(result.boxes) == 0:
-                return {n: {'detected_now': False, 'confidence': 0.0} for n in self.attrs}
+                return {name: {"detected_now": False, "confidence": 0.0} for name in self.attrs}
 
-            attr_results = {n: {'detected_now': False, 'confidence': 0.0} for n in self.attrs}
+            attr_results = {
+                name: {"detected_now": False, "confidence": 0.0}
+                for name in self.attrs
+            }
             boxes = result.boxes.cpu().numpy()
             for box in boxes:
                 class_id = int(box.cls[0])
@@ -412,75 +175,23 @@ class AttributeClassifier(EvilEyeBase):
                 attr_name = self.attr_class_mapping.get(class_id)
                 if attr_name and confidence >= self.conf_threshold:
                     attr_results[attr_name] = {
-                        'detected_now': True,
-                        'confidence': confidence,
-                        'bbox': bbox,
-                        'class_id': class_id,
+                        "detected_now": True,
+                        "confidence": confidence,
+                        "bbox": bbox,
+                        "class_id": class_id,
                     }
             return attr_results
         except Exception:
             self.logger.exception("AttributeClassifier inference failed for ROI")
             raise
 
-    def get_source_ids(self):
-        return self.params.get('source_ids', [0])
-
-    def put(self, det_info, force=False):
-        dropped_id = []
-        result = True
-        if self.queue_in.full():
-            if force:
-                dropped_data = self.queue_in.get()
-                dropped_id.append(dropped_data[1].source_id)
-                dropped_id.append(dropped_data[1].frame_id)
-            else:
-                dropped_id.append(det_info[1].source_id)
-                dropped_id.append(det_info[1].frame_id)
-                result = False
-        if len(dropped_id) > 0:
-            self.queue_dropped_id.put(dropped_id)
-        if result:
-            self.queue_in.put(det_info)
-        return result
-
-    def get(self):
+    @staticmethod
+    def _crop_roi(image, bbox):
         try:
-            return self.queue_out.get_nowait()
-        except Empty:
-            return None
-
-    def get_dropped_ids(self) -> list:
-        res = []
-        while not self.queue_dropped_id.empty():
-            res.append(self.queue_dropped_id.get())
-        return res
-
-    def get_oueue_out_size(self):
-        return self.queue_out.qsize()
-
-    def default(self):
-        self.params.clear()
-
-    def _crop_roi(self, image, bbox):
-        try:
-            x1, y1, x2, y2 = [int(v) for v in bbox]
+            x1, y1, x2, y2 = [int(value) for value in bbox]
             roi = image[y1:y2, x1:x2]
             if roi is None or roi.size == 0:
                 return None
             return roi
         except Exception:
             return None
-
-    def _put_out_drop_oldest(self, item):
-        try:
-            self.queue_out.put_nowait(item)
-            return
-        except Full:
-            try:
-                _ = self.queue_out.get_nowait()
-            except Exception:
-                pass
-            try:
-                self.queue_out.put_nowait(item)
-            except Exception:
-                pass

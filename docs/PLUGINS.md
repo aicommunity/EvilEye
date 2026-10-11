@@ -128,16 +128,19 @@ not need to subclass `EvilEyeBase`.
 Built-in YOLO, RT-DETR, RF-DETR, BoT-SORT, and attribute detector/classifier
 modules are registered as `processor_item` modules and execute through
 `ItemModuleAdapter`. Model and tracker state is created inside the selected
-thread or spawn worker. Existing config names remain valid, including
+thread or spawn worker. The adapter owns queueing, lifecycle, shutdown, and
+worker diagnostics; plugin classes implement the module contract instead of a
+second pipeline-facing put/get runtime. Existing config names remain valid, including
 `ObjectDetectorYoloMp` as an alias for `ObjectDetectorYolo`.
 `LegacyProcessorModuleAdapter` remains a compatibility bridge for modules that
 still expose only the old `put/get` contract; the migrated built-ins do not use
 it.
 
-`AttributeDetector` resolves configured `attrs` against the checkpoint's class
-names when `class_mapping` is omitted. If a requested label is not present, the
-module fails with a configuration error and asks for an explicit mapping instead
-of treating the order of `attrs` as model class IDs.
+`AttributeDetector` and `AttributeClassifier` resolve configured
+`attrs` against checkpoint class names when `class_mapping` is
+omitted or empty. If a requested label is missing, the module fails with a
+configuration error and requires an explicit mapping instead of treating the
+order of `attrs` as model class IDs.
 
 New plugins should implement `process_item(item, state)` and use the common
 runtime directly. For stages that consume a synchronized multi-source batch,

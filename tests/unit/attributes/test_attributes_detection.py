@@ -12,7 +12,6 @@ from evileye.core.logger import get_module_logger
 
 # Импорты для тестирования
 from evileye.attributes_detection.roi_feeder import RoiFeeder
-from evileye.attributes_detection.attribute_classifier import AttributeClassifier
 from evileye.objects_handler.attribute_state import AttributeState
 from evileye.objects_handler.attribute_manager import AttributeManager
 from evileye.objects_handler.objects_handler import ObjectsHandler
@@ -258,77 +257,6 @@ def test_roi_feeder_interface(roi_feeder):
 def test_get_source_ids(roi_feeder):
     """Получение списка source_ids."""
     source_ids = roi_feeder.get_source_ids()
-    assert source_ids == [0, 1]
-
-
-@pytest.fixture
-def attribute_classifier():
-    """Fixture для AttributeClassifier."""
-    classifier = AttributeClassifier()
-    classifier.params = {
-        'source_ids': [0, 1],
-        'enabled': True,
-        'model': 'test_model.onnx',
-        'attrs': ['hard_hat', 'backpack'],
-        'confidence_thresholds': {'hard_hat': 0.5, 'backpack': 0.6},
-        'time_thresholds': {
-            'hard_hat': {'min_time_ms': 600, 'confirm_time_ms': 2000},
-            'backpack': {'min_time_ms': 800, 'confirm_time_ms': 2500}
-        },
-        'ema_alpha': 0.6
-    }
-    classifier.set_params_impl()
-    yield classifier
-    # Безопасно останавливаем классификатор
-    try:
-        if classifier.processing_thread is not None:
-            classifier.stop()
-    except (AttributeError, TypeError):
-        pass  # Игнорируем ошибки при остановке
-
-
-def test_classifier_creation(attribute_classifier):
-    """Создание классификатора."""
-    assert attribute_classifier.get_source_ids() == [0, 1]
-    assert attribute_classifier.enabled
-    # Проверяем параметры через params (после set_params_impl некоторые параметры могут быть обработаны)
-    assert attribute_classifier.params.get('attrs') == ['hard_hat', 'backpack']
-    assert attribute_classifier.params.get('confidence_thresholds') == {'hard_hat': 0.5, 'backpack': 0.6}
-    assert attribute_classifier.params.get('ema_alpha') == 0.6
-    # model_path может быть установлен в set_params_impl, но не сохраняется в params
-    # Проверяем, что модель установлена через yolo_model или другие атрибуты
-
-
-def test_classifier_interface(attribute_classifier):
-    """Тест интерфейса ProcessorFrame."""
-    # Инициализируем классификатор перед использованием
-    # Не вызываем init_impl(), так как он требует реальную модель
-    # Вместо этого создаем поток вручную для теста
-    import threading
-    if attribute_classifier.processing_thread is None:
-        attribute_classifier.processing_thread = threading.Thread(target=attribute_classifier._process_impl)
-    
-    # Тест put/get
-    frame = Frame()
-    frame.source_id = 0
-    frame.frame_id = 1
-    
-    result = attribute_classifier.put(frame)
-    assert result
-    
-    # Запуск обработки
-    attribute_classifier.start()
-    time.sleep(0.1)  # Даём время на обработку
-    
-    output_frame = attribute_classifier.get()
-    if output_frame:
-        assert output_frame.source_id == 0
-        assert output_frame.frame_id == 1
-
-
-def test_classifier_get_source_ids(attribute_classifier):
-    """Получение списка source_ids."""
-    source_ids = attribute_classifier.get_source_ids()
     assert source_ids == [0, 1]
 
 

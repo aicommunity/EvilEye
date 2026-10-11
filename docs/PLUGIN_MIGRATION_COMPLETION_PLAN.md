@@ -50,14 +50,14 @@
 1. [готово] ObjectDetectorYolo переведён на processor_item: вход Frame/DTO, worker-local модель, ROI и class filtering, DetectionResultList; thread и spawn-process используют общий runtime. ObjectDetectorYoloMp сохраняется как alias. num_detection_threads отображается на worker_count и ordered worker pool возвращает результаты в порядке входа. При нескольких worker-ах vid_stride > 1 отклоняется, так как stride-счётчик локален worker-у. RT-DETR также переведён на item runtime; RF-DETR также использует item runtime и передаёт native Supervision detections без Ultralytics-совместимого преобразования.
 2. [готово] BoT-SORT использует item runtime и хранит отдельный tracker на source_id; уменьшение frame_id сбрасывает состояние при rewind/loop. Capture публикует persistent disconnect/reconnect counters и помещает connection_generation в каждый кадр. BoT-SORT сбрасывает per-source состояние при смене поколения (включая process capture). Тест движущегося объекта подтверждает непрерывность track_id в thread и spawn process.
 3. [готово] AttributeDetector и AttributeClassifier используют item runtime.
-   AttributeDetector сохраняет конфигурацию модели, class mapping, per-class
-   thresholds и ROI; AttributeClassifier обогащает tracker result по `track_id`.
-   Thread/process и реальные модели проверены smoke-тестами. Для AttributeDetector
-   добавлен opt-in golden parity тест против прежнего `AttributeDetectionThread`:
-   на фиксированном кадре совпадают классы, bbox и confidence; имена классов теперь
-   берутся из checkpoint, а нестандартные псевдонимы требуют явного `class_mapping`.
+   AttributeDetector сохраняет per-class thresholds и ROI; AttributeClassifier
+   обогащает tracker result по track_id. Оба модуля разрешают имена атрибутов
+   по checkpoint metadata, а для псевдонимов требуют явный class_mapping.
+   Thread/process и реальные модели проверены smoke-тестами. Для обоих модулей
+   добавлены opt-in golden parity тесты против прежнего поведения: совпадают
+   class IDs, bbox и confidence на фиксированных реальных входах.
 4. После каждой группы убрать `legacy_processor_protocol` у соответствующих manifests, не удаляя compatibility `type` aliases.
-5. [частично] Для YOLO, RT-DETR и AttributeDetector добавлены opt-in golden parity tests против legacy thread реализаций на фиксированных реальных кадрах; классы, bbox и confidence совпадают. Проверка RT-DETR выявила и устранила регрессию округления/clip координат. AttributeDetector также сохраняет модельные ID классов (например, bottle=39 в COCO) и требует явный mapping для псевдонимов. Остались parity-сценарии AttributeClassifier и BoT-SORT на последовательности кадров, а также тесты DTO/order для модулей, где их поведение отличается от inference.
+5. [частично] Для YOLO, RT-DETR, AttributeDetector и AttributeClassifier добавлены opt-in golden parity tests против legacy thread реализаций на фиксированных реальных входах; классы, bbox и confidence совпадают. Проверка RT-DETR выявила и устранила регрессию округления/clip координат. Оба attribute-модуля теперь разрешают ID из checkpoint labels и требуют явный mapping для псевдонимов. Остались BoT-SORT parity на последовательности кадров и тесты DTO/order для модулей, где их поведение отличается от inference.
 
 **Критерий:** ни один штатный детектор, tracker или attribute module не требует `LegacyProcessorModuleAdapter`; thread/process режимы проходят один набор контрактных сценариев.
 
@@ -149,21 +149,21 @@
 основные конфигурационные режимы и внешний пакет уже работают; оставшиеся
 пункты ниже закрывают проверяемые пробелы миграции и эксплуатации.
 
-### 1. Закрыть parity встроенных модулей
+### 1. Закрыть parity tracker-ов и DTO
 
-- Добавить сравнение AttributeClassifier со старой реализацией на фиксированном
-  наборе tracker ROI: class mapping, confidence, результат по `track_id`, пустые
-  ROI и вход с shared-frame handle.
+- AttributeClassifier уже сравнен с legacy реализацией на фиксированном ROI:
+  class mapping, confidence, результат по track_id и bbox закреплены golden
+  test-ом.
 - Добавить golden последовательность для BoT-SORT на нескольких кадрах из
-  сохранённого набора detections. Проверить устойчивость `track_id`, переходы
+  сохранённого набора detections. Проверить устойчивость track_id, переходы
   lost/refound и reset после rewind/reconnect; существующий synthetic continuity
   тест оставить отдельным контрактным тестом.
 - Зафиксировать, какие новые поля DTO намеренно добавлены, чтобы parity проверяла
   семантику, а не сравнение сериализаций побайтно.
 
-**Готово, когда:** classifier и tracker имеют воспроизводимые golden tests против
-предыдущего поведения и одинаковые результаты через SPI thread/process там, где
-оба режима заявлены.
+**Готово, когда:** tracker имеет воспроизводимый golden test против предыдущего
+поведения и одинаковые результаты через SPI thread/process там, где оба режима
+заявлены; порядок и DTO проверяются отдельными контрактами.
 
 ### 2. Закрыть source lifecycle и end-to-end конечную видеозапись
 
@@ -219,6 +219,13 @@
   вместо ID 39. `AttributeDetector` теперь использует имена классов checkpoint;
   если запрошенной метки нет, требует явный `class_mapping`. Реальный smoke
   подтвердил `{person: 0, bottle: 39}`.
+- AttributeClassifier очищен от параллельного legacy lifecycle: модуль больше не
+  наследует EvilEyeBase и не содержит собственных put/get очередей, MP worker и
+  dispatch thread. Его запуск/stop выполняет только ItemModuleAdapter; тест
+  закрепляет отсутствие старого ProcessorFrame интерфейса.
+- Добавлен opt-in golden test
+  tests/integration/attributes/test_attribute_classifier_legacy_parity.py;
+  реальный yolo11n.pt spawn smoke проходит через новый mapping по checkpoint.
 - Добавлен opt-in golden test
   `tests/integration/attributes/test_attribute_detector_legacy_parity.py`.
   Он сравнивает class IDs, bbox и confidence с результатом legacy реализации;
@@ -233,9 +240,14 @@
   clipping. Повторный `QT_QPA_PLATFORM=offscreen pytest -q tests/unit` дошёл до
   100% с exit code 0; тестовых `pytest`, `resource_tracker`, `spawn_main`,
   `PluginSource` и `MpWorkerCapture` процессов после прогона не осталось.
+- После удаления второго lifecycle AttributeClassifier и перехода обоих
+  attribute-модулей на общий mapping resolver полный `QT_QPA_PLATFORM=offscreen
+  pytest -q tests/unit` повторно завершился с exit code 0 и дошёл до 100%;
+  orphan worker-процессов после прогона не осталось.
 - Полный integration suite, finite-video end-to-end со счётчиками стадий,
-  AttributeClassifier/BoT-SORT golden parity, RTSP backend-проверки и Web UI
-  авторизованный просмотр остаются открытыми; общая миграция не завершена.
+  BoT-SORT golden parity, RTSP backend-проверки и Web UI авторизованный
+  просмотр остаются открытыми. AttributeClassifier parity и process smoke
+  добавлены и проходят; общая миграция не завершена.
 
 ## Условие завершения миграции
 
