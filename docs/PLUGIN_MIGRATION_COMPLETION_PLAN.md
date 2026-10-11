@@ -57,7 +57,7 @@
    добавлены opt-in golden parity тесты против прежнего поведения: совпадают
    class IDs, bbox и confidence на фиксированных реальных входах.
 4. После каждой группы убрать `legacy_processor_protocol` у соответствующих manifests, не удаляя compatibility `type` aliases.
-5. [частично] Для YOLO, RT-DETR, AttributeDetector и AttributeClassifier добавлены opt-in golden parity tests против legacy thread реализаций на фиксированных реальных входах; классы, bbox и confidence совпадают. Проверка RT-DETR выявила и устранила регрессию округления/clip координат. Оба attribute-модуля теперь разрешают ID из checkpoint labels и требуют явный mapping для псевдонимов. Остались BoT-SORT parity на последовательности кадров и тесты DTO/order для модулей, где их поведение отличается от inference.
+5. [частично] Для YOLO, RT-DETR, AttributeDetector и AttributeClassifier добавлены opt-in golden parity tests против legacy thread реализаций на фиксированных реальных входах; классы, bbox и confidence совпадают. Проверка RT-DETR выявила и устранила регрессию округления/clip координат. Оба attribute-модуля теперь разрешают ID из checkpoint labels и требуют явный mapping для псевдонимов. BoT-SORT parity теперь закреплён отдельным golden-тестом; остаются тесты DTO/order для модулей, где их поведение отличается от inference.
 
 **Критерий:** ни один штатный детектор, tracker или attribute module не требует `LegacyProcessorModuleAdapter`; thread/process режимы проходят один набор контрактных сценариев.
 
@@ -154,10 +154,7 @@
 - AttributeClassifier уже сравнен с legacy реализацией на фиксированном ROI:
   class mapping, confidence, результат по track_id и bbox закреплены golden
   test-ом.
-- Добавить golden последовательность для BoT-SORT на нескольких кадрах из
-  сохранённого набора detections. Проверить устойчивость track_id, переходы
-  lost/refound и reset после rewind/reconnect; существующий synthetic continuity
-  тест оставить отдельным контрактным тестом.
+- [готово] Для BoT-SORT добавлена воспроизводимая синтетическая последовательность с движением, пропусками detections и восстановлением track_id. Golden bbox и ID сняты со старого thread worker на `27fcb2a`; SPI thread и spawn-process совпадают с ними. Reset после rewind/reconnect проверяется отдельными контрактными тестами.
 - Зафиксировать, какие новые поля DTO намеренно добавлены, чтобы parity проверяла
   семантику, а не сравнение сериализаций побайтно.
 
@@ -245,7 +242,7 @@
   pytest -q tests/unit` повторно завершился с exit code 0 и дошёл до 100%;
   orphan worker-процессов после прогона не осталось.
 - Полный integration suite, finite-video end-to-end со счётчиками стадий,
-  BoT-SORT golden parity, RTSP backend-проверки и Web UI авторизованный
+  RTSP backend-проверки и Web UI авторизованный
   просмотр остаются открытыми. AttributeClassifier parity и process smoke
   добавлены и проходят; общая миграция не завершена.
 
@@ -253,4 +250,4 @@
 
 Миграция завершена, когда встроенный inventory целиком работает через Plugin SPI, legacy protocol count равен нулю (кроме явно принятого исключения), builtin и внешний пакет проходят одинаковые контрактные тесты, полный доступный suite завершается без оставшихся процессов, штатные видео и тревоги проходят end-to-end, а внешние ограничения камер и Web UI закрыты корректной конфигурацией доступа.
 - На сервере после фиксации bbox parity: весь tests/unit завершился с exit=0; интеграционные группы pipeline, registry и CLI working-directory/minimal-no-DB завершились с exit=0 (21 тест). Совместные opt-in golden проверки YOLO и RT-DETR прошли; после проверок фоновых pytest и multiprocessing worker-ов не осталось.
-- BoT-SORT: добавлен контрактный тест последовательности из пяти движущихся детекций через Plugin SPI; один track_id сохраняется на всём отрезке в thread и spawn-process режимах. Оба варианта прошли.
+- BoT-SORT: `tests/unit/object_tracker/test_botsort_plugin_runtime.py::test_botsort_matches_legacy_frame_sequence_golden` проверяет 8 кадров с потерянными detections, восстановлением track_id и bbox относительно legacy worker; thread и spawn-process варианты прошли.

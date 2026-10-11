@@ -326,3 +326,79 @@ def test_botsort_item_runtime_preserves_track_continuity(execution_mode):
     finally:
         adapter.stop()
         adapter.release()
+
+
+@pytest.mark.parametrize("execution_mode", ["thread", "process"])
+def test_botsort_matches_legacy_frame_sequence_golden(execution_mode):
+    """Keep the migrated SPI tracker aligned with the pre-SPI tracker output.
+
+    Golden values were captured from the legacy worker at 27fcb2a with the same
+    deterministic detections, image, and BoT-SORT configuration.
+    """
+    adapter = EvilEyeBase.create_instance("ObjectTrackingBotsort")
+    adapter.set_params(
+        module_id="ObjectTrackingBotsort",
+        execution_mode=execution_mode,
+        source_ids=[1],
+        fps=5,
+        botsort_cfg={"gmc_method": "none", "track_buffer": 3},
+    )
+    assert adapter.init() is True
+    adapter.start()
+
+    image = np.zeros((96, 128, 3), dtype=np.uint8)
+    positions = [(10, 20), (12, 20), None, (16, 21), (18, 22), None, None, (24, 23)]
+    expected_boxes = [
+        [10.0, 20.0, 40.0, 60.0],
+        [11.7355, 20.0, 41.7355, 60.0],
+        None,
+        [15.151, 20.7796, 45.151, 60.7796],
+        [17.7172, 21.7874, 47.7172, 61.7874],
+        None,
+        None,
+        [22.869, 22.829, 52.869, 62.829],
+    ]
+
+    try:
+        for frame_id, position in enumerate(positions, 1):
+            detections = DetectionResultList()
+            detections.source_id = 1
+            detections.frame_id = frame_id
+            detections.detections = []
+            if position is not None:
+                x, y = position
+                detection = DetectionResult()
+                detection.bounding_box = [x, y, x + 30, y + 40]
+                detection.class_id = 0
+                detection.confidence = 0.95
+                detections.detections = [detection]
+
+            frame = _frame(1, frame_id)
+            frame.image = image.copy()
+            adapter.put((detections, frame))
+
+            deadline = time.monotonic() + (20.0 if execution_mode == "process" else 3.0)
+            output = None
+            while output is None and time.monotonic() < deadline:
+                output = adapter.get()
+                if output is None:
+                    time.sleep(0.01)
+
+            assert output is not None, f"no tracker output for frame {frame_id}"
+            tracks, output_frame = output
+            assert output_frame.frame_id == frame_id
+            assert tracks.source_id == 1
+            assert tracks.frame_id == frame_id
+            expected_box = expected_boxes[frame_id - 1]
+            if expected_box is None:
+                assert tracks.tracks == []
+            else:
+                assert len(tracks.tracks) == 1
+                track = tracks.tracks[0]
+                assert track.track_id == 1
+                assert track.class_id == 0
+                assert track.confidence == pytest.approx(0.95, abs=1e-5)
+                assert track.bounding_box == pytest.approx(expected_box, abs=0.035)
+    finally:
+        adapter.stop()
+        adapter.release()
