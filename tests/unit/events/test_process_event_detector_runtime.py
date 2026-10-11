@@ -832,3 +832,17 @@ def test_event_update_frame_attachments_have_strict_size_limits():
             payload={},
             frames=frames,
         )
+
+def test_process_event_worker_exit_during_shutdown_is_not_reported_as_failure():
+    detector = EventDetectorModuleAdapter(_register_module(), EventDetectorContext())
+    detector.execution_mode = "process"
+    detector._started = True
+    detector._closing = True
+    detector._mp_control = SimpleNamespace(
+        processes=[SimpleNamespace(exitcode=0)]
+    )
+
+    detector._check_process_health()
+
+    assert detector.degraded is False
+    assert detector.last_error is None

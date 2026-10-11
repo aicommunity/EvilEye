@@ -265,18 +265,23 @@ class MpControl:
             if hasattr(w, "_stop_event"):
                 w._stop_event.set()
 
-        # Join with timeout
+        # Join with timeout. A forcibly terminated process may leave one of the
+        # multiprocessing pipes in a partial-message state. In that case queue
+        # draining or joining its feeder thread can block shutdown indefinitely.
+        forced_termination = False
         deadline = time.monotonic() + timeout
         for p in self.processes:
             remaining = max(0.1, deadline - time.monotonic())
             p.join(timeout=remaining)
             if p.is_alive():
+                forced_termination = True
                 self.logger.warning(f"Force-terminating worker pid={p.pid}")
                 p.terminate()
                 p.join(timeout=1.0)
                 if p.is_alive():
                     self.logger.error(f"Force-killing worker pid={p.pid}")
                     p.kill()
+                    p.join(timeout=1.0)
             try:
                 unregister_worker_pid(int(p.pid))
             except Exception:
@@ -295,11 +300,32 @@ class MpControl:
             if self._log_listener.is_alive():
                 self.logger.error("MpControl log listener did not stop: %s", self.name)
 
-        self.drain_ipc_queues()
-        for ipc_queue in (self.input_queue, self.output_queue, self._log_queue):
+        ipc_queues = (self.input_queue, self.output_queue, self._log_queue)
+        if forced_termination:
+            self.logger.warning(
+                "Worker in pool '%s' required forced termination; abandoning IPC "
+                "queue contents to keep shutdown bounded",
+                self.name,
+            )
+            for ipc_queue in ipc_queues:
+                try:
+                    ipc_queue.cancel_join_thread()
+                except (AttributeError, OSError, ValueError):
+                    pass
+                except Exception as exc:
+                    self.logger.warning(
+                        "Could not cancel IPC queue feeder join for '%s': %s",
+                        self.name,
+                        exc,
+                    )
+        else:
+            self.drain_ipc_queues()
+
+        for ipc_queue in ipc_queues:
             try:
                 ipc_queue.close()
-                ipc_queue.join_thread()
+                if not forced_termination:
+                    ipc_queue.join_thread()
             except (AttributeError, OSError, ValueError):
                 pass
             except Exception as exc:

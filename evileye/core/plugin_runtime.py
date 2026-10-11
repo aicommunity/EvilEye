@@ -2087,7 +2087,12 @@ class EventDetectorModuleAdapter(EvilEyeBase):
         self._mp_control = None
 
     def _check_process_health(self):
-        if self._mp_control is None or not self._started or self._failure_reported:
+        if (
+            self._mp_control is None
+            or not self._started
+            or self._closing
+            or self._failure_reported
+        ):
             return
         exited = [
             process for process in self._mp_control.processes
