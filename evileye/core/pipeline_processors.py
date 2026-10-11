@@ -88,81 +88,113 @@ class PipelineProcessors(PipelineBase):
         return params
 
     def start(self):
-        """Start all processors in order, with sources starting last to prevent queue overflow"""
+        """Start frame workers and require readiness before starting sources."""
         import time
+        import queue
         from ..object_detector.object_detection_base import ObjectDetectorBase
-        from .processor_frame import ProcessorFrame
 
-        # First, start all processors except sources (detectors, trackers, etc.)
-        # This ensures they are ready to receive data before sources begin capturing
-        detectors = []
+        frame_workers = []
+        for processor in self.processors:
+            if processor is None or isinstance(processor, ProcessorSource):
+                continue
+            for inner in getattr(processor, "processors", ()):
+                if isinstance(inner, ObjectDetectorBase) or callable(
+                    getattr(inner, "is_ready", None)
+                ):
+                    frame_workers.append(inner)
+
+        try:
+            readiness_timeout = float(
+                os.getenv("EVILEYE_FRAME_WORKER_READY_TIMEOUT_SEC", "30.0")
+            )
+        except (TypeError, ValueError) as exc:
+            raise RuntimeError(
+                "EVILEYE_FRAME_WORKER_READY_TIMEOUT_SEC must be a positive number"
+            ) from exc
+        if readiness_timeout <= 0:
+            raise RuntimeError(
+                "EVILEYE_FRAME_WORKER_READY_TIMEOUT_SEC must be a positive number"
+            )
+
         for processor in self.processors:
             if processor is not None and not isinstance(processor, ProcessorSource):
                 processor.start()
-                # Collect detectors to wait for model loading
-                if isinstance(processor, ProcessorFrame):
-                    # Check if this processor contains detectors
-                    if hasattr(processor, 'processors'):
-                        for p in processor.processors:
-                            if isinstance(p, ObjectDetectorBase) or callable(
-                                getattr(p, "is_ready", None)
-                            ):
-                                detectors.append(p)
 
-        # Do not block pipeline startup for a long time on detector readiness.
-        # In headless/API runs this delays controller.start(), which in turn
-        # prevents preview publication and may look like a hung runtime.
-        # We only do a short best-effort readiness wait here.
-        if detectors:
-            self.logger.info(f"Waiting for {len(detectors)} detector(s) to load models...")
-            all_ready = True
-            # Wait in parallel so total wait is bounded and short.
-            detectors_with_ready = [d for d in detectors if hasattr(d, "is_ready")]
-            detectors_fallback = [d for d in detectors if not hasattr(d, "is_ready")]
-            if detectors_with_ready:
-                import concurrent.futures
-                timeout_per_detector = 2.0
-                with concurrent.futures.ThreadPoolExecutor(
-                        max_workers=min(len(detectors_with_ready), 8)
-                ) as executor:
-                    future_to_det = {
-                        executor.submit(d.is_ready, timeout_per_detector): d
-                        for d in detectors_with_ready
-                    }
-                    try:
-                        for fut in concurrent.futures.as_completed(
-                                future_to_det, timeout=timeout_per_detector + 1.0
-                        ):
-                            det = future_to_det[fut]
-                            try:
-                                ready = fut.result()
-                            except Exception as e:
-                                ready = False
-                                self.logger.warning(
-                                    f"Detector {det.__class__.__name__} is_ready raised: {e}"
-                                )
-                            if not ready:
-                                self.logger.warning(
-                                    f"Detector {det.__class__.__name__} did not become ready within timeout"
-                                )
-                                all_ready = False
-                            else:
-                                self.logger.debug(f"Detector {det.__class__.__name__} is ready")
-                    except concurrent.futures.TimeoutError:
-                        all_ready = False
-                        self.logger.warning("Detector readiness wait timed out; continuing startup")
-            for _ in detectors_fallback:
-                time.sleep(0.2)
-            if all_ready:
-                self.logger.info("All detectors are ready")
-            else:
-                self.logger.warning("Some detectors may not be fully ready, but starting sources anyway")
-            # Small settling delay without stalling startup for tens of seconds.
-            time.sleep(0.1)
+        if frame_workers:
+            self.logger.info(
+                "Waiting up to %.1fs for %d frame worker(s) to initialize",
+                readiness_timeout,
+                len(frame_workers),
+            )
+            ready_results: queue.Queue = queue.Queue()
+
+            def _check_ready(worker):
+                try:
+                    ready_results.put((worker, bool(worker.is_ready(readiness_timeout)), None))
+                except Exception as exc:
+                    ready_results.put((worker, False, exc))
+
+            readiness_threads = [
+                threading.Thread(
+                    target=_check_ready,
+                    args=(worker,),
+                    name=f"Readiness-{getattr(worker, 'module_id', worker.__class__.__name__)}",
+                    daemon=True,
+                )
+                for worker in frame_workers
+                if callable(getattr(worker, "is_ready", None))
+            ]
+            missing_readiness = [
+                worker for worker in frame_workers
+                if not callable(getattr(worker, "is_ready", None))
+            ]
+            for thread in readiness_threads:
+                thread.start()
+
+            failed_workers = [
+                getattr(worker, "module_id", worker.__class__.__name__)
+                for worker in missing_readiness
+            ]
+            received_workers = set()
+            deadline = time.monotonic() + readiness_timeout + 1.0
+            for _ in readiness_threads:
+                remaining = deadline - time.monotonic()
+                if remaining <= 0:
+                    break
+                try:
+                    worker, ready, error = ready_results.get(timeout=remaining)
+                except queue.Empty:
+                    break
+                received_workers.add(id(worker))
+                name = getattr(worker, "module_id", worker.__class__.__name__)
+                if error is not None:
+                    self.logger.error("Frame worker %s readiness check failed: %s", name, error)
+                if not ready:
+                    failed_workers.append(name)
+
+            failed_workers.extend(
+                getattr(worker, "module_id", worker.__class__.__name__)
+                for worker in frame_workers
+                if callable(getattr(worker, "is_ready", None))
+                and id(worker) not in received_workers
+            )
+
+            if failed_workers:
+                failure = RuntimeError(
+                    "Frame workers did not become ready; pipeline sources were not started "
+                    f"(modules: {', '.join(dict.fromkeys(failed_workers))})"
+                )
+                self.logger.error("%s", failure)
+                try:
+                    self.stop()
+                except Exception:
+                    self.logger.exception("Failed to clean up processors after startup failure")
+                raise failure
+
+            self.logger.info("All frame workers are ready")
         else:
             time.sleep(0.1)
 
-        # Finally, start sources last so they don't send frames before processors are ready
         for processor in self.processors:
             if processor is not None and isinstance(processor, ProcessorSource):
                 processor.start()
@@ -214,6 +246,69 @@ class PipelineProcessors(PipelineBase):
         if self.sources_proc is None:
             return True
         return self.sources_proc.check_all_sources_finished()
+
+    @staticmethod
+    def _queue_has_items(value) -> bool | None:
+        if value is None:
+            return False
+        qsize = getattr(value, "qsize", None)
+        if not callable(qsize):
+            return None
+        try:
+            return int(qsize()) > 0
+        except Exception:
+            return None
+
+    def get_pending_work_summary(self) -> list[str]:
+        pending = []
+        estimate_stats = getattr(self, "estimate_mp_backlog_stats", None)
+        if callable(estimate_stats):
+            try:
+                stats = estimate_stats()
+                if int(stats.get("pending", 0)) > 0:
+                    pending.append(f"multiprocess={int(stats['pending'])}")
+            except Exception:
+                pending.append("multiprocess=unknown")
+
+        for container in self.processors or ():
+            if container is None:
+                continue
+            for module in getattr(container, "processors", ()) or ():
+                module_id = getattr(module, "module_id", module.__class__.__name__)
+                module_pending = False
+                has_pending = getattr(module, "has_pending_work", None)
+                if callable(has_pending):
+                    try:
+                        module_pending = bool(has_pending())
+                    except Exception:
+                        pending.append(f"{module_id}=unknown")
+                        continue
+                stats_provider = getattr(module, "get_runtime_stats", None)
+                if callable(stats_provider):
+                    try:
+                        stats = stats_provider()
+                        module_pending = module_pending or int(
+                            stats.get("in_flight", 0) or 0
+                        ) > 0
+                    except Exception:
+                        pending.append(f"{module_id}=unknown")
+                        continue
+                queue_depth_unknown = False
+                for attr in ("queue_in", "queue_out", "_input_queue", "_output_queue"):
+                    queue_pending = self._queue_has_items(getattr(module, attr, None))
+                    if queue_pending is True:
+                        module_pending = True
+                        break
+                    if queue_pending is None:
+                        queue_depth_unknown = True
+                if module_pending:
+                    pending.append(f"{module_id}=in_flight")
+                elif queue_depth_unknown:
+                    pending.append(f"{module_id}=queue_depth_unknown")
+        return pending
+
+    def has_pending_work(self) -> bool:
+        return bool(self.get_pending_work_summary())
 
     def process(self) -> dict[Any, Any]:
         pipeline_results = dict()

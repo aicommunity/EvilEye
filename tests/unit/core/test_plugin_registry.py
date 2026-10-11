@@ -75,6 +75,11 @@ class _EchoItemModule:
         return f"{self.prefix}{item}:{state['count']}"
 
 
+class _NoOutputItemModule:
+    def process_item(self, item, state):
+        return None
+
+
 class _ContextItemModule:
     def create_state(self, config, context):
         return {"count": 0, "context": context}
@@ -626,6 +631,46 @@ def test_mp_control_drop_oldest_returns_evicted_item_and_metric(monkeypatch):
     control.stop()
 
 
+def test_mp_control_drop_oldest_waits_for_evicted_queue_slot(monkeypatch):
+    import queue
+
+    import evileye.core.mp_control as mp_control_module
+
+    class _RacingQueue(queue.Queue):
+        def __init__(self, maxsize=0):
+            super().__init__(maxsize=maxsize)
+            self.slot_was_freed = False
+
+        def get_nowait(self):
+            item = super().get_nowait()
+            self.slot_was_freed = True
+            return item
+
+        def put(self, item, block=True, timeout=None):
+            if self.slot_was_freed and not block:
+                self.slot_was_freed = False
+                raise queue.Full
+            return super().put(item, block=block, timeout=timeout)
+
+    class _QueueContext:
+        def Queue(self, maxsize=0):
+            return _RacingQueue(maxsize=maxsize or 0)
+
+    monkeypatch.setattr(
+        mp_control_module, "get_spawn_context", lambda: _QueueContext()
+    )
+    control = mp_control_module.MpControl(max_input_size=1, max_output_size=1)
+    control.put("old", block=False)
+
+    dropped, item = control.put_drop_oldest("latest")
+
+    assert dropped is True
+    assert item == "old"
+    assert control.input_queue.get_nowait() == "latest"
+    assert control.get_metrics()["put_drop_oldest_total"] == 1
+    control.stop()
+
+
 def test_item_module_input_queue_overflow_is_explicit_and_degraded():
     import threading
 
@@ -850,6 +895,43 @@ def test_item_module_adapter_passes_runtime_context_to_worker(execution_mode):
             "execution_mode": execution_mode,
             "source_ids": (0, 3),
         }
+        assert adapter.has_pending_work() is False
+    finally:
+        adapter.stop()
+
+
+@pytest.mark.parametrize("execution_mode", ["thread", "process"])
+def test_item_module_adapter_tracks_no_output_completion(execution_mode):
+    class _NoOutputModule:
+        def process_item(self, item, state):
+            return None
+
+    plugin_id = f"test.no-output-{execution_mode}"
+    spec = ModuleSpec(
+        "no-output",
+        "processor_item",
+        _NoOutputItemModule,
+        execution_modes=(execution_mode,),
+    )
+    plugin_registry.register_plugin(
+        PluginSpec(plugin_id, PLUGIN_API_VERSION, modules=(spec,))
+    )
+    adapter = ItemModuleAdapter(
+        plugin_registry.get_module(f"{plugin_id}/no-output")
+    )
+    adapter.set_params(
+        module_id=f"{plugin_id}/no-output",
+        execution_mode=execution_mode,
+    )
+    adapter.init()
+    adapter.start()
+    try:
+        adapter.put("frame")
+        deadline = time.monotonic() + (15.0 if execution_mode == "process" else 2.0)
+        while adapter.has_pending_work() and time.monotonic() < deadline:
+            adapter.get()
+            time.sleep(0.01)
+        assert adapter.has_pending_work() is False
     finally:
         adapter.stop()
 
@@ -884,6 +966,7 @@ def test_item_module_adapter_recreates_factory_in_spawn_process():
             if result is None:
                 time.sleep(0.02)
         assert result == "spawn-frame:1"
+        assert adapter.has_pending_work() is False
     finally:
         adapter.stop()
 
@@ -1028,6 +1111,7 @@ def test_builtin_capture_sources_use_spi_adapter_and_keep_capture_backend(monkey
     assert "legacy_source_protocol" not in gst_spec.capabilities
 
     generated = []
+    inited_when_get_called = []
     expected = Frame()
     expected.source_id = 3
     expected.frame_id = 9
@@ -1040,6 +1124,7 @@ def test_builtin_capture_sources_use_spi_adapter_and_keep_capture_backend(monkey
         source.run_flag = True
 
     def fake_get(source):
+        inited_when_get_called.append(source.is_inited)
         if not generated:
             generated.append(True)
             source._test_finished = True
@@ -1068,6 +1153,7 @@ def test_builtin_capture_sources_use_spi_adapter_and_keep_capture_backend(monkey
     assert adapter.execution_mode == "thread"
     assert adapter.get_runtime_stats()["backend_execution_mode"] == "process"
     assert adapter._module.execution_mode == "process"
+    assert adapter._module.is_inited is False
     assert adapter.source_ids == [3]
     assert adapter.source_names == ["Test camera"]
 
@@ -1080,6 +1166,7 @@ def test_builtin_capture_sources_use_spi_adapter_and_keep_capture_backend(monkey
             if not frames:
                 time.sleep(0.01)
         assert frames == [expected]
+        assert inited_when_get_called and all(inited_when_get_called)
     finally:
         adapter.stop()
 
@@ -1418,3 +1505,56 @@ def test_registry_rejects_unsupported_default_execution_mode():
         registry.register_plugin(
             PluginSpec("test.invalid-mode-default", PLUGIN_API_VERSION, modules=(spec,))
         )
+
+@pytest.mark.parametrize("execution_mode", ["thread", "process"])
+def test_item_module_adapter_waits_for_worker_initialization(execution_mode):
+    module, module_id = _register_process_echo_module(
+        f"test.readiness-{execution_mode}"
+    )
+    module.set_params(
+        module_id=module_id,
+        execution_mode=execution_mode,
+        config={"prefix": "ready-"},
+    )
+    assert module.init() is True
+    module.start()
+    try:
+        assert module.is_ready(timeout=15.0 if execution_mode == "process" else 2.0)
+        module.put("frame")
+        deadline = time.monotonic() + (15.0 if execution_mode == "process" else 2.0)
+        result = None
+        while result is None and time.monotonic() < deadline:
+            result = module.get()
+            if result is None:
+                time.sleep(0.01)
+        assert result == "ready-frame:1"
+    finally:
+        module.stop()
+
+
+def _invalid_item_module_factory(config=None):
+    return object()
+
+
+@pytest.mark.parametrize("execution_mode", ["thread", "process"])
+def test_item_module_initialization_failure_is_not_ready(execution_mode):
+    plugin_id = f"test.readiness-failure-{execution_mode}"
+    spec = ModuleSpec(
+        "invalid",
+        "processor_item",
+        _invalid_item_module_factory,
+        execution_modes=(execution_mode,),
+    )
+    plugin_registry.register_plugin(
+        PluginSpec(plugin_id, PLUGIN_API_VERSION, modules=(spec,))
+    )
+    module_id = f"{plugin_id}/invalid"
+    module = ItemModuleAdapter(plugin_registry.get_module(module_id))
+    module.set_params(module_id=module_id, execution_mode=execution_mode)
+    assert module.init() is True
+    module.start()
+    try:
+        assert module.is_ready(timeout=10.0 if execution_mode == "process" else 2.0) is False
+        assert module.degraded is True
+    finally:
+        module.stop()

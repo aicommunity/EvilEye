@@ -513,6 +513,21 @@ class Controller(ControllerProcessingMixin):
         from evileye.controller.processing_service import ProcessingService
 
         self.logger.info(f"Controller main loop started, stream_pipeline_id: {self.stream_pipeline_id}")
+        source_drain_started_at = None
+        drain_timeout_sec = None
+        if self.autoclose:
+            try:
+                drain_timeout_sec = float(
+                    os.getenv("EVILEYE_AUTOCLOSE_DRAIN_TIMEOUT_SEC", "60.0")
+                )
+            except (TypeError, ValueError) as exc:
+                raise RuntimeError(
+                    "EVILEYE_AUTOCLOSE_DRAIN_TIMEOUT_SEC must be a positive number"
+                ) from exc
+            if drain_timeout_sec <= 0:
+                raise RuntimeError(
+                    "EVILEYE_AUTOCLOSE_DRAIN_TIMEOUT_SEC must be a positive number"
+                )
         # Emit system started via detector (unified path)
         if self.system_events_detector:
             self.system_events_detector.emit_started()
@@ -623,7 +638,29 @@ class Controller(ControllerProcessingMixin):
                 self.pipeline.insert_debug_info_by_id(self.debug_info)
 
                 if self.autoclose and all_sources_finished:
-                    self.run_flag = False
+                    pending_work = self.pipeline.has_pending_work()
+                    if not pending_work:
+                        self.run_flag = False
+                    else:
+                        now_mono = time.monotonic()
+                        if source_drain_started_at is None:
+                            source_drain_started_at = now_mono
+                            get_pending = self.pipeline.get_pending_work_summary
+                            self.logger.info(
+                                "All sources reached EOF; draining pending pipeline work: %s",
+                                ", ".join(get_pending()) or "pending work",
+                            )
+                        elif now_mono - source_drain_started_at >= drain_timeout_sec:
+                            get_pending = self.pipeline.get_pending_work_summary
+                            pending_summary = get_pending()
+                            self.logger.error(
+                                "Autoclose drain timed out after %.1fs; stopping with pending work: %s",
+                                drain_timeout_sec,
+                                ", ".join(pending_summary) or "unknown",
+                            )
+                            self.run_flag = False
+                else:
+                    source_drain_started_at = None
 
                 fallback_processing_frames = self._process_pipeline_results(objects_results)
                 processing_frames = ProcessingService.collect_processing_frames(
@@ -1313,14 +1350,14 @@ class Controller(ControllerProcessingMixin):
         # Stop events detectors через EventsService
         if self._events_service:
             self.logger.info("Controller shutdown: stopping events subsystem")
-            self._events_service.stop_detectors()
-            # Flush events controller once before stopping
+            # Stop polling before detector workers close their IPC queues.
             if self.events_detectors_controller:
+                self.events_detectors_controller.stop()
                 self.events_detectors_controller.flush_once()
                 events = self.events_detectors_controller.get()
                 if events and self.events_processor:
                     self.events_processor.put(events)
-                self.events_detectors_controller.stop()
+            self._events_service.stop_detectors()
             if self.events_processor:
                 self.events_processor.stop()
             try:

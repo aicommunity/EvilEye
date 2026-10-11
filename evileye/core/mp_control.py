@@ -172,7 +172,11 @@ class MpControl:
             # A worker may have freed a slot between put and get.
             pass
 
-        self.put(data, block=False)
+        # A multiprocessing queue may still report Full for an immediate
+        # non-blocking retry while its feeder semaphore settles after get_nowait.
+        # Wait briefly for the slot we just freed instead of surfacing a false
+        # rejection to the frame pipeline.
+        self.put(data, block=True, timeout=0.1)
         if dropped_item is not None:
             with self._stats_lock:
                 self._stats["put_drop_oldest_total"] += 1

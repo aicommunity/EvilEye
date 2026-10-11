@@ -44,6 +44,8 @@ def test_opencv_builtin_source_uses_spi_adapter_with_capture_backend(tmp_path, b
     try:
         assert source.init() is True
         assert source.execution_mode == "thread"
+        assert source._module.is_inited is False
+        assert source._module._mp_control is None
         source_stats = source.get_runtime_stats()
         assert source_stats["backend_execution_mode"] == backend_mode
         assert source_stats["capture_health"]["disconnect_count"] == 0
@@ -141,6 +143,7 @@ def test_gstreamer_builtin_source_uses_common_source_spi(monkeypatch):
 
     emitted = []
     init_attempts = []
+    opened_when_get_called = []
     expected = CaptureImage()
     expected.source_id = 7
     expected.frame_id = 11
@@ -155,6 +158,7 @@ def test_gstreamer_builtin_source_uses_common_source_spi(monkeypatch):
         source.run_flag = True
 
     def fake_get(source):
+        opened_when_get_called.append(source._plugin_source_opened)
         if not emitted:
             emitted.append(expected)
             source.finished = True
@@ -177,7 +181,7 @@ def test_gstreamer_builtin_source_uses_common_source_spi(monkeypatch):
         source_names=["gst-spi-test"],
     )
     assert source.init() is True
-    assert source._module._plugin_source_opened is True
+    assert source._module._plugin_source_opened is False
 
     source.start()
     try:
@@ -188,6 +192,7 @@ def test_gstreamer_builtin_source_uses_common_source_spi(monkeypatch):
             if not frames:
                 time.sleep(0.01)
         assert frames == [expected]
+        assert opened_when_get_called and all(opened_when_get_called)
         assert len(init_attempts) >= 2
         assert source.source_ids == [7]
         assert source.source_names == ["gst-spi-test"]
@@ -209,7 +214,18 @@ def test_gstreamer_source_does_not_fall_back_when_backend_is_unavailable(monkeyp
         source_names=["gst-unavailable-test"],
     )
 
-    assert source.init() is False
-    assert source.degraded is True
+    assert source.init() is True
+    assert source.degraded is False
     assert isinstance(source._module, gst_module.VideoCaptureGStreamer)
     assert source._module._plugin_source_opened is False
+
+    source.start()
+    try:
+        deadline = time.monotonic() + 2.0
+        while not source.degraded and time.monotonic() < deadline:
+            time.sleep(0.01)
+        assert source.degraded is True
+        assert "VideoCaptureGStreamer was selected but GStreamer is unavailable" in source.last_error
+    finally:
+        source.stop()
+        source.release()

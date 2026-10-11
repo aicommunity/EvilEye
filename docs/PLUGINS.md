@@ -160,7 +160,24 @@ modules are registered as `processor_item` modules and execute through
 `ItemModuleAdapter`. Model and tracker state is created inside the selected
 thread or spawn worker. The adapter owns queueing, lifecycle, shutdown, and
 worker diagnostics; plugin classes implement the module contract instead of a
-second pipeline-facing put/get runtime. Existing config names remain valid, including
+second pipeline-facing put/get runtime.
+
+PipelineSurveillance starts frame workers before sources and waits for each
+worker's initialization handshake before it starts capture. Item modules must
+finish required model/runtime initialization in their factory or create_state;
+the readiness signal is not a promise that a lazily initialized first
+process_item call has completed. Startup fails and cleans up if a worker fails
+or does not become ready within EVILEYE_FRAME_WORKER_READY_TIMEOUT_SEC
+(default: 30 seconds). Sources are not started against an unready detector.
+When finite sources reach EOF with autoclose, the controller drains queued
+and in-flight stage work before shutdown. The drain is bounded by
+EVILEYE_AUTOCLOSE_DRAIN_TIMEOUT_SEC (default: 60 seconds); a timeout is
+reported with the modules that still have pending work. Bounded item queues
+may still discard stale frames under overload, and those drops are reported
+in runtime diagnostics. Synchronous custom pipelines can use the base
+pipeline's empty backlog; a pipeline with asynchronous stages must implement
+has_pending_work() and get_pending_work_summary() so autoclose does not stop
+before its own workers finish. Existing config names remain valid, including
 `ObjectDetectorYoloMp` as an alias for `ObjectDetectorYolo`.
 `LegacyProcessorModuleAdapter` remains a compatibility bridge for modules that
 still expose only the old `put/get` contract; the migrated built-ins do not use

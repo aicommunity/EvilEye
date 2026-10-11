@@ -179,6 +179,8 @@ class ItemModuleWorker(MpWorker):
         self.module = None
         self.module_state = None
         self.drop_oldest_on_full = False
+        self.ready_event = state.get("ready_event")
+        self.init_failed_event = state.get("init_failed_event")
         self._last_model_class_mapping = None
         self.reports_model_class_mapping = bool(
             state.get("reports_model_class_mapping", False)
@@ -201,7 +203,11 @@ class ItemModuleWorker(MpWorker):
                 self.module, self.config, self.runtime_context
             )
             self._publish_model_class_mapping()
+            if self.ready_event is not None:
+                self.ready_event.set()
         except Exception as exc:
+            if self.init_failed_event is not None:
+                self.init_failed_event.set()
             try:
                 self.output_queue.put(
                     (_PROCESS_OUTPUT_MARKER, "error", f"Worker initialization failed: {exc}"),
@@ -253,7 +259,7 @@ class ItemModuleWorker(MpWorker):
             self._stop_event.set()
             return (_PROCESS_OUTPUT_MARKER, "error", str(exc))
         if result is None:
-            return None
+            return (_PROCESS_OUTPUT_MARKER, "skip", b"")
         try:
             serialized_result = _serialize_process_value(
                 result, self.module_id, "process_item result"
@@ -273,6 +279,8 @@ class ItemModuleWorker(MpWorker):
             "factory_module": self.factory_module,
             "factory_qualname": self.factory_qualname,
             "reports_model_class_mapping": self.reports_model_class_mapping,
+            "ready_event": self.ready_event,
+            "init_failed_event": self.init_failed_event,
         }
 
     def cleanup(self) -> None:
@@ -406,6 +414,8 @@ class ItemModuleAdapter(EvilEyeBase):
         self._config: dict[str, Any] = {}
         self._input_queue: queue.Queue = queue.Queue(maxsize=8)
         self._output_queue: queue.Queue = queue.Queue(maxsize=8)
+        self._pending_items = 0
+        self._pending_items_lock = threading.Lock()
         self._thread: threading.Thread | None = None
         self._stop_event = threading.Event()
         self._module = None
@@ -415,6 +425,10 @@ class ItemModuleAdapter(EvilEyeBase):
         self.input_queue_dropped = 0
         self.input_queue_rejected = 0
         self._failure_reported = False
+        self._thread_ready_events: list[threading.Event] = []
+        self._thread_init_failed_events: list[threading.Event] = []
+        self._process_ready_events: list[Any] = []
+        self._process_init_failed_events: list[Any] = []
         self._model_class_mapping: dict[str, int] | None = None
         self._model_class_mapping_lock = threading.Lock()
         self.reports_model_class_mapping = (
@@ -472,6 +486,27 @@ class ItemModuleAdapter(EvilEyeBase):
 
     def get_source_ids(self):
         return list(self.source_ids)
+
+    def _track_submitted_item(self, dropped_payload=None) -> None:
+        with self._pending_items_lock:
+            if dropped_payload is not None:
+                self._pending_items = max(0, self._pending_items - 1)
+            self._pending_items += 1
+
+    def _track_completed_item(self) -> None:
+        with self._pending_items_lock:
+            self._pending_items = max(0, self._pending_items - 1)
+
+    def _clear_pending_items(self) -> None:
+        with self._pending_items_lock:
+            self._pending_items = 0
+
+    def pending_work_count(self) -> int:
+        with self._pending_items_lock:
+            return self._pending_items
+
+    def has_pending_work(self) -> bool:
+        return self.pending_work_count() > 0
 
     def _record_input_drop(self) -> None:
         self.input_queue_dropped += 1
@@ -569,9 +604,19 @@ class ItemModuleAdapter(EvilEyeBase):
     def start(self):
         self._stop_event.clear()
         self._failure_reported = False
+        self.degraded = False
+        self._clear_pending_items()
         if self.execution_mode == "process":
+            from .mp_context import get_spawn_context
             from .mp_control import MpControl
 
+            mp_context = get_spawn_context()
+            ready_event = mp_context.Event()
+            init_failed_event = mp_context.Event()
+            self._process_ready_events = [ready_event]
+            self._process_init_failed_events = [init_failed_event]
+            self._thread_ready_events = []
+            self._thread_init_failed_events = []
             self._mp_control = MpControl(
                 max_input_size=self._queue_size,
                 max_output_size=self._queue_size,
@@ -588,9 +633,15 @@ class ItemModuleAdapter(EvilEyeBase):
             worker.module_state = None
             worker.drop_oldest_on_full = False
             worker.reports_model_class_mapping = self.reports_model_class_mapping
+            worker.ready_event = ready_event
+            worker.init_failed_event = init_failed_event
             self._mp_control.start()
             return
 
+        self._process_ready_events = []
+        self._process_init_failed_events = []
+        self._thread_ready_events = [threading.Event()]
+        self._thread_init_failed_events = [threading.Event()]
         self._module = None
         self._state = None
         self._thread = threading.Thread(
@@ -621,9 +672,11 @@ class ItemModuleAdapter(EvilEyeBase):
                 self._refresh_thread_model_class_mapping()
             except Exception:
                 self.degraded = True
+                self._thread_init_failed_events[0].set()
                 self.logger.exception("Plugin module %s failed during worker initialization", self.module_id)
                 return
 
+            self._thread_ready_events[0].set()
             while not self._stop_event.is_set():
                 try:
                     item = self._input_queue.get(timeout=0.1)
@@ -641,14 +694,66 @@ class ItemModuleAdapter(EvilEyeBase):
                                 break
                             except queue.Full:
                                 continue
+                    else:
+                        self._track_completed_item()
                 except Exception:
                     self.degraded = True
+                    self._clear_pending_items()
                     self.logger.exception("Plugin module %s failed while processing item", self.module_id)
                     break
         finally:
             _close_item_resources(self._module, self._state, self.logger, self.module_id)
             self._module = None
             self._state = None
+
+    def is_ready(self, timeout: float = 30.0) -> bool:
+        """Wait until every item worker has completed module initialization."""
+        try:
+            timeout = max(0.0, float(timeout))
+        except (TypeError, ValueError) as exc:
+            raise PluginError("readiness timeout must be a non-negative number") from exc
+
+        ready_events = (
+            self._process_ready_events
+            if self.execution_mode == "process"
+            else self._thread_ready_events
+        )
+        failed_events = (
+            self._process_init_failed_events
+            if self.execution_mode == "process"
+            else self._thread_init_failed_events
+        )
+        if not ready_events:
+            return False
+
+        deadline = time.monotonic() + timeout
+        while True:
+            if self.degraded:
+                return False
+            if any(event.is_set() for event in failed_events):
+                if self.execution_mode == "process":
+                    self.get()
+                if not self.degraded:
+                    self.degraded = True
+                    self.logger.error(
+                        "Plugin module %s worker failed during initialization",
+                        self.module_id,
+                    )
+                return False
+            if all(event.is_set() for event in ready_events):
+                return True
+
+            if self.execution_mode == "process":
+                self._check_process_health()
+                if self.degraded:
+                    return False
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                return False
+            next_event = next(
+                event for event in ready_events if not event.is_set()
+            )
+            next_event.wait(min(0.05, remaining))
 
     def put(self, item):
         try:
@@ -662,7 +767,8 @@ class ItemModuleAdapter(EvilEyeBase):
                     item, self.module_id, "input item"
                 )
                 payload = (_PROCESS_INPUT_MARKER, serialized_item)
-            self._enqueue_input(item, payload)
+            dropped_payload = self._enqueue_input(item, payload)
+            self._track_submitted_item(dropped_payload)
         except queue.Full:
             self.input_queue_rejected += 1
             self.degraded = True
@@ -705,11 +811,17 @@ class ItemModuleAdapter(EvilEyeBase):
                         continue
                     if result[1] == "error":
                         self.degraded = True
+                        self._failure_reported = True
+                        self._clear_pending_items()
                         self.logger.error(
                             "Plugin module %s failed in worker: %s", self.module_id, result[2]
                         )
                         return None
+                    if result[1] == "skip":
+                        self._track_completed_item()
+                        continue
                     if result[1] == "output":
+                        self._track_completed_item()
                         try:
                             return pickle.loads(result[2])
                         except Exception as exc:
@@ -726,7 +838,9 @@ class ItemModuleAdapter(EvilEyeBase):
                         self.module_id,
                     )
                     return None
-            return self._output_queue.get_nowait()
+            result = self._output_queue.get_nowait()
+            self._track_completed_item()
+            return result
         except queue.Empty:
             self._check_process_health()
             return None
@@ -737,7 +851,12 @@ class ItemModuleAdapter(EvilEyeBase):
             raise
 
     def _check_process_health(self):
-        if self._mp_control is None or self._stop_event.is_set() or self._failure_reported:
+        if (
+            self._mp_control is None
+            or self._stop_event.is_set()
+            or self._failure_reported
+            or any(event.is_set() for event in self._process_init_failed_events)
+        ):
             return
         exited = [
             process for process in self._mp_control.processes
@@ -746,6 +865,7 @@ class ItemModuleAdapter(EvilEyeBase):
         if exited:
             self.degraded = True
             self._failure_reported = True
+            self._clear_pending_items()
             self.logger.error(
                 "Plugin module %s worker exited unexpectedly (exit_code=%s)",
                 self.module_id,
@@ -770,6 +890,7 @@ class ItemModuleAdapter(EvilEyeBase):
             "output_queue_size": output_queue_size,
             "input_queue_dropped": self.input_queue_dropped,
             "input_queue_rejected": self.input_queue_rejected,
+            "in_flight": self.pending_work_count(),
             "degraded": self.degraded,
         }
 
@@ -802,6 +923,7 @@ class ItemModuleAdapter(EvilEyeBase):
         self.input_queue_dropped = 0
         self.input_queue_rejected = 0
         self._failure_reported = False
+        self._clear_pending_items()
         while True:
             try:
                 self._input_queue.get_nowait()
@@ -819,6 +941,7 @@ class ItemModuleAdapter(EvilEyeBase):
 
 _ORDERED_THREAD_OUTPUT_MARKER = "__evileye_parallel_item_runtime__"
 _ORDERED_SKIP = object()
+_ORDERED_EVICTED = object()
 
 
 class OrderedItemModuleWorker(ItemModuleWorker):
@@ -894,9 +1017,17 @@ class ParallelItemModuleAdapter(ItemModuleAdapter):
             return super().start()
         self._stop_event.clear()
         self._failure_reported = False
+        self.degraded = False
+        self._clear_pending_items()
         if self.execution_mode == "process":
+            from .mp_context import get_spawn_context
             from .mp_control import MpControl
 
+            mp_context = get_spawn_context()
+            self._process_ready_events = []
+            self._process_init_failed_events = []
+            self._thread_ready_events = []
+            self._thread_init_failed_events = []
             self._mp_control = MpControl(
                 max_input_size=self._queue_size,
                 max_output_size=self._queue_size,
@@ -914,9 +1045,21 @@ class ParallelItemModuleAdapter(ItemModuleAdapter):
                 worker.module_state = None
                 worker.drop_oldest_on_full = False
                 worker.reports_model_class_mapping = self.reports_model_class_mapping
+                worker.ready_event = mp_context.Event()
+                worker.init_failed_event = mp_context.Event()
+                self._process_ready_events.append(worker.ready_event)
+                self._process_init_failed_events.append(worker.init_failed_event)
             self._mp_control.start()
             return
 
+        self._process_ready_events = []
+        self._process_init_failed_events = []
+        self._thread_ready_events = [
+            threading.Event() for _ in range(self.worker_count)
+        ]
+        self._thread_init_failed_events = [
+            threading.Event() for _ in range(self.worker_count)
+        ]
         self._parallel_modules = [None] * self.worker_count
         self._parallel_states = [None] * self.worker_count
         self._parallel_threads = [
@@ -960,16 +1103,19 @@ class ParallelItemModuleAdapter(ItemModuleAdapter):
                     self._set_model_class_mapping(mapping)
             except Exception as exc:
                 self.degraded = True
+                self._clear_pending_items()
                 self.logger.exception(
                     "Plugin module %s worker %s failed during initialization",
                     self.module_id,
                     worker_index,
                 )
+                self._thread_init_failed_events[worker_index].set()
                 self._output_queue.put(
                     (_ORDERED_THREAD_OUTPUT_MARKER, "error", str(exc))
                 )
                 return
 
+            self._thread_ready_events[worker_index].set()
             while not self._stop_event.is_set():
                 try:
                     sequence, item = self._input_queue.get(timeout=0.1)
@@ -986,6 +1132,7 @@ class ParallelItemModuleAdapter(ItemModuleAdapter):
                         envelope = (_ORDERED_THREAD_OUTPUT_MARKER, "output", sequence, result)
                 except Exception as exc:
                     self.degraded = True
+                    self._clear_pending_items()
                     self.logger.exception(
                         "Plugin module %s worker %s failed on item %s",
                         self.module_id,
@@ -1024,6 +1171,7 @@ class ParallelItemModuleAdapter(ItemModuleAdapter):
                 )
                 payload = (_PROCESS_INPUT_MARKER, sequence, serialized)
             dropped_payload = self._enqueue_input(item, payload)
+            self._track_submitted_item(dropped_payload)
             self._next_input_sequence += 1
             if dropped_payload is not None:
                 dropped_sequence = (
@@ -1031,7 +1179,7 @@ class ParallelItemModuleAdapter(ItemModuleAdapter):
                     if self.execution_mode == "process"
                     else int(dropped_payload[0])
                 )
-                self._ordered_results[dropped_sequence] = _ORDERED_SKIP
+                self._ordered_results[dropped_sequence] = _ORDERED_EVICTED
         except queue.Full:
             self.input_queue_rejected += 1
             self.degraded = True
@@ -1106,12 +1254,17 @@ class ParallelItemModuleAdapter(ItemModuleAdapter):
         while self._next_output_sequence in self._ordered_results:
             value = self._ordered_results.pop(self._next_output_sequence)
             self._next_output_sequence += 1
+            if value is _ORDERED_EVICTED:
+                continue
             if value is _ORDERED_SKIP:
+                self._track_completed_item()
                 continue
             if isinstance(value, tuple) and len(value) == 2 and value[0] == "error":
                 self.degraded = True
+                self._clear_pending_items()
                 self.logger.error("Plugin module %s failed on ordered item: %s", self.module_id, value[1])
                 return None
+            self._track_completed_item()
             return value
         return None
 
@@ -2377,7 +2530,9 @@ class SourceModuleAdapter(EvilEyeBase):
         """Expose capture source metadata and event helpers through the adapter."""
         module = self.__dict__.get("_module")
         if module is not None and hasattr(module, name):
-            return getattr(module, name)
+            value = getattr(module, name)
+            if value is not None:
+                return value
         config = self.__dict__.get("_config", {})
         fallback = {
             "source_names": config.get("source_names", self.__dict__.get("_source_ids", [])),
@@ -2444,13 +2599,7 @@ class SourceModuleAdapter(EvilEyeBase):
                 self._config, self.module_id, "source configuration"
             )
         if self._capture_source_backend:
-            module = self._ensure_managed_source_module()
-            try:
-                module.open()
-            except Exception as exc:
-                self._mark_degraded(f"capture source could not open: {exc}")
-                self.logger.exception("Capture source plugin %s could not open", self.module_id)
-                return False
+            self._ensure_managed_source_module()
         return True
 
     def start(self):
@@ -2529,9 +2678,11 @@ class SourceModuleAdapter(EvilEyeBase):
 
     def _read_capture_source_backend(self):
         module = self._ensure_managed_source_module()
-        backend_control = getattr(module, "_mp_control", None)
-        backend_processes = list(getattr(backend_control, "processes", []) or [])
+        backend_processes = []
         try:
+            module.open()
+            backend_control = getattr(module, "_mp_control", None)
+            backend_processes = list(getattr(backend_control, "processes", []) or [])
             while not self._stop_event.is_set():
                 item = module.read()
                 if item is None:
