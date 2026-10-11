@@ -64,7 +64,6 @@ def test_journal_simple_gui(journal_test_logger, qapp):
     def close_window():
         window.close()
         ds.close()
-        app.quit()
 
     QTimer.singleShot(100, close_window)
     import time

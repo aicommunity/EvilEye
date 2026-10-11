@@ -141,7 +141,6 @@ def test_journal_columns_with_config(journal_test_logger, qapp, tmp_path):
         # Cleanup
         #
         # NOTE: pytest-qt's `qapp` fixture manages QApplication lifetime.
-        # Calling `app.quit()` (and then processing events) can intermittently crash
         # native Qt plugins in headless/CI environments.
         if hasattr(journal, 'update_timer'):
             try:

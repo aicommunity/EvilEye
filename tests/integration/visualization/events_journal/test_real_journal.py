@@ -49,10 +49,8 @@ def test_real_journal(journal_test_logger, qapp):
         if hasattr(journal, 'ds') and journal.ds:
             journal.ds.close()
         # Выходим из приложения
-        app.quit()
     
     QTimer.singleShot(200, close_window)
-    # Даем время на закрытие окна и обработку событий (ДО app.quit())
     import time
     # Просто ждем, чтобы QTimer.singleShot успел выполниться
     # Не вызываем app.processEvents() в цикле, чтобы избежать segfault
@@ -65,6 +63,5 @@ def test_real_journal(journal_test_logger, qapp):
         journal.close()
         if hasattr(journal, 'ds') and journal.ds:
             journal.ds.close()
-        # Не вызываем app.quit() здесь, так как он уже вызван в close_window()
     except Exception:
         pass

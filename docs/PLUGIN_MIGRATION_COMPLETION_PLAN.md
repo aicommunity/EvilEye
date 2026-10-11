@@ -595,3 +595,12 @@ installation из тестов; подобрать воспроизводиму�
 - [готово] Временный MediaMTX 1.21.0 provisioned в /tmp только для проверки; SHA-256 архива совпал с опубликованной в tests/RTSP_FIXTURE.md контрольной суммой. Бинарник и конфигурация не добавлялись в репозиторий.
 - [готово] tests/integration/capture/test_local_rtsp_sources.py: 8 passed для OpenCV и GStreamer в thread/process: первичная доставка кадра и восстановление после остановки/повторного запуска publisher-а. Recovery проверяет рост backend_connection_generation.
 - Ограничение: это синтетический RTSP источник loopback. Поведение на конкретных камерах проверялось ранее отдельно; Web UI и полный integration suite остаются открытыми.
+
+
+### Продолжение 2026-10-12: Qt GUI lifecycle в integration tests
+
+- [готово] Тесты журнала событий используют общую session-фикстуру QApplication. Удалено создание второго QApplication в тестах double-click и realtime updates; тесты больше не вызывают quit/exit для общего приложения.
+- [готово] Удалён отложенный callback из теста кнопки журнала: он мог исполниться уже во время следующего теста и обходить устаревшие QWidget wrappers. В realtime/double-click тестах закрытие выполняется напрямую; таймеры singleShot, которые не могли сработать при заблокированном event loop, больше не оставляются в очереди.
+- Проверка: вся группа tests/integration/visualization/events_journal — 29 passed, exit 0; git diff --check — без ошибок.
+- Открытый сбой: весь tests/integration/visualization доходит до выполнения тестов, затем обычный выход Python завершается SIGSEGV (exit 139). GDB показывает PyQt6.QtCore cleanup_qobject → sip_api_visit_wrappers → cleanup_on_exit → Py_FinalizeEx; Python-кадра в момент падения нет. Опциональный EVILEYE_PYTEST_FORCE_EXIT здесь не включался и не считается исправлением. Удаление Qt wrappers вручную пробовалось и само приводило к native crash, поэтому в продукте и общей фикстуре такое удаление не добавлено.
+- Дальше: изолировать оставшийся dangling QObject wrapper в смешанном запуске Configurer и journal GUI тестов; проверить lifecycle дочерних виджетов и QSqlQueryModel без принудительного завершения процесса, затем повторить весь visualization suite и общий integration suite.

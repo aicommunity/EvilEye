@@ -2,13 +2,12 @@
 
 import sys
 import os
-def test_real_double_click(journal_test_logger):
+def test_real_double_click(journal_test_logger, qapp):
     """Test real double click functionality in GUI"""
     
     journal_test_logger.info("=== Test Real Double Click ===")
     
     try:
-        from PyQt6.QtWidgets import QApplication
         from PyQt6.QtCore import Qt, QTimer
         from evileye.visualization_modules.events_journal_json import EventsJournalJson
         import cv2
@@ -16,7 +15,7 @@ def test_real_double_click(journal_test_logger):
         import datetime
         
         # Create a simple test application
-        app = QApplication([])
+        app = qapp
         
         # Create test directory structure
         base_dir = 'EvilEyeData'
@@ -103,26 +102,6 @@ def test_real_double_click(journal_test_logger):
         timer.start(1000)  # Check every second
         
         # Автоматически закрываем окно через 500ms
-        def close_window():
-            # Останавливаем таймер перед закрытием
-            if hasattr(journal, 'update_timer'):
-                journal.update_timer.stop()
-            # Закрываем виджет
-            journal.close()
-            # Закрываем data source
-            if hasattr(journal, 'ds') and journal.ds:
-                journal.ds.close()
-            # Обрабатываем события для корректного закрытия
-            # Не вызываем processEvents здесь, чтобы избежать segfault
-            # Выходим из приложения
-            app.quit()
-        
-        QTimer.singleShot(500, close_window)
-        # Даем время на закрытие окна
-        import time
-        time.sleep(0.6)
-        
-        # Явно закрываем окно на случай, если таймер не сработал
         try:
             # Останавливаем проверочный таймер
             if hasattr(timer, 'stop'):
@@ -138,7 +117,6 @@ def test_real_double_click(journal_test_logger):
             if hasattr(journal, 'ds') and journal.ds:
                 journal.ds.close()
             # Выходим из приложения
-            app.quit()
         except Exception:
             pass
         

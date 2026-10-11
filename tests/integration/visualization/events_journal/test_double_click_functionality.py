@@ -143,12 +143,9 @@ def test_double_click_functionality(journal_test_logger, qapp):
             # Обрабатываем события для корректного закрытия
             # Не вызываем processEvents здесь, чтобы избежать segfault
             # Выходим из приложения
-            app.quit()
         
         QTimer.singleShot(200, close_window)
-        # Даем время на закрытие окна и обработку событий (ДО app.quit())
         import time
-        # Даем время на закрытие окна и обработку событий (ДО app.quit())
         import time
         # Обрабатываем события несколько раз с проверками
         for _ in range(min(10, 5)):  # Ограничиваем количество итераций
@@ -173,8 +170,6 @@ def test_double_click_functionality(journal_test_logger, qapp):
             if hasattr(journal, 'ds') and journal.ds:
                 journal.ds.close()
             # Выходим из приложения
-            app.quit()
-        # Не вызываем app.quit() здесь, так как он уже вызван в close_window()
         except Exception:
             pass
         

@@ -167,7 +167,6 @@ def test_journal_columns_with_db(journal_test_logger, qapp, tmp_path):
             journal.close()
             if hasattr(journal, 'ds') and journal.ds:
                 journal.ds.close()
-            app.quit()
         
         try:
             from PyQt6.QtCore import QTimer

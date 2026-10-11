@@ -5,13 +5,12 @@ import os
 import time
 import threading
 
-def test_realtime_updates(journal_test_logger):
+def test_realtime_updates(journal_test_logger, qapp):
     """Test real-time updates in journal window"""
     
     journal_test_logger.info("=== Test Real-time Updates ===")
     
     try:
-        from PyQt6.QtWidgets import QApplication
         from PyQt6.QtCore import QTimer
         from evileye.visualization_modules.events_journal_json import EventsJournalJson
         import cv2
@@ -20,7 +19,7 @@ def test_realtime_updates(journal_test_logger):
         import json
         
         # Create a simple test application
-        app = QApplication([])
+        app = qapp
         
         # Create test directory structure
         base_dir = 'EvilEyeData'
@@ -135,40 +134,6 @@ def test_realtime_updates(journal_test_logger):
         timer = QTimer()
         timer.timeout.connect(check_updates)
         timer.start(10000)  # Check every 10 seconds
-        
-        # Автоматически закрываем окно через 200ms
-        def close_window():
-            try:
-                # Останавливаем фоновый поток
-                stop_thread.set()
-                # Ждем завершения потока (максимум 1 секунда)
-                update_thread.join(timeout=1.0)
-                
-                # Останавливаем проверочный таймер
-                if hasattr(timer, 'stop'):
-                    timer.stop()
-                
-                # Останавливаем таймер перед закрытием
-                if hasattr(journal, 'update_timer'):
-                    journal.update_timer.stop()
-                
-                # Закрываем виджет
-                journal.close()
-                # Закрываем data source
-                if hasattr(journal, 'ds') and journal.ds:
-                    journal.ds.close()
-                # Выходим из приложения
-                app.quit()
-            except Exception:
-                pass
-        
-        QTimer.singleShot(200, close_window)
-        # Даем время на закрытие окна и обработку событий (ДО app.quit())
-        # Просто ждем, чтобы QTimer.singleShot успел выполниться
-        # Не вызываем app.processEvents() в цикле, чтобы избежать segfault
-        time.sleep(0.3)  # Увеличиваем задержку
-        
-        # Явно закрываем окно на случай, если таймер не сработал
         try:
             # Останавливаем фоновый поток
             stop_thread.set()
@@ -188,7 +153,7 @@ def test_realtime_updates(journal_test_logger):
             # Закрываем data source
             if hasattr(journal, 'ds') and journal.ds:
                 journal.ds.close()
-            # Не вызываем app.quit() здесь, так как он уже вызван в close_window()
+            # This test shares the session QApplication.
         except Exception:
             pass
         

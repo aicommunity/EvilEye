@@ -14,10 +14,6 @@ except ImportError:
 from evileye.visualization_modules.main_window import MainWindow
 
 def test_journal_button_behavior(journal_test_logger, qapp):
-    try:
-        from PyQt6.QtCore import QTimer
-    except ImportError:
-        from PyQt5.QtCore import QTimer
     
     # Use QApplication managed by pytest-qt fixture.
     app = qapp
@@ -147,17 +143,5 @@ def test_journal_button_behavior(journal_test_logger, qapp):
     journal_test_logger.info(f"Failed mode - Events journal enabled: {main_window_failed.events_journal.isEnabled()}")
     main_window_failed.close()
     
-    # Закрываем все окна и корректно выходим (без принудительного app.quit()).
-    def close_all():
-        for widget in app.allWidgets():
-            if widget.isWindow():
-                widget.close()
-        app.exit()
 
-    QTimer.singleShot(50, close_all)
-    try:
-        app.processEvents()
-    except Exception:
-        pass
-    
     journal_test_logger.info("\n=== Test completed ===")
