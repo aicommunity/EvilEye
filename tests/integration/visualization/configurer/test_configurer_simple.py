@@ -8,7 +8,9 @@
 import tempfile
 import json
 import os
-import time
+import sys
+import gc
+import subprocess
 
 # Qt widgets need the offscreen backend on headless CI and remote hosts.
 if not os.environ.get("DISPLAY") and not os.environ.get("WAYLAND_DISPLAY"):
@@ -21,25 +23,22 @@ from pathlib import Path
 
 try:
     from PyQt6.QtWidgets import QApplication, QMessageBox
-    from PyQt6.QtCore import Qt, QTimer
+    from PyQt6.QtCore import Qt, QCoreApplication, QEvent
     pyqt_version = 6
 except ImportError:
     from PyQt5.QtWidgets import QApplication, QMessageBox
-    from PyQt5.QtCore import Qt, QTimer
+    from PyQt5.QtCore import Qt, QCoreApplication, QEvent
     pyqt_version = 5
 
 from evileye.visualization_modules.configurer.configurer_window import ConfigurerMainWindow
 from unittest.mock import patch, Mock
 
 
-def test_configurer_simple():
+def _run_configurer_smoke(app):
     """Простой тест ConfigurerMainWindow"""
     print("🧪 Тестирование ConfigurerMainWindow...")
     
-    # Создаем QApplication
-    app = QApplication.instance()
-    if app is None:
-        app = QApplication.instance() or QApplication([])
+    # QApplication is created by the standalone smoke process.
     
     # Создаем временный файл конфигурации
     temp_config = tempfile.NamedTemporaryFile(mode='w', suffix='.json', delete=False)
@@ -138,6 +137,7 @@ def test_configurer_simple():
     
     json.dump(test_config, temp_config, indent=4)
     temp_config.close()
+    configurer = None
     
     try:
         print(f"📁 Создан временный файл: {temp_config.name}")
@@ -158,7 +158,10 @@ def test_configurer_simple():
         else:
             question_return_value = QMessageBox.Discard
         
-        with patch('evileye.visualization_modules.configurer.configurer_window.QMessageBox') as mock_msgbox:
+        with (
+            patch.object(ConfigurerMainWindow, "_connect_to_db"),
+            patch("evileye.visualization_modules.configurer.configurer_window.QMessageBox") as mock_msgbox,
+        ):
             # Мокируем методы QMessageBox
             mock_msgbox.critical = Mock()
             mock_msgbox.warning = Mock()
@@ -180,22 +183,10 @@ def test_configurer_simple():
         if configurer:
             print("✅ Окно ConfigurerMainWindow существует")
             
-            # Автоматически закрываем окно через 100ms
-            def close_window():
-                try:
-                    configurer.close()
-                except Exception:
-                    pass
-            
-            QTimer.singleShot(100, close_window)
-            # Даем время на закрытие окна
-            time.sleep(0.2)
-            
-            # Явно закрываем окно на случай, если таймер не сработал
-            try:
-                configurer.close()
-            except Exception:
-                pass
+            # Закрываем окно и обрабатываем ожидающие Qt-события.
+            configurer.close()
+            app.processEvents()
+            assert not configurer._change_tracking_connections
             print("✅ Окно ConfigurerMainWindow закрыто")
         else:
             print("❌ Окно ConfigurerMainWindow не создано")
@@ -211,6 +202,18 @@ def test_configurer_simple():
         raise  # Re-raise exception for pytest to catch
     
     finally:
+        # Destroy the native widget tree while QApplication and Qt modules are alive.
+        if configurer is not None:
+            configurer.close()
+            configurer.deleteLater()
+            deferred_delete = (
+                QEvent.Type.DeferredDelete if pyqt_version == 6 else QEvent.DeferredDelete
+            )
+            QCoreApplication.sendPostedEvents(None, deferred_delete)
+            app.processEvents()
+            del configurer
+            gc.collect()
+
         # Очищаем временный файл
         try:
             os.unlink(temp_config.name)
@@ -218,6 +221,24 @@ def test_configurer_simple():
             pass
 
 
+def test_configurer_simple():
+    env = os.environ.copy()
+    env.setdefault("QT_QPA_PLATFORM", "offscreen")
+    result = subprocess.run(
+        [sys.executable, str(Path(__file__).resolve())],
+        cwd=Path(__file__).resolve().parents[4],
+        env=env,
+        capture_output=True,
+        text=True,
+        timeout=60,
+    )
+    assert result.returncode == 0, (
+        f"Configurer GUI smoke process exited with {result.returncode}\n"
+        f"stdout:\n{result.stdout}\nstderr:\n{result.stderr}"
+    )
+
+
 if __name__ == "__main__":
-    success = test_configurer_simple()
-    sys.exit(0 if success else 1)
+    app = QApplication.instance() or QApplication([])
+    _run_configurer_smoke(app)
+    sys.exit(0)

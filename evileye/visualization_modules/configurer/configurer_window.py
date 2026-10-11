@@ -580,6 +580,11 @@ class ConfigurerMainWindow(QDialog):
                 # Сохраняем конфигурацию
                 self._save_config()
 
+        # Break signal connections before destroying the tab widget tree.
+        for signal, slot in self._change_tracking_connections:
+            signal.disconnect(slot)
+        self._change_tracking_connections.clear()
+
         # Закрываем вкладки
         for tab_idx in range(self.tabs.count()):
             tab = self.tabs.widget(tab_idx)
@@ -612,17 +617,21 @@ class ConfigurerMainWindow(QDialog):
                 self._original_tab_data[tab_name] = tab_widget.get_params()
 
     def _connect_change_tracking_signals(self) -> None:
-        """Подключение сигналов для отслеживания изменений"""
-        # Подключаем сигналы изменения вкладок
-        for tab_name, tab_widget in self.tab_params.items():
-            if hasattr(tab_widget, 'params_changed'):
-                tab_widget.params_changed.connect(self._on_tab_params_changed)
-            elif hasattr(tab_widget, 'valueChanged'):
-                # Для виджетов с сигналом valueChanged
-                tab_widget.valueChanged.connect(self._on_tab_params_changed)
-            elif hasattr(tab_widget, 'textChanged'):
-                # Для текстовых полей
-                tab_widget.textChanged.connect(self._on_tab_params_changed)
+        """Подключение сигналов изменения параметров вкладок."""
+        self._change_tracking_connections = []
+        for tab_widget in self.tab_params.values():
+            signal = None
+            for signal_name in ("params_changed", "valueChanged", "textChanged"):
+                candidate = getattr(tab_widget, signal_name, None)
+                if candidate is not None:
+                    signal = candidate
+                    break
+            if signal is not None:
+                signal.connect(self._on_tab_params_changed)
+                self._change_tracking_connections.append(
+                    (signal, self._on_tab_params_changed)
+                )
+
 
     @pyqtSlot()
     def _on_tab_params_changed(self) -> None:

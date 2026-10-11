@@ -613,3 +613,11 @@ installation из тестов; подобрать воспроизводиму�
 - Проверка: 144 теста из configurer, events_journal, roi_core, roi_editor завершились с exit 0. Коллекция полного visualization набора — 215 тестов; запуск дошёл до [100%], без FAILED/ERROR в логе, но затем завершился exit 139 во время выгрузки Python.
 - Открытый сбой не изменился: нативное завершение происходит в PyQt6/SIP cleanup_qobject → sip_api_visit_wrappers → cleanup_on_exit → Py_FinalizeEx, без Python stack frame. Единый QApplication и снятие дублирующих create/quit устранили один класс lifecycle-ошибок, но не dangling wrapper, вызывающий финальный SIGSEGV.
 - Следующее действие: найти владельца повреждённого QObject wrapper или подтвердить дефект версии PyQt6 в изоляции минимальным воспроизведением; оставить EVILEYE_PYTEST_FORCE_EXIT только диагностическим обходом, не считать его исправлением.
+
+
+### Продолжение 2026-10-12: Configurer cleanup и обычный выход GUI suite
+
+- В ConfigurerMainWindow список подключений сигналов отслеживания изменений теперь сохраняется. При подтверждённом закрытии окна слоты отключаются до закрытия вкладок; это устранило воспроизводимый SIP crash при создании полного набора вкладок и завершении отдельного процесса.
+- Упрощён smoke-тест Configurer: удалён QTimer.singleShot вместе с блокирующим time.sleep, закрытие окна выполняется синхронно, а реальное создание и завершение GUI выполняется дочерним процессом. Родительский pytest проверяет его код возврата и вывод при ошибке.
+- Проверки на сервере: одиночный Configurer smoke — 1 passed, exit 0; совместные Configurer и event journal — 30 passed, exit 0; весь tests/integration/visualization — 215 collected, 180 passed, 35 ожидаемо skipped (тесты с реальными данными выключены), exit 0. EVILEYE_PYTEST_FORCE_EXIT не использовался.
+- Предыдущий нативный SIGSEGV полного visualization suite больше не воспроизводится. Следующий шаг по плану: повторить полный integration suite и зафиксировать оставшиеся внешние/средовые блокеры, затем вернуться к финальной проверке inventory thread/process и parity.
