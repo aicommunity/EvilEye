@@ -271,7 +271,6 @@ def test_settings_integration(qapp):
             def close_main_window():
                 try:
                     main_window.close()
-                    app.quit()
                 except Exception:
                     pass
             
@@ -282,7 +281,6 @@ def test_settings_integration(qapp):
             # Явно закрываем главное окно на случай, если таймер не сработал
             try:
                 main_window.close()
-                app.quit()
             except Exception:
                 pass
         

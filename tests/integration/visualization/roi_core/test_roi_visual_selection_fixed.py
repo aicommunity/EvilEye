@@ -20,7 +20,7 @@ class TestROIVisualSelection(unittest.TestCase):
         """Настройка тестов"""
         self.app = QApplication.instance()
         if self.app is None:
-            self.app = QApplication([])
+            self.app = QApplication.instance() or QApplication([])
         
         # Создаем mock для логгера
         self.mock_logger = Mock()
@@ -54,7 +54,6 @@ class TestROIVisualSelection(unittest.TestCase):
             try:
                 if hasattr(self, 'roi_window') and self.roi_window:
                     self.roi_window.close()
-                self.app.quit()
             except Exception:
                 pass
         
@@ -66,7 +65,6 @@ class TestROIVisualSelection(unittest.TestCase):
         try:
             if hasattr(self, 'roi_window') and self.roi_window:
                 self.roi_window.close()
-            self.app.quit()
         except Exception:
             pass
 
@@ -246,7 +244,7 @@ class TestROISelectionIntegration(unittest.TestCase):
         """Настройка тестов"""
         self.app = QApplication.instance()
         if self.app is None:
-            self.app = QApplication([])
+            self.app = QApplication.instance() or QApplication([])
         
         # Создаем mock для логгера
         self.mock_logger = Mock()

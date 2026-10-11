@@ -22,7 +22,7 @@ class TestROIGraphicsView(unittest.TestCase):
         """Настройка перед каждым тестом"""
         self.app = QApplication.instance()
         if self.app is None:
-            self.app = QApplication([])
+            self.app = QApplication.instance() or QApplication([])
         
         self.scene = QGraphicsScene()
         self.view = ROIGraphicsView()
@@ -199,7 +199,7 @@ class TestResizeHandle(unittest.TestCase):
         """Настройка перед каждым тестом"""
         self.app = QApplication.instance()
         if self.app is None:
-            self.app = QApplication([])
+            self.app = QApplication.instance() or QApplication([])
         
         self.handle = ResizeHandle(100, 100, 20)
     
@@ -259,7 +259,7 @@ class TestROIEditorDialog(unittest.TestCase):
         """Настройка перед каждым тестом"""
         self.app = QApplication.instance()
         if self.app is None:
-            self.app = QApplication([])
+            self.app = QApplication.instance() or QApplication([])
         
         # Мокаем параметры
         self.mock_params = {
@@ -355,7 +355,7 @@ class TestROIInteraction(unittest.TestCase):
         """Настройка перед каждым тестом"""
         self.app = QApplication.instance()
         if self.app is None:
-            self.app = QApplication([])
+            self.app = QApplication.instance() or QApplication([])
         
         self.scene = QGraphicsScene()
         self.view = ROIGraphicsView()
@@ -422,7 +422,7 @@ class TestROIInteraction(unittest.TestCase):
 
 if __name__ == '__main__':
     # Создаем QApplication для тестов
-    app = QApplication([])
+    app = QApplication.instance() or QApplication([])
     
     # Запускаем тесты
     unittest.main()

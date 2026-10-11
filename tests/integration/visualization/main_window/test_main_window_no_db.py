@@ -24,7 +24,7 @@ def test_main_window_without_db():
         # Create QApplication if it doesn't exist
         app = QApplication.instance()
         if app is None:
-            app = QApplication(sys.argv)
+            app = QApplication.instance() or QApplication(sys.argv)
         
         # Create controller with database disabled
         ctrl = controller.Controller()
@@ -75,7 +75,6 @@ def test_main_window_without_db():
         
         def close_window():
             main_window.close()
-            app.quit()
         
         QTimer.singleShot(100, close_window)
         # Даем время на закрытие окна
@@ -85,7 +84,6 @@ def test_main_window_without_db():
         # Явно закрываем окно на случай, если таймер не сработал
         try:
             main_window.close()
-            app.quit()
         except Exception:
             pass
             
@@ -111,7 +109,7 @@ def test_main_window_with_db():
         # Create QApplication if it doesn't exist
         app = QApplication.instance()
         if app is None:
-            app = QApplication(sys.argv)
+            app = QApplication.instance() or QApplication(sys.argv)
         
         # Create controller with database enabled
         ctrl = controller.Controller()
@@ -162,7 +160,6 @@ def test_main_window_with_db():
         
         def close_window():
             main_window.close()
-            app.quit()
         
         QTimer.singleShot(100, close_window)
         # Даем время на закрытие окна
@@ -172,7 +169,6 @@ def test_main_window_with_db():
         # Явно закрываем окно на случай, если таймер не сработал
         try:
             main_window.close()
-            app.quit()
         except Exception:
             pass
             

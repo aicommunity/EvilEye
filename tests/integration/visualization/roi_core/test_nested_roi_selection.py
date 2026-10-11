@@ -21,7 +21,7 @@ class TestNestedROISelection(unittest.TestCase):
         """Настройка перед каждым тестом"""
         self.app = QApplication.instance()
         if self.app is None:
-            self.app = QApplication([])
+            self.app = QApplication.instance() or QApplication([])
         
         self.scene = QGraphicsScene()
         self.view = ROIGraphicsView()
@@ -60,7 +60,6 @@ class TestNestedROISelection(unittest.TestCase):
             try:
                 if hasattr(self, 'roi_window') and self.roi_window:
                     self.roi_window.close()
-                self.app.quit()
             except Exception:
                 pass
         
@@ -72,7 +71,6 @@ class TestNestedROISelection(unittest.TestCase):
         try:
             if hasattr(self, 'roi_window') and self.roi_window:
                 self.roi_window.close()
-            self.app.quit()
         except Exception:
             pass
 
@@ -191,7 +189,7 @@ class TestNestedROISelection(unittest.TestCase):
 
 if __name__ == '__main__':
     # Создаем QApplication для тестов
-    app = QApplication([])
+    app = QApplication.instance() or QApplication([])
     
     # Запускаем тесты
     unittest.main(verbosity=2)

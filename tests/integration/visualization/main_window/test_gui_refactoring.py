@@ -29,7 +29,7 @@ from evileye.visualization_modules.dialogs import SaveConfirmationDialog, SaveAs
 def qapp():
     """Fixture для QApplication."""
     if not QApplication.instance():
-        app = QApplication([])
+        app = QApplication.instance() or QApplication([])
     else:
         app = QApplication.instance()
     yield app

@@ -39,7 +39,7 @@ def test_configurer_simple():
     # Создаем QApplication
     app = QApplication.instance()
     if app is None:
-        app = QApplication([])
+        app = QApplication.instance() or QApplication([])
     
     # Создаем временный файл конфигурации
     temp_config = tempfile.NamedTemporaryFile(mode='w', suffix='.json', delete=False)
@@ -184,7 +184,6 @@ def test_configurer_simple():
             def close_window():
                 try:
                     configurer.close()
-                    app.quit()
                 except Exception:
                     pass
             
@@ -195,7 +194,6 @@ def test_configurer_simple():
             # Явно закрываем окно на случай, если таймер не сработал
             try:
                 configurer.close()
-                app.quit()
             except Exception:
                 pass
             print("✅ Окно ConfigurerMainWindow закрыто")

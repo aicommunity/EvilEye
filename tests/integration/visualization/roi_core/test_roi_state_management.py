@@ -22,7 +22,7 @@ class TestROIStateManagement(unittest.TestCase):
         """Настройка тестов"""
         self.app = QApplication.instance()
         if self.app is None:
-            self.app = QApplication([])
+            self.app = QApplication.instance() or QApplication([])
         
         # Создаем mock для логгера
         with patch('evileye.visualization_modules.roi_core.get_module_logger') as mock_logger:
@@ -49,7 +49,6 @@ class TestROIStateManagement(unittest.TestCase):
             try:
                 if hasattr(self, 'roi_window') and self.roi_window:
                     self.roi_window.close()
-                self.app.quit()
             except Exception:
                 pass
         
@@ -61,7 +60,6 @@ class TestROIStateManagement(unittest.TestCase):
         try:
             if hasattr(self, 'roi_window') and self.roi_window:
                 self.roi_window.close()
-            self.app.quit()
         except Exception:
             pass
 
@@ -217,7 +215,7 @@ class TestROIEditorDialogStateManagement(unittest.TestCase):
         """Настройка тестов"""
         self.app = QApplication.instance()
         if self.app is None:
-            self.app = QApplication([])
+            self.app = QApplication.instance() or QApplication([])
         
         # Создаем mock для логгера
         with patch('evileye.visualization_modules.roi_core.get_module_logger') as mock_logger:

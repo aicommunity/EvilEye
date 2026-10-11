@@ -604,3 +604,12 @@ installation из тестов; подобрать воспроизводиму�
 - Проверка: вся группа tests/integration/visualization/events_journal — 29 passed, exit 0; git diff --check — без ошибок.
 - Открытый сбой: весь tests/integration/visualization доходит до выполнения тестов, затем обычный выход Python завершается SIGSEGV (exit 139). GDB показывает PyQt6.QtCore cleanup_qobject → sip_api_visit_wrappers → cleanup_on_exit → Py_FinalizeEx; Python-кадра в момент падения нет. Опциональный EVILEYE_PYTEST_FORCE_EXIT здесь не включался и не считается исправлением. Удаление Qt wrappers вручную пробовалось и само приводило к native crash, поэтому в продукте и общей фикстуре такое удаление не добавлено.
 - Дальше: изолировать оставшийся dangling QObject wrapper в смешанном запуске Configurer и journal GUI тестов; проверить lifecycle дочерних виджетов и QSqlQueryModel без принудительного завершения процесса, затем повторить весь visualization suite и общий integration suite.
+
+
+### Продолжение 2026-10-12: единый QApplication для visualization suite
+
+- [готово] Добавлена session-scoped autouse QApplication фикстура для tests/integration/visualization; на headless сервере она заранее выставляет QT_QPA_PLATFORM=offscreen. Все GUI-тесты получают singleton до своего setup.
+- [готово] 44 прямых вызова QApplication([] или sys.argv) приведены к проверке существующего singleton; из visualization-тестов удалены локальные app.quit/exit (ни один из этих тестов не запускает app.exec). Это предотвращает повторное создание приложения и остановку общего Qt runtime.
+- Проверка: 144 теста из configurer, events_journal, roi_core, roi_editor завершились с exit 0. Коллекция полного visualization набора — 215 тестов; запуск дошёл до [100%], без FAILED/ERROR в логе, но затем завершился exit 139 во время выгрузки Python.
+- Открытый сбой не изменился: нативное завершение происходит в PyQt6/SIP cleanup_qobject → sip_api_visit_wrappers → cleanup_on_exit → Py_FinalizeEx, без Python stack frame. Единый QApplication и снятие дублирующих create/quit устранили один класс lifecycle-ошибок, но не dangling wrapper, вызывающий финальный SIGSEGV.
+- Следующее действие: найти владельца повреждённого QObject wrapper или подтвердить дефект версии PyQt6 в изоляции минимальным воспроизведением; оставить EVILEYE_PYTEST_FORCE_EXIT только диагностическим обходом, не считать его исправлением.

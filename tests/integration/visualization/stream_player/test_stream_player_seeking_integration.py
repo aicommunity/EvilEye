@@ -28,7 +28,7 @@ class TestStreamPlayerSeekingIntegration(unittest.TestCase):
     def setUpClass(cls):
         """Create QApplication once for all tests"""
         if not QApplication.instance():
-            cls.app = QApplication([])
+            cls.app = QApplication.instance() or QApplication([])
         else:
             cls.app = QApplication.instance()
     

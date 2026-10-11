@@ -40,7 +40,7 @@ pytestmark = pytest.mark.skipif(
 def qapp():
     """Создать QApplication для тестов"""
     if not QApplication.instance():
-        app = QApplication(sys.argv)
+        app = QApplication.instance() or QApplication(sys.argv)
         yield app
     else:
         yield QApplication.instance()
