@@ -33,6 +33,7 @@ from .pipeline_simple import PipelineSimple
 from .interfaces import (
     IDatabaseAdapter,
     IEventDetector,
+    IProcessEventDetector,
     IObjectHandler,
     IPipeline,
     IVisualizer,
@@ -43,6 +44,7 @@ from .contracts import (
     DatabaseDependencies,
     EventsConfig,
     EventsDependencies,
+    EventUpdate,
     PipelineConfig,
     PipelineDependencies,
     VisualizationConfig,

@@ -109,9 +109,6 @@ class EventsService:
             if name in {DETECTOR_CONFIG_KEY, LEGACY_DETECTOR_CONFIG_KEY}:
                 section = resolve_detector_section(params)
             detector_config = section or {}
-            registered = plugin_registry.get_module(name)
-            if registered is not None and registered.spec.config_schema is not None:
-                detector_config = plugin_registry.validate_module_config(name, detector_config)
             detector.set_params(**detector_config)
             if detector.init() is False:
                 raise RuntimeError(f"Event detector '{name}' initialization returned false")
@@ -133,7 +130,10 @@ class EventsService:
                     subscribe = getattr(source, "subscribe", None)
                     if callable(subscribe):
                         subscribe(detector)
-            if "object_handler" in registered.spec.capabilities:
+            if (
+                "object_handler" in registered.spec.capabilities
+                or "event_updates" in registered.spec.capabilities
+            ):
                 oh_subs.append(detector)
         unique_subscribers = []
         seen_subscribers: set[int] = set()
@@ -452,6 +452,7 @@ class EventsService:
 
     def start_detectors(self) -> None:
         seen: set[int] = set()
+        started = []
         for name, detector in self._detectors.items():
             det_id = id(detector)
             if det_id in seen:
@@ -459,9 +460,26 @@ class EventsService:
             seen.add(det_id)
             try:
                 detector.start()
+                started.append((name, detector))
                 self.logger.debug(f"Started detector: {name}")
-            except Exception as e:
-                self.logger.error(f"Failed to start detector {name}: {e}")
+            except Exception as exc:
+                self.logger.error(
+                    "Failed to start event detector %s: %s",
+                    name,
+                    exc,
+                    exc_info=True,
+                )
+                for started_name, started_detector in reversed(started):
+                    try:
+                        started_detector.stop()
+                    except Exception:
+                        self.logger.exception(
+                            "Failed to stop event detector %s after startup failure",
+                            started_name,
+                        )
+                raise RuntimeError(
+                    f"Failed to start event detector '{name}': {exc}"
+                ) from exc
 
     def stop_detectors(self) -> None:
         seen: set[int] = set()

@@ -21,6 +21,7 @@ def register_event_detector(
     name: str,
     *,
     capabilities: tuple[str, ...] = (),
+    execution_modes: tuple[str, ...] = ("thread",),
 ) -> Callable[[Type], Type]:
     """Register a factory whose constructor accepts ``EventDetectorContext``."""
 
@@ -32,7 +33,7 @@ def register_event_detector(
             name_value,
             factory,
             kind="event_detector",
-            execution_modes=("thread",),
+            execution_modes=execution_modes,
             capabilities=capabilities,
             legacy_ids=(name_value,),
         )

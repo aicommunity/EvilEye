@@ -30,9 +30,22 @@
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
-from typing import Any, Dict, Iterable, List, Mapping, Optional, Protocol, runtime_checkable
+from typing import (
+    TYPE_CHECKING,
+    Any,
+    Dict,
+    Iterable,
+    List,
+    Mapping,
+    Optional,
+    Protocol,
+    runtime_checkable,
+)
 
 from .plugins import ModuleRuntimeContext
+
+if TYPE_CHECKING:
+    from .contracts import EventUpdate
 
 
 @runtime_checkable
@@ -205,6 +218,13 @@ class IEventDetector(Protocol):
     def get(self) -> Iterable[Any]: ...
 
     def get_name(self) -> str: ...
+
+
+@runtime_checkable
+class IProcessEventDetector(Protocol):
+    """Spawn-worker contract for event rules consuming serializable updates."""
+
+    def process_update(self, update: Any, state: Any) -> Any: ...
 
 
 @runtime_checkable

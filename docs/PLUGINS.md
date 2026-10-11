@@ -30,7 +30,8 @@ installable package.
 
 The structural protocols are in `evileye.core.interfaces`: `IItemProcessor`,
 `IStatefulItemProcessor`, `IContextualStatefulItemProcessor`, `ISource`,
-`IBatchProcessor`, `IModelClassMappingProvider`, and `IEventDetector`. Plugins do not inherit from these protocols. The runtime
+`IBatchProcessor`, `IModelClassMappingProvider`, `IEventDetector`, and
+`IProcessEventDetector`. Plugins do not inherit from these protocols. The runtime
 validates the required callable methods when the module is initialized.
 
 The common item, source, and batch adapters expose `get_runtime_stats()`
@@ -205,17 +206,79 @@ tracker instead of stopping at the first matching `source_id`.
 
 ## Event detectors and alarms
 
-An event module declares `kind="event_detector"` (and
-`capabilities=("object_handler",)` when it subscribes to ObjectsHandler). It
-must follow EvilEye's event-detector lifecycle and emit event objects. Event
-detectors currently run in `thread` mode; requesting `process` is rejected
-until their event and dependency transport has a process contract. For a
-generic custom alarm, use `AlarmEvent(alarm_type, severity=..., source_id=...,
-details=...)`; it is persisted by the generic JSON and PostgreSQL adapters and
-displayed by the events journal. A stable `alarm_id` makes retries idempotent.
-Queues and persistence errors are reported in runtime diagnostics. The first
-release does not promise delivery of an alarm that existed only in memory when
-the host process crashed.
+Legacy event modules declare `kind="event_detector"` and retain their
+thread lifecycle. A module that reads live `ObjectsHandler` or capture source
+objects uses the `object_handler` or `capture_sources` capability and stays
+in thread mode.
+
+A process event module declares
+`execution_modes=("process",)` and
+`capabilities=("event_updates",)`. Its top-level factory accepts a config
+mapping and returns an object implementing
+`process_update(update: EventUpdate, state)`. The optional
+`create_state(config, context)` runs inside the spawned worker. Optional
+`start()` and `stop()` methods also run in that worker. The factory must be
+importable at module scope.
+
+The host subscribes this module to `ObjectsHandler` and transfers one
+`EventUpdate(kind="object_snapshot")` per configured source after each object
+update. `payload` contains primitive `active` and `lost` object summaries
+with ids, class id, timestamp, bounding box, attributes, and history summaries;
+frame pixels, live model objects, handlers, and locks do not cross the process
+boundary. Plugins can also accept explicit `EventUpdate` values through
+`put()`. Process modules cannot declare `object_handler` or
+`capture_sources`; the runtime rejects those live dependencies before start.
+
+```python
+from evileye.core.contracts import EventUpdate
+from evileye.core.plugins import ModuleSpec, PluginSpec, PLUGIN_API_VERSION
+from evileye.events_detectors.alarm_event import AlarmEvent
+
+class SafetyRule:
+    def __init__(self, config):
+        self.required_attributes = set(config["required_attributes"])
+
+    def process_update(self, update: EventUpdate, state):
+        alarms = []
+        for obj in update.payload["active"]:
+            present = {
+                name for name, value in obj["attributes"].items()
+                if value.get("state") == "exists"
+            }
+            missing = self.required_attributes - present
+            if missing:
+                alarms.append(AlarmEvent(
+                    "ppe_violation",
+                    severity="critical",
+                    source_id=update.source_id,
+                    details={"object_id": obj["object_id"], "missing": sorted(missing)},
+                ))
+        return alarms
+
+def load_plugin():
+    return PluginSpec(
+        plugin_id="site_safety",
+        api_version=PLUGIN_API_VERSION,
+        modules=(ModuleSpec(
+            module_id="ppe_rule",
+            kind="event_detector",
+            factory=SafetyRule,
+            execution_modes=("process",),
+            capabilities=("event_updates",),
+        ),),
+    )
+```
+
+`process_update` returns `None`, one event, or a list/tuple of events. Event
+objects must be pickle-serializable. For a generic custom alarm, return
+`AlarmEvent(alarm_type, severity=..., source_id=..., details=...)`; it is
+persisted by the generic JSON and PostgreSQL adapters and displayed by the
+events journal. A stable `alarm_id` makes retries idempotent. Both the host update queue and
+worker input queue are bounded; overflow rejects the update and sets a degraded
+runtime diagnostic. Failure to start an enabled event detector aborts event
+startup and stops detectors already started in that pass. This reports loss
+but does not promise delivery of an alarm that existed only in memory when the
+host process crashed.
 
 ## Custom pipelines
 

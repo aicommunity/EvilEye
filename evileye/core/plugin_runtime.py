@@ -13,6 +13,7 @@ from typing import Any, Mapping
 from .base_class import EvilEyeBase
 from .mp_worker import MpWorker
 from .plugins import ModuleRuntimeContext, PluginError, plugin_registry
+from .contracts import EventUpdate
 from .mp_context import get_spawn_context
 
 
@@ -274,6 +275,112 @@ class ItemModuleWorker(MpWorker):
         }
 
     def cleanup(self) -> None:
+        _close_item_resources(self.module, self.module_state, self.logger, self.module_id)
+        self.module = None
+        self.module_state = None
+
+
+_EVENT_UPDATE_INPUT = "__evileye_event_update_input__"
+_EVENT_UPDATE_OUTPUT = "__evileye_event_update_output__"
+
+
+class EventDetectorUpdateWorker(MpWorker):
+    """Spawn worker for event modules consuming serializable EventUpdate values."""
+
+    def apply_spawn_state(self, state: dict[str, Any]) -> None:
+        self.module_id = state["module_id"]
+        self.config = state["config"]
+        self.factory_module = state["factory_module"]
+        self.factory_qualname = state["factory_qualname"]
+        self.module = None
+        self.module_state = None
+        self.drop_oldest_on_full = False
+
+    def _publish_error(self, message: str) -> None:
+        try:
+            self.output_queue.put(
+                (_EVENT_UPDATE_OUTPUT, "error", str(message)), timeout=1.0
+            )
+        except Exception:
+            if self.logger:
+                self.logger.exception(
+                    "Event detector %s could not report worker error", self.module_id
+                )
+
+    def init_worker(self) -> None:
+        try:
+            factory = importlib.import_module(self.factory_module)
+            for component in self.factory_qualname.split("."):
+                factory = getattr(factory, component)
+            self.module = _call_factory(factory, self.config)
+            if not callable(getattr(self.module, "process_update", None)):
+                raise PluginError(
+                    f"Event detector '{self.module_id}' must implement "
+                    "process_update(update, state)"
+                )
+            context = ModuleRuntimeContext(
+                module_id=self.module_id, execution_mode="process"
+            )
+            self.module_state = _create_state(self.module, self.config, context)
+            start = getattr(self.module, "start", None)
+            if callable(start):
+                start()
+            self.output_queue.put(
+                (_EVENT_UPDATE_OUTPUT, "ready", None), timeout=1.0
+            )
+        except Exception as exc:
+            self._publish_error(f"Worker initialization failed: {exc}")
+            _close_item_resources(self.module, self.module_state, self.logger, self.module_id)
+            self.module = None
+            self.module_state = None
+            raise
+
+    def worker_impl(self, data):
+        if not (
+            isinstance(data, tuple)
+            and len(data) == 2
+            and data[0] == _EVENT_UPDATE_INPUT
+        ):
+            self._stop_event.set()
+            return (_EVENT_UPDATE_OUTPUT, "error", "invalid event update envelope")
+        try:
+            update = pickle.loads(data[1])
+            if not isinstance(update, EventUpdate):
+                raise PluginError(
+                    f"Event detector '{self.module_id}' input must be EventUpdate"
+                )
+            result = self.module.process_update(update, self.module_state)
+            events = [] if result is None else (
+                list(result) if isinstance(result, (tuple, list)) else [result]
+            )
+            payload = _serialize_process_value(
+                events, self.module_id, "process_update result"
+            )
+            return (_EVENT_UPDATE_OUTPUT, "output", payload)
+        except Exception as exc:
+            if self.logger:
+                self.logger.exception(
+                    "Event detector %s failed while processing update", self.module_id
+                )
+            self._stop_event.set()
+            return (_EVENT_UPDATE_OUTPUT, "error", str(exc))
+
+    def get_spawn_state(self) -> dict[str, Any]:
+        return {
+            "module_id": self.module_id,
+            "config": self.config,
+            "factory_module": self.factory_module,
+            "factory_qualname": self.factory_qualname,
+        }
+
+    def cleanup(self) -> None:
+        stop = getattr(self.module, "stop", None)
+        if callable(stop):
+            try:
+                stop()
+            except Exception:
+                if self.logger:
+                    self.logger.exception("Event detector %s failed to stop", self.module_id)
         _close_item_resources(self.module, self.module_state, self.logger, self.module_id)
         self.module = None
         self.module_state = None
@@ -1307,7 +1414,7 @@ def _source_worker_entry(module_id, factory_module, factory_qualname, config, ou
 
 
 class EventDetectorModuleAdapter(EvilEyeBase):
-    """Own event-detector construction, config, and lifecycle for the plugin SPI."""
+    """Own event-detector construction, config, and thread/process lifecycle."""
 
     def __init__(self, registered_module, context):
         self.registered_module = registered_module
@@ -1319,12 +1426,20 @@ class EventDetectorModuleAdapter(EvilEyeBase):
         self.execution_mode = "thread"
         self.degraded = False
         self.last_error = None
+        self._queue_size = 32
+        self._mp_control = None
+        self._update_thread = None
+        self._update_stop = threading.Event()
+        self._update_notifications: queue.Queue = queue.Queue(maxsize=self._queue_size)
+        self._notifications_dropped = 0
+        self._sequence = 0
+        self._updates_submitted = 0
+        self._events_received = 0
+        self._failure_reported = False
         super().__init__()
-        modes = set(registered_module.spec.execution_modes)
-        if "thread" not in modes:
+        if not registered_module.spec.execution_modes:
             raise PluginError(
-                f"Event detector '{self.module_id}' requires thread execution; "
-                f"manifest declares {sorted(modes)}"
+                f"Event detector '{self.module_id}' declares no execution modes"
             )
 
     def _record_failure(self, operation: str, exc: Exception) -> None:
@@ -1363,32 +1478,58 @@ class EventDetectorModuleAdapter(EvilEyeBase):
     def set_params_impl(self):
         params = dict(self.params or {})
         spec = self.registered_module.spec
-        requested_mode = str(
-            params.get("execution_mode") or spec.default_execution_mode or "thread"
-        ).strip().lower()
+        default_mode = spec.default_execution_mode
+        if default_mode is None:
+            default_mode = "thread" if "thread" in spec.execution_modes else spec.execution_modes[0]
+        requested_mode = str(params.get("execution_mode") or default_mode).strip().lower()
         if requested_mode not in spec.execution_modes:
             raise PluginError(
                 f"Event detector '{self.module_id}' does not support "
                 f"execution_mode='{requested_mode}'; supported modes: "
                 f"{', '.join(spec.execution_modes)}"
             )
-        if requested_mode != "thread":
-            raise PluginError(
-                f"Event detector '{self.module_id}' process execution is not "
-                "implemented by the current event runtime"
-            )
         self.execution_mode = requested_mode
-        reserved = {"module_id", "type", "execution_mode", "logger_name"}
+        capabilities = set(spec.capabilities)
+        if requested_mode == "process":
+            if "event_updates" not in capabilities:
+                raise PluginError(
+                    f"Process event detector '{self.module_id}' must declare "
+                    "the event_updates capability"
+                )
+            live_capabilities = capabilities.intersection(
+                {"object_handler", "capture_sources"}
+            )
+            if live_capabilities:
+                raise PluginError(
+                    f"Process event detector '{self.module_id}' cannot declare live "
+                    f"dependencies: {', '.join(sorted(live_capabilities))}; use "
+                    "event_updates and the EventUpdate contract"
+                )
+        reserved = {
+            "module_id", "type", "execution_mode", "logger_name",
+            "queue_size", "config",
+        }
         config = params.get("config")
         if config is None:
             config = {key: value for key, value in params.items() if key not in reserved}
         if not isinstance(config, dict):
             raise PluginError(f"Event detector '{self.module_id}' config must be an object")
         self._config = dict(config)
-        if self.registered_module.spec.config_schema is not None:
-            self._config = plugin_registry.validate_module_config(self.module_id, self._config)
+        self._queue_size = max(1, int(params.get("queue_size", 32)))
+        if requested_mode == "process":
+            self._update_notifications = queue.Queue(maxsize=self._queue_size)
+        if spec.config_schema is not None:
+            self._config = plugin_registry.validate_module_config(
+                self.module_id, self._config
+            )
+        if requested_mode == "process":
+            _serialize_process_value(
+                self._config, self.module_id, "configuration"
+            )
 
     def init_impl(self, **kwargs):
+        if self.execution_mode == "process":
+            return True
         factory = self.registered_module.spec.factory
         try:
             self.module = factory(self.context)
@@ -1398,7 +1539,10 @@ class EventDetectorModuleAdapter(EvilEyeBase):
                 f"Event detector factory '{self.module_id}' failed: {exc}"
             ) from exc
         required = ("set_params", "init", "start", "stop", "reset", "put", "get", "get_name")
-        if "object_handler" in self.registered_module.spec.capabilities or "capture_sources" in self.registered_module.spec.capabilities:
+        if (
+            "object_handler" in self.registered_module.spec.capabilities
+            or "capture_sources" in self.registered_module.spec.capabilities
+        ):
             required += ("update",)
         missing = [name for name in required if not callable(getattr(self.module, name, None))]
         if missing:
@@ -1417,26 +1561,266 @@ class EventDetectorModuleAdapter(EvilEyeBase):
         return True
 
     def start(self):
-        if self.module is None or not self.is_inited:
+        if not self.is_inited:
             raise PluginError(f"Event detector '{self.module_id}' is not initialized")
         if self._started:
             return
-        self._call_module("start")
-        self._started = True
+        if self.execution_mode == "process":
+            from .mp_control import MpControl
 
-    def stop(self):
-        if self.module is not None and self._started:
-            self._call_module("stop")
-            self._started = False
+            self._mp_control = MpControl(
+                max_input_size=self._queue_size,
+                max_output_size=self._queue_size,
+                name=f"Event-{self.module_id.replace('/', '-')}",
+                restart_on_exit=False,
+            )
+            worker = self._mp_control.add_worker(EventDetectorUpdateWorker)
+            worker.module_id = self.module_id
+            worker.config = self._config
+            worker.factory_module = self.registered_module.spec.factory.__module__
+            worker.factory_qualname = self.registered_module.spec.factory.__qualname__
+            worker.module = None
+            worker.module_state = None
+            worker.drop_oldest_on_full = False
+            self._mp_control.start()
+            try:
+                ready = self._mp_control.output_queue.get(timeout=10.0)
+            except queue.Empty as exc:
+                self._record_failure(
+                    "worker startup", RuntimeError("worker did not become ready in 10 seconds")
+                )
+                self._mp_control.stop()
+                self._mp_control = None
+                raise PluginError(
+                    f"Process event detector '{self.module_id}' worker startup timed out"
+                ) from exc
+            if (
+                not isinstance(ready, tuple)
+                or len(ready) != 3
+                or ready[0] != _EVENT_UPDATE_OUTPUT
+                or ready[1] != "ready"
+            ):
+                message = (
+                    str(ready[2]) if isinstance(ready, tuple) and len(ready) == 3
+                    and ready[1] == "error" else "worker returned an invalid startup envelope"
+                )
+                self._record_failure("worker startup", RuntimeError(message))
+                self._mp_control.stop()
+                self._mp_control = None
+                raise PluginError(
+                    f"Process event detector '{self.module_id}' worker failed to start: {message}"
+                )
+            self._started = True
+            self._update_stop.clear()
+            self._update_thread = threading.Thread(
+                target=self._dispatch_context_updates,
+                name=f"EventUpdates-{self.module_id.replace('/', '-')}",
+                daemon=True,
+            )
+            self._update_thread.start()
+        else:
+            self._call_module("start")
+            self._started = True
+
+    def _snapshot_value(self, value: Any) -> Any:
+        import datetime
+        import math
+
+        if value is None or isinstance(value, (str, bool, int)):
+            return value
+        if isinstance(value, float):
+            if not math.isfinite(value):
+                raise PluginError(
+                    f"Event detector '{self.module_id}' update contains non-finite number"
+                )
+            return value
+        if isinstance(value, datetime.datetime):
+            return value.isoformat()
+        if isinstance(value, Mapping):
+            return {
+                str(key): self._snapshot_value(item)
+                for key, item in value.items()
+                if not str(key).startswith("_")
+            }
+        if isinstance(value, (tuple, list)):
+            return [self._snapshot_value(item) for item in value]
+        if isinstance(value, set):
+            return [self._snapshot_value(item) for item in sorted(value, key=str)]
+        tolist = getattr(value, "tolist", None)
+        if callable(tolist):
+            return self._snapshot_value(tolist())
+        item = getattr(value, "item", None)
+        if callable(item):
+            return self._snapshot_value(item())
+        raise PluginError(
+            f"Event detector '{self.module_id}' update contains unsupported value "
+            f"{type(value).__name__}"
+        )
+
+    def _snapshot_object(self, obj: Any) -> dict[str, Any]:
+        def _entry(value: Any) -> dict[str, Any]:
+            track = getattr(value, "track", None)
+            bbox = getattr(track, "bounding_box", None) if track is not None else None
+            return {
+                "object_id": self._snapshot_value(getattr(value, "object_id", None)),
+                "global_id": self._snapshot_value(getattr(value, "global_id", None)),
+                "source_id": self._snapshot_value(getattr(value, "source_id", None)),
+                "class_id": self._snapshot_value(getattr(value, "class_id", None)),
+                "frame_id": self._snapshot_value(getattr(value, "frame_id", None)),
+                "timestamp": self._snapshot_value(getattr(value, "time_stamp", None)),
+                "bbox": self._snapshot_value(bbox) if bbox is not None else None,
+            }
+
+        track = getattr(obj, "track", None)
+        bbox = getattr(track, "bounding_box", None) if track is not None else None
+        history = getattr(obj, "history", ()) or ()
+        return {
+            "object_id": self._snapshot_value(getattr(obj, "object_id", None)),
+            "global_id": self._snapshot_value(getattr(obj, "global_id", None)),
+            "source_id": self._snapshot_value(getattr(obj, "source_id", None)),
+            "class_id": self._snapshot_value(getattr(obj, "class_id", None)),
+            "frame_id": self._snapshot_value(getattr(obj, "frame_id", None)),
+            "timestamp": self._snapshot_value(getattr(obj, "time_stamp", None)),
+            "bbox": self._snapshot_value(bbox) if bbox is not None else None,
+            "attributes": self._snapshot_value(getattr(obj, "attributes", {}) or {}),
+            "history": [_entry(item) for item in history],
+        }
+
+    def _build_context_updates(self) -> list[EventUpdate]:
+        import datetime
+
+        handler = getattr(self.context, "objects_handler", None)
+        if handler is None:
+            raise PluginError(
+                f"Process event detector '{self.module_id}' requires objects_handler "
+                "to build event_updates"
+            )
+        updates = []
+        for source_id in self.context.pipeline_source_ids:
+            active = handler.get("active", source_id)
+            lost = handler.get("lost", source_id)
+            active_objects = getattr(active, "objects", ()) if active is not None else ()
+            lost_objects = getattr(lost, "objects", ()) if lost is not None else ()
+            update = EventUpdate(
+                sequence=self._sequence,
+                kind="object_snapshot",
+                source_id=int(source_id),
+                timestamp=datetime.datetime.now(datetime.timezone.utc).isoformat(),
+                payload={
+                    "active": [self._snapshot_object(obj) for obj in active_objects],
+                    "lost": [self._snapshot_object(obj) for obj in lost_objects],
+                },
+            )
+            self._sequence += 1
+            updates.append(update)
+        return updates
+
+    def _dispatch_context_updates(self):
+        while not self._update_stop.is_set():
+            try:
+                self._update_notifications.get(timeout=0.1)
+            except queue.Empty:
+                continue
+            if self._update_stop.is_set():
+                break
+            try:
+                for update in self._build_context_updates():
+                    self.put(update)
+            except Exception as exc:
+                self._record_failure("event update dispatch", exc)
+
+    def _enqueue_process_update(self, update: EventUpdate) -> None:
+        if not isinstance(update, EventUpdate):
+            raise PluginError(
+                f"Process event detector '{self.module_id}' accepts EventUpdate values"
+            )
+        if self._mp_control is None or not self._started:
+            raise PluginError(f"Process event detector '{self.module_id}' is not started")
+        payload = _serialize_process_value(update, self.module_id, "EventUpdate input")
+        try:
+            self._mp_control.put(
+                (_EVENT_UPDATE_INPUT, payload), block=False
+            )
+            self._updates_submitted += 1
+        except queue.Full as exc:
+            self._record_failure(
+                "input queue",
+                RuntimeError("event update queue is full; update was rejected"),
+            )
+            raise PluginError(
+                f"Process event detector '{self.module_id}' input queue is full"
+            ) from exc
 
     def put(self, data):
+        if self.execution_mode == "process":
+            return self._enqueue_process_update(data)
         return self._call_module("put", data)
 
     def get(self):
-        return self._call_module("get")
+        if self.execution_mode != "process":
+            return self._call_module("get")
+        events = []
+        if self._mp_control is not None:
+            for _ in range(max(16, self._queue_size * 2)):
+                try:
+                    envelope = self._mp_control.get_nowait()
+                except queue.Empty:
+                    break
+                if (
+                    not isinstance(envelope, tuple)
+                    or len(envelope) != 3
+                    or envelope[0] != _EVENT_UPDATE_OUTPUT
+                ):
+                    self._record_failure(
+                        "worker output", RuntimeError("worker returned an invalid envelope")
+                    )
+                    continue
+                if envelope[1] == "error":
+                    self._record_failure(
+                        "worker", RuntimeError(str(envelope[2]))
+                    )
+                    self._failure_reported = True
+                    continue
+                if envelope[1] != "output":
+                    self._record_failure(
+                        "worker output", RuntimeError(f"unknown envelope kind {envelope[1]!r}")
+                    )
+                    continue
+                try:
+                    events.extend(pickle.loads(envelope[2]))
+                    self._events_received += 1
+                except Exception as exc:
+                    self._record_failure("worker output deserialization", exc)
+        self._check_process_health()
+        return events
+
+    def _check_process_health(self):
+        if self._mp_control is None or not self._started or self._failure_reported:
+            return
+        exited = [
+            process for process in self._mp_control.processes
+            if process.exitcode is not None
+        ]
+        if exited:
+            self._failure_reported = True
+            self._record_failure(
+                "worker exit",
+                RuntimeError(f"worker exited unexpectedly with code {exited[0].exitcode}"),
+            )
 
     def update(self):
-        if self.module is not None and callable(getattr(self.module, "update", None)):
+        if self.execution_mode == "process":
+            try:
+                self._update_notifications.put_nowait(True)
+            except queue.Full:
+                self._notifications_dropped += 1
+                self._record_failure(
+                    "event update notification",
+                    RuntimeError(
+                        "host update queue is full; notification was rejected"
+                    ),
+                )
+        elif self.module is not None and callable(getattr(self.module, "update", None)):
             return self._call_module("update")
         return None
 
@@ -1446,15 +1830,30 @@ class EventDetectorModuleAdapter(EvilEyeBase):
         return self._call_module("get_name")
 
     def get_runtime_stats(self) -> dict[str, Any]:
-        module_stats = getattr(self.module, "get_runtime_stats", None)
+        self._check_process_health()
+        worker_running = False
+        if self.execution_mode == "process" and self._mp_control is not None:
+            worker_running = any(p.is_alive() for p in self._mp_control.processes)
+        elif self.module is not None:
+            module_stats = getattr(self.module, "get_runtime_stats", None)
+            worker_running = self._started
+        else:
+            module_stats = None
         return {
             "module_id": self.module_id,
             "execution_mode": self.execution_mode,
             "initialized": self.is_inited,
             "started": self._started,
+            "worker_running": worker_running,
+            "updates_submitted": self._updates_submitted,
+            "update_notifications_dropped": self._notifications_dropped,
+            "events_received": self._events_received,
             "degraded": self.degraded,
             "last_error": self.last_error,
-            "module": module_stats() if callable(module_stats) else None,
+            "module": (
+                module_stats() if self.execution_mode != "process"
+                and callable(module_stats) else None
+            ) if self.module is not None else None,
         }
 
     def get_debug_info(self, debug_info: dict | None):
@@ -1464,12 +1863,55 @@ class EventDetectorModuleAdapter(EvilEyeBase):
         debug_info["plugin_runtime"] = self.get_runtime_stats()
         return debug_info
 
+    def stop(self):
+        if self.execution_mode == "process":
+            self._update_stop.set()
+            if self._update_thread is not None and self._update_thread.is_alive():
+                self._update_thread.join(timeout=2.0)
+                if self._update_thread.is_alive():
+                    self._record_failure(
+                        "shutdown", RuntimeError("update dispatcher did not stop in time")
+                    )
+            self._update_thread = None
+            dropped_notifications = 0
+            while True:
+                try:
+                    self._update_notifications.get_nowait()
+                    dropped_notifications += 1
+                except queue.Empty:
+                    break
+            if dropped_notifications:
+                self._notifications_dropped += dropped_notifications
+                self._record_failure(
+                    "shutdown",
+                    RuntimeError(
+                        f"{dropped_notifications} queued host updates were discarded"
+                    ),
+                )
+            if self._mp_control is not None:
+                workers = list(self._mp_control.processes)
+                self._mp_control.stop()
+                if any(worker.exitcode not in (0, None) for worker in workers):
+                    self._record_failure(
+                        "worker shutdown",
+                        RuntimeError("worker required forced termination during shutdown"),
+                    )
+                self._mp_control = None
+        elif self.module is not None and self._started:
+            self._call_module("stop")
+        self._started = False
+
     def reset_impl(self):
         self.stop()
         if self.module is not None:
             self._call_module("reset")
         self.degraded = False
         self.last_error = None
+        self._failure_reported = False
+        self._sequence = 0
+        self._updates_submitted = 0
+        self._notifications_dropped = 0
+        self._events_received = 0
 
     def release_impl(self):
         self.stop()
