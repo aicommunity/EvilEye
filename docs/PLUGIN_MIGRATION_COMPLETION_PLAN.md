@@ -621,3 +621,13 @@ installation из тестов; подобрать воспроизводиму�
 - Упрощён smoke-тест Configurer: удалён QTimer.singleShot вместе с блокирующим time.sleep, закрытие окна выполняется синхронно, а реальное создание и завершение GUI выполняется дочерним процессом. Родительский pytest проверяет его код возврата и вывод при ошибке.
 - Проверки на сервере: одиночный Configurer smoke — 1 passed, exit 0; совместные Configurer и event journal — 30 passed, exit 0; весь tests/integration/visualization — 215 collected, 180 passed, 35 ожидаемо skipped (тесты с реальными данными выключены), exit 0. EVILEYE_PYTEST_FORCE_EXIT не использовался.
 - Предыдущий нативный SIGSEGV полного visualization suite больше не воспроизводится. Следующий шаг по плану: повторить полный integration suite и зафиксировать оставшиеся внешние/средовые блокеры, затем вернуться к финальной проверке inventory thread/process и parity.
+
+
+### Продолжение 2026-10-12: gate встроенного plugin inventory и общий integration suite
+
+- Inventory gate теперь проверяет точное множество 17 builtin manifest IDs, их ModuleSpec.kind и список execution modes. Factory из тестовых модулей не попадают в builtin inventory, даже если legacy decorator зарегистрировал их под plugin_id=evileye.
+- Process contract тест расписания запускается для обоих ID: ScheduleAlarmEventsDetector и совместимого FieldOfViewEventsDetector. Проверены создание через EventsService, process worker, тревога начала события, завершение по потере объекта и shutdown для каждого ID.
+- Полный tests/unit: 1 039 collected, все прошли, exit 0.
+- Полный tests/integration: 373 collected, 312 passed, 61 skipped, exit 0. Пропуски относятся к выключенным model parity/real-data сценариям, отсутствующему MediaMTX binary, запрету загрузки v4l2loopback и отсутствующим live RTSP credentials. Это успешный общий shutdown для доступной части набора, но перечисленные внешние проверки остаются неподтверждёнными этим запуском.
+- После обоих прогонов pytest, spawn workers и multiprocessing resource tracker не остались запущенными.
+- Следующий шаг: повторно обеспечить локальный RTSP fixture на сервере без системной установки; включить model parity/E2E проверки при доступных моделях; отдельно подтвердить live camera/Web UI проверки. После этого обновить финальный inventory matrix и критерии завершения v1.

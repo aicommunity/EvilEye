@@ -557,7 +557,11 @@ def test_capture_source_connection_transitions_notify_subscribers():
     assert source.get_reconnects_info() == [("camera-1", timestamp, False)]
 
 
-def test_builtin_schedule_alarm_detector_uses_object_update_process_contract():
+@pytest.mark.parametrize(
+    "detector_id",
+    ("ScheduleAlarmEventsDetector", "FieldOfViewEventsDetector"),
+)
+def test_builtin_schedule_alarm_detector_uses_object_update_process_contract(detector_id):
     from evileye.controller.services.events_service import EventsService
     from evileye.events_detectors.event_schedule_alarm import ScheduleAlarmEvent
     from evileye.events_detectors.event_registry import register_builtins
@@ -617,8 +621,8 @@ def test_builtin_schedule_alarm_detector_uses_object_update_process_contract():
     service = EventsService()
     service.initialize_detectors(
         {
-            "enabled": ["ScheduleAlarmEventsDetector"],
-            "ScheduleAlarmEventsDetector": {
+            "enabled": [detector_id],
+            detector_id: {
                 "default_schedule": {
                     "enabled": True,
                     "weekdays": list(range(7)),
@@ -632,7 +636,8 @@ def test_builtin_schedule_alarm_detector_uses_object_update_process_contract():
         use_database=False,
     )
     service.initialize_controller({})
-    detector = service.get_detector("ScheduleAlarmEventsDetector")
+    detector = service.get_detector(detector_id)
+    assert detector.module_id == f"evileye/{detector_id}"
     assert detector.execution_mode == "process"
     assert handler.subscribers == [detector]
     service.start_detectors()
@@ -644,7 +649,7 @@ def test_builtin_schedule_alarm_detector_uses_object_update_process_contract():
         events = []
         while time.monotonic() < deadline:
             controller.flush_once()
-            events = controller.get().get("ScheduleAlarmEventsDetector", [])
+            events = controller.get().get(detector_id, [])
             if events:
                 break
             time.sleep(0.02)
@@ -667,7 +672,7 @@ def test_builtin_schedule_alarm_detector_uses_object_update_process_contract():
         deadline = time.monotonic() + 5.0
         while time.monotonic() < deadline:
             controller.flush_once()
-            finished_events = controller.get().get("ScheduleAlarmEventsDetector", [])
+            finished_events = controller.get().get(detector_id, [])
             if finished_events:
                 break
             time.sleep(0.02)

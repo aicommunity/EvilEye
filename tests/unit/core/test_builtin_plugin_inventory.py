@@ -33,6 +33,26 @@ _BUILTIN_MODULES = {
     "ZoneEventsDetector",
 }
 
+_BUILTIN_CONTRACTS = {
+    "AttributeClassifier": ("processor_item", ("thread", "process")),
+    "AttributeDetector": ("processor_item", ("thread", "process")),
+    "AttributeEventsDetector": ("event_detector", ("process",)),
+    "CamEventsDetector": ("event_detector", ("process",)),
+    "FieldOfViewEventsDetector": ("event_detector", ("process",)),
+    "ObjectDetectorRfdetr": ("processor_item", ("thread", "process")),
+    "ObjectDetectorRtdetr": ("processor_item", ("thread", "process")),
+    "ObjectDetectorYolo": ("processor_item", ("thread", "process")),
+    "ObjectMultiCameraTracking": ("batch_processor", ("thread",)),
+    "ObjectTrackingBotsort": ("processor_item", ("thread", "process")),
+    "PreprocessingPipeline": ("processor_item", ("thread", "process")),
+    "RoiFeeder": ("processor_item", ("thread", "process")),
+    "ScheduleAlarmEventsDetector": ("event_detector", ("process",)),
+    "SystemEventsDetector": ("event_detector", ("process",)),
+    "VideoCaptureGStreamer": ("source", ("thread", "process")),
+    "VideoCaptureOpencv": ("source", ("thread", "process")),
+    "ZoneEventsDetector": ("event_detector", ("process",)),
+}
+
 
 def test_all_builtin_modules_are_resolved_from_plugin_registry():
     register_builtins()
@@ -43,6 +63,24 @@ def test_all_builtin_modules_are_resolved_from_plugin_registry():
         if plugin_registry.get_module(module_id) is None
     }
     assert not missing, f"Built-in modules missing from PluginRegistry: {sorted(missing)}"
+
+    builtin_ids = {
+        module_id
+        for module_id in registered_ids
+        if (registered := plugin_registry.get_module(module_id)) is not None
+        and registered.plugin_id == "evileye"
+        and getattr(registered.spec.factory, "__module__", "").startswith("evileye.")
+    }
+    expected_builtin_ids = {
+        f"evileye/{module_id}" for module_id in _BUILTIN_CONTRACTS
+    }
+    assert builtin_ids == expected_builtin_ids
+
+    for module_name, (expected_kind, expected_modes) in _BUILTIN_CONTRACTS.items():
+        registered = plugin_registry.get_module(module_name)
+        assert registered is not None
+        assert registered.spec.kind == expected_kind
+        assert tuple(registered.spec.execution_modes) == expected_modes
 
     for module_id in registered_ids:
         registered = plugin_registry.get_module(module_id)
