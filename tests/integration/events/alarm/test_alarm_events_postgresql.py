@@ -6,6 +6,7 @@ from pathlib import Path
 from uuid import uuid4
 
 import pytest
+import psycopg2
 from psycopg2 import sql
 
 from evileye.database_controller.db_adapter_alarm_events import DatabaseAdapterAlarmEvents
@@ -37,6 +38,8 @@ def test_alarm_postgresql_adapter_writes_idempotently_and_cleans_up(tmp_path):
     database_params.setdefault("admin_user_name", "postgres")
     database_params.setdefault("admin_password", "")
     database_params["image_dir"] = str(tmp_path)
+    database_params["connect_timeout_secs"] = 5
+    database_params["statement_timeout_ms"] = 500
 
     database = DatabaseControllerPg({"pipeline": {"sources": []}})
     database.set_params(
@@ -45,6 +48,8 @@ def test_alarm_postgresql_adapter_writes_idempotently_and_cleans_up(tmp_path):
         database_name=database_params.get("database_name", "evil_eye_db"),
         host_name=database_params["host_name"],
         port=database_params["port"],
+        connect_timeout_secs=database_params["connect_timeout_secs"],
+        statement_timeout_ms=database_params["statement_timeout_ms"],
         admin_user_name=database_params["admin_user_name"],
         admin_password=database_params["admin_password"],
         image_dir=database_params["image_dir"],
@@ -65,6 +70,12 @@ def test_alarm_postgresql_adapter_writes_idempotently_and_cleans_up(tmp_path):
         from evileye.database_controller.migrations import apply_startup_migrations
 
         apply_startup_migrations(database)
+        assert database.query_checked("SHOW statement_timeout") == [("500ms",)]
+        query_started = time.monotonic()
+        with pytest.raises(psycopg2.errors.QueryCanceled):
+            database.query_checked("SELECT pg_sleep(%s)", (2,))
+        assert time.monotonic() - query_started < 3.0
+
         adapter = DatabaseAdapterAlarmEvents(database)
         adapter.set_params(table_name="alarm_events", queue_maxsize=8)
         adapter.init()

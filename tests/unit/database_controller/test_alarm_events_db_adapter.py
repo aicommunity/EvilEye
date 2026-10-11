@@ -300,3 +300,44 @@ def test_alarm_database_adapter_shutdown_timeout_is_visible_and_restart_is_safe(
     adapter.start()
     adapter.stop()
     assert adapter.get_runtime_stats()["worker_alive"] is False
+
+
+def test_postgres_pool_uses_finite_connection_and_statement_timeouts(monkeypatch):
+    import evileye.database_controller.database_controller_pg as pg_module
+    from evileye.core.logger import get_module_logger
+    from evileye.database_controller.database_controller_pg import DatabaseControllerPg
+
+    captured = {}
+
+    class _Pool:
+        pass
+
+    def make_pool(*args, **kwargs):
+        captured.update(kwargs)
+        return _Pool()
+
+    monkeypatch.setattr(pg_module.pool, "ThreadedConnectionPool", make_pool)
+    database = object.__new__(DatabaseControllerPg)
+    database.logger = get_module_logger("test-db-timeouts")
+    database.host_name = "127.0.0.1"
+    database.port = 5432
+    database.database_name = "test"
+    database.user_name = "test"
+    database.password = ""
+    database.connect_timeout_secs = 4
+    database.statement_timeout_ms = 1234
+    database.conn_pool = None
+    database.tables = {}
+    database._project_created = True
+    database._job_created = True
+    database.cameras_params = []
+    database._insert_cam_info = lambda cameras: None
+
+    database.connect_impl()
+
+    assert captured["connect_timeout"] == 4
+    assert captured["options"] == "-c statement_timeout=1234ms"
+    assert captured["keepalives"] == 1
+    assert captured["keepalives_idle"] == 10
+    assert captured["keepalives_interval"] == 5
+    assert captured["keepalives_count"] == 3

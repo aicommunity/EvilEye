@@ -331,3 +331,18 @@
   автоматическую установку зависимостей;
 - какие интерфейсы и capability manifest должны стабилизироваться как публичный
   SDK, включая миграционную политику.
+
+
+### PostgreSQL deadlines для shutdown
+
+- [готово] `DatabaseControllerPg` поддерживает `connect_timeout_secs` (по
+  умолчанию 5 секунд) и `statement_timeout_ms` (30 секунд); параметры передаются
+  и основному pool, и admin connection для создания БД. Для соединений включены
+  TCP keepalive с заданными интервалом и числом проб. Значения доступны через
+  `set_params/get_params`, проверены unit-тестом параметров pool и реальным
+  integration-запросом `SHOW statement_timeout` плюс контролируемым `pg_sleep`,
+  который завершается `QueryCanceled` в пределах заданного deadline.
+- Ограничение остаётся: `query_checked` и adapter worker имеют независимые retry
+  циклы. Нужно определить одного владельца повторов для write path и зафиксировать
+  максимальный shutdown budget (statement timeout × попытки + backoff), чтобы
+  остановка была ограничена не только на уровне `join`, но и для всей операции.
