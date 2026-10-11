@@ -521,3 +521,12 @@ installation из тестов; подобрать воспроизводиму�
 - [готово] Нормализация RTSP URL сохраняет нестандартный порт и IPv6 authority при подстановке userinfo. Тесты покрывают URL credentials, config credentials и IPv6.
 - Проверки на сервере: `tests/unit/capture` — 70 passed; локальный RTSP source/reconnect набор — 8 passed; прежние RTSP capture-and-record тесты OpenCV и GStreamer — 2 passed.
 - Следующий шаг: инвентаризировать встроенные processor/source/event компоненты, которые ещё запускаются в обход SPI, и проверить общий путь пользовательских тревог от detector до журнала. Отдельно остаётся выяснить и устранить native SIGSEGV PyQt при обычном завершении полного integration suite, описанный выше.
+
+
+### Продолжение 2026-10-11: граница event detector runtime
+
+- [готово] Проверен инвентарь plugin SPI: встроенные модули и event detectors регистрируются через общий registry; отдельная проверка inventory сохраняет 18 публичных config IDs и ноль legacy протоколов.
+- [готово] Проверен путь пользовательской тревоги: entry point detector → `EventsService` → `EventsDetectorsController` → `EventsProcessor` → JSON adapter → универсальная строка журнала с типом, severity, source и details. Целевая группа plugin/alarm unit тестов завершилась: 23 passed. PostgreSQL запись, retry и идемпотентность по `alarm_id` покрыты отдельными integration тестами.
+- Ограничение подтверждено кодом и контрактным тестом: event detector принимает только `thread`; `process` явно отклоняется. Текущий `EventDetectorContext` содержит ссылки на live sources и `ObjectsHandler`, для которых ещё нет сериализуемого протокола передачи обновлений в worker. `ObjectMultiCameraTracking` также остаётся thread-only как batch processor.
+- Общая модель журнала поддерживает `AlarmEvent`, но live-проверка виджета с авторизованной пользовательской сессией не подтверждена; текущая проверка проверяет преобразование строки и JSON data source.
+- Следующий этап: определить сериализуемый event-update контракт для process detector-ов, отделить пользовательские правила от прямого доступа к `ObjectsHandler`, затем добавить spawn-worker тесты на доставку событий, ошибку и остановку. После этого провести live UI проверку alarm-строки при наличии валидной учётной записи.
