@@ -266,28 +266,29 @@ class DatabaseControllerPg(DatabaseControllerBase):
             )
             return None
 
-    def query_checked(self, query_string, data=None):
-        """Execute a query and raise after bounded retries if PostgreSQL fails."""
+    def query_once(self, query_string, data=None):
+        """Execute one checked SQL attempt; the caller owns any retry policy."""
         if self.conn_pool is None:
             raise psycopg2.OperationalError("PostgreSQL connection pool is unavailable")
 
-        def execute_query():
-            connection = None
-            try:
-                connection = self.conn_pool.getconn()
-                with connection:
-                    with connection.cursor() as curs:
-                        curs.execute(query_string, data)
-                        try:
-                            return curs.fetchall()
-                        except psycopg2.ProgrammingError:
-                            return None
-            finally:
-                if connection:
-                    self.conn_pool.putconn(connection)
+        connection = None
+        try:
+            connection = self.conn_pool.getconn()
+            with connection:
+                with connection.cursor() as curs:
+                    curs.execute(query_string, data)
+                    try:
+                        return curs.fetchall()
+                    except psycopg2.ProgrammingError:
+                        return None
+        finally:
+            if connection:
+                self.conn_pool.putconn(connection)
 
+    def query_checked(self, query_string, data=None):
+        """Execute a query and raise after bounded retries if PostgreSQL fails."""
         result, error = self.error_handler.execute_with_retry(
-            func=execute_query,
+            func=lambda: self.query_once(query_string, data),
             max_retries=3,
             initial_delay=0.1,
             max_delay=2.0,

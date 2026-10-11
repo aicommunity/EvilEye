@@ -37,6 +37,9 @@ class _FakeDatabase:
     def is_connected(self):
         return self.connected
 
+    def query_once(self, query, values):
+        return self.query_checked(query, values)
+
     def query_checked(self, query, values):
         if self.block_query:
             self.worker_entered.set()

@@ -105,6 +105,26 @@ def test_alarm_postgresql_adapter_writes_idempotently_and_cleans_up(tmp_path):
         ]
         assert adapter.get_runtime_stats()["processed_items"] == 2
         assert adapter.get_runtime_stats()["degraded"] is False
+
+        # Adapter writes use one retry owner. A server-side query timeout is
+        # retried by the adapter worker and the worker exits within its budget.
+        query_once = database.query_once
+        database.query_once = lambda query, values: query_once(
+            "SELECT pg_sleep(%s)", (2,)
+        )
+        adapter.stop_timeout_secs = 3.0
+        adapter.start()
+        adapter.insert(
+            AlarmEvent(
+                "integration_timeout_alarm",
+                alarm_id=f"slow-{alarm_id}",
+            )
+        )
+        adapter.stop()
+        database.query_once = query_once
+        stats = adapter.get_runtime_stats()
+        assert stats["terminal_write_failures"] == 1
+        assert stats["worker_alive"] is False
     finally:
         if adapter is not None:
             adapter.stop()

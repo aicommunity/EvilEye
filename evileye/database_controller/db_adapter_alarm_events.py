@@ -57,6 +57,6 @@ class DatabaseAdapterAlarmEvents(DatabaseAdapterBase):
 
     def _process_queue_item(self, item):
         query, values = item
-        self.db_controller.query_checked(query, values)
+        self.db_controller.query_once(query, values)
         threading_events.notify(EventType.NEW_EVENT)
 

@@ -342,7 +342,10 @@
   `set_params/get_params`, проверены unit-тестом параметров pool и реальным
   integration-запросом `SHOW statement_timeout` плюс контролируемым `pg_sleep`,
   который завершается `QueryCanceled` в пределах заданного deadline.
-- Ограничение остаётся: `query_checked` и adapter worker имеют независимые retry
-  циклы. Нужно определить одного владельца повторов для write path и зафиксировать
-  максимальный shutdown budget (statement timeout × попытки + backoff), чтобы
-  остановка была ограничена не только на уровне `join`, но и для всей операции.
+- [готово] Alarm adapter использует `DatabaseControllerPg.query_once`; поэтому
+  для очередной тревоги есть один владелец retries (три попытки worker-а), а
+  прямой `query_checked` сохраняет собственный bounded retry. PostgreSQL
+  integration test подменяет запись на `pg_sleep` и проверяет, что statement
+  timeout даёт один terminal failure, после чего worker завершается в пределах
+  stop budget. Нужно отдельно инвентаризировать другие DB adapters на вложенные
+  retries и подобрать production shutdown budget к лимитам конфигурации.
