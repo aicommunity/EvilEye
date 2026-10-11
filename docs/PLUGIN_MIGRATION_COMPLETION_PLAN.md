@@ -167,10 +167,7 @@
 - Согласовать документированную модель кадра: размеры/цветовой формат, timestamp,
   sequence, connection generation и владение shared-frame handle; проверить её
   на встроенном OpenCV/GStreamer и внешнем `open/read/close` source.
-- На конечном MP4 пройти полный `PipelineSurveillance`: сосчитать кадры на входе,
-  выходы detector/tracker и события, проверить записанный сегмент через `ffprobe`,
-  штатный stop и отсутствие процессов/relay сокетов. Счётчик должен наблюдаться
-  через runtime metrics или тестовый collector, а не по косвенным логам.
+- [готово] Полный `PipelineSurveillance` finite-video test считает уникальные frame IDs на source/detector/tracker stage и проверяет равенство множеств. Записанный сегмент читается `ffprobe`; detector/tracker проверены в thread и spawn-process. Остаются event stage, capture loop/reconnect проверки и RTSP transport/backend.
 - Добавить deterministic file-loop/reconnect сценарии для встроенного capture.
   Синтетический RTSP прогонять независимо от доступности реальных камер; реальные
   RTSP результаты фиксировать отдельно для каждого backend и transport.
@@ -241,9 +238,7 @@
   attribute-модулей на общий mapping resolver полный `QT_QPA_PLATFORM=offscreen
   pytest -q tests/unit` повторно завершился с exit code 0 и дошёл до 100%;
   orphan worker-процессов после прогона не осталось.
-- Полный integration suite, finite-video end-to-end со счётчиками стадий,
-  RTSP backend-проверки и Web UI авторизованный
-  просмотр остаются открытыми. AttributeClassifier parity и process smoke
+- Полный integration suite, RTSP backend-проверки и авторизованный просмотр Web UI остаются открытыми. AttributeClassifier parity и process smoke
   добавлены и проходят; общая миграция не завершена.
 
 ## Условие завершения миграции
@@ -251,3 +246,5 @@
 Миграция завершена, когда встроенный inventory целиком работает через Plugin SPI, legacy protocol count равен нулю (кроме явно принятого исключения), builtin и внешний пакет проходят одинаковые контрактные тесты, полный доступный suite завершается без оставшихся процессов, штатные видео и тревоги проходят end-to-end, а внешние ограничения камер и Web UI закрыты корректной конфигурацией доступа.
 - На сервере после фиксации bbox parity: весь tests/unit завершился с exit=0; интеграционные группы pipeline, registry и CLI working-directory/minimal-no-DB завершились с exit=0 (21 тест). Совместные opt-in golden проверки YOLO и RT-DETR прошли; после проверок фоновых pytest и multiprocessing worker-ов не осталось.
 - BoT-SORT: `tests/unit/object_tracker/test_botsort_plugin_runtime.py::test_botsort_matches_legacy_frame_sequence_golden` проверяет 8 кадров с потерянными detections, восстановлением track_id и bbox относительно legacy worker; thread и spawn-process варианты прошли.
+
+- PipelineSurveillance finite-video E2E: `tests/integration/pipeline/test_pipeline_surveillance_video_e2e.py` прогоняет 20 кадров через встроенный OpenCV capture, YOLO и BoT-SORT. Счётчики stage outputs сравнивают frame IDs, output recording проверяется `ffprobe`; thread и spawn-process варианты прошли (2 passed), degraded=false, после shutdown worker-ов нет. Запуск opt-in через `EVILEYE_RUN_SURVEILLANCE_VIDEO_E2E=1`.
