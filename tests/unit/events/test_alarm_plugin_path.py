@@ -272,3 +272,95 @@ def test_alarm_adapter_temporarily_failing_write_is_retried():
     assert adapter.calls == 2
     assert adapter.saved == ["retryable-alarm"]
     assert processor.get_runtime_stats()["degraded"] is False
+
+
+class _CollectingAlarmAdapter:
+    def __init__(self):
+        self.saved = []
+
+    def insert(self, event):
+        self.saved.append(event.alarm_id)
+
+
+def _processor_with_adapter(adapter):
+    processor = EventsProcessor([adapter], None)
+    processor.events_adapters = {"AlarmEvent": [adapter]}
+    return processor
+
+
+def test_event_processor_drains_accepted_batches_before_stop():
+    adapter = _CollectingAlarmAdapter()
+    processor = _processor_with_adapter(adapter)
+    expected = [f"drain-{index}" for index in range(12)]
+    for alarm_id in expected:
+        assert processor.put({"AlarmEvent": [AlarmEvent("test", alarm_id=alarm_id)]})
+
+    processor.start()
+    processor.stop()
+
+    stats = processor.get_runtime_stats()
+    assert adapter.saved == expected
+    assert stats["queue_size"] == 0
+    assert stats["worker_alive"] is False
+    assert stats["degraded"] is False
+
+
+def test_event_processor_can_restart_after_clean_stop():
+    adapter = _CollectingAlarmAdapter()
+    processor = _processor_with_adapter(adapter)
+    processor.start()
+    processor.stop()
+
+    processor.start()
+    assert processor.put({"AlarmEvent": [AlarmEvent("test", alarm_id="after-restart")]})
+    processor.stop()
+
+    assert adapter.saved == ["after-restart"]
+    assert processor.get_runtime_stats()["worker_alive"] is False
+
+
+def test_event_processor_stop_timeout_is_visible_and_late_put_is_rejected():
+    from threading import Event
+
+    started = Event()
+    release = Event()
+
+    class _BlockingAdapter(_CollectingAlarmAdapter):
+        def insert(self, event):
+            started.set()
+            assert release.wait(timeout=3)
+            super().insert(event)
+
+    adapter = _BlockingAdapter()
+    processor = _processor_with_adapter(adapter)
+    processor.stop_timeout_secs = 0.05
+    assert processor.put({"AlarmEvent": [AlarmEvent("test", alarm_id="blocked")]})
+    processor.start()
+    assert started.wait(timeout=2)
+
+    processor.stop()
+    stats = processor.get_runtime_stats()
+    assert stats["worker_alive"] is True
+    assert stats["degraded"] is True
+    assert "shutdown timed out" in stats["last_error"]
+    assert processor.put({"AlarmEvent": [AlarmEvent("test", alarm_id="late")]}) is False
+
+    release.set()
+    processor.processing_thread.join(timeout=2)
+    assert processor.get_runtime_stats()["worker_alive"] is False
+    assert adapter.saved == ["blocked"]
+
+
+def test_permanent_alarm_adapter_failure_is_reported():
+    class _BrokenAdapter:
+        def insert(self, event):
+            raise OSError("storage unavailable")
+
+    adapter = _BrokenAdapter()
+    processor = _processor_with_adapter(adapter)
+    processor._adapter_call(AlarmEvent("test", alarm_id="not-saved"), "insert")
+
+    stats = processor.get_runtime_stats()
+    assert stats["adapter_failures"] == 1
+    assert stats["degraded"] is True
+    assert "storage unavailable" in stats["last_error"]
