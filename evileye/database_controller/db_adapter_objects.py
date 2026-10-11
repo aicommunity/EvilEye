@@ -69,22 +69,15 @@ class DatabaseAdapterObjects(DatabaseAdapterBase):
         if query_string is None:
             return
 
-        if (
-                not hasattr(self.db_controller, "is_connected")
-                or not self.db_controller.is_connected()
-        ):
-            self.logger.warning(
-                "Database is not connected in db_adapter_objects._process_queue_item; "
-                "skipping DB write operation."
-            )
-            return
-
-        record = self.db_controller.query(query_string, data)
+        record = self.db_controller.query_once(query_string, data)
 
         if not record:
-            self.logger.warning(
-                "Database query returned no records in db_adapter_objects._process_queue_item; "
-                "skipping image save and notifications."
+            if query_type == QueryType.INSERT:
+                raise RuntimeError(
+                    "Objects INSERT returned no row despite its RETURNING clause"
+                )
+            self.logger.info(
+                "Objects UPDATE matched no record; no image or notification is required"
             )
             return
 
@@ -102,7 +95,12 @@ class DatabaseAdapterObjects(DatabaseAdapterBase):
             # Metadata row already written; skip image IO without AttributeError/spam.
             pass
         else:
-            self._save_image(preview_path, frame_path, image, box)
+            try:
+                self._save_image(preview_path, frame_path, image, box)
+            except Exception as exc:
+                self._record_failure(
+                    'save object event images', exc, category='terminal_write'
+                )
         if query_type == QueryType.INSERT:
             threading_events.notify(EventType.HANDLER_NEW_OBJECT)
         elif query_type == QueryType.UPDATE:

@@ -349,3 +349,29 @@
   timeout даёт один terminal failure, после чего worker завершается в пределах
   stop budget. Нужно отдельно инвентаризировать другие DB adapters на вложенные
   retries и подобрать production shutdown budget к лимитам конфигурации.
+
+
+### Продолжение 2026-10-11: единый retry-контур PostgreSQL adapters
+
+- [готово] `AttributeEvents`, `CamEvents`, `FieldOfViewEvents`, `Objects`,
+  `SystemEvents` и `ZoneEvents` переведены с `query()` на `query_once()`. Теперь
+  исключение соединения доходит до общего bounded retry worker-а; успешный
+  возврат `None` из совместимого `query()` больше не маскирует отказ записи.
+  Повторная SQL-попытка принадлежит одному worker-у, без вложенного
+  `query_checked` retry.
+- [готово] `ZoneEvents` больше не переопределяет цикл очереди: bounded retry,
+  shutdown drain и terminal failure stats выполняются `DatabaseAdapterBase`.
+- [готово] Ошибки сохранения изображений после успешного SQL commit отражаются
+  как terminal storage failure и не запускают повторный INSERT. Для zone event
+  отсутствие опционального кадра не подавляет уведомление о сохранённой записи.
+- [готово] Добавлены контрактные тесты на все шесть адаптеров: три попытки,
+  terminal failure, нулевой processed count и общий worker для ZoneEvents.
+  Также проверены отсутствие повтора INSERT при ошибке записи изображения и
+  уведомление о zone event без изображения.
+- Полный `QT_QPA_PLATFORM=offscreen python3.10 -m pytest -q tests/unit`
+  завершился с exit code 0 уже с новыми регрессиями; PostgreSQL alarm integration
+  также прошёл. После прогонов фоновых pytest и multiprocessing worker-ов нет.
+
+**Следующий приоритет:** источник-ориентированный RTSP fixture и полный
+integration shutdown. Имеющийся на сервере набор локальных RTSP backend-ов пока
+не подтверждён; проверить доступность библиотек перед выбором реализации fixture.

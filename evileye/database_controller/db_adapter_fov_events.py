@@ -60,18 +60,7 @@ class DatabaseAdapterFieldOfViewEvents(DatabaseAdapterBase):
         if query_string is None:
             return
 
-        try:
-            record = self.db_controller.query(query_string, data)
-        except Exception as e:
-            should_retry, last_error = self.error_handler.handle_query_error(
-                error=e,
-                query_string=str(query_string) if query_string else None,
-                retry_callback=None,
-                max_retries=1,
-            )
-            if last_error:
-                return
-            record = self.db_controller.query(query_string, data)
+        self.db_controller.query_once(query_string, data)
         if query_type == QueryType.INSERT:
             threading_events.notify(EventType.NEW_EVENT)
         elif query_type == QueryType.UPDATE:

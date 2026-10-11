@@ -32,7 +32,7 @@ class DatabaseAdapterSystemEvents(DatabaseAdapterBase):
         if query_string is None:
             return
 
-        self.db_controller.query(query_string, data)
+        self.db_controller.query_once(query_string, data)
         threading_events.notify(EventType.NEW_EVENT)
 
     def _prepare_for_saving(self, event) -> tuple[list, list]:

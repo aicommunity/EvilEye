@@ -85,37 +85,18 @@ class DatabaseAdapterZoneEvents(DatabaseAdapterBase):
         self.queue_in.put((query_type, update_query, data, preview_path, frame_path, event.img_left))
         event.img_left = None
 
-    def _execute_query(self):
-        while self.run_flag:
-            time.sleep(0.01)
-            try:
-                if not self.queue_in.empty():
-                    query_type, query_string, data, preview_path, frame_path, image = self.queue_in.get()
-                    if query_string is not None:
-                        pass
-                else:
-                    query_type = query_string = data = preview_path = frame_path = image = None
-            except ValueError:
-                break
-
-            if query_string is None:
-                continue
-
-            self._process_queue_item((query_type, query_string, data, preview_path, frame_path, image))
-
     def _process_queue_item(self, item):
         query_type, query_string, data, preview_path, frame_path, image = item
 
-        try:
-            record = self.db_controller.query(query_string, data)
-        except Exception as e:
-            self.logger.error(f'DB: ZoneEvents query failed: {e}')
-            return
+        record = self.db_controller.query_once(query_string, data)
 
         # Безопасные проверки результата RETURNING
         if not record:
             if query_type == QueryType.INSERT:
-                self.logger.warning('DB: ZoneEvents INSERT returned no data; skipping image save')
+                raise RuntimeError(
+                    'ZoneEvents INSERT returned no row despite its RETURNING clause'
+                )
+            self.logger.info('ZoneEvents UPDATE matched no active event')
             return
 
         if not isinstance(record, list) or len(record) == 0:
@@ -154,9 +135,13 @@ class DatabaseAdapterZoneEvents(DatabaseAdapterBase):
                     "DB: ZoneEvents image missing (frame=%s); skipping image save",
                     None if image is None else type(image).__name__,
                 )
-            return
-
-        self._save_image(preview_path, frame_path, image, box, zone_coords)
+        else:
+            try:
+                self._save_image(preview_path, frame_path, image, box, zone_coords)
+            except Exception as exc:
+                self._record_failure(
+                    'save zone event images', exc, category='terminal_write'
+                )
 
         if query_type == QueryType.INSERT:
             threading_events.notify(EventType.NEW_EVENT)
