@@ -236,8 +236,7 @@
   attribute-модулей на общий mapping resolver полный `QT_QPA_PLATFORM=offscreen
   pytest -q tests/unit` повторно завершился с exit code 0 и дошёл до 100%;
   orphan worker-процессов после прогона не осталось.
-- Полный integration suite, локальный RTSP fixture/reconnect и авторизованный просмотр Web UI остаются открытыми. Live RTSP кадр и запись проверены; AttributeClassifier parity и process smoke
-  добавлены и проходят; общая миграция не завершена.
+- Полный integration suite и авторизованный просмотр Web UI остаются открытыми. Локальные RTSP fixture/reconnect с OpenCV и GStreamer теперь прошли в thread/process режимах; live RTSP кадр и запись также проверены. AttributeClassifier parity и process smoke добавлены и проходят; общая миграция не завершена.
 
 ## Условие завершения миграции
 
@@ -589,3 +588,10 @@ installation из тестов; подобрать воспроизводиму�
 - Целевые unit-тесты runtime, capture source lifecycle, readiness и controller shutdown: 68 passed. Model-backed PipelineSurveillance finite-video E2E: 2 passed (thread и spawn-process).
 - Headless запуск на сервере завершился с Application finished with code: 0: readiness была до EOF; autoclose дождался detector-а, worker завершился штатно с processed_total=9, без forced termination, shared-frame transport ошибок и ошибки закрытой event queue. Источник захватил 10 кадров; один кадр был явно отброшен ограниченной очередью как устаревший при перегрузке (input_queue_dropped=1). Это сохраняет текущую bounded/drop-oldest политику и не является гарантией обработки каждого кадра реального времени.
 - Web UI в smoke не проверялся: конфигурация запуска headless и веб-сервер отключён.
+
+
+### Продолжение 2026-10-12: локальный RTSP recovery
+
+- [готово] Временный MediaMTX 1.21.0 provisioned в /tmp только для проверки; SHA-256 архива совпал с опубликованной в tests/RTSP_FIXTURE.md контрольной суммой. Бинарник и конфигурация не добавлялись в репозиторий.
+- [готово] tests/integration/capture/test_local_rtsp_sources.py: 8 passed для OpenCV и GStreamer в thread/process: первичная доставка кадра и восстановление после остановки/повторного запуска publisher-а. Recovery проверяет рост backend_connection_generation.
+- Ограничение: это синтетический RTSP источник loopback. Поведение на конкретных камерах проверялось ранее отдельно; Web UI и полный integration suite остаются открытыми.
