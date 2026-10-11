@@ -1508,10 +1508,25 @@ class SourceModuleAdapter(EvilEyeBase):
         self._backend_worker_exitcodes: list[int | None] | None = None
         self._finished = False
         self.degraded = False
+        self.last_error = None
+        self._thread_stop_timeout_secs = 2.0
+        self._process_stop_timeout_secs = 3.0
+        self._process_terminate_timeout_secs = 1.0
         self._failure_reported = False
         super().__init__()
 
+    def _mark_degraded(self, message: str) -> None:
+        message = str(message)
+        self.degraded = True
+        if message != self.last_error:
+            self.last_error = message
+            self.logger.error("Source %s degraded: %s", self.module_id, message)
+
     def set_params_impl(self):
+        if self.is_running():
+            raise PluginError(
+                f"Source '{self.module_id}' cannot be reconfigured while its worker is running"
+            )
         params = dict(self.params or {})
         self.module_id = str(params.get("module_id") or params.get("type") or self.module_id)
         registered = plugin_registry.get_module(self.module_id)
@@ -1648,13 +1663,17 @@ class SourceModuleAdapter(EvilEyeBase):
             module = self._ensure_managed_source_module()
             try:
                 module.open()
-            except Exception:
-                self.degraded = True
+            except Exception as exc:
+                self._mark_degraded(f"capture source could not open: {exc}")
                 self.logger.exception("Capture source plugin %s could not open", self.module_id)
                 return False
         return True
 
     def start(self):
+        if self.is_running():
+            raise PluginError(
+                f"Source '{self.module_id}' cannot start while its previous worker is running"
+            )
         self._finished = False
         self._failure_reported = False
         if self.execution_mode == "process":
@@ -1689,8 +1708,7 @@ class SourceModuleAdapter(EvilEyeBase):
                 return True
             except queue.Full:
                 continue
-        self.degraded = True
-        self.logger.error("Source %s stopped before item delivery", self.module_id)
+        self._mark_degraded("source stopped before an item could be delivered")
         return False
 
     def _read_thread(self):
@@ -1713,15 +1731,16 @@ class SourceModuleAdapter(EvilEyeBase):
                     return
                 if not self._put_output(item):
                     return
-        except Exception:
-            self.degraded = True
+        except Exception as exc:
+            self._mark_degraded(f"source read failed: {exc}")
             self.logger.exception("Source plugin %s failed", self.module_id)
         finally:
             self._finished = True
             if self._module is not None:
                 try:
                     self._module.close()
-                except Exception:
+                except Exception as exc:
+                    self._mark_degraded(f"source close failed: {exc}")
                     self.logger.exception("Source plugin %s close failed", self.module_id)
 
     def _read_capture_source_backend(self):
@@ -1736,14 +1755,15 @@ class SourceModuleAdapter(EvilEyeBase):
                     return
                 if not self._put_output(item):
                     return
-        except Exception:
-            self.degraded = True
+        except Exception as exc:
+            self._mark_degraded(f"capture source read failed: {exc}")
             self.logger.exception("Capture source plugin %s failed", self.module_id)
         finally:
             self._finished = True
             try:
                 module.close()
-            except Exception:
+            except Exception as exc:
+                self._mark_degraded(f"capture source close failed: {exc}")
                 self.logger.exception("Capture source plugin %s close failed", self.module_id)
             self._capture_source_worker_exitcodes(backend_processes)
 
@@ -1761,8 +1781,7 @@ class SourceModuleAdapter(EvilEyeBase):
                 self._finished = True
                 continue
             if isinstance(item, tuple) and item and item[0] == "__evileye_source_error__":
-                self.degraded = True
-                self.logger.error("Source plugin %s failed in process: %s", self.module_id, item[1])
+                self._mark_degraded(f"source process failed: {item[1]}")
                 self._finished = True
                 continue
             if self.execution_mode == "process":
@@ -1771,7 +1790,7 @@ class SourceModuleAdapter(EvilEyeBase):
                     and len(item) == 2
                     and item[0] == _SOURCE_ITEM_MARKER
                 ):
-                    self.degraded = True
+                    self._mark_degraded("source process returned an invalid envelope")
                     self._finished = True
                     self.logger.error(
                         "Source plugin %s returned an invalid process envelope",
@@ -1781,7 +1800,7 @@ class SourceModuleAdapter(EvilEyeBase):
                 try:
                     item = pickle.loads(item[1])
                 except Exception as exc:
-                    self.degraded = True
+                    self._mark_degraded(f"source returned an invalid serialized item: {exc}")
                     self._finished = True
                     self.logger.error(
                         "Source plugin %s returned an invalid serialized item: %s",
@@ -1793,7 +1812,9 @@ class SourceModuleAdapter(EvilEyeBase):
         if self.execution_mode == "process" and self._process is not None and not self._process.is_alive():
             self._finished = True
             if self._process.exitcode not in (None, 0) and not self._failure_reported:
-                self.degraded = True
+                self._mark_degraded(
+                    f"source worker exited unexpectedly (exit_code={self._process.exitcode})"
+                )
                 self._failure_reported = True
                 self.logger.error(
                     "Source plugin %s worker exited (exit_code=%s)",
@@ -1809,7 +1830,9 @@ class SourceModuleAdapter(EvilEyeBase):
             and not self._process.is_alive()
             and self._process.exitcode not in (None, 0)
         ):
-            self.degraded = True
+            self._mark_degraded(
+                f"source worker exited unexpectedly (exit_code={self._process.exitcode})"
+            )
             if not self._failure_reported:
                 self._failure_reported = True
                 self.logger.error(
@@ -1830,7 +1853,7 @@ class SourceModuleAdapter(EvilEyeBase):
                 exitcodes = [process.exitcode for process in control.processes]
                 self._backend_worker_exitcodes = exitcodes
                 if any(code not in (None, 0) for code in exitcodes):
-                    self.degraded = True
+                    self._mark_degraded(f"capture backend worker exited unexpectedly: {exitcodes}")
             except Exception:
                 pass
         capture_health = None
@@ -1840,16 +1863,14 @@ class SourceModuleAdapter(EvilEyeBase):
             try:
                 capture_health = get_capture_health()
             except Exception as exc:
-                self.degraded = True
-                self.logger.error("Source %s health query failed: %s", self.module_id, exc)
+                self._mark_degraded(f"source health query failed: {exc}")
         backend_metrics = None
         get_metrics = getattr(control, "get_metrics", None)
         if callable(get_metrics):
             try:
                 backend_metrics = get_metrics()
             except Exception as exc:
-                self.degraded = True
-                self.logger.error("Source %s backend metrics failed: %s", self.module_id, exc)
+                self._mark_degraded(f"source backend metrics failed: {exc}")
         return {
             "module_id": self.module_id,
             "execution_mode": self.execution_mode,
@@ -1860,6 +1881,7 @@ class SourceModuleAdapter(EvilEyeBase):
             "backend_worker_exitcodes": self._backend_worker_exitcodes,
             "worker_running": self.is_running(),
             "finished": self._finished,
+            "last_error": self.last_error,
             "queue_size": queue_size,
             "degraded": self.degraded,
         }
@@ -1884,32 +1906,57 @@ class SourceModuleAdapter(EvilEyeBase):
         if self._process_stop_event is not None:
             self._process_stop_event.set()
         module = self.__dict__.get("_module")
-        thread_alive = self._thread is not None and self._thread.is_alive()
         if self._capture_source_backend and module is not None:
             backend_control = getattr(module, "_mp_control", None)
             backend_processes = list(getattr(backend_control, "processes", []) or [])
             try:
                 module.stop()
-            except Exception:
+            except Exception as exc:
+                self._mark_degraded(f"capture source stop failed: {exc}")
                 self.logger.exception("Capture source plugin %s stop failed", self.module_id)
             self._capture_source_worker_exitcodes(backend_processes)
-        if thread_alive:
-            self._thread.join(
-                timeout=5.0
-                if self._capture_source_backend
-                else 2.0
-            )
-        self._thread = None
-        if self._process is not None:
-            self._process.join(timeout=3.0)
-            if self._process.is_alive():
-                self._process.terminate()
-                self._process.join(timeout=1.0)
-            self._process = None
-        self._finished = True
+
+        thread = self._thread
+        if thread is not None:
+            thread.join(timeout=self._thread_stop_timeout_secs)
+            if thread.is_alive():
+                self._mark_degraded(
+                    "source thread did not stop before timeout; "
+                    f"worker_alive=true, timeout={self._thread_stop_timeout_secs}s"
+                )
+            else:
+                self._thread = None
+
+        process = self._process
+        if process is not None:
+            process.join(timeout=self._process_stop_timeout_secs)
+            if process.is_alive():
+                self._mark_degraded(
+                    "source process did not stop before timeout; terminating worker; "
+                    f"timeout={self._process_stop_timeout_secs}s"
+                )
+                process.terminate()
+                process.join(timeout=self._process_terminate_timeout_secs)
+                if process.is_alive():
+                    self._mark_degraded(
+                        "source process remained alive after terminate; "
+                        f"worker_alive=true, exit_code={process.exitcode}"
+                    )
+                else:
+                    self._mark_degraded(
+                        f"source process required forced termination (exit_code={process.exitcode})"
+                    )
+            if not process.is_alive():
+                self._process = None
+
+        if not self.is_running():
+            self._finished = True
 
     def release_impl(self):
         self.stop()
+        if self.is_running():
+            self._mark_degraded("source resources remain owned by a worker that did not stop")
+            return
         module = self.__dict__.get("_module")
         if module is not None and self._capture_source_backend:
             try:
@@ -1921,6 +1968,8 @@ class SourceModuleAdapter(EvilEyeBase):
         close = getattr(module, "close", None)
         if not callable(close):
             raise PluginError("Capture source backend lost its required close() method")
+        if getattr(module, "_plugin_source_opened", True) is False:
+            return
         close()
 
     def _capture_source_worker_exitcodes(self, module) -> None:
@@ -1964,6 +2013,9 @@ class SourceModuleAdapter(EvilEyeBase):
         if self._capture_source_backend:
             restart = self.is_running()
             self.stop()
+            if self.is_running():
+                self._mark_degraded("cannot reset capture source while its worker is still running")
+                return
             module = self.__dict__.get("_module")
             if module is not None:
                 try:
@@ -1974,6 +2026,7 @@ class SourceModuleAdapter(EvilEyeBase):
             self.is_inited = False
             self._finished = False
             self.degraded = False
+            self.last_error = None
             self._failure_reported = False
             self._backend_worker_exitcodes = None
             initialized = self.init()
@@ -1981,7 +2034,11 @@ class SourceModuleAdapter(EvilEyeBase):
                 self.start()
             return
         self.stop()
+        if self.is_running():
+            self._mark_degraded("cannot reset source while its worker is still running")
+            return
         self.degraded = False
+        self.last_error = None
         self._failure_reported = False
         self._finished = False
         while True:

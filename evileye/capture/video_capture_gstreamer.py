@@ -379,6 +379,7 @@ class VideoCaptureGStreamer(
                         try:
                             if self._appsink_handler_id is not None:
                                 self.appsink.disconnect(self._appsink_handler_id)
+                                self._appsink_handler_id = None
                         except Exception:
                             pass
                 except Exception:
@@ -415,6 +416,7 @@ class VideoCaptureGStreamer(
                 self._cleanup_recording_branch(pipeline=pipeline)
             except Exception as e:
                 self.logger.debug(f"Error cleaning up recording branch in release: {e}")
+            self.appsink = None
 
             # Clear frame_buffer and last_frame to free memory
             with self.frame_lock:

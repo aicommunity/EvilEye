@@ -109,7 +109,7 @@ For `PipelineSurveillance`, each source item must be an `evileye.core.frame.Fram
 - `source_id` is the configured logical source ID. `frame_id` is a per-source
   sequence ID and must be preserved across detector/tracker stages. If the
   source resets that sequence on reconnect or rewind, it must increment
-  `connection_generation`; built-in capture starts at generation zero.
+  `connection_generation`; built-in capture starts at generation zero. The GStreamer file loop advances it at EOS before emitting frames from the next loop.
 - `image` is the HxWx3 BGR NumPy image used by both built-in capture backends.
   Treat emitted image data as immutable. `time_stamp` is acquisition wall time
   in seconds; `pts_ns` and `media_pts_sec` are optional source media-clock data.
@@ -142,7 +142,17 @@ transitions, the backend connection generation carried by frames, and worker
 metrics. The capture worker acknowledges shared-memory frame descriptors before
 releasing them, so short finite videos are delivered before the worker exits.
 External source plugins implement the simpler `open/read/close` contract and do
-not need to subclass `EvilEyeBase`.
+not need to subclass `EvilEyeBase`. `open()` runs once before the read loop and
+`close()` runs in the worker's cleanup path. A `read()` call returns one new
+item or `None` at EOF; repeatedly returning the same latest `Frame` is not a
+valid source sequence. For `Frame`, source/frame IDs and connection generation
+identify a unique item. In thread mode, `read()` must return within a bounded
+interval so the runtime can observe shutdown; the SPI has no cross-thread
+cancellation method. A thread that exceeds the stop timeout remains
+visible as running/degraded, and the adapter rejects reconfiguration or restart
+until it exits. Use process mode for blocking native or network reads: the host
+can terminate a child that does not stop before its timeout, and reports that
+forced termination as degraded.
 
 Built-in YOLO, RT-DETR, RF-DETR, BoT-SORT, and attribute detector/classifier
 modules are registered as `processor_item` modules and execute through

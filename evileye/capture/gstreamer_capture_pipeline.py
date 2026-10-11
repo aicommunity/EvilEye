@@ -708,6 +708,10 @@ class GStreamerCapturePipelineMixin:
                         # combinations it can trigger GStreamer segment-format criticals and lead to
                         # downstream "no frames" restarts. Enable explicitly with env EVILEYE_GST_LOOP_SEEK=1.
                         self._restart_counter += 1
+                        # A file loop starts a new media/frame generation even
+                        # though the configured source remains available.
+                        self._record_reconnect(datetime.datetime.now())
+                        self._first_pts_ns = None
                         self._log_resource_stats("before_restart_eos")
 
                         did_seek = False

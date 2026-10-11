@@ -1063,6 +1063,9 @@ class GStreamerCaptureFramesMixin:
             source_id = None
             current_video_frame = None
             current_video_position = None
+            connection_generation = None
+            pts_ns = None
+            media_pts_sec = None
             image_copy = None
 
             try:
@@ -1091,6 +1094,9 @@ class GStreamerCaptureFramesMixin:
                         source_id = last_frame_ref.source_id
                         current_video_frame = last_frame_ref.current_video_frame
                         current_video_position = last_frame_ref.current_video_position
+                        connection_generation = last_frame_ref.connection_generation
+                        pts_ns = last_frame_ref.pts_ns
+                        media_pts_sec = last_frame_ref.media_pts_sec
                         # Get reference to image (don't copy yet - do it outside lock)
                         image_ref = last_frame_ref.image
                     else:
@@ -1122,8 +1128,12 @@ class GStreamerCaptureFramesMixin:
                         timestamp=timestamp,
                         source_id=source_id,
                         current_video_frame=current_video_frame,
-                        current_video_position=current_video_position
+                        current_video_position=current_video_position,
+                        pts_ns=pts_ns,
+                        media_pts_sec=media_pts_sec,
                     )
+                    if connection_generation is not None:
+                        copied_frame.connection_generation = connection_generation
                     frames.append(copied_frame)
             except Exception as e:
                 # Log error but don't break the flow - return empty list if copy fails

@@ -63,9 +63,9 @@
 
 ### Этап C. Мигрировать источники без потери capture-функций
 
-1. [частично] `VideoCaptureBase` предоставляет общий `open/read/close`; контракт `Frame` документирует HxWx3 BGR `uint8`, source/frame ID, wall-clock timestamp, optional PTS, file position и connection generation. Descriptor IPC тест проверяет round-trip этих полей. Остаётся проверить формат/PTS на GStreamer и внешний `open/read/close` source.
+1. [частично] `VideoCaptureBase` предоставляет общий `open/read/close`; контракт `Frame` документирует HxWx3 BGR `uint8`, source/frame ID, wall-clock timestamp, optional PTS, file position и connection generation. Descriptor IPC round-trip, внешний source lifecycle в thread/process и реальный GStreamer MP4 payload/PTS проверены; остаются RTSP и camera reconnect сценарии.
 2. [готово] OpenCV и GStreamer подключены к source SPI через `SourceModuleAdapter`. Их codec handling, reconnect, split/crop, запись сегментов, ограниченные очереди и shared-frame capture остаются в специализированных backend-ах.
-3. [частично] Для встроенных capture backend-ов режим `thread/process` исполняется их собственным backend-ом; сторонние source plugins используют общий thread/spawn runtime. `SourceModuleAdapter` публикует capture health и `MpControl` worker metrics. В process-режиме parent proxy отдельно публикует наблюдаемые переходы доступности кадров и `backend_connection_generation`, который приходит в metadata кадра от дочернего backend-а и фиксирует быстрые reconnect без паузы кадров.
+3. [частично] Для встроенных capture backend-ов режим `thread/process` исполняется их собственным backend-ом; сторонние source plugins используют общий thread/spawn runtime. `SourceModuleAdapter` публикует capture health и worker status. Тесты закрепляют ровно один `open/close` при EOF, process shutdown и то, что зависший thread не скрывается и не может быть перезапущен поверх живого worker-а; blocking process завершается с явной degraded-диагностикой. В process-режиме parent proxy отдельно публикует наблюдаемые переходы доступности кадров и `backend_connection_generation`, который приходит в metadata кадра от дочернего backend-а и фиксирует быстрые reconnect без паузы кадров.
 4. [частично] Остановка проверена в thread/process тестах и полном unit suite без оставшихся worker-ов. Проверки RTSP/GStreamer зависят от доступности backend-а и камеры.
 
 **Проверки:** видеофайл, loop/reconnect, синтетический RTSP и доступные реальные камеры; запись и ffprobe; проверка отсутствия worker, сокетов и очередей после stop.
@@ -164,11 +164,9 @@
 
 ### 2. Закрыть source lifecycle и end-to-end конечную видеозапись
 
-- Согласовать документированную модель кадра: размеры/цветовой формат, timestamp,
-  sequence, connection generation и владение shared-frame handle; проверить её
-  на встроенном OpenCV/GStreamer и внешнем `open/read/close` source.
-- [готово] Полный `PipelineSurveillance` finite-video test считает уникальные frame IDs на source/detector/tracker stage и проверяет равенство множеств. Записанный сегмент читается `ffprobe`; detector/tracker проверены в thread и spawn-process. Остаются event stage, capture loop/reconnect проверки и RTSP transport/backend.
-- Добавить deterministic file-loop/reconnect сценарии для встроенного capture.
+- [частично] Согласовать документированную модель кадра: размеры/цветовой формат, timestamp, sequence, connection generation и владение shared-frame handle; descriptor round-trip и внешний `open/read/close` source проверяются в thread/process. GStreamer MP4 integration test проверяет BGR payload, уникальные frame IDs, сохранение PTS при копировании и новый connection generation при file-loop EOS. Остаются RTSP transport/backend и reconnect тесты на реальных камерах.
+- [готово] Полный `PipelineSurveillance` finite-video test считает уникальные frame IDs на source/detector/tracker stage и проверяет равенство множеств без повторной выдачи последнего кадра. Записанный сегмент читается `ffprobe`; detector/tracker проверены в thread и spawn-process после дедупликации source SPI.
+- [частично] Добавить deterministic file-loop/reconnect сценарии для встроенного capture. GStreamer local MP4 loop теперь проверяет новый connection generation и уникальные frame IDs; остаются RTSP transport и reconnect проверки на камерах.
   Синтетический RTSP прогонять независимо от доступности реальных камер; реальные
   RTSP результаты фиксировать отдельно для каждого backend и transport.
 

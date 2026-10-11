@@ -44,6 +44,7 @@ class VideoCaptureBase(EvilEyeBase):
         self._plugin_source_config = dict(plugin_config or {})
         self._plugin_source_opened = False
         self._plugin_pending_frames = deque()
+        self._plugin_last_frame_ids = {}
         # Raw parameters passed from configuration / controller
         # Initialized here to avoid hasattr checks in methods
         self.params: dict | None = None
@@ -115,6 +116,8 @@ class VideoCaptureBase(EvilEyeBase):
             raise ValueError("Capture source requires a configuration")
         if self._plugin_source_opened:
             return True
+        self._plugin_pending_frames.clear()
+        self._plugin_last_frame_ids.clear()
 
         source_config.setdefault("execution_mode", "thread")
         self.set_params(**source_config)
@@ -132,13 +135,43 @@ class VideoCaptureBase(EvilEyeBase):
         self._plugin_source_opened = True
         return True
 
+    def _accept_plugin_frame(self, frame) -> bool:
+        """Validate the surveillance frame identity and reject repeated snapshots."""
+        if not isinstance(frame, Frame):
+            raise TypeError(
+                f"Capture source returned {type(frame).__name__}; expected Frame"
+            )
+        if frame.source_id is None or frame.frame_id is None:
+            raise ValueError("Capture source Frame must define source_id and frame_id")
+        try:
+            frame_id = int(frame.frame_id)
+            source_id = int(frame.source_id)
+            generation = int(frame.connection_generation)
+        except (TypeError, ValueError) as exc:
+            raise ValueError(
+                "Capture source Frame IDs and connection_generation must be integers"
+            ) from exc
+        key = (source_id, generation)
+        previous = self._plugin_last_frame_ids.get(key)
+        if previous is not None and frame_id <= previous:
+            return False
+        self._plugin_last_frame_ids[key] = frame_id
+        return True
+
     def read(self):
-        """Block until one frame is available or a finite source reaches EOF."""
+        """Block until one new frame is available or a finite source reaches EOF."""
         if not self._plugin_source_opened:
             raise RuntimeError("Capture source must be opened before reading")
         while not self.stop_event.is_set():
             if self._plugin_pending_frames:
-                return self._plugin_pending_frames.popleft()
+                frame = self._plugin_pending_frames.popleft()
+                if self._accept_plugin_frame(frame):
+                    return frame
+                if self.is_finished() and not self._plugin_pending_frames:
+                    return None
+                if self.stop_event.wait(0.01):
+                    return None
+                continue
             if not self.get_init_flag():
                 try:
                     initialized = self.init()
@@ -162,8 +195,8 @@ class VideoCaptureBase(EvilEyeBase):
                 self.start()
             frames = self.get()
             if frames:
-                self._plugin_pending_frames.extend(frames[1:])
-                return frames[0]
+                self._plugin_pending_frames.extend(frames)
+                continue
             if self.is_finished():
                 return None
             if self.stop_event.wait(0.01):
