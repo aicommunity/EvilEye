@@ -212,31 +212,35 @@ objects uses the `object_handler` or `capture_sources` capability and stays
 in thread mode.
 
 A process event module declares
-`execution_modes=("process",)` and either
-`capabilities=("event_updates",)` for object snapshots or
-`capabilities=("event_commands",)` for explicit controller commands. Its
+`execution_modes=("process",)` and one or more input capabilities:
+`event_updates` for object snapshots, `source_updates` for camera state
+transitions, or `event_commands` for explicit controller commands. Its
 top-level factory accepts a config mapping and returns an object implementing
 `process_update(update: EventUpdate, state)`. The optional
 `create_state(config, context)` runs inside the spawned worker. Optional
 `start()` and `stop()` methods also run in that worker. The factory must be
 importable at module scope.
 
-The host subscribes this module to `ObjectsHandler` and transfers one
-`EventUpdate(kind="object_snapshot")` per configured source after each object
-update. `payload` contains primitive `active` and `lost` object summaries
-with ids, class id, timestamp, bounding box, attributes, and history summaries;
-frame pixels, live model objects, handlers, and locks do not cross the process
-boundary. Plugins can also accept explicit `EventUpdate` values through
-`put()`. Process modules cannot declare `object_handler` or
-`capture_sources`; the runtime rejects those live dependencies before start.
-Modules using `event_commands` receive explicit updates through `put()` and
-are not subscribed to object snapshots. Controller lifecycle messages that
-arrive before worker startup are buffered in a bounded queue and flushed after
-the child reports ready.
-The builtin `SystemEventsDetector` now uses this process contract. The adapter
-preserves the controller-facing `emit_message`, `emit_started`, and
-`emit_stopped` calls. During normal shutdown, accepted worker updates are
-processed and their output is retained for the final event-controller flush.
+For `event_updates`, the host subscribes the module to `ObjectsHandler` and
+transfers one `EventUpdate(kind="object_snapshot")` per configured source after
+each object update. For `source_updates`, it subscribes to capture sources and
+sends serialized disconnect/reconnect transitions as
+`EventUpdate(kind="source_status")`. Capture sources notify subscribers when
+they record a connection transition. The object snapshot `payload` contains
+primitive `active` and `lost` object summaries with ids, class id, timestamp,
+bounding box, attributes, and history summaries; frame pixels, live model
+objects, handlers, and locks do not cross the process boundary. Plugins can
+also accept explicit `EventUpdate` values through `put()`. Process modules
+cannot declare `object_handler` or `capture_sources`; the runtime rejects those
+live dependencies before start. Modules using `event_commands` receive explicit
+updates through `put()`. Controller lifecycle messages that arrive before
+worker startup are buffered in a bounded queue and flushed after the child
+reports ready.
+The builtin `SystemEventsDetector` uses `event_commands`; the builtin
+`CamEventsDetector` uses `source_updates`. The adapter preserves the
+controller-facing `emit_message`, `emit_started`, and `emit_stopped` calls.
+During normal shutdown, accepted worker updates are processed and their output
+is retained for the final event-controller flush.
 
 ```python
 from evileye.core.contracts import EventUpdate

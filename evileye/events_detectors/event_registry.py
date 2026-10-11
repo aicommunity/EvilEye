@@ -80,6 +80,14 @@ def _create_cam_detector(context: EventDetectorContext):
     return CamEventsDetector(list(context.sources))
 
 
+def _create_process_cam_detector(config):
+    from evileye.events_detectors.process_cam_events_module import (
+        create_process_cam_events_module,
+    )
+
+    return create_process_cam_events_module(config)
+
+
 def _create_zone_detector(context: EventDetectorContext):
     from evileye.events_detectors.zone_events_detector import ZoneEventsDetector
 
@@ -131,7 +139,7 @@ def register_builtins() -> None:
 
     builtin_factories = {
         "CamEventsDetector": (
-            _create_cam_detector, ("capture_sources",), ("thread",), "thread",
+            _create_process_cam_detector, ("source_updates",), ("process",), "process",
         ),
         "ZoneEventsDetector": (
             _create_zone_detector, ("object_handler",), ("thread",), "thread",

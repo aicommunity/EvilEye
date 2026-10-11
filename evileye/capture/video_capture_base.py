@@ -553,6 +553,7 @@ class VideoCaptureBase(EvilEyeBase):
 
     def _set_process_mode_working(self, working: bool) -> None:
         """Update parent health and publish observed process-mode transitions."""
+        transition = None
         with self.conn_mutex:
             was_working = self.is_working
             self.is_working = working
@@ -560,9 +561,13 @@ class VideoCaptureBase(EvilEyeBase):
             # after the worker has produced at least one frame.
             has_received_frame = self._mp_last_frame_mono > 0.0
             if not was_working and working and has_received_frame:
-                self._record_reconnect()
+                transition = "reconnect"
             elif was_working and not working and has_received_frame:
-                self._record_disconnect()
+                transition = "disconnect"
+        if transition == "reconnect":
+            self._record_reconnect()
+        elif transition == "disconnect":
+            self._record_disconnect()
 
     def _touch_process_mode_frame_activity(self, frame=None) -> None:
         """Mark capture healthy and sync child reconnect metadata from a frame."""
@@ -571,6 +576,7 @@ class VideoCaptureBase(EvilEyeBase):
         had_received_frame = self._mp_last_frame_mono > 0.0
         self._mp_last_frame_mono = time.monotonic()
         connection_generation = getattr(frame, "connection_generation", None)
+        should_record_reconnect = False
         with self.conn_mutex:
             was_working = self.is_working
             self.is_working = True
@@ -578,8 +584,9 @@ class VideoCaptureBase(EvilEyeBase):
                 self._mp_backend_connection_generation = max(
                     self._mp_backend_connection_generation, connection_generation
                 )
-            if had_received_frame and not was_working:
-                self._record_reconnect()
+            should_record_reconnect = had_received_frame and not was_working
+        if should_record_reconnect:
+            self._record_reconnect()
         self.is_inited = True
         self.last_frame_time = datetime.datetime.now()
 
@@ -896,6 +903,7 @@ class VideoCaptureBase(EvilEyeBase):
                 "kind": "disconnect",
                 "timestamp": ts.isoformat(),
             }
+        self._notify_subscribers()
 
     def _record_reconnect(self, timestamp: datetime.datetime | None = None) -> None:
         ts = timestamp or datetime.datetime.now()
@@ -907,6 +915,7 @@ class VideoCaptureBase(EvilEyeBase):
                 "kind": "reconnect",
                 "timestamp": ts.isoformat(),
             }
+        self._notify_subscribers()
 
     @staticmethod
     def reconstruct_url(url_parsed_info: ParseResult, username: str | None, password: str | None) -> str:

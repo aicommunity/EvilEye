@@ -1497,12 +1497,12 @@ class EventDetectorModuleAdapter(EvilEyeBase):
         capabilities = set(spec.capabilities)
         if requested_mode == "process":
             input_capabilities = capabilities.intersection(
-                {"event_updates", "event_commands"}
+                {"event_updates", "source_updates", "event_commands"}
             )
             if not input_capabilities:
                 raise PluginError(
                     f"Process event detector '{self.module_id}' must declare "
-                    "event_updates or event_commands"
+                    "event_updates, source_updates or event_commands"
                 )
             live_capabilities = capabilities.intersection(
                 {"object_handler", "capture_sources"}
@@ -1628,7 +1628,9 @@ class EventDetectorModuleAdapter(EvilEyeBase):
                 self._mp_control.stop()
                 self._mp_control = None
                 raise
-            if "event_updates" in self.registered_module.spec.capabilities:
+            if set(self.registered_module.spec.capabilities).intersection(
+                {"event_updates", "source_updates"}
+            ):
                 self._update_stop.clear()
                 self._update_thread = threading.Thread(
                     target=self._dispatch_context_updates,
@@ -1707,30 +1709,61 @@ class EventDetectorModuleAdapter(EvilEyeBase):
     def _build_context_updates(self) -> list[EventUpdate]:
         import datetime
 
-        handler = getattr(self.context, "objects_handler", None)
-        if handler is None:
-            raise PluginError(
-                f"Process event detector '{self.module_id}' requires objects_handler "
-                "to build event_updates"
-            )
+        capabilities = set(self.registered_module.spec.capabilities)
         updates = []
-        for source_id in self.context.pipeline_source_ids:
-            active = handler.get("active", source_id)
-            lost = handler.get("lost", source_id)
-            active_objects = getattr(active, "objects", ()) if active is not None else ()
-            lost_objects = getattr(lost, "objects", ()) if lost is not None else ()
-            update = EventUpdate(
-                sequence=self._sequence,
-                kind="object_snapshot",
-                source_id=int(source_id),
-                timestamp=datetime.datetime.now(datetime.timezone.utc).isoformat(),
-                payload={
-                    "active": [self._snapshot_object(obj) for obj in active_objects],
-                    "lost": [self._snapshot_object(obj) for obj in lost_objects],
-                },
-            )
-            self._sequence += 1
-            updates.append(update)
+        if "event_updates" in capabilities:
+            handler = getattr(self.context, "objects_handler", None)
+            if handler is None:
+                raise PluginError(
+                    f"Process event detector '{self.module_id}' requires objects_handler "
+                    "to build event_updates"
+                )
+            for source_id in self.context.pipeline_source_ids:
+                active = handler.get("active", source_id)
+                lost = handler.get("lost", source_id)
+                active_objects = getattr(active, "objects", ()) if active is not None else ()
+                lost_objects = getattr(lost, "objects", ()) if lost is not None else ()
+                update = EventUpdate(
+                    sequence=self._sequence,
+                    kind="object_snapshot",
+                    source_id=int(source_id),
+                    timestamp=datetime.datetime.now(datetime.timezone.utc).isoformat(),
+                    payload={
+                        "active": [self._snapshot_object(obj) for obj in active_objects],
+                        "lost": [self._snapshot_object(obj) for obj in lost_objects],
+                    },
+                )
+                self._sequence += 1
+                updates.append(update)
+
+        if "source_updates" in capabilities:
+            for source_index, source in enumerate(self.context.sources):
+                disconnects = source.get_disconnects_info()
+                reconnects = source.get_reconnects_info()
+                if not disconnects and not reconnects:
+                    continue
+
+                def _transition(item):
+                    address, timestamp, is_connected = item
+                    return {
+                        "address": str(address),
+                        "timestamp": self._snapshot_value(timestamp),
+                        "is_connected": bool(is_connected),
+                    }
+
+                updates.append(
+                    EventUpdate(
+                        sequence=self._sequence,
+                        kind="source_status",
+                        source_id=source_index,
+                        timestamp=datetime.datetime.now(datetime.timezone.utc).isoformat(),
+                        payload={
+                            "disconnects": [_transition(item) for item in disconnects],
+                            "reconnects": [_transition(item) for item in reconnects],
+                        },
+                    )
+                )
+                self._sequence += 1
         return updates
 
     def _dispatch_context_updates(self):
@@ -1910,10 +1943,12 @@ class EventDetectorModuleAdapter(EvilEyeBase):
 
     def update(self):
         if self.execution_mode == "process":
-            if "event_updates" not in self.registered_module.spec.capabilities:
+            if not set(self.registered_module.spec.capabilities).intersection(
+                {"event_updates", "source_updates"}
+            ):
                 raise PluginError(
                     f"Process event detector '{self.module_id}' does not accept "
-                    "ObjectsHandler update notifications"
+                    "host update notifications"
                 )
             try:
                 self._update_notifications.put_nowait(True)

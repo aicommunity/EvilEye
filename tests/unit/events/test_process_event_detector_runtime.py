@@ -216,7 +216,9 @@ def test_process_event_mode_requires_event_update_capability():
         EventDetectorContext(),
     )
 
-    with pytest.raises(PluginError, match="event_updates or event_commands"):
+    with pytest.raises(
+        PluginError, match="event_updates, source_updates or event_commands"
+    ):
         adapter.set_params(execution_mode="process")
 
 
@@ -429,3 +431,127 @@ def test_process_event_detector_drains_accepted_events_on_graceful_stop():
         assert detector.get() == []
     finally:
         detector.stop()
+
+
+def test_builtin_camera_events_detector_uses_source_update_contract():
+    from evileye.controller.services.events_service import EventsService
+
+    class _Source:
+        def __init__(self):
+            self.subscribers = []
+            self.disconnects = []
+            self.reconnects = []
+
+        def subscribe(self, *subscribers):
+            self.subscribers.extend(subscribers)
+
+        def get_disconnects_info(self):
+            values, self.disconnects = self.disconnects, []
+            return values
+
+        def get_reconnects_info(self):
+            values, self.reconnects = self.reconnects, []
+            return values
+
+        def disconnect(self, address, timestamp):
+            self.disconnects.append((address, timestamp, False))
+            for subscriber in self.subscribers:
+                subscriber.update()
+
+    class _Pipeline:
+        def __init__(self, source):
+            self.source = source
+
+        def get_sources(self):
+            return [self.source]
+
+    class _ObjectsHandler:
+        def subscribe(self, *subscribers):
+            pass
+
+    source = _Source()
+    service = EventsService()
+    service.initialize_detectors(
+        {"enabled": ["CamEventsDetector"]},
+        _Pipeline(source),
+        _ObjectsHandler(),
+        use_database=False,
+    )
+    service.initialize_controller({})
+    detector = service.get_detector("CamEventsDetector")
+    assert detector.execution_mode == "process"
+    assert source.subscribers == [detector]
+
+    source.disconnect("rtsp://camera-1/stream", datetime(2026, 10, 11, 13, 0, 0))
+    service.start_detectors()
+    controller = service.get_detectors_controller()
+    try:
+        deadline = time.monotonic() + 5.0
+        snapshot = {}
+        while time.monotonic() < deadline:
+            if controller.flush_once():
+                snapshot = controller.get()
+                break
+            time.sleep(0.02)
+
+        events = snapshot["CamEventsDetector"]
+        assert len(events) == 1
+        assert events[0].camera_address == "rtsp://camera-1/stream"
+        assert events[0].con_status is False
+        assert events[0].timestamp == datetime(2026, 10, 11, 13, 0, 0)
+    finally:
+        service.release()
+
+
+def test_capture_source_connection_transitions_notify_subscribers():
+    from threading import RLock
+
+    from evileye.capture.video_capture_base import VideoCaptureBase
+
+    class _ConcreteVideoCapture(VideoCaptureBase):
+        def get_frames_impl(self):
+            return []
+
+        def _grab_frames(self):
+            return None
+
+        def _retrieve_frames(self):
+            return None
+
+        def init_impl(self):
+            return None
+
+        def release_impl(self):
+            return None
+
+        def reset_impl(self):
+            return None
+
+        def default(self):
+            return None
+
+    class _Subscriber:
+        def __init__(self):
+            self.updates = 0
+
+        def update(self):
+            self.updates += 1
+
+    source = object.__new__(_ConcreteVideoCapture)
+    source.conn_mutex = RLock()
+    source.disconnects = []
+    source.reconnects = []
+    source._disconnect_count = 0
+    source._reconnect_count = 0
+    source._last_connection_transition = None
+    source.subscribers = [_Subscriber()]
+    source.is_working = False
+    source._camera_event_identity = lambda: "camera-1"
+    timestamp = datetime(2026, 10, 11, 13, 0, 0)
+
+    source._record_disconnect(timestamp)
+    source._record_reconnect(timestamp)
+
+    assert source.subscribers[0].updates == 2
+    assert source.get_disconnects_info() == [("camera-1", timestamp, False)]
+    assert source.get_reconnects_info() == [("camera-1", timestamp, False)]

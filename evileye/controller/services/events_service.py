@@ -125,7 +125,10 @@ class EventsService:
             detector = self._detectors.get(name)
             if registered is None or registered.spec.kind != "event_detector" or detector is None:
                 continue
-            if "capture_sources" in registered.spec.capabilities:
+            if (
+                "capture_sources" in registered.spec.capabilities
+                or "source_updates" in registered.spec.capabilities
+            ):
                 for source in sources:
                     subscribe = getattr(source, "subscribe", None)
                     if callable(subscribe):
