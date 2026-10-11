@@ -64,8 +64,8 @@ class _FakeYoloRuntime:
         if classes is not None:
             predictions = [box for box in predictions if int(box.cls[0]) in classes]
         return [
-            SimpleNamespace(boxes=_FakeBoxes(predictions))
-            for _ in images
+            SimpleNamespace(boxes=_FakeBoxes(predictions), orig_img=image)
+            for image in images
         ]
 
     def release(self):

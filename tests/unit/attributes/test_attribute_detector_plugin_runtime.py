@@ -40,6 +40,7 @@ class _FakeBoxes:
 class _FakeYoloRuntime:
     predictions = []
     calls = []
+    model_names = {0: "hard_hat", 1: "no_hard_hat"}
 
     def __init__(self, logger=None):
         self.model = None
@@ -49,7 +50,7 @@ class _FakeYoloRuntime:
         self.params = params
 
     def load(self):
-        self.model = object()
+        self.model = SimpleNamespace(names=dict(type(self).model_names))
 
     def predict_raw(self, images, **kwargs):
         type(self).calls.append((images, kwargs))
@@ -106,6 +107,45 @@ def test_attribute_detector_maps_roi_boxes_and_class_thresholds(monkeypatch):
     assert _FakeYoloRuntime.calls[0][1]["classes"] == [0, 1]
     assert module.get_model_class_mapping() == {"hard_hat": 0, "no_hard_hat": 1}
     module.close()
+
+
+def test_attribute_detector_resolves_class_ids_from_checkpoint_names(monkeypatch):
+    import evileye.object_detector.yolo_runtime as yolo_runtime_module
+
+    monkeypatch.setattr(yolo_runtime_module, "YoloRuntime", _FakeYoloRuntime)
+    old_names = _FakeYoloRuntime.model_names
+    _FakeYoloRuntime.model_names = {0: "person", 39: "bottle"}
+    _FakeYoloRuntime.calls = []
+    _FakeYoloRuntime.predictions = [_FakeBox(39, 0.8, [1, 2, 5, 6])]
+    module = AttributeDetector()
+    try:
+        state = module.create_state({"attrs": ["person", "bottle"]})
+        result, _ = module.process_item(_frame(), state)
+
+        assert module.get_model_class_mapping() == {"person": 0, "bottle": 39}
+        assert _FakeYoloRuntime.calls[0][1]["classes"] == [0, 39]
+        assert len(result.detections) == 1
+        assert result.detections[0].class_id == 39
+        assert result.detections[0].detection_data["attribute"] == "bottle"
+    finally:
+        module.close()
+        _FakeYoloRuntime.model_names = old_names
+
+
+def test_attribute_detector_requires_explicit_mapping_for_unknown_model_labels(monkeypatch):
+    import evileye.object_detector.yolo_runtime as yolo_runtime_module
+
+    monkeypatch.setattr(yolo_runtime_module, "YoloRuntime", _FakeYoloRuntime)
+    old_names = _FakeYoloRuntime.model_names
+    _FakeYoloRuntime.model_names = {0: "helmet", 1: "no_helmet"}
+    module = AttributeDetector()
+    try:
+        with pytest.raises(ValueError, match="configure class_mapping explicitly"):
+            module.create_state({"attrs": ["hard_hat"]})
+        assert module._yolo_runtime.model is None
+    finally:
+        module.close()
+        _FakeYoloRuntime.model_names = old_names
 
 
 def test_attribute_detector_reads_shared_frame_without_consuming_handle(monkeypatch):

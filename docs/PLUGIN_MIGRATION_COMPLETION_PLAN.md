@@ -49,9 +49,15 @@
 
 1. [готово] ObjectDetectorYolo переведён на processor_item: вход Frame/DTO, worker-local модель, ROI и class filtering, DetectionResultList; thread и spawn-process используют общий runtime. ObjectDetectorYoloMp сохраняется как alias. num_detection_threads отображается на worker_count и ordered worker pool возвращает результаты в порядке входа. При нескольких worker-ах vid_stride > 1 отклоняется, так как stride-счётчик локален worker-у. RT-DETR также переведён на item runtime; RF-DETR также использует item runtime и передаёт native Supervision detections без Ultralytics-совместимого преобразования.
 2. [готово] BoT-SORT использует item runtime и хранит отдельный tracker на source_id; уменьшение frame_id сбрасывает состояние при rewind/loop. Capture публикует persistent disconnect/reconnect counters и помещает connection_generation в каждый кадр. BoT-SORT сбрасывает per-source состояние при смене поколения (включая process capture). Тест движущегося объекта подтверждает непрерывность track_id в thread и spawn process.
-3. [готово] AttributeDetector и AttributeClassifier используют item runtime. AttributeDetector сохраняет конфигурацию модели, class mapping, per-class thresholds и ROI; AttributeClassifier обогащает tracker result по `track_id`. Thread/process и реальные модели проверены smoke-тестами; сравнение результата на фиксированном видео с прежней реализацией остаётся.
+3. [готово] AttributeDetector и AttributeClassifier используют item runtime.
+   AttributeDetector сохраняет конфигурацию модели, class mapping, per-class
+   thresholds и ROI; AttributeClassifier обогащает tracker result по `track_id`.
+   Thread/process и реальные модели проверены smoke-тестами. Для AttributeDetector
+   добавлен opt-in golden parity тест против прежнего `AttributeDetectionThread`:
+   на фиксированном кадре совпадают классы, bbox и confidence; имена классов теперь
+   берутся из checkpoint, а нестандартные псевдонимы требуют явного `class_mapping`.
 4. После каждой группы убрать `legacy_processor_protocol` у соответствующих manifests, не удаляя compatibility `type` aliases.
-5. [частично] Для YOLO и RT-DETR добавлены opt-in golden parity tests против legacy thread реализаций на реальных моделях и одном фиксированном кадре; classes, bbox и confidence совпадают. Проверка RT-DETR выявила и устранила регрессию округления/clip координат. Запуск: EVILEYE_RUN_MODEL_PARITY=1 pytest -q tests/integration/object_detector/test_yolo_legacy_parity.py tests/integration/object_detector/test_rtdetr_legacy_parity.py. Остальным модулям нужны сравнения на фиксированных видео/кадрах: track continuity, attributes, порядок кадров и DTO.
+5. [частично] Для YOLO, RT-DETR и AttributeDetector добавлены opt-in golden parity tests против legacy thread реализаций на фиксированных реальных кадрах; классы, bbox и confidence совпадают. Проверка RT-DETR выявила и устранила регрессию округления/clip координат. AttributeDetector также сохраняет модельные ID классов (например, bottle=39 в COCO) и требует явный mapping для псевдонимов. Остались parity-сценарии AttributeClassifier и BoT-SORT на последовательности кадров, а также тесты DTO/order для модулей, где их поведение отличается от inference.
 
 **Критерий:** ни один штатный детектор, tracker или attribute module не требует `LegacyProcessorModuleAdapter`; thread/process режимы проходят один набор контрактных сценариев.
 
@@ -136,6 +142,100 @@
 - После уточнения ошибок загрузки `PluginManager` отдельно помечает `ModuleNotFoundError` как отсутствующую зависимость и сообщает её имя вместе с entry point; registry, controller lifecycle и adapter tests прошли. Целевые integration-проверки database controller без БД и PostgreSQL alarm persistence завершились: 8 passed; оставшихся pytest/multiprocessing процессов нет.
 
 - Очереди `processor_item` получили типизированную backpressure-политику: вытесненные кадры учитываются в runtime stats, а non-frame payload сохраняет явный reject. Thread, process-queue helper и ordered parallel tests прошли; полный `tests/unit` завершился с `exit=0`, после него не осталось pytest, resource_tracker, spawn_main или MpWorker процессов. Alarm overflow/retry tests остаются зелёными.
+
+## Порядок оставшихся работ на 2026-10-11
+
+Первая версия плана **не завершена**. Registry/SPI, встроенные item модули,
+основные конфигурационные режимы и внешний пакет уже работают; оставшиеся
+пункты ниже закрывают проверяемые пробелы миграции и эксплуатации.
+
+### 1. Закрыть parity встроенных модулей
+
+- Добавить сравнение AttributeClassifier со старой реализацией на фиксированном
+  наборе tracker ROI: class mapping, confidence, результат по `track_id`, пустые
+  ROI и вход с shared-frame handle.
+- Добавить golden последовательность для BoT-SORT на нескольких кадрах из
+  сохранённого набора detections. Проверить устойчивость `track_id`, переходы
+  lost/refound и reset после rewind/reconnect; существующий synthetic continuity
+  тест оставить отдельным контрактным тестом.
+- Зафиксировать, какие новые поля DTO намеренно добавлены, чтобы parity проверяла
+  семантику, а не сравнение сериализаций побайтно.
+
+**Готово, когда:** classifier и tracker имеют воспроизводимые golden tests против
+предыдущего поведения и одинаковые результаты через SPI thread/process там, где
+оба режима заявлены.
+
+### 2. Закрыть source lifecycle и end-to-end конечную видеозапись
+
+- Согласовать документированную модель кадра: размеры/цветовой формат, timestamp,
+  sequence, connection generation и владение shared-frame handle; проверить её
+  на встроенном OpenCV/GStreamer и внешнем `open/read/close` source.
+- На конечном MP4 пройти полный `PipelineSurveillance`: сосчитать кадры на входе,
+  выходы detector/tracker и события, проверить записанный сегмент через `ffprobe`,
+  штатный stop и отсутствие процессов/relay сокетов. Счётчик должен наблюдаться
+  через runtime metrics или тестовый collector, а не по косвенным логам.
+- Добавить deterministic file-loop/reconnect сценарии для встроенного capture.
+  Синтетический RTSP прогонять независимо от доступности реальных камер; реальные
+  RTSP результаты фиксировать отдельно для каждого backend и transport.
+
+**Готово, когда:** finite-video прогон доказывает прохождение кадров по стадиям и
+корректное освобождение ресурсов в thread/process режимах.
+
+### 3. Зафиксировать границу event/alarm runtime
+
+- Нагрузочно проверить ограниченную очередь и повтор записи при временно
+  недоступной БД: очередь не растёт без границ, восстановление сохраняет порядок
+  допустимых повторов, `alarm_id` исключает дубликаты, stop дренирует очередь.
+- Проверить, что падение одного event detector не останавливает соседние правила,
+  а adapter и pipeline остаются `degraded` до успешного восстановления.
+- Для event detectors оставить явную проверку отказа `process`-режима. Отдельно
+  решить, требуется ли им spawn runtime: текущие зависимости на `ObjectsHandler`
+  и контроллер не являются сериализуемым контрактом, поэтому расширять режим без
+  отдельного протокола доставки событий нельзя.
+
+**Готово, когда:** отказ/восстановление БД и detector-а наблюдаемы, а ограничение
+по process режиму документировано и проверено контрактным тестом.
+
+### 4. Закрыть regression и эксплуатационные проверки
+
+- Разобрать зависание завершения полного integration suite после pytest summary;
+  установить владельцев оставшихся потоков/worker-ов и обеспечить штатное закрытие.
+  Не считать suite зелёным только по summary, пока процесс не завершился с кодом 0.
+- Последовательно прогнать полный unit и integration наборы, затем штатный
+  finite-video smoke и plugin-package smoke; после каждого проверить процессы.
+- Проверить Web UI и защищённые API с валидной учётной записью, если она доступна;
+  без неё оставить эту проверку открытым внешним блокером, не подменяя авторизацию.
+- В финале снять inventory всех builtin modules и capabilities; завершать миграцию
+  только при нуле `legacy_processor_protocol`/`legacy_source_protocol`, а
+  thread-only исключения оставить явно в документации.
+
+**Готово, когда:** каждый прогон имеет exit code, подтверждённый shutdown, а
+внешние ограничения отделены от дефектов репозитория.
+
+### Актуальная проверка 2026-10-11
+
+- Сравнение с прежним `AttributeDetectionThread` на `yolo11n.pt` и фиксированном
+  `bus.jpg` выявило ошибку: без `class_mapping` атрибут `bottle` получал ID 1
+  вместо ID 39. `AttributeDetector` теперь использует имена классов checkpoint;
+  если запрошенной метки нет, требует явный `class_mapping`. Реальный smoke
+  подтвердил `{person: 0, bottle: 39}`.
+- Добавлен opt-in golden test
+  `tests/integration/attributes/test_attribute_detector_legacy_parity.py`.
+  Он сравнивает class IDs, bbox и confidence с результатом legacy реализации;
+  новый SPI дополнительно сохраняет имя атрибута в detection metadata.
+- Контрактные тесты для metadata mapping и обязательного явного mapping при
+  незнакомых labels прошли. Команда `EVILEYE_RUN_MODEL_PARITY=1 pytest -q
+  tests/unit/attributes/test_attribute_detector_plugin_runtime.py
+  tests/integration/attributes/test_attribute_detector_legacy_parity.py`
+  завершилась успешно.
+- Первый полный unit прогон обнаружил устаревшую RT-DETR fake-фикстуру без
+  `orig_img`. Фикстура дополнена исходным ROI-изображением без ослабления проверки
+  clipping. Повторный `QT_QPA_PLATFORM=offscreen pytest -q tests/unit` дошёл до
+  100% с exit code 0; тестовых `pytest`, `resource_tracker`, `spawn_main`,
+  `PluginSource` и `MpWorkerCapture` процессов после прогона не осталось.
+- Полный integration suite, finite-video end-to-end со счётчиками стадий,
+  AttributeClassifier/BoT-SORT golden parity, RTSP backend-проверки и Web UI
+  авторизованный просмотр остаются открытыми; общая миграция не завершена.
 
 ## Условие завершения миграции
 

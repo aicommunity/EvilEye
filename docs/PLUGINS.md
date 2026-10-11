@@ -134,6 +134,11 @@ thread or spawn worker. Existing config names remain valid, including
 still expose only the old `put/get` contract; the migrated built-ins do not use
 it.
 
+`AttributeDetector` resolves configured `attrs` against the checkpoint's class
+names when `class_mapping` is omitted. If a requested label is not present, the
+module fails with a configuration error and asks for an explicit mapping instead
+of treating the order of `attrs` as model class IDs.
+
 New plugins should implement `process_item(item, state)` and use the common
 runtime directly. For stages that consume a synchronized multi-source batch,
 declare `kind="batch_processor"` and implement
