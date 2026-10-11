@@ -35,14 +35,18 @@ class JsonAdapterZoneEvents(DatabaseAdapterBase):
         self._image_storage = ImageStorageService(self.image_dir, preview_width=320, preview_height=240, logger=None)
 
     def start(self):
-        self.run_flag = True
+        with self._lifecycle_lock:
+            self._closing = False
+            self.run_flag = True
 
     def _process_queue_item(self, item):
         """JSON адаптер не использует очередь; метод требуется базовым классом."""
         return
 
     def stop(self):
-        self.run_flag = False
+        with self._lifecycle_lock:
+            self._closing = True
+            self.run_flag = False
 
     def _execute_query(self):
         pass

@@ -201,3 +201,96 @@ def test_alarm_database_adapter_reports_queue_overflow():
     assert stats["queue_size"] == 0
     assert stats["queue_failures"] == 1
     assert stats["degraded"] is True
+
+
+def test_alarm_adapter_bounds_queue_and_recovers_fifo_after_sustained_outage():
+    import time
+
+    class _OutageDatabase(_FakeDatabase):
+        def __init__(self):
+            super().__init__()
+            self.outage_started = Event()
+            self.outage_attempts = 0
+            self.outage_active = True
+            self.persisted_alarm_ids = []
+
+        def query_checked(self, query, values):
+            alarm_id = values[1]
+            if self.outage_active:
+                self.outage_started.set()
+                self.outage_attempts += 1
+                if self.outage_attempts == 3:
+                    # Recover after the adapter exhausts its bounded retry budget.
+                    self.outage_active = False
+                raise psycopg2.OperationalError("database remains unavailable")
+            self.queries.append((query, values))
+            self.persisted_alarm_ids.append(alarm_id)
+            self.saved.set()
+
+    db = _OutageDatabase()
+    adapter = _make_adapter(db)
+    adapter.set_params(table_name="alarm_events", queue_maxsize=2)
+    adapter.start()
+    try:
+        adapter.insert(AlarmEvent("ppe_violation", alarm_id="outage-alarm"))
+        assert db.outage_started.wait(timeout=1)
+
+        # The worker is retrying the failing write; two later alarms fit, while
+        # the next write is explicitly rejected instead of growing memory use.
+        adapter.insert(AlarmEvent("ppe_violation", alarm_id="recovery-1"))
+        adapter.insert(AlarmEvent("ppe_violation", alarm_id="recovery-2"))
+        with pytest.raises(RuntimeError, match="queue is full"):
+            adapter.insert(AlarmEvent("ppe_violation", alarm_id="overflow"))
+
+        deadline = time.monotonic() + 3
+        while adapter.get_runtime_stats()["queue_failures"] < 2 and time.monotonic() < deadline:
+            time.sleep(0.01)
+        assert adapter.get_runtime_stats()["queue_failures"] >= 2
+        assert db.outage_attempts == 3
+
+        # The finite retry policy reports the lost first alarm; after service
+        # recovery, already accepted queue entries still persist in FIFO order.
+        adapter.stop()
+    finally:
+        if adapter.get_runtime_stats()["worker_alive"]:
+            adapter.stop()
+
+    stats = adapter.get_runtime_stats()
+    assert db.persisted_alarm_ids == ["recovery-1", "recovery-2"]
+    assert stats["queue_size"] == 0
+    assert stats["queue_failures"] == 2  # terminal write + rejected enqueue
+    assert stats["degraded"] is True
+    assert "database remains unavailable" in stats["last_error"]
+    assert stats["worker_alive"] is False
+
+
+def test_alarm_database_adapter_shutdown_timeout_is_visible_and_restart_is_safe():
+    db = _FakeDatabase()
+    db.block_query = True
+    adapter = _make_adapter(db)
+    adapter.stop_timeout_secs = 0.05
+    adapter.start()
+    adapter.insert(AlarmEvent("ppe_violation", alarm_id="blocked-alarm"))
+    assert db.worker_entered.wait(timeout=1)
+
+    try:
+        adapter.stop()
+        stats = adapter.get_runtime_stats()
+        assert stats["worker_alive"] is True
+        assert stats["closing"] is True
+        assert stats["shutdown_timeouts"] == 1
+        assert stats["degraded"] is True
+        assert "shutdown timed out" in stats["last_error"]
+        with pytest.raises(RuntimeError, match="worker is not running"):
+            adapter.insert(AlarmEvent("ppe_violation", alarm_id="late-alarm"))
+        with pytest.raises(RuntimeError, match="previous worker is still stopping"):
+            adapter.start()
+    finally:
+        db.allow_query.set()
+        adapter.query_thread.join(timeout=2)
+
+    assert adapter.get_runtime_stats()["worker_alive"] is False
+    adapter.stop_timeout_secs = 1.0
+    adapter.start()
+    adapter.stop()
+    assert adapter.get_runtime_stats()["worker_alive"] is False

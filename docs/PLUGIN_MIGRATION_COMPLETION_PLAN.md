@@ -248,3 +248,76 @@
 - PipelineSurveillance finite-video E2E: `tests/integration/pipeline/test_pipeline_surveillance_video_e2e.py` прогоняет 20 кадров через встроенный OpenCV capture, YOLO и BoT-SORT. Счётчики stage outputs сравнивают frame IDs, output recording проверяется `ffprobe`; thread и spawn-process варианты прошли (2 passed), degraded=false, после shutdown worker-ов нет. Запуск opt-in через `EVILEYE_RUN_SURVEILLANCE_VIDEO_E2E=1`.
 
 - Source contract: `Frame` получил API docstring; `docs/PLUGINS.md` описывает payload и ownership shared-memory handle. `test_capture_descriptor_payload` закрепляет передачу frame metadata при decode descriptor. Source health, frame PTS и descriptor IPC unit tests прошли (6 passed).
+
+### Продолжение 2026-10-11: отказ и восстановление alarm storage
+
+- [готово] Добавлена нагрузочная регрессия DB alarm adapter: при отказе БД
+  адаптер исчерпывает три попытки записи, после чего следующий запрос отражает
+  восстановление; две уже принятые записи сохраняются в FIFO-порядке. При
+  заполнении очереди третья запись отклоняется явно. Проверяются ограничение
+  очереди, число попыток, сохранённые `alarm_id`, пустая очередь после stop и
+  `degraded` с причиной потери первой тревоги. Это подтверждает наблюдаемость, но
+  не гарантирует сохранение события после исчерпания retries: durable outbox
+  по-прежнему вне версии 1.
+- [готово] DB adapter теперь сериализует приём `insert/update` с `stop`, чтобы
+  событие либо принято до закрытия и дренировано, либо явно отклонено. Остановка
+  worker ограничена `stop_timeout_secs`; timeout оставляет `worker_alive=true`,
+  `closing=true`, увеличивает `shutdown_timeouts` и запрещает перезапуск до
+  фактического выхода старого потока. После выхода допустим безопасный restart.
+  Синхронные JSON adapters используют тот же acceptance boundary.
+- [готово] Полный `QT_QPA_PLATFORM=offscreen python3.10 -m pytest -q tests/unit`
+  завершился с exit code 0. Первый прогон поймал две фикстуры capture SPI,
+  возвращавшие dict вместо `Frame`; обе фикстуры приведены к публичному Frame
+  контракту, затем полный прогон прошёл. После него фоновых pytest и
+  multiprocessing worker процессов не обнаружено.
+- Целевые alarm/JSON проверки завершились успешно; DB adapter
+  lifecycle/outage regression включена в этот прогон. Осталось только
+  предупреждение обновления установленной Albumentations.
+
+## Дальнейший порядок работ
+
+Первая версия плана **всё ещё не завершена**. Следующий приоритет — закрыть
+проверяемые границы версии 1; только после этого имеет смысл отдельно принимать
+решение о DAG, hot-plug и долговечной очереди.
+
+1. **Закрыть runtime тревог.** Сохранить контракт конечных retries и
+   диагностируемой потери; добавить явные отдельные счётчики terminal write
+   failures и enqueue rejections, чтобы `queue_failures` не смешивал разные
+   причины. Проверить реальное восстановление соединения PostgreSQL на
+   integration fixture (включая дубли `alarm_id`) и убедиться, что приложение
+   отображает latched degraded, если тревога окончательно потеряна. Не добавлять
+   event-detector `process` режим без сериализуемого контракта доставки объектов
+   и событий.
+2. **Закрыть source transport.** Добавить независимый локальный RTSP fixture
+   (предпочтительно проектный test dependency или воспроизводимый контейнерный
+   сервис, без скачивания бинарника во время теста); проверять DESCRIBE/SETUP/PLAY,
+   таймаут, EOF/reconnect и смену `connection_generation` отдельно для OpenCV и
+   GStreamer. Затем повторить реальные камеры и записать результат по каждой
+   камере/backend/transport. Текущий блокер: локальный RTSP server fixture на
+   сервере отсутствует; камеры `.199`/`.202` возвращают `RTSP 250` на PLAY в
+   GStreamer.
+3. **Закрыть полный integration shutdown.** Разбить suite на независимые группы,
+   для каждой сохранять exit code и список живых потоков/процессов; найти владельца
+   ресурсов, из-за которых общий прогон зависал после summary. После фикса пройти
+   полный набор с конечным timeout и получить exit code 0, затем повторить
+   finite-video, внешний editable package и проверить отсутствие worker-ов.
+4. **Закрыть эксплуатационную часть.** На действующих конфигурациях отдельно
+   подтвердить конечную видеозапись с детекцией/трекингом и камеру через каждый
+   поддержанный backend. Проверку защищённых UI экранов выполнить только с
+   валидной учётной записью; без неё оставить конкретный внешний блокер.
+5. **Завершить inventory миграции.** Снять список всех builtin module IDs,
+   capabilities и execution modes; для каждого оставить тест thread/process,
+   golden parity или явное thread-only обоснование. Нулевой legacy protocol count
+   и успешный shutdown обязательны для завершения v1.
+
+После закрытия этих пунктов отдельно подготовить RFC для следующей версии:
+
+- нужен ли граф/DAG пайплайна сверх `PipelineDeclarative` и
+  специализированного `PipelineSurveillance`;
+- нужен ли durable outbox/повтор доставки тревог через перезапуск;
+- требования к доверенной установке сторонних пакетов, lock-файлам,
+  совместимости версий и диагностике конфликтов;
+- нужен ли управляемый runtime reload плагинов; он не должен означать
+  автоматическую установку зависимостей;
+- какие интерфейсы и capability manifest должны стабилизироваться как публичный
+  SDK, включая миграционную политику.

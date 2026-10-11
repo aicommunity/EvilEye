@@ -5,7 +5,7 @@ from ..core.base_class import EvilEyeBase
 from ..core.interfaces import IDatabaseAdapter
 from .database_controller_pg import DatabaseControllerPg
 from .database_error_handler import DatabaseErrorHandler
-from threading import Thread
+from threading import Lock, Thread, current_thread
 from queue import Queue, Empty
 from abc import abstractmethod, ABC
 
@@ -16,8 +16,12 @@ class DatabaseAdapterBase(EvilEyeBase, ABC):
         self.db_controller: DatabaseControllerPg = db_controller
         self.db_params: Dict[str, Any] = self.db_controller.get_params()
         self.cameras_params: Dict[str, Any] = self.db_controller.get_cameras_params()
-        self.query_thread: Thread = Thread(target=self._execute_query)
+        self.query_thread: Optional[Thread] = None
         self.run_flag: bool = False
+        self._closing = False
+        self._lifecycle_lock = Lock()
+        self.stop_timeout_secs = 5.0
+        self.shutdown_timeouts = 0
         self.queue_maxsize = 1024
         self.queue_in: Queue = Queue(maxsize=self.queue_maxsize)
         self.queue_failures = 0
@@ -62,17 +66,58 @@ class DatabaseAdapterBase(EvilEyeBase, ABC):
         return self.table_name
 
     def start(self) -> None:
-        self.run_flag = True
-        thread = self.query_thread
-        if thread is None or thread.ident is not None:
-            # Recreate after a previous start/stop (Thread can only be started once).
-            self.query_thread = Thread(target=self._execute_query)
-        self.query_thread.start()
+        with self._lifecycle_lock:
+            thread = self.query_thread
+            if thread is not None and thread.is_alive():
+                if self.run_flag and not self._closing:
+                    return
+                raise RuntimeError(
+                    "Cannot restart database adapter while its previous worker is still stopping"
+                )
+            self.run_flag = True
+            self._closing = False
+            if thread is None or thread.ident is not None:
+                self.query_thread = Thread(
+                    target=self._execute_query,
+                    name=f"DatabaseAdapter-{self.event_name or self.__class__.__name__}",
+                )
+            self.query_thread.start()
 
     def stop(self) -> None:
-        self.run_flag = False
-        if self.query_thread is not None and self.query_thread.is_alive():
-            self.query_thread.join()
+        with self._lifecycle_lock:
+            self._closing = True
+            self.run_flag = False
+            thread = self.query_thread
+            try:
+                pending = self.queue_in.qsize()
+            except Exception:
+                pending = "unknown"
+
+        if thread is None or not thread.is_alive():
+            if pending:
+                self.queue_failures += 1
+                self.degraded = True
+                self.last_error = (
+                    f"database adapter has {pending} pending items but no running worker"
+                )
+                self.logger.error(self.last_error)
+            return
+        if thread is current_thread():
+            return
+
+        thread.join(timeout=self.stop_timeout_secs)
+        if thread.is_alive():
+            try:
+                pending = self.queue_in.qsize()
+            except Exception:
+                pending = "unknown"
+            self.shutdown_timeouts += 1
+            self.degraded = True
+            self.last_error = (
+                "database adapter shutdown timed out; "
+                f"worker_alive=true, pending_items={pending}"
+            )
+            self.logger.error(self.last_error)
 
     def default(self) -> None:
         pass
@@ -91,8 +136,16 @@ class DatabaseAdapterBase(EvilEyeBase, ABC):
                 exc = ConnectionError(f"Database adapter '{self.event_name}' is disconnected")
                 self._record_failure('insert', exc)
                 raise exc
-        # Для JSON адаптеров (db_controller может быть None или self) всегда выполняем операцию
-        self._insert_impl(data)
+        # Serialize acceptance with stop(): work accepted before shutdown is drained,
+        # and work arriving after shutdown is explicitly rejected.
+        with self._lifecycle_lock:
+            if self._closing:
+                exc = RuntimeError(
+                    "Database adapter worker is not running because the adapter is stopping"
+                )
+                self._record_failure('insert', exc)
+                raise exc
+            self._insert_impl(data)
 
     def update(self, data: Any) -> None:
         # Проверяем, что БД подключена перед выполнением операций (только для БД адаптеров)
@@ -102,8 +155,15 @@ class DatabaseAdapterBase(EvilEyeBase, ABC):
                 exc = ConnectionError(f"Database adapter '{self.event_name}' is disconnected")
                 self._record_failure('update', exc)
                 raise exc
-        # Для JSON адаптеров (db_controller может быть None или self) всегда выполняем операцию
-        self._update_impl(data)
+        # Keep updates under the same acceptance boundary as inserts.
+        with self._lifecycle_lock:
+            if self._closing:
+                exc = RuntimeError(
+                    "Database adapter worker is not running because the adapter is stopping"
+                )
+                self._record_failure('update', exc)
+                raise exc
+            self._update_impl(data)
 
     def get_db_params(self) -> Dict[str, Any]:
         return self.db_params
@@ -135,6 +195,8 @@ class DatabaseAdapterBase(EvilEyeBase, ABC):
             "queue_failures": self.queue_failures,
             "processed_items": self.processed_items,
             "worker_alive": bool(self.query_thread and self.query_thread.is_alive()),
+            "closing": self._closing,
+            "shutdown_timeouts": self.shutdown_timeouts,
             "degraded": self.degraded,
             "last_error": self.last_error,
         }

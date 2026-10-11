@@ -141,7 +141,9 @@ def test_gstreamer_builtin_source_uses_common_source_spi(monkeypatch):
 
     emitted = []
     init_attempts = []
-    expected = {"source_id": 7, "frame_id": 11}
+    expected = CaptureImage()
+    expected.source_id = 7
+    expected.frame_id = 11
 
     def fake_init(source):
         init_attempts.append(True)

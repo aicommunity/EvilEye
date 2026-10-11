@@ -1014,6 +1014,7 @@ def test_builtin_capture_sources_use_spi_adapter_and_keep_capture_backend(monkey
     # Importing the builtins registers their public SPI manifests.
     from evileye.capture.video_capture_opencv import VideoCaptureOpencv
     from evileye.capture.video_capture_gstreamer import VideoCaptureGStreamer
+    from evileye.core.frame import Frame
 
     for source_type in (VideoCaptureOpencv, VideoCaptureGStreamer):
         registered = plugin_registry.get_module(source_type.__name__)
@@ -1027,6 +1028,9 @@ def test_builtin_capture_sources_use_spi_adapter_and_keep_capture_backend(monkey
     assert "legacy_source_protocol" not in gst_spec.capabilities
 
     generated = []
+    expected = Frame()
+    expected.source_id = 3
+    expected.frame_id = 9
 
     def fake_init(source):
         source.is_inited = True
@@ -1039,7 +1043,7 @@ def test_builtin_capture_sources_use_spi_adapter_and_keep_capture_backend(monkey
         if not generated:
             generated.append(True)
             source._test_finished = True
-            return [{"source_id": 3, "frame_id": 9}]
+            return [expected]
         return []
 
     def fake_is_finished(source):
@@ -1075,7 +1079,7 @@ def test_builtin_capture_sources_use_spi_adapter_and_keep_capture_backend(monkey
             frames.extend(adapter.get())
             if not frames:
                 time.sleep(0.01)
-        assert frames == [{"source_id": 3, "frame_id": 9}]
+        assert frames == [expected]
     finally:
         adapter.stop()
 

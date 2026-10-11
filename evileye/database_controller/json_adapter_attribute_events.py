@@ -49,7 +49,9 @@ class JsonAdapterAttributeEvents(DatabaseAdapterBase):
         return
 
     def stop(self):
-        self.run_flag = False
+        with self._lifecycle_lock:
+            self._closing = True
+            self.run_flag = False
 
     def _execute_query(self):
         # not used
