@@ -361,17 +361,23 @@
   `query_checked` retry.
 - [готово] `ZoneEvents` больше не переопределяет цикл очереди: bounded retry,
   shutdown drain и terminal failure stats выполняются `DatabaseAdapterBase`.
-- [готово] Ошибки сохранения изображений после успешного SQL commit отражаются
-  как terminal storage failure и не запускают повторный INSERT. Для zone event
-  отсутствие опционального кадра не подавляет уведомление о сохранённой записи.
+- [готово] Ошибки сохранения изображений и некорректные `RETURNING` строки
+  после успешного SQL commit отражаются как terminal storage failure и не
+  запускают повторный INSERT. Уже сохранённая object/zone запись уведомляется
+  даже при повреждённом результате или отсутствии опционального кадра.
 - [готово] Добавлены контрактные тесты на все шесть адаптеров: три попытки,
   terminal failure, нулевой processed count и общий worker для ZoneEvents.
   Также проверены отсутствие повтора INSERT при ошибке записи изображения и
   уведомление о zone event без изображения.
 - Полный `QT_QPA_PLATFORM=offscreen python3.10 -m pytest -q tests/unit`
-  завершился с exit code 0 уже с новыми регрессиями; PostgreSQL alarm integration
-  также прошёл. После прогонов фоновых pytest и multiprocessing worker-ов нет.
+  повторно завершился с exit code 0 после malformed `RETURNING` regressions;
+  после прогона нет pytest и multiprocessing worker-ов.
 
 **Следующий приоритет:** источник-ориентированный RTSP fixture и полный
-integration shutdown. Имеющийся на сервере набор локальных RTSP backend-ов пока
-не подтверждён; проверить доступность библиотек перед выбором реализации fixture.
+integration shutdown. На сервере доступны GStreamer 1.20.3, `gst-launch-1.0`,
+H.264 encoder/payloader plugins, но нет GI namespace `GstRtspServer`; текущие
+RTSP integration tests используют реальные камеры и пароль из environment, а
+изолированный локальный RTSP fixture отсутствует. Не выполнять system package
+installation из тестов; подобрать воспроизводимую test dependency или проверяемый
+контейнерный fixture. Полный integration shutdown остаётся отдельным открытым
+пунктом.

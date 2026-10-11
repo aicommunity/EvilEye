@@ -153,3 +153,54 @@ def test_zone_event_without_image_still_notifies_persisted_event(monkeypatch):
     assert database.attempts == 1
     assert notifications == [EventType.NEW_EVENT]
     assert adapter.get_runtime_stats()["processed_items"] == 1
+
+
+def test_object_event_invalid_returning_row_is_reported_and_notified(monkeypatch):
+    from evileye.database_controller import db_adapter_objects as objects_module
+    from evileye.database_controller.constants import EventType
+
+    database = _SuccessfulDatabase([(1,)])
+    adapter = DatabaseAdapterObjects(database)
+    adapter.set_params(table_name="objects")
+    notifications = []
+    monkeypatch.setattr(objects_module.threading_events, "notify", notifications.append)
+    adapter.queue_in.put_nowait(
+        (QueryType.INSERT, sql.SQL("INSERT RETURNING record_id, bounding_box"), [], "p", "f", None)
+    )
+
+    adapter._execute_query()
+
+    stats = adapter.get_runtime_stats()
+    assert database.attempts == 1
+    assert stats["terminal_write_failures"] == 1
+    assert stats["processed_items"] == 1
+    assert notifications == [EventType.HANDLER_NEW_OBJECT]
+
+
+def test_zone_event_invalid_returning_row_is_reported_and_notified(monkeypatch):
+    from evileye.database_controller import db_adapter_zone_events as zone_module
+    from evileye.database_controller.constants import EventType
+
+    database = _SuccessfulDatabase([(None, None)])
+    adapter = DatabaseAdapterZoneEvents(database)
+    adapter.set_params(table_name="zone_events", event_name="ZoneEvent")
+    notifications = []
+    monkeypatch.setattr(zone_module.threading_events, "notify", notifications.append)
+    adapter.queue_in.put_nowait(
+        (
+            QueryType.INSERT,
+            sql.SQL("INSERT RETURNING box_entered, zone_coords"),
+            [],
+            "preview.jpg",
+            "frame.jpg",
+            None,
+        )
+    )
+
+    adapter._execute_query()
+
+    stats = adapter.get_runtime_stats()
+    assert database.attempts == 1
+    assert stats["terminal_write_failures"] == 1
+    assert stats["processed_items"] == 1
+    assert notifications == [EventType.NEW_EVENT]

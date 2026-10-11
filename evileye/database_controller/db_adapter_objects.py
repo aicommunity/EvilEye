@@ -81,20 +81,23 @@ class DatabaseAdapterObjects(DatabaseAdapterBase):
             )
             return
 
-        try:
-            row_num = record[0][0]
-            box = record[0][1]
-        except Exception as ex:
-            self.logger.error(
-                f"Unexpected record format in db_adapter_objects._process_queue_item: {record}. "
-                f"Error: {ex}"
+        if (
+            not isinstance(record, list)
+            or not record
+            or not isinstance(record[0], (list, tuple))
+            or len(record[0]) < 2
+            or record[0][1] is None
+        ):
+            self._record_failure(
+                'process object RETURNING row',
+                RuntimeError('Objects query returned an invalid record_id/bounding_box row'),
+                category='terminal_write',
             )
-            return
-
-        if image is None or getattr(image, "image", None) is None:
-            # Metadata row already written; skip image IO without AttributeError/spam.
-            pass
+            box = None
         else:
+            box = record[0][1]
+
+        if box is not None and image is not None and getattr(image, "image", None) is not None:
             try:
                 self._save_image(preview_path, frame_path, image, box)
             except Exception as exc:
