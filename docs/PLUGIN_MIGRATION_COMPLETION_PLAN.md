@@ -12,7 +12,7 @@
 
 - `evileye/core/plugins.py` содержит `PluginSpec`, `ModuleSpec`, `PipelineSpec`, `PluginRegistry` и загрузчик entry points группы `evileye.plugins`; есть проверка API version, фабрик, видов модулей, режимов и идентификаторов.
 - Встроенные классы регистрируются через `register_module`; старый `EvilEyeBase.register` остаётся совместимым фасадом. Параллельный `EvilEyeBase._registry` удалён.
-- `event_registry` использует общий `PluginRegistry`; legacy event detectors создаются через `EventDetectorContext` и `EventDetectorModuleAdapter`. Для process-модулей доступны сериализуемые `event_updates` от объектов, `source_updates` от источников и `event_commands` от контроллера. Встроенные `SystemEventsDetector`, `CamEventsDetector` и `ScheduleAlarmEventsDetector` работают в process-режиме; Zone/Attribute остаются thread-only, пока им не передаются изображения кадров.
+- `event_registry` использует общий `PluginRegistry`; legacy event detectors создаются через `EventDetectorContext` и `EventDetectorModuleAdapter`. Для process-модулей доступны `event_updates` от объектов, ограниченные JPEG-вложения `event_frames`, `source_updates` от источников и `event_commands` от контроллера. Встроенные `SystemEventsDetector`, `CamEventsDetector` и `ScheduleAlarmEventsDetector`, `AttributeEventsDetector` работают в process-режиме; Zone остаётся thread-only до миграции геометрии зон и sticky enter/exit состояния.
 - Инвентарь закреплён тестом: 18 публичных config IDs (17 manifest modules и alias `ObjectDetectorYoloMp`); inventory test фиксирует нулевое число встроенных `legacy_*_protocol`.
 - `PipelineSurveillance` принимает `modules.<group>.mode=extend|replace`, валидирует группы и виды модулей, а `ProcessorFrame` отправляет кадр каждому совместимому процессору. `module_id` принимается наряду со старым `type`.
 - `PreprocessingPipeline` и `RoiFeeder` используют `processor_item` runtime.
@@ -25,7 +25,7 @@
 
 - `VideoCaptureOpencv` и `VideoCaptureGStreamer` реализуют общий source SPI `open/read/close`; их thread/process режимы делегируются capture backend-ам с shared-frame transport. Встроенный inventory больше не содержит `legacy_source_protocol`.
 - `ObjectMultiCameraTracking` переведён на `kind="batch_processor"` и публичный `IBatchProcessor.process_batch(batch, state)`. Общий адаптер создаёт модуль и вызывает batch-контракт; исполнение пока только потоковое.
-- Event detectors регистрируются через общий `PluginRegistry` и создаются runtime-адаптером с единым контекстом зависимостей. `EventsService` управляет подписками и запуском; process-runtime передаёт объектные snapshots, source transitions и команды контроллера через `EventUpdate`. Zone/Attribute требуют контракта передачи кадра/доказательства перед миграцией.
+- Event detectors регистрируются через общий `PluginRegistry` и создаются runtime-адаптером с единым контекстом зависимостей. `EventsService` управляет подписками и запуском; process-runtime передаёт object snapshots, source transitions и команды контроллера через `EventUpdate`; Attribute уже получает JPEG-вложения кадров. Zone остаётся thread-only до миграции самой геометрии зон и sticky enter/exit evidence.
 - `PipelineSurveillance`, `PipelineCapture` и `PipelineDeclarative` уже регистрируются как встроенные `PipelineSpec`. `PipelineService` разрешает их через реестр; `pipeline_class` остаётся совместимым именем. Ошибка неизвестного класса не должна переключать запуск на другой пайплайн.
 - Discovery и тревоги покрыты контрактными тестами. Пример внешнего пакета уже проверен через editable install в изолированном server-side virtualenv без переустановки EvilEye.
 
@@ -531,9 +531,9 @@ installation из тестов; подобрать воспроизводиму�
 - Общая модель журнала поддерживает `AlarmEvent`, но live-проверка виджета с авторизованной пользовательской сессией не подтверждена; текущая проверка проверяет преобразование строки и JSON data source.
 - [готово] Введён публичный `EventUpdate` и process-контракт `process_update(update, state)`. Host сериализует снимки active/lost объектов, process worker выполняет правило, возвращает события, а adapter сообщает об ошибке и переполнении очереди. Process event modules не могут объявлять live `object_handler`/capture dependencies.
 - [готово] Spawn-тесты подтверждают передачу снимка с атрибутами и историей, доставку `AlarmEvent`, диагностику исключения плагина и ошибки старта, отказ process-режима без capability, видимую реакцию на переполнение обеих очередей и штатную остановку дочернего процесса и dispatcher thread.
-- Ограничение: снимок передаёт метаданные объектов и краткие поля истории без изображения кадра. Сложные правила, которым нужен frame payload, остаются в thread mode до отдельного контракта frame references. Для ложных/потерянных при аварии процесса тревог durable outbox по-прежнему не реализован.
+- Ограничение: снимок передаёт метаданные объектов и краткие поля истории без изображения кадра. Сложные правила, которым нужен frame payload, остаются в thread mode до capability `event_frames` с ограниченными JPEG-вложениями. Для ложных/потерянных при аварии процесса тревог durable outbox по-прежнему не реализован.
 - [готово] Process detector проходит через `EventsService` → `EventsDetectorsController` → `EventsProcessor` → JSON adapter → журнал data source; тест проверяет сохранённый `alarm_id` и преобразованный тип тревоги. PostgreSQL adapter отдельно покрыт тестами общего контракта alarm persistence.
-- Следующий этап: спроектировать ограниченные по времени frame references для Zone/Attribute alarm detectors, сохранить изображение доказательства через process-границу и затем мигрировать детекторы по одному с полным event-to-journal тестом. После этого провести live UI проверку при доступной авторизованной сессии.
+- Следующий этап: спроектировать ограниченные по времени frame snapshots для Zone alarm detector, сохранить изображение доказательства через process-границу и затем мигрировать детекторы по одному с полным event-to-journal тестом. После этого провести live UI проверку при доступной авторизованной сессии.
 
 
 ### Продолжение 2026-10-11: миграция SystemEventsDetector
@@ -542,14 +542,14 @@ installation из тестов; подобрать воспроизводиму�
 - [готово] Штатная остановка process event detector теперь ставит sentinel после принятых входов, вычитывает ответы worker-а и оставляет полученные события для финального `EventsDetectorsController.flush_once()`. Таймаут/ненормальный выход worker-а видны как degraded.
 - [готово] Контрактные проверки покрывают SystemStart через builtin registry и service/controller, pre-start буфер, graceful drain и ранее добавленный process AlarmEvent путь до JSON журнала. На сервере запущено 45 целевых тестов: event runtime, legacy event detectors, builtin plugin inventory, plugin audit и alarm DB adapter; все прошли.
 - [готово] Встроенный `CamEventsDetector` переведён на `source_updates` и process worker. `VideoCaptureBase` уведомляет подписчиков при регистрации disconnect/reconnect; `SourceModuleAdapter` передаёт сериализуемые переходы через `EventUpdate(kind="source_status")`. Проверены доставка события камеры через `EventsService` и controller, а также уведомления источника для обеих смен состояния.
-- Следующий этап: спроектировать ограниченные по времени frame references для Zone/Attribute alarm detectors. Текущие object snapshots намеренно не содержат пиксели; новая граница должна сохранять изображение доказательства для записи и журнала, иметь ограниченное время жизни и предсказуемое освобождение памяти при медленном/упавшем worker-е.
+- Следующий этап: спроектировать ограниченные по времени frame snapshots для Zone alarm detector. Кадры передаются только модулям с capability `event_frames`, как ограниченные JPEG-вложения; Zone ещё требует переноса геометрии и sticky enter/exit состояния.
 
 ### Продолжение 2026-10-11: миграция CamEventsDetector
 
 - [готово] Для process event detector добавлена capability `source_updates`: runtime сериализует накопленные disconnect/reconnect переходы источников в `EventUpdate(kind="source_status")`.
 - [готово] `VideoCaptureBase` вызывает уведомление подписчиков после записи перехода соединения. Вызовы из capture health path вынесены за `conn_mutex`, чтобы callback в runtime не удерживал блокировку соединения.
 - [готово] Встроенный `CamEventsDetector` зарегистрирован process-only через новый модуль, а `EventsService` подписывает source-update detector на capture sources.
-- Остаток миграции событий: Zone/Attribute нуждаются в frame-reference транспортировке изображений доказательства; не передавать эти кадры неявно через snapshot объектов.
+- Остаток миграции событий: Attribute перешёл на `event_frames`; Zone остаётся единственным встроенным event detector, который ещё требует image-aware process migration.
 
 
 ### Продолжение 2026-10-11: миграция ScheduleAlarmEventsDetector
@@ -557,4 +557,12 @@ installation из тестов; подобрать воспроизводиму�
 - [готово] Встроенный ScheduleAlarmEventsDetector переведён на process-модуль с capability `event_updates`. Новый обработчик использует те же правила расписаний, фильтрацию по классам, cooldown и состояние активных/потерянных объектов.
 - [готово] Object snapshot дополнен `time_detected` и `time_lost` как для текущего объекта, так и для записей истории. Это сохраняет поля `ScheduleAlarmEvent` и время начала/завершения старого детектора.
 - [готово] Контрактный тест проходит через spawn worker, `EventsService` и `EventsDetectorsController`; проверены создание события при совпадении расписания и завершение события при потере объекта.
-- Следующие события для миграции: Zone и Attribute нуждаются в доказательстве-кадре. Для них требуется отдельный ограниченный transport изображения; Schedule больше не зависит от этой границы.
+- Следующий детектор для миграции: Zone нуждается в кадрах доказательства и отдельном process-state для зон. Ограниченный JPEG transport уже реализован для Attribute; Schedule от него не зависит.
+
+
+### Продолжение 2026-10-11: frame attachments и AttributeEventsDetector
+
+- [готово] Добавлен публичный `EventFrameSnapshot`: JPEG хранится в бинарном вложении `EventUpdate`, декодирование ленивое, а размеры ограничены 2 MiB на кадр, 4 MiB на update и 16 кадрами. Worker queue для модулей `event_frames` ограничена четырьмя update-ами.
+- [готово] `event_frames` разрешён только вместе с `event_updates`. Object snapshot содержит индексы текущего и sticky изображения; runtime дедуплицирует совместно используемые image buffers, не смешивая разные кадры с одинаковыми source/frame ids и отмечает ошибку/деградацию при превышении лимита.
+- [готово] Встроенный `AttributeEventsDetector` переведён на process module. Контрактная проверка проходит через spawn worker и EventsService/controller; проверено, что изображения начала и завершения события доходят как сжатые вложения и декодируются в прежний BGR формат.
+- Остаток: `ZoneEventsDetector` требует переноса геометрии зон, тайм-порогов, возврата в зону и sticky изображения начала события на процессное состояние. Это последнее встроенное событие с live `ObjectsHandler` dependency.

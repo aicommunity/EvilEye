@@ -1,3 +1,4 @@
+from evileye.core.contracts import EventFrameSnapshot
 from .event import Event
 import copy
 
@@ -26,7 +27,10 @@ class AttributeEvent(Event):
         if obj is not None:
             if not is_finished:
                 # Use .copy() for numpy arrays in CaptureImage instead of deepcopy
-                if obj.last_image and hasattr(obj.last_image, 'image') and obj.last_image.image is not None:
+                if isinstance(obj.last_image, EventFrameSnapshot):
+                    # Process snapshots keep their bounded JPEG payload lazy through IPC.
+                    self.img_found = obj.last_image
+                elif obj.last_image and hasattr(obj.last_image, 'image') and obj.last_image.image is not None:
                     # Create shallow copy of CaptureImage and copy only numpy array
                     import copy as cp
                     self.img_found = cp.copy(obj.last_image)
@@ -39,7 +43,9 @@ class AttributeEvent(Event):
                 self.class_id = getattr(obj, 'class_id', None)
             else:
                 # Use .copy() for numpy arrays in CaptureImage instead of deepcopy
-                if obj.last_image and hasattr(obj.last_image, 'image') and obj.last_image.image is not None:
+                if isinstance(obj.last_image, EventFrameSnapshot):
+                    self.img_finished = obj.last_image
+                elif obj.last_image and hasattr(obj.last_image, 'image') and obj.last_image.image is not None:
                     import copy as cp
                     self.img_finished = cp.copy(obj.last_image)
                     if hasattr(self.img_finished, 'image'):

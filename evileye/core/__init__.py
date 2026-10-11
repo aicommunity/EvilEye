@@ -44,6 +44,7 @@ from .contracts import (
     DatabaseDependencies,
     EventsConfig,
     EventsDependencies,
+    EventFrameSnapshot,
     EventUpdate,
     PipelineConfig,
     PipelineDependencies,

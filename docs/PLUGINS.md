@@ -214,8 +214,10 @@ in thread mode.
 A process event module declares
 `execution_modes=("process",)` and one or more input capabilities:
 `event_updates` for object snapshots, `source_updates` for camera state
-transitions, or `event_commands` for explicit controller commands. Its
-top-level factory accepts a config mapping and returns an object implementing
+transitions, or `event_commands` for explicit controller commands. The
+`event_frames` capability extends `event_updates` with bounded JPEG
+attachments. Its top-level factory accepts a config mapping and returns an
+object implementing
 `process_update(update: EventUpdate, state)`. The optional
 `create_state(config, context)` runs inside the spawned worker. Optional
 `start()` and `stop()` methods also run in that worker. The factory must be
@@ -228,8 +230,12 @@ sends serialized disconnect/reconnect transitions as
 `EventUpdate(kind="source_status")`. Capture sources notify subscribers when
 they record a connection transition. The object snapshot `payload` contains
 primitive `active` and `lost` object summaries with ids, class id, timestamp,
-`time_detected`/`time_lost`, bounding box, attributes, and history summaries; frame pixels, live model
-objects, handlers, and locks do not cross the process boundary. Plugins can
+`time_detected`/`time_lost`, bounding box, attributes, and history summaries.
+With `event_frames`, each object can reference a JPEG attachment by index; a
+frame is limited to 2 MiB, an update to 4 MiB and 16 attachments, and the input
+queue to four frame-bearing updates. Exceeding a limit marks the detector
+degraded instead of silently dropping evidence. Live model objects, handlers,
+and locks do not cross the process boundary. Plugins can
 also accept explicit `EventUpdate` values through `put()`. Process modules
 cannot declare `object_handler` or `capture_sources`; the runtime rejects those
 live dependencies before start. Modules using `event_commands` receive explicit
@@ -238,9 +244,10 @@ worker startup are buffered in a bounded queue and flushed after the child
 reports ready.
 The builtin `SystemEventsDetector` uses `event_commands`; the builtin
 `CamEventsDetector` uses `source_updates`; and
-`ScheduleAlarmEventsDetector` uses `event_updates`. The schedule detector
-uses timestamp and class metadata from object history to preserve its existing
-start/finish behavior; it does not need frame pixels. The adapter preserves the
+`ScheduleAlarmEventsDetector` uses `event_updates`; `AttributeEventsDetector`
+uses `event_updates` and `event_frames` to preserve evidence images. The
+schedule detector uses timestamp and class metadata from object history to
+preserve its existing start/finish behavior; it does not need frame pixels. The adapter preserves the
 controller-facing `emit_message`, `emit_started`, and `emit_stopped` calls.
 During normal shutdown, accepted worker updates are processed and their output
 is retained for the final event-controller flush.

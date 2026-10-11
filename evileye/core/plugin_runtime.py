@@ -14,7 +14,7 @@ from typing import Any, Mapping
 from .base_class import EvilEyeBase
 from .mp_worker import MpWorker
 from .plugins import ModuleRuntimeContext, PluginError, plugin_registry
-from .contracts import EventUpdate
+from .contracts import EventFrameSnapshot, EventUpdate
 from .mp_context import get_spawn_context
 
 
@@ -1513,6 +1513,11 @@ class EventDetectorModuleAdapter(EvilEyeBase):
                     f"dependencies: {', '.join(sorted(live_capabilities))}; use "
                     "event_updates and the EventUpdate contract"
                 )
+        if "event_frames" in capabilities and "event_updates" not in capabilities:
+            raise PluginError(
+                f"Process event detector '{self.module_id}' must declare event_updates "
+                "when it requests event_frames"
+            )
         reserved = {
             "module_id", "type", "execution_mode", "logger_name",
             "queue_size", "config",
@@ -1524,6 +1529,14 @@ class EventDetectorModuleAdapter(EvilEyeBase):
             raise PluginError(f"Event detector '{self.module_id}' config must be an object")
         self._config = dict(config)
         self._queue_size = max(1, int(params.get("queue_size", 32)))
+        if requested_mode == "process" and "event_frames" in capabilities:
+            if self._queue_size > 4:
+                self.logger.info(
+                    "Capping event frame worker queue for %s from %d to 4",
+                    self.module_id,
+                    self._queue_size,
+                )
+                self._queue_size = 4
         if requested_mode == "process":
             self._update_notifications = queue.Queue(maxsize=self._queue_size)
             self._pending_process_updates = queue.Queue(maxsize=self._queue_size)
@@ -1677,7 +1690,81 @@ class EventDetectorModuleAdapter(EvilEyeBase):
             f"{type(value).__name__}"
         )
 
-    def _snapshot_object(self, obj: Any) -> dict[str, Any]:
+    def _snapshot_event_frame_ref(
+        self,
+        frame: Any,
+        source_id: int | None,
+        frames: list[EventFrameSnapshot],
+        frame_indices: dict[tuple[Any, ...], int],
+    ) -> int | None:
+        if frame is None:
+            return None
+        image = getattr(frame, "image", None)
+        if image is None:
+            return None
+        frame_source_id = getattr(frame, "source_id", None)
+        if frame_source_id is None:
+            frame_source_id = source_id
+        frame_source_id = self._snapshot_value(frame_source_id)
+        if not isinstance(frame_source_id, int) or isinstance(frame_source_id, bool):
+            raise PluginError(
+                f"Event detector '{self.module_id}' frame source_id must be an integer"
+            )
+        frame_id = self._snapshot_value(getattr(frame, "frame_id", None))
+        if frame_id is not None:
+            try:
+                frame_id = int(frame_id)
+            except (TypeError, ValueError) as exc:
+                raise PluginError(
+                    f"Event detector '{self.module_id}' frame_id must be an integer"
+                ) from exc
+            key = (frame_source_id, frame_id, id(image))
+        else:
+            key = (frame_source_id, None, id(image))
+        existing_index = frame_indices.get(key)
+        if existing_index is not None:
+            return existing_index
+
+        try:
+            import cv2
+            import numpy as np
+
+            ok, encoded = cv2.imencode(
+                ".jpg",
+                image,
+                [int(cv2.IMWRITE_JPEG_QUALITY), 85],
+            )
+        except Exception as exc:
+            raise PluginError(
+                f"Event detector '{self.module_id}' could not encode frame {frame_id}: {exc}"
+            ) from exc
+        if not ok:
+            raise PluginError(
+                f"Event detector '{self.module_id}' could not encode frame {frame_id}"
+            )
+        jpeg_bytes = np.asarray(encoded).tobytes()
+        snapshot = EventFrameSnapshot(
+            source_id=frame_source_id,
+            frame_id=frame_id,
+            timestamp=self._snapshot_value(getattr(frame, "time_stamp", None)),
+            current_video_position=self._snapshot_value(
+                getattr(frame, "current_video_position", None)
+            ),
+            jpeg_bytes=jpeg_bytes,
+        )
+        frame_index = len(frames)
+        frames.append(snapshot)
+        frame_indices[key] = frame_index
+        return frame_index
+
+    def _snapshot_object(
+        self,
+        obj: Any,
+        *,
+        frame_store: list[EventFrameSnapshot] | None = None,
+        frame_indices: dict[tuple[Any, ...], int] | None = None,
+        source_id: int | None = None,
+    ) -> dict[str, Any]:
         def _entry(value: Any) -> dict[str, Any]:
             track = getattr(value, "track", None)
             bbox = getattr(track, "bounding_box", None) if track is not None else None
@@ -1696,10 +1783,14 @@ class EventDetectorModuleAdapter(EvilEyeBase):
         track = getattr(obj, "track", None)
         bbox = getattr(track, "bounding_box", None) if track is not None else None
         history = getattr(obj, "history", ()) or ()
-        return {
+        snapshot = {
             "object_id": self._snapshot_value(getattr(obj, "object_id", None)),
             "global_id": self._snapshot_value(getattr(obj, "global_id", None)),
-            "source_id": self._snapshot_value(getattr(obj, "source_id", None)),
+            "source_id": self._snapshot_value(
+                getattr(obj, "source_id", None)
+                if getattr(obj, "source_id", None) is not None
+                else source_id
+            ),
             "class_id": self._snapshot_value(getattr(obj, "class_id", None)),
             "frame_id": self._snapshot_value(getattr(obj, "frame_id", None)),
             "timestamp": self._snapshot_value(getattr(obj, "time_stamp", None)),
@@ -1709,6 +1800,17 @@ class EventDetectorModuleAdapter(EvilEyeBase):
             "attributes": self._snapshot_value(getattr(obj, "attributes", {}) or {}),
             "history": [_entry(item) for item in history],
         }
+        if frame_store is not None and frame_indices is not None:
+            object_source_id = snapshot["source_id"]
+            last_image = getattr(obj, "last_image", None)
+            snapshot["last_image_ref"] = self._snapshot_event_frame_ref(
+                last_image, object_source_id, frame_store, frame_indices
+            )
+            sticky_image = getattr(obj, "_zone_event_sticky_image", None)
+            snapshot["zone_sticky_image_ref"] = self._snapshot_event_frame_ref(
+                sticky_image, object_source_id, frame_store, frame_indices
+            )
+        return snapshot
 
     def _build_context_updates(self) -> list[EventUpdate]:
         import datetime
@@ -1722,20 +1824,38 @@ class EventDetectorModuleAdapter(EvilEyeBase):
                     f"Process event detector '{self.module_id}' requires objects_handler "
                     "to build event_updates"
                 )
+            include_frames = "event_frames" in capabilities
             for source_id in self.context.pipeline_source_ids:
                 active = handler.get("active", source_id)
                 lost = handler.get("lost", source_id)
                 active_objects = getattr(active, "objects", ()) if active is not None else ()
                 lost_objects = getattr(lost, "objects", ()) if lost is not None else ()
+                frame_store: list[EventFrameSnapshot] = []
+                frame_indices: dict[tuple[Any, ...], int] = {}
+                object_snapshot_args = (
+                    {
+                        "frame_store": frame_store,
+                        "frame_indices": frame_indices,
+                        "source_id": int(source_id),
+                    }
+                    if include_frames else {}
+                )
                 update = EventUpdate(
                     sequence=self._sequence,
                     kind="object_snapshot",
                     source_id=int(source_id),
                     timestamp=datetime.datetime.now(datetime.timezone.utc).isoformat(),
                     payload={
-                        "active": [self._snapshot_object(obj) for obj in active_objects],
-                        "lost": [self._snapshot_object(obj) for obj in lost_objects],
+                        "active": [
+                            self._snapshot_object(obj, **object_snapshot_args)
+                            for obj in active_objects
+                        ],
+                        "lost": [
+                            self._snapshot_object(obj, **object_snapshot_args)
+                            for obj in lost_objects
+                        ],
                     },
+                    frames=tuple(frame_store),
                 )
                 self._sequence += 1
                 updates.append(update)

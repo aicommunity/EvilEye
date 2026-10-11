@@ -678,3 +678,157 @@ def test_builtin_schedule_alarm_detector_uses_object_update_process_contract():
         assert finished_events[0].time_lost == lost_timestamp
     finally:
         service.release()
+
+
+def test_builtin_attribute_events_detector_transports_evidence_frames_in_process():
+    import numpy as np
+
+    from evileye.controller.services.events_service import EventsService
+    from evileye.events_detectors.event_attribute import AttributeEvent
+    from evileye.events_detectors.event_registry import register_builtins
+    from evileye.core.contracts import EventFrameSnapshot
+    from evileye.core.frame import CaptureImage
+
+    register_builtins()
+
+    class _Pipeline:
+        def get_sources(self):
+            return [object()]
+
+    class _ObjectsHandler:
+        def __init__(self):
+            self.subscribers = []
+            self.timestamp = datetime.now().replace(microsecond=0)
+            self.obj = SimpleNamespace(
+                object_id=51,
+                global_id=9,
+                source_id=0,
+                class_id=2,
+                frame_id=10,
+                time_stamp=self.timestamp,
+                time_detected=self.timestamp,
+                time_lost=None,
+                track=SimpleNamespace(bounding_box=[1.0, 2.0, 8.0, 9.0]),
+                attributes={"hardhat": {"state": "exists"}},
+                history=[],
+                last_image=self._frame(10),
+            )
+            self.active = SimpleNamespace(objects=[self.obj])
+            self.lost = SimpleNamespace(objects=[])
+
+        @staticmethod
+        def _frame(frame_id):
+            frame = CaptureImage()
+            frame.source_id = 0
+            frame.frame_id = frame_id
+            frame.time_stamp = datetime.now().timestamp()
+            frame.image = np.full((12, 16, 3), 80 + frame_id, dtype=np.uint8)
+            return frame
+
+        def subscribe(self, *subscribers):
+            self.subscribers.extend(subscribers)
+
+        def get(self, kind, source_id):
+            return getattr(self, kind)
+
+        def notify(self):
+            for subscriber in self.subscribers:
+                subscriber.update()
+
+    handler = _ObjectsHandler()
+    service = EventsService()
+    service.initialize_detectors(
+        {
+            "enabled": ["AttributeEventsDetector"],
+            "AttributeEventsDetector": {
+                "sources": {"0": {"hardhat_ok": ["hardhat"]}},
+            },
+        },
+        _Pipeline(),
+        handler,
+        use_database=False,
+    )
+    service.initialize_controller({})
+    detector = service.get_detector("AttributeEventsDetector")
+    assert detector.execution_mode == "process"
+    assert "event_frames" in detector.registered_module.spec.capabilities
+    assert handler.subscribers == [detector]
+    service.start_detectors()
+    handler.notify()
+    controller = service.get_detectors_controller()
+
+    try:
+        deadline = time.monotonic() + 5.0
+        events = []
+        while time.monotonic() < deadline:
+            controller.flush_once()
+            events = controller.get().get("AttributeEventsDetector", [])
+            if events:
+                break
+            time.sleep(0.02)
+
+        assert len(events) == 1
+        assert isinstance(events[0], AttributeEvent)
+        assert events[0].matched_event_name == "hardhat_ok"
+        assert events[0].matched_attrs == ["hardhat"]
+        assert isinstance(events[0].img_found, EventFrameSnapshot)
+        assert events[0].img_found.image.shape == (12, 16, 3)
+        assert events[0].img_found.frame_id == 10
+
+        finish_timestamp = datetime.now().replace(microsecond=0)
+        handler.obj.time_lost = finish_timestamp
+        handler.obj.last_image = handler._frame(11)
+        handler.active = SimpleNamespace(objects=[])
+        handler.lost = SimpleNamespace(objects=[handler.obj])
+        handler.notify()
+
+        finished_events = []
+        deadline = time.monotonic() + 5.0
+        while time.monotonic() < deadline:
+            controller.flush_once()
+            finished_events = controller.get().get("AttributeEventsDetector", [])
+            if finished_events:
+                break
+            time.sleep(0.02)
+
+        assert len(finished_events) == 1
+        assert finished_events[0].finished is True
+        assert isinstance(finished_events[0].img_finished, EventFrameSnapshot)
+        assert finished_events[0].img_finished.image.shape == (12, 16, 3)
+        assert finished_events[0].img_finished.frame_id == 11
+        assert finished_events[0].time_finished == finish_timestamp
+    finally:
+        service.release()
+
+
+def test_event_update_frame_attachments_have_strict_size_limits():
+    from evileye.core.contracts import EventFrameSnapshot
+
+    with pytest.raises(ValueError, match="frame limit"):
+        EventFrameSnapshot(
+            source_id=0,
+            frame_id=1,
+            timestamp=0.0,
+            current_video_position=None,
+            jpeg_bytes=b"x" * (EventFrameSnapshot.MAX_BYTES + 1),
+        )
+
+    frame_bytes = b"x" * EventFrameSnapshot.MAX_BYTES
+    frames = tuple(
+        EventFrameSnapshot(
+            source_id=0,
+            frame_id=index,
+            timestamp=0.0,
+            current_video_position=None,
+            jpeg_bytes=frame_bytes,
+        )
+        for index in (1, 2, 3)
+    )
+    with pytest.raises(ValueError, match="frame attachments exceed"):
+        EventUpdate(
+            sequence=0,
+            kind="object_snapshot",
+            source_id=0,
+            payload={},
+            frames=frames,
+        )
