@@ -20,7 +20,7 @@ class DatabaseAdapterAlarmEvents(DatabaseAdapterBase):
     def _insert_impl(self, event):
         if not self.run_flag or not self.query_thread.is_alive():
             error = RuntimeError("Alarm database adapter worker is not running")
-            self._record_failure('enqueue alarm', error)
+            self._record_failure('enqueue alarm', error, category='enqueue')
             raise error
         fields = [
             "event_id", "alarm_id", "time_stamp", "alarm_type", "severity",
@@ -49,7 +49,7 @@ class DatabaseAdapterAlarmEvents(DatabaseAdapterBase):
             error = RuntimeError(
                 f"Alarm database queue is full (maxsize={self.queue_maxsize})"
             )
-            self._record_failure('enqueue alarm', error)
+            self._record_failure('enqueue alarm', error, category='enqueue')
             raise error from exc
 
     def _update_impl(self, event):

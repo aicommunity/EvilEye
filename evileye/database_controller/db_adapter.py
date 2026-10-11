@@ -25,6 +25,8 @@ class DatabaseAdapterBase(EvilEyeBase, ABC):
         self.queue_maxsize = 1024
         self.queue_in: Queue = Queue(maxsize=self.queue_maxsize)
         self.queue_failures = 0
+        self.enqueue_rejections = 0
+        self.terminal_write_failures = 0
         self.processed_items = 0
         self.degraded = False
         self.last_error: Optional[str] = None
@@ -95,12 +97,14 @@ class DatabaseAdapterBase(EvilEyeBase, ABC):
 
         if thread is None or not thread.is_alive():
             if pending:
-                self.queue_failures += 1
-                self.degraded = True
-                self.last_error = (
+                error = RuntimeError(
                     f"database adapter has {pending} pending items but no running worker"
                 )
-                self.logger.error(self.last_error)
+                self._record_failure(
+                    "shutdown with pending items",
+                    error,
+                    category="terminal_write",
+                )
             return
         if thread is current_thread():
             return
@@ -134,7 +138,7 @@ class DatabaseAdapterBase(EvilEyeBase, ABC):
         if self.db_controller and hasattr(self.db_controller, 'is_connected'):
             if not self.db_controller.is_connected():
                 exc = ConnectionError(f"Database adapter '{self.event_name}' is disconnected")
-                self._record_failure('insert', exc)
+                self._record_failure('insert', exc, category='enqueue')
                 raise exc
         # Serialize acceptance with stop(): work accepted before shutdown is drained,
         # and work arriving after shutdown is explicitly rejected.
@@ -143,7 +147,7 @@ class DatabaseAdapterBase(EvilEyeBase, ABC):
                 exc = RuntimeError(
                     "Database adapter worker is not running because the adapter is stopping"
                 )
-                self._record_failure('insert', exc)
+                self._record_failure('insert', exc, category='enqueue')
                 raise exc
             self._insert_impl(data)
 
@@ -153,7 +157,7 @@ class DatabaseAdapterBase(EvilEyeBase, ABC):
         if self.db_controller and hasattr(self.db_controller, 'is_connected'):
             if not self.db_controller.is_connected():
                 exc = ConnectionError(f"Database adapter '{self.event_name}' is disconnected")
-                self._record_failure('update', exc)
+                self._record_failure('update', exc, category='enqueue')
                 raise exc
         # Keep updates under the same acceptance boundary as inserts.
         with self._lifecycle_lock:
@@ -161,7 +165,7 @@ class DatabaseAdapterBase(EvilEyeBase, ABC):
                 exc = RuntimeError(
                     "Database adapter worker is not running because the adapter is stopping"
                 )
-                self._record_failure('update', exc)
+                self._record_failure('update', exc, category='enqueue')
                 raise exc
             self._update_impl(data)
 
@@ -171,8 +175,20 @@ class DatabaseAdapterBase(EvilEyeBase, ABC):
     def get_cameras_params(self) -> Dict[str, Any]:
         return self.cameras_params
 
-    def _record_failure(self, operation: str, error: Exception) -> None:
+    def _record_failure(
+        self,
+        operation: str,
+        error: Exception,
+        *,
+        category: str = "enqueue",
+    ) -> None:
         self.queue_failures += 1
+        if category == "enqueue":
+            self.enqueue_rejections += 1
+        elif category == "terminal_write":
+            self.terminal_write_failures += 1
+        else:
+            raise ValueError(f"Unknown database adapter failure category: {category}")
         self.degraded = True
         self.last_error = f"{operation}: {type(error).__name__}: {error}"
         self.logger.error(
@@ -193,6 +209,8 @@ class DatabaseAdapterBase(EvilEyeBase, ABC):
             "queue_size": pending,
             "queue_maxsize": self.queue_maxsize,
             "queue_failures": self.queue_failures,
+            "enqueue_rejections": self.enqueue_rejections,
+            "terminal_write_failures": self.terminal_write_failures,
             "processed_items": self.processed_items,
             "worker_alive": bool(self.query_thread and self.query_thread.is_alive()),
             "closing": self._closing,
@@ -215,7 +233,7 @@ class DatabaseAdapterBase(EvilEyeBase, ABC):
                 max_delay=0.5,
             )
             if error is not None:
-                self._record_failure('queued write', error)
+                self._record_failure('queued write', error, category='terminal_write')
             else:
                 self.processed_items += 1
 

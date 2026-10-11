@@ -200,6 +200,7 @@ def test_alarm_database_adapter_reports_queue_overflow():
     stats = adapter.get_runtime_stats()
     assert stats["queue_size"] == 0
     assert stats["queue_failures"] == 1
+    assert stats["enqueue_rejections"] == 1
     assert stats["degraded"] is True
 
 
@@ -258,7 +259,9 @@ def test_alarm_adapter_bounds_queue_and_recovers_fifo_after_sustained_outage():
     stats = adapter.get_runtime_stats()
     assert db.persisted_alarm_ids == ["recovery-1", "recovery-2"]
     assert stats["queue_size"] == 0
-    assert stats["queue_failures"] == 2  # terminal write + rejected enqueue
+    assert stats["queue_failures"] == 2  # compatibility aggregate
+    assert stats["enqueue_rejections"] == 1
+    assert stats["terminal_write_failures"] == 1
     assert stats["degraded"] is True
     assert "database remains unavailable" in stats["last_error"]
     assert stats["worker_alive"] is False
@@ -279,10 +282,13 @@ def test_alarm_database_adapter_shutdown_timeout_is_visible_and_restart_is_safe(
         assert stats["worker_alive"] is True
         assert stats["closing"] is True
         assert stats["shutdown_timeouts"] == 1
+        assert stats["enqueue_rejections"] == 0
+        assert stats["terminal_write_failures"] == 0
         assert stats["degraded"] is True
         assert "shutdown timed out" in stats["last_error"]
         with pytest.raises(RuntimeError, match="worker is not running"):
             adapter.insert(AlarmEvent("ppe_violation", alarm_id="late-alarm"))
+        assert adapter.get_runtime_stats()["enqueue_rejections"] == 1
         with pytest.raises(RuntimeError, match="previous worker is still stopping"):
             adapter.start()
     finally:
