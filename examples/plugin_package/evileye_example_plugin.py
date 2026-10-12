@@ -1,6 +1,12 @@
-"""Small reference plugin for EvilEye's public entry-point API."""
+"""Reference modules and a user-defined pipeline for the public entry-point API."""
 
-from evileye.core.plugins import ModuleSpec, PLUGIN_API_VERSION, PluginSpec
+from evileye.core.pipeline_base import PipelineBase
+from evileye.core.plugins import (
+    ModuleSpec,
+    PipelineSpec,
+    PLUGIN_API_VERSION,
+    PluginSpec,
+)
 
 
 class AddLabel:
@@ -26,6 +32,50 @@ class AddLabel:
         return {"value": item, "plugin_label": self.label}
 
 
+class MarkerPipeline(PipelineBase):
+    """Small IPipeline implementation proving an external pipeline lifecycle."""
+
+    def __init__(self, default_marker="example"):
+        super().__init__()
+        self.marker = str(default_marker)
+        self.sequence = 0
+        self.running = False
+        self._sources = []
+
+    def set_params_impl(self):
+        self.marker = str(self.params.get("marker", self.marker))
+
+    def get_params_impl(self):
+        return {"pipeline_class": self.__class__.__name__, "marker": self.marker}
+
+    def start(self):
+        self.running = True
+
+    def stop(self):
+        self.running = False
+
+    def process(self):
+        if not self.running:
+            raise RuntimeError("MarkerPipeline must be started before process()")
+        self.sequence += 1
+        result = {"marker": self.marker, "sequence": self.sequence}
+        self._current_results = result
+        self.add_result(result)
+        return result
+
+    def get_sources(self):
+        return list(self._sources)
+
+    def generate_default_structure(self, num_sources: int):
+        return {"marker": self.marker, "source_count": int(num_sources)}
+
+
+def make_marker_pipeline(dependencies):
+    # The factory receives PipelineDependencies from the public plugin SPI.
+    marker = dependencies.config.raw_config.get("factory_marker", "example")
+    return MarkerPipeline(default_marker=marker)
+
+
 def load_plugin():
     return PluginSpec(
         plugin_id="example",
@@ -37,5 +87,8 @@ def load_plugin():
                 factory=AddLabel,
                 execution_modes=("thread", "process"),
             ),
+        ),
+        pipelines=(
+            PipelineSpec("marker-pipeline", make_marker_pipeline),
         ),
     )
