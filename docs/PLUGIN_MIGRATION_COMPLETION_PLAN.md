@@ -312,19 +312,23 @@
      исходный `OperationalError`, чтобы общий retry-контур мог восстановиться.
    - [готово] Ограничения `connect_timeout_secs` и `statement_timeout_ms`
      проверяются unit и PostgreSQL integration тестами.
-   - [готово] `EventsProcessor.get_runtime_stats()` включает health и counters
-     DB adapters; unit tests закрепляют degraded после terminal write/overflow.
-     Публичный HTTP endpoint и отображение этих stats в Web UI ещё не проверены.
-   - [ограничение v1] Event detectors остаются thread-only: process режим не
-     добавляется без сериализуемого протокола доставки событий.
+   - [готово 2026-10-12] EventsProcessor.get_runtime_stats() включает health и
+     counters DB adapters; защищённый GET /api/v1/system/runtime передаёт
+     pipeline/event runtime через control IPC, а Runs UI показывает общий health
+     и раскрываемые данные для runtime:view. Backend API и IPC проверены.
+   - [ограничение проверки] Исходники новой Runs UI панели не удалось собрать
+     или проверить в браузере: на сервере отсутствуют node/npm/nodejs.
+   - [ограничение v1] Process event detector требует сериализуемых capabilities
+     event_updates/event_commands. Подписки на live ObjectsHandler и capture
+     sources остаются thread-only; несовместимая process-конфигурация отклоняется.
    - [готово 2026-10-12] JSON alarm без source_name получает имя камеры из source_id и карты источников PipelineSurveillance до ACL-фильтрации. Сквозной тест аутентифицирует ограниченного пользователя с доступом к Cam0 и проверяет alarm от process detector до grouped journal API.
 2. **Закрыть source transport.**
    - [готово] Live frame tests проходят через GStreamer и OpenCV SPI на камерах
      `.199` и `.200`; GStreamer shared recorder записал MP4 с пакетами на обеих
      камерах. OpenCV проверки используют CAP_FFMPEG.
-   - [осталось] Добавить локальный воспроизводимый RTSP fixture и без реальных
-     камер проверять DESCRIBE/SETUP/PLAY, timeout и reconnect для OpenCV и
-     GStreamer. Текущие live smoke не заменяют детерминированный transport test.
+   - [готово 2026-10-12] Временный локальный MediaMTX fixture проверил
+     DESCRIBE/SETUP/PLAY, timeout и reconnect OpenCV/GStreamer: 8 тестов прошли
+     в thread/process режимах. Физическое отключение камеры этим не проверяется.
 3. **Закрыть полный integration shutdown.**
    - [готово 2026-10-12] Полные unit и integration наборы завершились с кодом 0:
      1065 и 378 тестов в коллекции соответственно. После обоих прогонов не
@@ -333,14 +337,24 @@
      MediaMTX/v4l2loopback или real-data, пропущены и не считаются выполненными.
    - [правило] Повторять полный regression после каждого дальнейшего изменения;
      optional live/model smoke запускать только при наличии заявленных ресурсов.
-4. **Закрыть эксплуатационную часть.** На действующих конфигурациях отдельно
-   подтвердить конечную видеозапись с детекцией/трекингом и камеру через каждый
-   поддержанный backend. Проверку защищённых UI экранов выполнить только с
-   валидной учётной записью; без неё оставить конкретный внешний блокер.
-5. **Завершить inventory миграции.** Снять список всех builtin module IDs,
-   capabilities и execution modes; для каждого оставить тест thread/process,
-   golden parity или явное thread-only обоснование. Нулевой legacy protocol count
-   и успешный shutdown обязательны для завершения v1.
+4. **Закрыть эксплуатационную часть.**
+   - [готово для проверенных режимов] Finite-video PipelineSurveillance
+     проверил detector/tracker и MP4 через ffprobe в thread/process; доступные
+     физические камеры выдавали кадры через OpenCV и GStreamer, запись проверена
+     отдельно. Web UI с временной учётной записью проверил live и playback.
+   - [нужно эксплуатационное решение] Двухминутный live fanout на текущем
+     сервере показал degraded под нагрузкой: 7.05 FPS источника, 6.93 FPS после
+     detector fanout и 2.02 FPS после tracker, с потерями и incomplete fanout.
+     Нужны целевая частота/полнота для safety alarm и выбранная политика, затем
+     повторный прогон по этим критериям. Измерения не являются SLA/KPI.
+   - [ограничение среды] Новая Runs UI диагностика написана, но сборка и
+     браузерная проверка ожидают Node.js runtime. Физическое отключение рабочей
+     камеры не выполнялось, чтобы не нарушить совместную эксплуатацию.
+5. **Завершить inventory миграции.**
+   - [готово 2026-10-12] Gate фиксирует 17 builtin module IDs, capabilities и
+     execution modes; legacy_processor_protocol/legacy_source_protocol равны
+     нулю. ObjectMultiCameraTracking документирован как batch_processor с
+     ограниченным execution mode; inventory и shutdown проверены.
 
 После закрытия этих пунктов отдельно подготовить RFC для следующей версии:
 
