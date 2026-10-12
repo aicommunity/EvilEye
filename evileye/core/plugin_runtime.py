@@ -51,6 +51,99 @@ def _serialize_process_value(value: Any, module_id: str, label: str) -> bytes:
         ) from exc
 
 
+_PROCESS_RESULT_MARKER = "__evileye_plugin_result__"
+_FRAME_RUNTIME_KEY = "_evileye_runtime_frame_key"
+_FRAME_METADATA_FIELDS = (
+    "source_id", "frame_id", "connection_generation", "current_video_frame",
+    "current_video_position", "source_video_duration", "time_stamp", "pts_ns",
+    "media_pts_sec",
+)
+
+
+def _prepare_item_for_process(item: Any, transport, request_id: int):
+    from .frame import Frame
+
+    frames: dict[int, Frame] = {}
+    handles = []
+
+    def convert(value):
+        if isinstance(value, Frame):
+            frame_index = len(frames)
+            frames[frame_index] = value
+            handle = getattr(value, "frame_handle", None)
+            if handle is None:
+                handle = getattr(value, "frame_ref", None)
+            image = getattr(value, "image", None)
+            if image is not None:
+                handle = transport.alloc_frame(
+                    image=image,
+                    frame_id=int(getattr(value, "frame_id", 0) or 0),
+                    timestamp=float(getattr(value, "time_stamp", None) or time.time()),
+                )
+                handles.append(handle)
+
+            descriptor = Frame()
+            for field in _FRAME_METADATA_FIELDS:
+                setattr(descriptor, field, getattr(value, field, None))
+            descriptor.image = None
+            descriptor.subscribers = []
+            descriptor.frame_handle = handle
+            descriptor.frame_ref = handle
+            setattr(descriptor, _FRAME_RUNTIME_KEY, (request_id, frame_index))
+            return descriptor
+        if isinstance(value, tuple):
+            return tuple(convert(part) for part in value)
+        if isinstance(value, list):
+            return [convert(part) for part in value]
+        if isinstance(value, dict):
+            return {key: convert(part) for key, part in value.items()}
+        return value
+
+    try:
+        return convert(item), frames, handles
+    except Exception:
+        for handle in handles:
+            transport.release_frame(handle)
+        raise
+
+
+def _restore_process_result(value: Any, frames: dict[int, Any], request_id: int):
+    from .frame import Frame
+
+    if isinstance(value, Frame):
+        key = getattr(value, _FRAME_RUNTIME_KEY, None)
+        if not (
+            isinstance(key, tuple) and len(key) == 2
+            and key[0] == request_id and isinstance(key[1], int)
+        ):
+            return value
+        original = frames.get(key[1])
+        if original is None:
+            return value
+        for field in _FRAME_METADATA_FIELDS:
+            setattr(original, field, getattr(value, field, None))
+        return original
+    if isinstance(value, tuple):
+        return tuple(_restore_process_result(part, frames, request_id) for part in value)
+    if isinstance(value, list):
+        return [_restore_process_result(part, frames, request_id) for part in value]
+    if isinstance(value, dict):
+        return {
+            key: _restore_process_result(part, frames, request_id)
+            for key, part in value.items()
+        }
+    return value
+
+
+def _request_id_from_process_payload(payload: Any) -> int | None:
+    if (
+        isinstance(payload, tuple) and len(payload) == 3
+        and payload[0] == _PROCESS_INPUT_MARKER and isinstance(payload[1], int)
+    ):
+        return payload[1]
+    return None
+
+
 def _call_factory(factory, config: dict[str, Any]):
     """Call a plugin factory with its config when its signature accepts it."""
     try:
@@ -248,32 +341,36 @@ class ItemModuleWorker(MpWorker):
 
     def worker_impl(self, data):
         if not (
-            isinstance(data, tuple)
-            and len(data) == 2
-            and data[0] == _PROCESS_INPUT_MARKER
+            isinstance(data, tuple) and len(data) == 3
+            and data[0] == _PROCESS_INPUT_MARKER and isinstance(data[1], int)
         ):
             self._stop_event.set()
             return (_PROCESS_OUTPUT_MARKER, "error", "invalid serialized input envelope")
+        request_id = data[1]
         try:
-            item = pickle.loads(data[1])
+            item = pickle.loads(data[2])
             result = self.module.process_item(item, self.module_state)
             self._publish_model_class_mapping()
         except Exception as exc:
             if self.logger:
                 self.logger.exception("Plugin module %s failed while processing item", self.module_id)
             self._stop_event.set()
-            return (_PROCESS_OUTPUT_MARKER, "error", str(exc))
+            error = pickle.dumps((request_id, str(exc)), protocol=pickle.HIGHEST_PROTOCOL)
+            return (_PROCESS_OUTPUT_MARKER, "error", error)
         if result is None:
-            return (_PROCESS_OUTPUT_MARKER, "skip", b"")
+            return (_PROCESS_OUTPUT_MARKER, "skip", request_id)
         try:
             serialized_result = _serialize_process_value(
-                result, self.module_id, "process_item result"
+                (_PROCESS_RESULT_MARKER, request_id, result),
+                self.module_id,
+                "process_item result",
             )
         except PluginError as exc:
             if self.logger:
                 self.logger.error("%s", exc)
             self._stop_event.set()
-            return (_PROCESS_OUTPUT_MARKER, "error", str(exc))
+            error = pickle.dumps((request_id, str(exc)), protocol=pickle.HIGHEST_PROTOCOL)
+            return (_PROCESS_OUTPUT_MARKER, "error", error)
         return (_PROCESS_OUTPUT_MARKER, "output", serialized_result)
 
     def get_spawn_state(self) -> dict[str, Any]:
@@ -436,6 +533,11 @@ class ItemModuleAdapter(EvilEyeBase):
         self._process_init_failed_events: list[Any] = []
         self._model_class_mapping: dict[str, int] | None = None
         self._model_class_mapping_lock = threading.Lock()
+        from .frame_transport import SharedFrameTransport
+        self._frame_transport = SharedFrameTransport()
+        self._process_pending: dict[int, dict[str, Any]] = {}
+        self._process_pending_lock = threading.Lock()
+        self._process_sequence = 0
         self.reports_model_class_mapping = (
             "model_class_mapping" in capabilities
         )
@@ -768,6 +870,7 @@ class ItemModuleAdapter(EvilEyeBase):
             next_event.wait(min(0.05, remaining))
 
     def put(self, item):
+        request_id = None
         try:
             payload = item
             if self.execution_mode == "process":
@@ -775,25 +878,74 @@ class ItemModuleAdapter(EvilEyeBase):
                     raise RuntimeError(
                         f"Process module '{self.module_id}' is not started"
                     )
-                serialized_item = _serialize_process_value(
-                    item, self.module_id, "input item"
-                )
-                payload = (_PROCESS_INPUT_MARKER, serialized_item)
+                with self._process_pending_lock:
+                    request_id = self._process_sequence
+                    self._process_sequence += 1
+                if self.accepts_frame_handle:
+                    process_item, frames, handles = _prepare_item_for_process(
+                        item, self._frame_transport, request_id
+                    )
+                else:
+                    process_item, frames, handles = item, {}, []
+                try:
+                    serialized_item = _serialize_process_value(
+                        process_item, self.module_id, "input item"
+                    )
+                except Exception:
+                    for handle in handles:
+                        self._frame_transport.release_frame(handle)
+                    raise
+                with self._process_pending_lock:
+                    self._process_pending[request_id] = {
+                        "frames": frames, "handles": handles,
+                    }
+                payload = (_PROCESS_INPUT_MARKER, request_id, serialized_item)
             dropped_payload = self._enqueue_input(item, payload)
             if isinstance(dropped_payload, _IncomingFrameDropped):
+                self._release_process_payload(dropped_payload.evicted_payload)
+                self._release_process_request(request_id)
                 if dropped_payload.evicted_payload is not None:
                     self._track_completed_item()
                 return
+            self._release_process_payload(dropped_payload)
             self._track_submitted_item(dropped_payload)
         except queue.Full:
+            self._release_process_request(request_id)
             self.input_queue_rejected += 1
             self.degraded = True
             self.logger.error("Plugin module %s input queue is full", self.module_id)
             raise RuntimeError(f"Plugin module '{self.module_id}' input queue is full")
         except PluginError as exc:
+            self._release_process_request(request_id)
             self.degraded = True
             self.logger.error("%s", exc)
             raise
+        except Exception:
+            self._release_process_request(request_id)
+            raise
+
+    def _release_process_payload(self, payload: Any) -> None:
+        request_id = _request_id_from_process_payload(payload)
+        if request_id is not None:
+            self._release_process_request(request_id)
+
+    def _release_process_request(self, request_id: int | None):
+        if request_id is None:
+            return None
+        with self._process_pending_lock:
+            pending = self._process_pending.pop(request_id, None)
+        if pending is not None:
+            for handle in pending["handles"]:
+                self._frame_transport.release_frame(handle)
+        return pending
+
+    def _release_all_process_requests(self) -> None:
+        with self._process_pending_lock:
+            pending = list(self._process_pending.values())
+            self._process_pending.clear()
+        for request in pending:
+            for handle in request["handles"]:
+                self._frame_transport.release_frame(handle)
 
     def get(self):
         self._check_process_health()
@@ -804,11 +956,11 @@ class ItemModuleAdapter(EvilEyeBase):
                 while True:
                     result = self._mp_control.get_nowait()
                     if not (
-                        isinstance(result, tuple)
-                        and len(result) == 3
+                        isinstance(result, tuple) and len(result) == 3
                         and result[0] == _PROCESS_OUTPUT_MARKER
                     ):
                         self.degraded = True
+                        self._release_all_process_requests()
                         self.logger.error(
                             "Plugin module %s returned an invalid process envelope",
                             self.module_id,
@@ -826,21 +978,57 @@ class ItemModuleAdapter(EvilEyeBase):
                             )
                         continue
                     if result[1] == "error":
+                        request_id = None
+                        message = result[2]
+                        if isinstance(message, bytes):
+                            try:
+                                request_id, message = pickle.loads(message)
+                            except Exception:
+                                pass
+                        self._release_process_request(request_id)
+                        self._release_all_process_requests()
                         self.degraded = True
                         self._failure_reported = True
                         self._clear_pending_items()
                         self.logger.error(
-                            "Plugin module %s failed in worker: %s", self.module_id, result[2]
+                            "Plugin module %s failed in worker: %s", self.module_id, message
                         )
                         return None
                     if result[1] == "skip":
+                        self._release_process_request(
+                            result[2] if isinstance(result[2], int) else None
+                        )
                         self._track_completed_item()
                         continue
                     if result[1] == "output":
                         self._track_completed_item()
+                        request_id = None
                         try:
-                            return pickle.loads(result[2])
+                            decoded = pickle.loads(result[2])
+                            if (
+                                isinstance(decoded, tuple) and len(decoded) == 3
+                                and decoded[0] == _PROCESS_RESULT_MARKER
+                                and isinstance(decoded[1], int)
+                            ):
+                                request_id = decoded[1]
+                                pending = self._process_pending.get(request_id)
+                                if pending is None:
+                                    raise PluginError(
+                                        f"Module '{self.module_id}' returned an unknown "
+                                        f"process request id {request_id}"
+                                    )
+                                output = _restore_process_result(
+                                    decoded[2], pending["frames"], request_id
+                                )
+                                self._release_process_request(request_id)
+                                return output
+                            raise PluginError(
+                                f"Module '{self.module_id}' returned an invalid "
+                                "process result envelope"
+                            )
                         except Exception as exc:
+                            self._release_process_request(request_id)
+                            self._release_all_process_requests()
                             self.degraded = True
                             self.logger.error(
                                 "Plugin module %s returned an invalid serialized output: %s",
@@ -849,6 +1037,7 @@ class ItemModuleAdapter(EvilEyeBase):
                             )
                             return None
                     self.degraded = True
+                    self._release_all_process_requests()
                     self.logger.error(
                         "Plugin module %s returned an unknown process envelope",
                         self.module_id,
@@ -881,6 +1070,7 @@ class ItemModuleAdapter(EvilEyeBase):
         if exited:
             self.degraded = True
             self._failure_reported = True
+            self._release_all_process_requests()
             self._clear_pending_items()
             self.logger.error(
                 "Plugin module %s worker exited unexpectedly (exit_code=%s)",
@@ -921,6 +1111,7 @@ class ItemModuleAdapter(EvilEyeBase):
         if self._mp_control is not None:
             self._mp_control.stop()
             self._mp_control = None
+        self._release_all_process_requests()
         self._stop_event.set()
         try:
             self._input_queue.put_nowait(None)

@@ -82,6 +82,14 @@ materializing its image. Optional metadata such as `"emits_dto_type:Frame"` is
 exposed to the pipeline's compatibility diagnostics. Without the handle
 capability the pipeline materializes a frame before calling the module.
 
+In process mode, the item runtime places Frame.image in shared memory and sends
+a lightweight Frame containing frame metadata and frame_handle/frame_ref. The
+module must read that descriptor (for example with
+SharedFrameTransport.get_frame_view); it must not assume Frame.image is set.
+When the module returns the same Frame as part of its result, the runtime
+reconnects it to the original parent-side Frame and releases the shared-memory
+segment. In thread mode the module receives the ordinary materialized Frame.
+
 
 A model-backed processor that publishes class IDs implements
 `get_model_class_mapping() -> Mapping[str, int]` and declares

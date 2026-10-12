@@ -387,7 +387,8 @@ def test_process_item_rejects_unserializable_input_without_queueing_it():
     module._mp_control = sink
     module.put({"frame_id": 7})
     assert sink.items[0][0] == "__evileye_plugin_input__"
-    assert pickle.loads(sink.items[0][1]) == {"frame_id": 7}
+    assert sink.items[0][1] == 0
+    assert pickle.loads(sink.items[0][2]) == {"frame_id": 7}
 
     with pytest.raises(PluginError, match="input item must be serializable"):
         module.put(lambda: None)
@@ -407,11 +408,13 @@ def test_process_item_serializes_worker_output():
     worker._stop_event = threading.Event()
 
     result = worker.worker_impl(
-        ("__evileye_plugin_input__", pickle.dumps("frame"))
+        ("__evileye_plugin_input__", 41, pickle.dumps("frame"))
     )
 
     assert result[:2] == ("__evileye_plugin_runtime__", "output")
-    assert pickle.loads(result[2]) == "result-frame:1"
+    assert pickle.loads(result[2]) == (
+        "__evileye_plugin_result__", 41, "result-frame:1"
+    )
 
 
 def test_process_item_rejects_unserializable_output_in_worker():
@@ -423,12 +426,14 @@ def test_process_item_rejects_unserializable_output_in_worker():
     worker._stop_event = threading.Event()
 
     result = worker.worker_impl(
-        ("__evileye_plugin_input__", pickle.dumps("frame"))
+        ("__evileye_plugin_input__", 41, pickle.dumps("frame"))
     )
 
     assert result[0] == "__evileye_plugin_runtime__"
     assert result[1] == "error"
-    assert "process_item result must be serializable" in result[2]
+    request_id, message = pickle.loads(result[2])
+    assert request_id == 41
+    assert "process_item result must be serializable" in message
     assert worker._stop_event.is_set()
 
 
