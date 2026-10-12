@@ -57,6 +57,19 @@ def _make_finite_video(path: Path, frame_count: int) -> None:
         writer.release()
 
 
+def _frame_key(item):
+    frame = item[-1] if isinstance(item, (tuple, list)) else item
+    source_id = getattr(frame, "source_id", None)
+    frame_id = getattr(frame, "frame_id", None)
+    if source_id is None or frame_id is None:
+        return None
+    return (
+        int(source_id),
+        int(getattr(frame, "connection_generation", 0) or 0),
+        int(frame_id),
+    )
+
+
 @pytest.mark.parametrize("execution_mode", ["thread", "process"])
 def test_surveillance_pipeline_merges_external_detectors_for_each_video_frame(
     tmp_path, execution_mode
@@ -120,20 +133,34 @@ def test_surveillance_pipeline_merges_external_detectors_for_each_video_frame(
         trackers=[],
     )
 
-    labels_by_frame = {}
+    source_frame_keys = set()
+    detector_labels_by_frame = {}
+    detector_result_count_by_frame = {}
     try:
         assert pipeline.init() is True
         pipeline.start()
         deadline = time.monotonic() + 45.0
         while time.monotonic() < deadline:
             result = pipeline.process()
-            for data, frame in result.get("detectors", []) or []:
-                labels_by_frame[int(frame.frame_id)] = {
+            for item in result.get("sources", []) or []:
+                key = _frame_key(item)
+                if key is not None:
+                    source_frame_keys.add(key)
+            for item in result.get("detectors", []) or []:
+                key = _frame_key(item)
+                if key is None:
+                    continue
+                data = item[0] if isinstance(item, (list, tuple)) else {}
+                detector_result_count_by_frame[key] = (
+                    detector_result_count_by_frame.get(key, 0) + 1
+                )
+                labels = detector_labels_by_frame.setdefault(key, set())
+                labels.update(
                     detection["label"]
-                    for detection in data.get("detections", [])
-                }
+                    for detection in (data.get("detections", []) or [])
+                )
             if (
-                len(labels_by_frame) >= frame_count
+                len(detector_labels_by_frame) >= frame_count
                 and pipeline.check_all_sources_finished()
                 and not pipeline.get_pending_work_summary()
             ):
@@ -143,6 +170,13 @@ def test_surveillance_pipeline_merges_external_detectors_for_each_video_frame(
         pipeline.stop()
         pipeline.release()
 
-    assert len(labels_by_frame) == frame_count
-    assert all(labels == {"fast", "slow"} for labels in labels_by_frame.values())
+    assert len(source_frame_keys) == frame_count
+    assert set(detector_labels_by_frame) == source_frame_keys
+    assert set(detector_result_count_by_frame) == source_frame_keys
+    assert all(count == 1 for count in detector_result_count_by_frame.values())
+    assert all(
+        labels == {"fast", "slow"}
+        for labels in detector_labels_by_frame.values()
+    )
+    assert all(source_id == 17 for source_id, _, _ in source_frame_keys)
     assert pipeline.get_runtime_stats()["degraded"] is False
