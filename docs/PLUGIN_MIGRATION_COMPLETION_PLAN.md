@@ -701,3 +701,10 @@ installation из тестов; подобрать воспроизводиму�
 - Проверки на сервере: полный tests/unit прошёл с exit 0; model-backed finite-video PipelineSurveillance E2E — 2 passed (thread и spawn-process); process alarm -> JSON journal API регрессия прошла отдельно. git diff --check чистый.
 - Диагностический 10-секундный запуск одного источника из configs/poly-videos-thread.json: source=164, tracker matches=29 (2.85 FPS), p95=861 ms, mean staleness=13.83 кадров; detector dropped=50 и tracker dropped=75, pipeline degraded. Process-конфигурация из configs/poly-videos.json за 10 секунд: source=77, tracker matches=3 (0.18 FPS), p95=8 200 ms, mean staleness=67.33 кадра; detector dropped=33 и tracker dropped=26, pipeline degraded. Активные source/detector/tracker workers были живы в последнем snapshot до stop. Оба профиля явно выявляют перегрузку без исключения или тихой потери. Это диагностические, а не KPI сравнения режимов; worker count, queue capacity и input rate требуют отдельного подбора под целевую нагрузку.
 - Внешний multi-detector fanout теперь имеет проверку на адаптерном уровне, но пока не проверен на реальной камере с двумя модельными detector-ами одновременно. Эта live/model нагрузочная проверка остаётся следующим шагом.
+
+### Продолжение 2026-10-12: сквозная проверка стороннего fanout на видеоисточнике
+
+- [проверено] Добавлен integration-тест: реальный `PipelineSurveillance` читает конечный MP4 и передаёт кадры двум внешним `processor_item` детекторам. Детекторы имеют разную задержку; для каждого из 16 кадров проверяется единый результат с метками обоих модулей.
+- [проверено] Оба режима — `thread` и `spawn process` — завершились успешно без degraded-состояния. Сценарий покрывает путь VideoCaptureOpencv -> plugin runtime -> detector fanout без весов модели.
+- Команда: `QT_QPA_PLATFORM=offscreen python3 -m pytest -q tests/integration/pipeline/test_pipeline_surveillance_plugin_fanout.py` — 2 passed.
+- Проверка двух реальных модельных детекторов на живой камере остаётся нагрузочным шагом: для неё нужны выбранные камеры и сопоставимые настройки моделей.
