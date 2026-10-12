@@ -2,7 +2,7 @@ import os
 import json
 import hashlib
 import time
-from typing import List, Dict, Tuple, Callable, Optional
+from typing import Any, List, Dict, Tuple, Callable, Optional
 from evileye.database_controller.json_adapter_schedule_alarm_events import (
     JSON_FOUND_FILENAMES,
     JSON_LOST_FILENAMES,
@@ -74,6 +74,14 @@ class JsonLabelJournalDataSource(EventJournalDataSource):
                     self._source_name_id_address[src_name] = (src_id, address)
         except Exception as e:
             self.logger.warning(f"Failed to load source mappings: {e}")
+
+    def _source_name_for_id(self, source_id: Any) -> Optional[str]:
+        if source_id is None:
+            return None
+        for source_name, (configured_id, _address) in self._source_name_id_address.items():
+            if str(configured_id) == str(source_id):
+                return source_name
+        return None
 
     def force_refresh(self) -> None:
         """Force refresh of cache by clearing timestamps"""
@@ -318,11 +326,8 @@ class JsonLabelJournalDataSource(EventJournalDataSource):
                 source_id = item.get('source_id')
                 source_name = item.get('source_name')
                 # If source_name is missing, try to get it from _source_name_id_address
-                if not source_name and source_id is not None:
-                    for src_name, (src_id, address) in self._source_name_id_address.items():
-                        if src_id == source_id:
-                            source_name = src_name
-                            break
+                if not source_name:
+                    source_name = self._source_name_for_id(source_id)
                 return {
                     'event_id': event_id_str,
                     'event_id_numeric': event_id_numeric,
@@ -387,6 +392,8 @@ class JsonLabelJournalDataSource(EventJournalDataSource):
                     'date_folder': date_folder,
                 }
             elif event_type == 'alarm':
+                source_id = item.get('source_id')
+                source_name = item.get('source_name') or self._source_name_for_id(source_id)
                 return {
                     'event_id': event_id_str,
                     'event_id_numeric': event_id_numeric,
@@ -396,8 +403,8 @@ class JsonLabelJournalDataSource(EventJournalDataSource):
                     'alarm_type': item.get('alarm_type', 'Alarm'),
                     'severity': item.get('severity', 'warning'),
                     'details': item.get('details') or {},
-                    'source_id': item.get('source_id'),
-                    'source_name': item.get('source_name'),
+                    'source_id': source_id,
+                    'source_name': source_name,
                     'date_folder': date_folder,
                 }
         except Exception as e:

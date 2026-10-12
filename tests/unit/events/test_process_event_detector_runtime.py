@@ -230,6 +230,7 @@ def test_events_service_process_alarm_reaches_json_journal(tmp_path, monkeypatch
     from evileye.api.core.journal_grouping import group_events_rows
     from fastapi.testclient import TestClient
     from evileye.api.app import create_app
+    from evileye.api.security import hash_password
     from evileye.api.core import journal_service
 
     class _Pipeline:
@@ -299,8 +300,23 @@ def test_events_service_process_alarm_reaches_json_journal(tmp_path, monkeypatch
         records = json.loads(path.read_text(encoding="utf-8"))
         assert records[0]["alarm_id"] == alarm.alarm_id
 
-        source = JsonLabelJournalDataSource(str(tmp_path))
+        source = JsonLabelJournalDataSource(
+            str(tmp_path),
+            params={
+                "pipeline": {
+                    "sources": [
+                        {"source_ids": [0], "source_names": ["Cam0"]}
+                    ]
+                }
+            },
+        )
         row = source._map_item(records[0], "alarm", "2026-10-11", 0)
+        assert row["source_name"] == "Cam0"
+        source.set_date("2026-10-11")
+        source.begin_request()
+        assert source.get_total(
+            {"journal_kind": "events", "source_names": ["Cam0"]}
+        ) == 1
         assert group_events_rows([row])[0]["event"] == "ppe_violation"
 
         config_path = tmp_path / "journal-config.json"
@@ -324,12 +340,15 @@ def test_events_service_process_alarm_reaches_json_journal(tmp_path, monkeypatch
             json.dumps(
                 {
                     "web_auth": {
-                        "enabled": False,
+                        "enabled": True,
+                        "session_secret": "unit-test-session-secret-long-enough",
+                        "internal_token": "unit-test-internal-token",
                         "users": [
                             {
                                 "username": "test",
-                                "password": "test",
-                                "role": "admin",
+                                "password_hash": hash_password("test-user-password"),
+                                "role": "user",
+                                "allowed_cameras": ["Cam0"],
                             }
                         ],
                     }
@@ -357,6 +376,11 @@ def test_events_service_process_alarm_reaches_json_journal(tmp_path, monkeypatch
             monkeypatch.setattr(journal_service, name, value)
 
         client = TestClient(create_app())
+        login = client.post(
+            "/api/v1/auth/login",
+            json={"username": "test", "password": "test-user-password"},
+        )
+        assert login.status_code == 200
         response = client.get(
             "/api/v1/journals/events/grouped",
             params={"page": 0, "size": 10, "date": "2026-10-11"},
@@ -371,7 +395,7 @@ def test_events_service_process_alarm_reaches_json_journal(tmp_path, monkeypatch
         ]
         assert len(alarm_rows) == 1
         alarm_row = alarm_rows[0]
-        assert alarm_row["source"] == "0"
+        assert alarm_row["source"] == "Cam0"
         assert "critical" in alarm_row["information"]
         assert "from_service" in alarm_row["information"]
         assert alarm_row["time"].startswith("2026-10-11T12:00:00")

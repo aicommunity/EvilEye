@@ -364,3 +364,44 @@ def test_permanent_alarm_adapter_failure_is_reported():
     assert stats["adapter_failures"] == 1
     assert stats["degraded"] is True
     assert "storage unavailable" in stats["last_error"]
+
+
+def test_alarm_json_infers_camera_name_before_acl_filtering(tmp_path):
+    metadata = tmp_path / "Events" / "2026-10-11" / "Metadata"
+    metadata.mkdir(parents=True)
+    (metadata / "alarm_events.json").write_text(
+        json.dumps(
+            [
+                {
+                    "alarm_id": "source-name-omitted",
+                    "ts": "2026-10-11T12:00:00",
+                    "alarm_type": "ppe_violation",
+                    "severity": "critical",
+                    "source_id": 0,
+                    "source_name": None,
+                    "details": {"rule": "hardhat_required"},
+                }
+            ]
+        ),
+        encoding="utf-8",
+    )
+    source = JsonLabelJournalDataSource(
+        str(tmp_path),
+        params={
+            "pipeline": {
+                "sources": [{"source_ids": [0], "source_names": ["Cam0"]}]
+            }
+        },
+    )
+    source.set_date("2026-10-11")
+    source.begin_request()
+
+    rows = source.fetch(
+        page=0,
+        size=10,
+        filters={"journal_kind": "events", "source_names": ["Cam0"]},
+        sort=[],
+    )
+
+    assert len(rows) == 1
+    assert rows[0]["source_name"] == "Cam0"
