@@ -127,6 +127,49 @@ For `PipelineSurveillance`, each source item must be an `evileye.core.frame.Fram
 implementations may return other item types, but the surveillance pipeline's
 source stage expects `Frame` values.
 
+## Detector outputs in PipelineSurveillance
+
+A detector item should return a pair `(detection_batch, frame)`. For a detector
+that must feed the built-in tracker, use the public lazy exports
+`DetectionResult` and `DetectionResultList`:
+
+```python
+from evileye.object_detector import DetectionResult, DetectionResultList
+
+def process_item(self, item, state):
+    frame = item[-1] if isinstance(item, (tuple, list)) else item
+    batch = DetectionResultList()
+    batch.source_id = frame.source_id
+    batch.frame_id = frame.frame_id
+    batch.time_stamp = frame.time_stamp
+
+    detection = DetectionResult()
+    detection.bounding_box = [x1, y1, x2, y2]  # source-frame pixel coordinates
+    detection.confidence = 0.93
+    detection.class_id = 0
+    batch.detections.append(detection)
+    return batch, frame
+```
+
+Each detection carries `bounding_box` in XYXY source-frame coordinates,
+`confidence`, and integer `class_id`; optional plugin metadata can be stored
+in `detection_data`. A mapping result is also accepted by the built-in tracker
+when it contains `source_id`, `frame_id`, and a `detections` list with those
+fields. Keep the batch metadata aligned with the frame.
+
+When several detectors are assigned to the same source, the pipeline joins
+their `detections` lists by `(source_id, connection_generation, frame_id)`
+and sends one combined item to the next stage. Return the original frame with
+its identity unchanged. A mismatched or missing frame identity cannot be joined
+and is reported as incomplete fanout. Process-mode outputs, including detection
+objects and custom `detection_data`, must be pickle-serializable.
+
+`DetectionResultList` can pass directly into the built-in BoT-SORT module. If
+the detector publishes class names, implement
+`get_model_class_mapping() -> Mapping[str, int]` and declare the
+`model_class_mapping` capability so the controller and visualizer receive the
+same class IDs.
+
 ## Built-in migration
 
 `PreprocessingPipeline` and `RoiFeeder` are now registered as item processors

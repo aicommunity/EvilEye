@@ -16,7 +16,7 @@ from evileye.pipelines.pipeline_surveillance import PipelineSurveillance
 
 
 class _TaggedDetector:
-    """Small importable plugin used to exercise the real source-to-detector path."""
+    """Small importable plugin used to exercise the real source-to-tracker path."""
 
     def __init__(self, config=None):
         config = config or {}
@@ -24,10 +24,25 @@ class _TaggedDetector:
         self.delay_sec = float(config.get("delay_sec", 0.0))
 
     def process_item(self, item, state):
+        from evileye.object_detector.object_detection_base import (
+            DetectionResult,
+            DetectionResultList,
+        )
+
         if self.delay_sec:
             time.sleep(self.delay_sec)
         frame = item[-1] if isinstance(item, (list, tuple)) else item
-        return [{"detections": [{"label": self.label}]}, frame]
+        result = DetectionResultList()
+        result.source_id = frame.source_id
+        result.frame_id = frame.frame_id
+        result.time_stamp = frame.time_stamp
+        detection = DetectionResult()
+        detection.bounding_box = [10, 10, 30, 30]
+        detection.confidence = 0.95
+        detection.class_id = 0
+        detection.detection_data["plugin_label"] = self.label
+        result.detections.append(detection)
+        return result, frame
 
 
 def _make_finite_video(path: Path, frame_count: int) -> None:
@@ -58,7 +73,7 @@ def _make_finite_video(path: Path, frame_count: int) -> None:
 
 
 def _frame_key(item):
-    frame = item[-1] if isinstance(item, (tuple, list)) else item
+    frame = item[-1] if isinstance(item, (list, tuple)) else item
     source_id = getattr(frame, "source_id", None)
     frame_id = getattr(frame, "frame_id", None)
     if source_id is None or frame_id is None:
@@ -68,6 +83,14 @@ def _frame_key(item):
         int(getattr(frame, "connection_generation", 0) or 0),
         int(frame_id),
     )
+
+
+def _detection_label(detection):
+    if isinstance(detection, dict):
+        details = detection.get("detection_data", {})
+    else:
+        details = getattr(detection, "detection_data", {})
+    return details.get("plugin_label")
 
 
 @pytest.mark.parametrize("execution_mode", ["thread", "process"])
@@ -130,16 +153,26 @@ def test_surveillance_pipeline_merges_external_detectors_for_each_video_frame(
                 "queue_size": 64,
             },
         ],
-        trackers=[],
+        trackers=[
+            {
+                "module_id": "ObjectTrackingBotsort",
+                "execution_mode": "process",
+                "source_ids": [17],
+                "fps": 10,
+                "queue_size": 64,
+                "botsort_cfg": {"gmc_method": "none", "with_reid": False},
+            }
+        ],
     )
 
     source_frame_keys = set()
     detector_labels_by_frame = {}
     detector_result_count_by_frame = {}
+    tracker_frame_keys = set()
     try:
         assert pipeline.init() is True
         pipeline.start()
-        deadline = time.monotonic() + 45.0
+        deadline = time.monotonic() + 60.0
         while time.monotonic() < deadline:
             result = pipeline.process()
             for item in result.get("sources", []) or []:
@@ -155,12 +188,26 @@ def test_surveillance_pipeline_merges_external_detectors_for_each_video_frame(
                     detector_result_count_by_frame.get(key, 0) + 1
                 )
                 labels = detector_labels_by_frame.setdefault(key, set())
-                labels.update(
-                    detection["label"]
-                    for detection in (data.get("detections", []) or [])
+                detections = (
+                    data.get("detections", [])
+                    if isinstance(data, dict)
+                    else getattr(data, "detections", [])
                 )
+                labels.update(
+                    label
+                    for label in (
+                        _detection_label(detection)
+                        for detection in (detections or [])
+                    )
+                    if label is not None
+                )
+            for item in result.get("trackers", []) or []:
+                key = _frame_key(item)
+                if key is not None:
+                    tracker_frame_keys.add(key)
             if (
                 len(detector_labels_by_frame) >= frame_count
+                and len(tracker_frame_keys) >= frame_count
                 and pipeline.check_all_sources_finished()
                 and not pipeline.get_pending_work_summary()
             ):
@@ -178,5 +225,6 @@ def test_surveillance_pipeline_merges_external_detectors_for_each_video_frame(
         labels == {"fast", "slow"}
         for labels in detector_labels_by_frame.values()
     )
+    assert tracker_frame_keys == source_frame_keys
     assert all(source_id == 17 for source_id, _, _ in source_frame_keys)
     assert pipeline.get_runtime_stats()["degraded"] is False

@@ -704,7 +704,7 @@ installation из тестов; подобрать воспроизводиму�
 
 ### Продолжение 2026-10-12: сквозная проверка стороннего fanout на видеоисточнике
 
-- [проверено] Добавлен integration-тест: реальный `PipelineSurveillance` читает конечный MP4 и передаёт кадры двум внешним `processor_item` детекторам. Детекторы имеют разную задержку; для каждого из 16 кадров проверяется единый результат с метками обоих модулей.
+- [проверено] Integration-тест запускает реальный `PipelineSurveillance` на конечном MP4: два внешних `processor_item` детектора возвращают `DetectionResultList` с разной задержкой, fanout объединяет результат по каждому исходному ключу кадра и передаёт его встроенному BoT-SORT.
 - [проверено] Оба режима — `thread` и `spawn process` — завершились успешно без degraded-состояния. Сценарий покрывает путь VideoCaptureOpencv -> plugin runtime -> detector fanout без весов модели.
 - Команда: `QT_QPA_PLATFORM=offscreen python3 -m pytest -q tests/integration/pipeline/test_pipeline_surveillance_plugin_fanout.py` — 2 passed.
 - Live-проверка моделей и стороннего пакета выполнена ниже; дальнейшая нагрузочная настройка устойчивого FPS остаётся отдельной задачей.
