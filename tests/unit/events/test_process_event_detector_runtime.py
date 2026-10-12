@@ -925,7 +925,12 @@ def test_process_detector_failure_does_not_block_healthy_sibling():
         assert len(healthy_events) == 1
         assert healthy_events[0].details["rule"] == "healthy_rule"
         assert broken.get_runtime_stats()["degraded"] is True
-        assert controller.get_runtime_stats()["degraded"] is True
+        controller_stats = controller.get_runtime_stats()
+        assert controller_stats["degraded"] is True
+        assert "broken" in " ".join(controller_stats["detector_failures"])
+        debug_info = {}
+        controller.insert_debug_info_by_id(debug_info)
+        assert debug_info[controller.id]["runtime"]["degraded"] is True
         assert healthy.get_runtime_stats()["degraded"] is False
     finally:
         controller.stop()

@@ -34,6 +34,13 @@ class EventsDetectorsController(EvilEyeBase):
     def get_params_impl(self):
         return dict()
 
+    def get_debug_info(self, debug_info: dict | None = None):
+        if debug_info is None:
+            debug_info = {}
+        super().get_debug_info(debug_info)
+        debug_info["runtime"] = self.get_runtime_stats()
+        return debug_info
+
     def init_impl(self):
         self.events_detectors = {detector.get_name(): [] for detector in self.detectors}
         return True
