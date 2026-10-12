@@ -5,6 +5,7 @@ This small distribution registers an item processor through the
 EvilEye with:
 
 ```powershell
+python -m pip install --upgrade pip
 python -m pip install -e .
 ```
 

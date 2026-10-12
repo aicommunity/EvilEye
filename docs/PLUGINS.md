@@ -1,8 +1,11 @@
 # EvilEye plugins
 
 EvilEye loads installed Python plugins when the application starts. It does not
-install dependencies or reload code in a running process. During development,
-install a plugin package into the EvilEye environment with `pip install -e .`.
+install dependencies or reload code in a running process. For editable development installs, use a pip version with PEP 660 support. In a
+fresh or older environment, update pip first with
+`python -m pip install --upgrade pip`, then run `python -m pip install -e .`
+from the plugin package directory. The package installs into the same Python
+environment EvilEye uses.
 
 ## Declare a plugin package
 
