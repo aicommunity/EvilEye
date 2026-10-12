@@ -2,7 +2,9 @@
 
 import evileye.attributes_detection  # noqa: F401
 import evileye.capture  # noqa: F401
-import evileye.object_detector  # noqa: F401
+from evileye.object_detector import register_builtin_modules
+
+register_builtin_modules()
 import evileye.object_tracker  # noqa: F401
 import evileye.object_multi_camera_tracker  # noqa: F401
 import evileye.preprocessing  # noqa: F401
@@ -39,7 +41,7 @@ _BUILTIN_CONTRACTS = {
     "AttributeEventsDetector": ("event_detector", ("process",)),
     "CamEventsDetector": ("event_detector", ("process",)),
     "FieldOfViewEventsDetector": ("event_detector", ("process",)),
-    "ObjectDetectorRfdetr": ("processor_item", ("thread", "process")),
+    "ObjectDetectorRfdetr": ("processor_item", ("process",)),
     "ObjectDetectorRtdetr": ("processor_item", ("thread", "process")),
     "ObjectDetectorYolo": ("processor_item", ("thread", "process")),
     "ObjectMultiCameraTracking": ("batch_processor", ("thread",)),
@@ -141,14 +143,14 @@ def test_builtin_inventory_has_no_legacy_processor_or_source_protocols():
         assert "legacy_source_protocol" not in source.spec.capabilities
 
 
-def test_rfdetr_legacy_thread_count_maps_to_ordered_item_workers():
+def test_rfdetr_legacy_worker_count_maps_to_ordered_process_workers():
     from evileye.core.plugin_runtime import ParallelItemModuleAdapter
 
     adapter = EvilEyeBase.create_instance("ObjectDetectorRfdetr")
     assert isinstance(adapter, ParallelItemModuleAdapter)
     adapter.set_params(
         module_id="ObjectDetectorRfdetr",
-        execution_mode="thread",
+        execution_mode="process",
         source_ids=[0],
         num_detection_threads=4,
     )

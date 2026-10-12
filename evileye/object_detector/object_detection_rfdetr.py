@@ -107,7 +107,7 @@ if _SUPPORT_RFDETR:
             "model_class_mapping",
             "parallel_items",
         ),
-        execution_modes=("thread", "process"),
+        execution_modes=("process",),
         default_execution_mode="process",
     )(ObjectDetectorRfdetr)
 else:

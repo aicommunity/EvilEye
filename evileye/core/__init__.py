@@ -1,60 +1,72 @@
-"""
-Ядро системы EvilEye (evileye/core).
+"""Lightweight public API for the core package.
 
-Этот модуль предоставляет базовую инфраструктуру для компонентов системы:
-
-- **EvilEyeBase**: Runtime-фреймворк для компонентов с lifecycle (init/release, plugin registry, logging)
-- **interfaces.py**: Типовые контракты (Protocols) для type hints и документации API
-- **base_class.py**: Базовый класс для всех компонентов системы
-- **pipeline_base.py**: Базовый класс для всех реализаций pipeline
-- **processor_base.py**: Базовый класс для процессоров pipeline
-- **logger.py**: Утилиты для логирования (get_module_logger для модулей без lifecycle)
-
-Разделение ответственности:
-- EvilEyeBase — runtime-фреймворк (lifecycle, plugin registry, logging)
-- interfaces.py — типовые контракты (type checking, документация API)
-- DIContainer/DependencyRegistry — зарезервировано для будущего использования
-
-См. также: docs/ARCHITECTURE.md раздел "Дополнительные паттерны: DI и фасады"
+Public names are loaded on first access so importing a worker contract does not
+initialize pipelines, GUI modules, or every builtin plugin in spawned processes.
 """
 
-from .base_class import EvilEyeBase
-from .frame import CaptureImage, Frame
-from .processor_base import ProcessorBase
-from .processor_source import ProcessorSource
-from .processor_step import ProcessorStep
-from .processor_frame import ProcessorFrame
-from .mp_worker import MpWorker
-from .mp_control import MpControl
-from .process_manager import ProcessManager, get_process_manager
-from .pipeline_processors import PipelineProcessors
-from .pipeline_base import PipelineBase
-from .pipeline_simple import PipelineSimple
-from .interfaces import (
-    IDatabaseAdapter,
-    IEventDetector,
-    IProcessEventDetector,
-    IObjectHandler,
-    IPipeline,
-    IVisualizer,
-)
-from .contracts import (
-    ControllerContext,
-    DatabaseConfig,
-    DatabaseDependencies,
-    EventsConfig,
-    EventsDependencies,
-    EventFrameSnapshot,
-    EventUpdate,
-    PipelineConfig,
-    PipelineDependencies,
-    VisualizationConfig,
-    VisualizationDependencies,
-)
-from .facades import DatabaseFacade, PipelineFacade
-# DI управляет сервисами приложения; component factories регистрируются в PluginRegistry.
-from .di_container import DIContainer
-from .dependencies import DependencyRegistry, DependencyDefinition, get_registry, register_dependency
-from .config_validator import ConfigValidator
-from .object_pool import ObjectPool
-from .runtime_services import get_frame_broker, get_pipeline_manager
+from importlib import import_module as _import_module
+
+_EXPORTS = {
+    "EvilEyeBase": (".base_class", "EvilEyeBase"),
+    "CaptureImage": (".frame", "CaptureImage"),
+    "Frame": (".frame", "Frame"),
+    "ProcessorBase": (".processor_base", "ProcessorBase"),
+    "ProcessorSource": (".processor_source", "ProcessorSource"),
+    "ProcessorStep": (".processor_step", "ProcessorStep"),
+    "ProcessorFrame": (".processor_frame", "ProcessorFrame"),
+    "MpWorker": (".mp_worker", "MpWorker"),
+    "MpControl": (".mp_control", "MpControl"),
+    "ProcessManager": (".process_manager", "ProcessManager"),
+    "get_process_manager": (".process_manager", "get_process_manager"),
+    "PipelineProcessors": (".pipeline_processors", "PipelineProcessors"),
+    "PipelineBase": (".pipeline_base", "PipelineBase"),
+    "PipelineSimple": (".pipeline_simple", "PipelineSimple"),
+    "IDatabaseAdapter": (".interfaces", "IDatabaseAdapter"),
+    "IEventDetector": (".interfaces", "IEventDetector"),
+    "IProcessEventDetector": (".interfaces", "IProcessEventDetector"),
+    "IObjectHandler": (".interfaces", "IObjectHandler"),
+    "IPipeline": (".interfaces", "IPipeline"),
+    "IVisualizer": (".interfaces", "IVisualizer"),
+    "ControllerContext": (".contracts", "ControllerContext"),
+    "DatabaseConfig": (".contracts", "DatabaseConfig"),
+    "DatabaseDependencies": (".contracts", "DatabaseDependencies"),
+    "EventsConfig": (".contracts", "EventsConfig"),
+    "EventsDependencies": (".contracts", "EventsDependencies"),
+    "EventFrameSnapshot": (".contracts", "EventFrameSnapshot"),
+    "EventUpdate": (".contracts", "EventUpdate"),
+    "PipelineConfig": (".contracts", "PipelineConfig"),
+    "PipelineDependencies": (".contracts", "PipelineDependencies"),
+    "VisualizationConfig": (".contracts", "VisualizationConfig"),
+    "VisualizationDependencies": (".contracts", "VisualizationDependencies"),
+    "DatabaseFacade": (".facades", "DatabaseFacade"),
+    "PipelineFacade": (".facades", "PipelineFacade"),
+    "DIContainer": (".di_container", "DIContainer"),
+    "DependencyRegistry": (".dependencies", "DependencyRegistry"),
+    "DependencyDefinition": (".dependencies", "DependencyDefinition"),
+    "get_registry": (".dependencies", "get_registry"),
+    "register_dependency": (".dependencies", "register_dependency"),
+    "ConfigValidator": (".config_validator", "ConfigValidator"),
+    "ObjectPool": (".object_pool", "ObjectPool"),
+    "get_frame_broker": (".runtime_services", "get_frame_broker"),
+    "get_pipeline_manager": (".runtime_services", "get_pipeline_manager"),
+    "PipelineSurveillance": (".pipeline_surveillance", "PipelineSurveillance"),
+    "PipelineCapture": (".pipeline_capture", "PipelineCapture"),
+    "PipelineDeclarative": (".pipeline_declarative", "PipelineDeclarative"),
+}
+
+__all__ = list(_EXPORTS)
+
+
+def __getattr__(name: str):
+    try:
+        module_name, attribute_name = _EXPORTS[name]
+    except KeyError as exc:
+        raise AttributeError(f"module {__name__!r} has no attribute {name!r}") from exc
+    module = _import_module(module_name, __name__)
+    value = getattr(module, attribute_name)
+    globals()[name] = value
+    return value
+
+
+def __dir__():
+    return sorted(set(globals()) | set(__all__))

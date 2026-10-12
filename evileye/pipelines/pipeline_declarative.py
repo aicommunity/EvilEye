@@ -21,9 +21,14 @@ from __future__ import annotations
 
 from typing import Any, Dict, List
 
+import evileye.capture  # noqa: F401 — register source plugins
 import evileye.attributes_detection  # noqa: F401 — register plugins
+from evileye.object_detector import register_builtin_modules as _register_builtin_object_detectors
+import evileye.object_tracker  # noqa: F401 — register tracker plugins
 import evileye.object_multi_camera_tracker  # noqa: F401
 import evileye.preprocessing  # noqa: F401
+
+_register_builtin_object_detectors()
 
 from evileye.core.pipeline_processors import PipelineProcessors
 from evileye.core.processor_base import ProcessorBase

@@ -5,9 +5,12 @@ from ..core.processor_step import ProcessorStep
 from ..core.processor_base import ProcessorBase
 from ..core.pipeline_processors import PipelineProcessors
 from typing import Any, Tuple, List, Dict
+import evileye.capture  # Import to register builtin sources
 import evileye.preprocessing  # Import to register PreprocessingPipeline
 import evileye.attributes_detection  # Import to register RoiFeeder and AttributeClassifier
-import evileye.object_detector  # Import to register the built-in detectors
+from evileye.object_detector import register_builtin_modules as _register_builtin_object_detectors
+
+_register_builtin_object_detectors()
 import evileye.object_tracker  # Import to register the built-in trackers
 import evileye.object_multi_camera_tracker  # Import to register ObjectMultiCameraTracking
 
