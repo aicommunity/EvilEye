@@ -338,6 +338,7 @@ def test_events_service_process_alarm_reaches_json_journal(tmp_path, monkeypatch
             encoding="utf-8",
         )
         monkeypatch.chdir(tmp_path)
+        monkeypatch.setenv("EVILEYE_SITE_DIR", str(tmp_path))
         monkeypatch.setattr(
             journal_service,
             "get_current_config_path",

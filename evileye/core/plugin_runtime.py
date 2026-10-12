@@ -23,6 +23,11 @@ _PROCESS_OUTPUT_MARKER = "__evileye_plugin_runtime__"
 _SOURCE_ITEM_MARKER = "__evileye_source_item__"
 
 
+class _IncomingFrameDropped:
+    def __init__(self, evicted_payload=None):
+        self.evicted_payload = evicted_payload
+
+
 def _is_frame_work_item(item: Any) -> bool:
     """Frame work can shed stale queued frames; other payloads reject overflow."""
     from .frame import Frame
@@ -524,7 +529,14 @@ class ItemModuleAdapter(EvilEyeBase):
                     f"Process module '{self.module_id}' is not started"
                 )
             if _is_frame_work_item(item):
-                dropped, dropped_payload = self._mp_control.put_drop_oldest(payload)
+                try:
+                    dropped, dropped_payload = self._mp_control.put_drop_oldest(payload)
+                except queue.Full as exc:
+                    evicted_payload = getattr(exc, "dropped_item", None)
+                    if evicted_payload is not None:
+                        self._record_input_drop()
+                    self._record_input_drop()
+                    return _IncomingFrameDropped(evicted_payload)
                 if dropped:
                     self._record_input_drop()
                     return dropped_payload
@@ -768,6 +780,10 @@ class ItemModuleAdapter(EvilEyeBase):
                 )
                 payload = (_PROCESS_INPUT_MARKER, serialized_item)
             dropped_payload = self._enqueue_input(item, payload)
+            if isinstance(dropped_payload, _IncomingFrameDropped):
+                if dropped_payload.evicted_payload is not None:
+                    self._track_completed_item()
+                return
             self._track_submitted_item(dropped_payload)
         except queue.Full:
             self.input_queue_rejected += 1
@@ -1171,6 +1187,16 @@ class ParallelItemModuleAdapter(ItemModuleAdapter):
                 )
                 payload = (_PROCESS_INPUT_MARKER, sequence, serialized)
             dropped_payload = self._enqueue_input(item, payload)
+            if isinstance(dropped_payload, _IncomingFrameDropped):
+                if dropped_payload.evicted_payload is not None:
+                    self._track_completed_item()
+                    dropped_sequence = (
+                        int(dropped_payload.evicted_payload[1])
+                        if self.execution_mode == "process"
+                        else int(dropped_payload.evicted_payload[0])
+                    )
+                    self._ordered_results[dropped_sequence] = _ORDERED_EVICTED
+                return
             self._track_submitted_item(dropped_payload)
             self._next_input_sequence += 1
             if dropped_payload is not None:

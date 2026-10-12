@@ -273,6 +273,9 @@ class PipelineProcessors(PipelineBase):
         for container in self.processors or ():
             if container is None:
                 continue
+            fanout_pending = getattr(container, "_detector_fanout_pending", None)
+            if fanout_pending:
+                pending.append(f"{container.get_name()}_detector_fanout={len(fanout_pending)}")
             for module in getattr(container, "processors", ()) or ():
                 module_id = getattr(module, "module_id", module.__class__.__name__)
                 module_pending = False
@@ -451,8 +454,9 @@ class PipelineProcessors(PipelineBase):
         debug_info["runtime"] = self.get_runtime_stats()
 
     def get_runtime_stats(self) -> dict[str, Any]:
-        """Aggregate health of generic plugin modules in this pipeline."""
+        """Aggregate health of generic plugin modules and detector fanout."""
         modules = {}
+        stages = {}
         for stage in self.processors:
             if stage is None:
                 continue
@@ -468,9 +472,20 @@ class PipelineProcessors(PipelineBase):
                         "degraded": True,
                         "diagnostic_error": str(exc),
                     }
+            pending_fanout = getattr(stage, "_detector_fanout_pending", None)
+            fanout_incomplete = int(getattr(stage, "_detector_fanout_incomplete_count", 0) or 0)
+            if pending_fanout or fanout_incomplete:
+                stage_name = stage.get_name()
+                stages[stage_name] = {
+                    "degraded": fanout_incomplete > 0,
+                    "pending_detector_fanout": len(pending_fanout or {}),
+                    "detector_fanout_incomplete": fanout_incomplete,
+                }
         return {
-            "degraded": any(bool(stats.get("degraded")) for stats in modules.values()),
+            "degraded": any(bool(stats.get("degraded")) for stats in modules.values())
+            or any(bool(stats.get("degraded")) for stats in stages.values()),
             "modules": modules,
+            "stages": stages,
         }
 
     def get_sources(self):

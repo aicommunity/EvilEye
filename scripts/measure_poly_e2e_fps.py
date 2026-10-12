@@ -56,16 +56,116 @@ def _percentile_int(values: list[int], pct: float) -> int | None:
     return ordered[max(0, min(idx, len(ordered) - 1))]
 
 
+
+class RuntimeStatsSampler:
+    """Summarize module queue and health counters over one active measurement."""
+
+    _COUNTERS = ("input_queue_dropped", "input_queue_rejected")
+
+    def __init__(self, baseline: dict[str, Any]):
+        self._baseline: dict[str, dict[str, int]] = {}
+        self._latest: dict[str, dict[str, Any]] = {}
+        self._modules: dict[str, dict[str, Any]] = {}
+        self._pipeline_degraded_seen = False
+        self._samples = 0
+        self.observe(baseline, establish_baseline=True)
+
+    @staticmethod
+    def _integer(value: Any) -> int:
+        try:
+            return int(value)
+        except (TypeError, ValueError):
+            return 0
+
+    def observe(
+        self, snapshot: dict[str, Any], *, establish_baseline: bool = False
+    ) -> None:
+        self._samples += 1
+        self._pipeline_degraded_seen |= bool(snapshot.get("degraded"))
+        modules = snapshot.get("modules")
+        if not isinstance(modules, dict):
+            return
+
+        for module_id, raw_stats in modules.items():
+            if not isinstance(raw_stats, dict):
+                continue
+            stats = dict(raw_stats)
+            if establish_baseline or module_id not in self._baseline:
+                self._baseline[module_id] = {
+                    name: self._integer(stats.get(name)) for name in self._COUNTERS
+                }
+
+            row = self._modules.setdefault(
+                str(module_id),
+                {
+                    "execution_mode": stats.get("execution_mode"),
+                    "input_queue_depth_max": None,
+                    "output_queue_depth_max": None,
+                    "in_flight_max": None,
+                    "degraded_seen": False,
+                },
+            )
+            row["execution_mode"] = stats.get(
+                "execution_mode", row.get("execution_mode")
+            )
+            row["degraded_seen"] |= bool(stats.get("degraded"))
+            for name, output_name in (
+                ("input_queue_size", "input_queue_depth_max"),
+                ("output_queue_size", "output_queue_depth_max"),
+                ("in_flight", "in_flight_max"),
+            ):
+                depth = stats.get(name)
+                if depth is None:
+                    continue
+                depth_value = self._integer(depth)
+                previous = row.get(output_name)
+                row[output_name] = (
+                    depth_value if previous is None else max(previous, depth_value)
+                )
+            self._latest[str(module_id)] = stats
+
+    def finish(self, final_snapshot: dict[str, Any]) -> dict[str, Any]:
+        self.observe(final_snapshot)
+        result = {}
+        for module_id, row in self._modules.items():
+            latest = self._latest.get(module_id, {})
+            baseline = self._baseline.get(module_id, {})
+            result[module_id] = {
+                **row,
+                "input_queue_dropped": max(
+                    0,
+                    self._integer(latest.get("input_queue_dropped"))
+                    - baseline.get("input_queue_dropped", 0),
+                ),
+                "input_queue_rejected": max(
+                    0,
+                    self._integer(latest.get("input_queue_rejected"))
+                    - baseline.get("input_queue_rejected", 0),
+                ),
+                "degraded_at_end": bool(latest.get("degraded")),
+                "worker_running_at_end": bool(latest.get("worker_running")),
+            }
+        return {
+            "samples": self._samples,
+            "pipeline_degraded_seen": self._pipeline_degraded_seen,
+            "pipeline_degraded_at_end": bool(final_snapshot.get("degraded")),
+            "modules": result,
+        }
+
 def measure(
     config_path: Path,
     *,
     warmup_sec: float,
     active_sec: float,
     env_note: str = "",
+    poll_interval_sec: float = 0.001,
 ) -> dict[str, Any]:
     from evileye.core.logging_config import setup_evileye_logging
     from evileye.core.mp_context import ensure_spawn_start_method
     from evileye.pipelines.pipeline_surveillance import PipelineSurveillance
+
+    if poll_interval_sec < 0:
+        raise ValueError("poll_interval_sec must be non-negative")
 
     ensure_spawn_start_method()
     setup_evileye_logging(log_level="WARNING")
@@ -79,6 +179,9 @@ def measure(
         pipeline.set_params(**cfg["pipeline"])
         pipeline.init()
         pipeline.start()
+        runtime_sampler = RuntimeStatsSampler(pipeline.get_runtime_stats())
+        runtime_sample_interval_sec = 0.25
+        next_runtime_sample = time.monotonic() + runtime_sample_interval_sec
 
         pending: dict[tuple[int, int], float] = {}
         latencies_ms: list[float] = []
@@ -92,11 +195,16 @@ def measure(
         time.sleep(warmup_sec)
         t_start = time.monotonic()
         ticks = 0
+        runtime_snapshot_at_measurement_end = None
         try:
             while time.monotonic() - t_start < active_sec:
                 t_tick = time.monotonic()
                 res = pipeline.process()
                 ticks += 1
+                now = time.monotonic()
+                if now >= next_runtime_sample:
+                    runtime_sampler.observe(pipeline.get_runtime_stats())
+                    next_runtime_sample = now + runtime_sample_interval_sec
                 for item in res.get("sources") or []:
                     key = _frame_key(item)
                     if key:
@@ -122,12 +230,21 @@ def measure(
                         s = latest - fid
                         if s >= 0:
                             staleness_matched.append(s)
+                if poll_interval_sec:
+                    time.sleep(poll_interval_sec)
         finally:
+            try:
+                runtime_snapshot_at_measurement_end = pipeline.get_runtime_stats()
+            except Exception:
+                runtime_snapshot_at_measurement_end = None
             try:
                 pipeline.stop()
             except Exception:
                 pass
 
+        if runtime_snapshot_at_measurement_end is None:
+            runtime_snapshot_at_measurement_end = pipeline.get_runtime_stats()
+        module_runtime = runtime_sampler.finish(runtime_snapshot_at_measurement_end)
         active_elapsed = max(0.001, time.monotonic() - t_start)
         sorted_lat = sorted(latencies_ms)
         p50 = sorted_lat[len(sorted_lat) // 2] if sorted_lat else None
@@ -149,6 +266,7 @@ def measure(
             "config": str(config_path.relative_to(REPO_ROOT)),
             "warmup_sec": warmup_sec,
             "active_sec": active_sec,
+            "poll_interval_sec": poll_interval_sec,
             "ticks": ticks,
             "source_frames": len(source_keys),
             "tracker_matches": len(tracker_keys),
@@ -171,6 +289,7 @@ def measure(
             "pending_unmatched_pct": round(
                 100.0 * unmatched / max(1, len(source_keys)), 2
             ),
+            "module_runtime": module_runtime,
             "env_note": env_note,
         }
     finally:
@@ -186,6 +305,12 @@ def main() -> int:
     parser.add_argument("--warmup-sec", type=float, default=30.0)
     parser.add_argument("--active-sec", type=float, default=120.0)
     parser.add_argument(
+        "--poll-interval-sec",
+        type=float,
+        default=0.001,
+        help="Yield briefly between pipeline polls to avoid saturating the host CPU",
+    )
+    parser.add_argument(
         "--out",
         default="reports/poly_videos_mode_compare/e2e_measure.json",
     )
@@ -198,6 +323,7 @@ def main() -> int:
         warmup_sec=args.warmup_sec,
         active_sec=args.active_sec,
         env_note=args.env_note,
+        poll_interval_sec=args.poll_interval_sec,
     )
     out_path = (REPO_ROOT / args.out).resolve()
     out_path.parent.mkdir(parents=True, exist_ok=True)

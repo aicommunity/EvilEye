@@ -42,6 +42,14 @@ class ProcessorStep(ProcessorBase):
         self._trackers_repeats_by_source: dict[int, int] = defaultdict(int)
         self._mc_tick_diag_counter = 0
         self._mp_pending_snapshot = 0
+        self._detector_fanout_pending: dict[tuple[int, int, int], dict[str, Any]] = {}
+        self._detector_fanout_timeout_sec = float(
+            os.getenv("EVILEYE_DETECTOR_FANOUT_TIMEOUT_SEC", "30")
+        )
+        if self._detector_fanout_timeout_sec <= 0:
+            raise ValueError("EVILEYE_DETECTOR_FANOUT_TIMEOUT_SEC must be positive")
+        self._detector_fanout_max_pending = 512
+        self._detector_fanout_incomplete_count = 0
 
     def _append_processing_result(self, processing_results: list, normalized: Any) -> None:
         if normalized is None:
@@ -52,7 +60,7 @@ class ProcessorStep(ProcessorBase):
     def _merge_detector_fanout(results: list) -> list:
         """Merge compatible detector result lists for the same source/frame."""
         merged_results = []
-        by_frame: dict[tuple[int, int], int] = {}
+        by_frame: dict[tuple[int, int, int], int] = {}
         for result in results:
             if not isinstance(result, (list, tuple)) or len(result) < 2:
                 merged_results.append(result)
@@ -64,7 +72,8 @@ class ProcessorStep(ProcessorBase):
                 merged_results.append(result)
                 continue
             try:
-                key = (int(source_id), int(frame_id))
+                generation = int(getattr(frame, "connection_generation", 0) or 0)
+                key = (int(source_id), generation, int(frame_id))
             except (TypeError, ValueError):
                 merged_results.append(result)
                 continue
@@ -94,6 +103,96 @@ class ProcessorStep(ProcessorBase):
                 base_data.detections.extend(detections)
         return merged_results
 
+    @staticmethod
+    def _detector_frame_key(item):
+        if isinstance(item, (list, tuple)) and len(item) >= 2:
+            frame = item[1]
+        else:
+            frame = item
+        source_id = getattr(frame, "source_id", None)
+        frame_id = getattr(frame, "frame_id", None)
+        if source_id is None or frame_id is None:
+            return None
+        try:
+            generation = int(getattr(frame, "connection_generation", 0) or 0)
+            return int(source_id), generation, int(frame_id)
+        except (TypeError, ValueError):
+            return None
+
+    @staticmethod
+    def _processor_has_pending_work(processor) -> bool:
+        has_pending = getattr(processor, "has_pending_work", None)
+        if callable(has_pending):
+            try:
+                return bool(has_pending())
+            except Exception:
+                return True
+        get_stats = getattr(processor, "get_runtime_stats", None)
+        if callable(get_stats):
+            try:
+                return int(get_stats().get("in_flight", 0) or 0) > 0
+            except Exception:
+                return True
+        return True
+
+    def _collect_detector_fanout_outputs(
+        self, passthrough: list, outputs_by_processor: dict[int, list]
+    ) -> list:
+        emitted = list(passthrough)
+        for processor_index, results in outputs_by_processor.items():
+            for result in results:
+                key = self._detector_frame_key(result)
+                state = self._detector_fanout_pending.get(key) if key is not None else None
+                if state is None or processor_index not in state["expected"]:
+                    emitted.append(result)
+                    continue
+                state["results"].append(result)
+                state["received"].add(processor_index)
+
+        now = time.monotonic()
+        pending_keys = list(self._detector_fanout_pending)
+        overflow_count = max(0, len(pending_keys) - self._detector_fanout_max_pending)
+        overflow_keys = set(pending_keys[:overflow_count])
+        for key in pending_keys:
+            state = self._detector_fanout_pending.get(key)
+            if state is None:
+                continue
+            missing = state["expected"] - state["received"]
+            expired = now - state["created_at"] >= self._detector_fanout_timeout_sec
+            missing_modules_idle = bool(missing) and all(
+                not self._processor_has_pending_work(self.processors[index])
+                for index in missing
+            )
+            overflowed = key in overflow_keys
+            if missing and not expired and not missing_modules_idle and not overflowed:
+                continue
+            if missing:
+                missing_ids = [
+                    f"{getattr(self.processors[index], 'module_id', self.class_name)}[{index}]"
+                    for index in sorted(missing)
+                ]
+                self._detector_fanout_incomplete_count += 1
+                self.logger.warning(
+                    "Detector fanout incomplete for source=%s generation=%s frame=%s; "
+                    "missing=%s; forwarding %d available result(s)%s",
+                    key[0],
+                    key[1],
+                    key[2],
+                    missing_ids,
+                    len(state["results"]),
+                    (
+                        " (pending limit reached)"
+                        if overflowed
+                        else " (timeout)"
+                        if expired
+                        else " (worker completed without output)"
+                    ),
+                )
+            emitted.extend(self._merge_detector_fanout(state["results"]))
+            del self._detector_fanout_pending[key]
+
+        return self._merge_detector_fanout(emitted)
+
     def _sync_mp_mode(self) -> str:
         return os.getenv("EVILEYE_PIPELINE_SYNC_MP", "").strip().lower()
 
@@ -116,7 +215,9 @@ class ProcessorStep(ProcessorBase):
         except (TypeError, ValueError):
             return 64
 
-    def _sync_mp_drain_after_put(self, processing_results: list) -> int:
+    def _sync_mp_drain_after_put(
+        self, processing_results: list, *, detector_outputs: dict[int, list] | None = None
+    ) -> int:
         if not self._sync_mp_enabled():
             return 0
         if self._sync_mp_adaptive():
@@ -159,6 +260,7 @@ class ProcessorStep(ProcessorBase):
             n = self._drain_processor_outputs(
                 processing_results,
                 max_items_per_processor=self._drain_max_items(),
+                detector_outputs=detector_outputs,
             )
             added += n
             if n > 0:
@@ -167,11 +269,15 @@ class ProcessorStep(ProcessorBase):
         return added
 
     def _drain_processor_outputs(
-        self, processing_results: list, *, max_items_per_processor: int = 64
+        self,
+        processing_results: list,
+        *,
+        max_items_per_processor: int = 64,
+        detector_outputs: dict[int, list] | None = None,
     ) -> int:
         """Non-blocking drain of worker output queues (no wall-clock wait)."""
         added = 0
-        for processor in self.processors:
+        for processor_index, processor in enumerate(self.processors):
             drained = 0
             while drained < max_items_per_processor:
                 result = processor.get()
@@ -199,7 +305,10 @@ class ProcessorStep(ProcessorBase):
                         else:
                             self._trackers_updates_by_source[sid] += 1
                         self._trackers_last_frame_id_by_source[sid] = fid
-                self._append_processing_result(processing_results, normalized)
+                if detector_outputs is not None:
+                    detector_outputs.setdefault(processor_index, []).append(normalized)
+                else:
+                    self._append_processing_result(processing_results, normalized)
                 drained += 1
                 added += 1
         return added
@@ -350,6 +459,7 @@ class ProcessorStep(ProcessorBase):
             return self._process_mc_trackers_sync(input_list)
 
         processing_results = []
+        detector_outputs = {} if self.processor_name == "detectors" else None
         had_puts = False
         put_count = 0
         stage_had_input = bool(input_list)
@@ -375,13 +485,30 @@ class ProcessorStep(ProcessorBase):
                     except (TypeError, ValueError):
                         source_id = None
 
-                for processor in self.processors:
+                detector_targets = set()
+                for processor_index, processor in enumerate(self.processors):
                     source_ids = processor.get_source_ids()
                     if source_id is not None and (source_ids is None or source_id in source_ids):
                         processor.put(self._adapt_input_for_processor(input, processor))
                         is_processor_found = True
                         had_puts = True
                         put_count += 1
+                        if detector_outputs is not None:
+                            detector_targets.add(processor_index)
+
+                if len(detector_targets) > 1:
+                    key = self._detector_frame_key(frame)
+                    if key is not None:
+                        state = self._detector_fanout_pending.setdefault(
+                            key,
+                            {
+                                "expected": set(),
+                                "received": set(),
+                                "results": [],
+                                "created_at": time.monotonic(),
+                            },
+                        )
+                        state["expected"].update(detector_targets)
 
                 if not is_processor_found:
                     result_type = getattr(self.dummy_processor, "ResultType", None)
@@ -433,10 +560,15 @@ class ProcessorStep(ProcessorBase):
         post_drain_added = self._drain_processor_outputs(
             processing_results,
             max_items_per_processor=self._drain_max_items(),
+            detector_outputs=detector_outputs,
         )
-        post_drain_added += self._sync_mp_drain_after_put(processing_results)
-        if self.processor_name == "detectors":
-            processing_results = self._merge_detector_fanout(processing_results)
+        post_drain_added += self._sync_mp_drain_after_put(
+            processing_results, detector_outputs=detector_outputs
+        )
+        if detector_outputs is not None:
+            processing_results = self._collect_detector_fanout_outputs(
+                processing_results, detector_outputs
+            )
         t_after_drain = time.monotonic()
         drain_imm_count = len(processing_results)
         t_stage_end = time.monotonic()

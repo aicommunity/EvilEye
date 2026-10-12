@@ -1558,3 +1558,58 @@ def test_item_module_initialization_failure_is_not_ready(execution_mode):
         assert module.degraded is True
     finally:
         module.stop()
+
+
+@pytest.mark.parametrize("parallel", [False, True])
+def test_process_frame_enqueue_timeout_drops_incoming_without_raising(parallel):
+    from evileye.core.frame import Frame
+    from evileye.core.mp_control import DropOldestQueueFull
+    from evileye.core.plugin_runtime import ParallelItemModuleAdapter
+
+    class _FullQueueControl:
+        processes = []
+
+        def put_drop_oldest(self, _payload):
+            raise DropOldestQueueFull()
+
+        def stop(self):
+            pass
+
+    plugin_id = f"test.process-frame-timeout-{int(parallel)}"
+    spec = ModuleSpec(
+        "frame",
+        "processor_item",
+        _EchoItemModule,
+        execution_modes=("process",),
+        capabilities=("parallel_items",) if parallel else (),
+    )
+    plugin_registry.register_plugin(
+        PluginSpec(plugin_id, PLUGIN_API_VERSION, modules=(spec,))
+    )
+    registered = plugin_registry.get_module(f"{plugin_id}/frame")
+    adapter_type = ParallelItemModuleAdapter if parallel else ItemModuleAdapter
+    adapter = adapter_type(registered)
+    adapter.set_params(
+        module_id=f"{plugin_id}/frame",
+        execution_mode="process",
+        queue_size=1,
+        worker_count=2 if parallel else 1,
+    )
+    assert adapter.init() is True
+    adapter._mp_control = _FullQueueControl()
+
+    frame = Frame()
+    frame.source_id = 0
+    frame.frame_id = 1
+    try:
+        adapter.put(frame)
+        stats = adapter.get_runtime_stats()
+
+        assert stats["input_queue_dropped"] == 1
+        assert stats["input_queue_rejected"] == 0
+        assert stats["in_flight"] == 0
+        assert stats["degraded"] is True
+        if parallel:
+            assert adapter._next_input_sequence == 0
+    finally:
+        adapter.stop()

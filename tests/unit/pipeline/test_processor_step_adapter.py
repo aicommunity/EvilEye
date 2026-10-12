@@ -115,6 +115,33 @@ def test_detector_fanout_merges_detection_lists_per_frame():
     assert first.detections == ["person"]
 
 
+def test_detector_fanout_does_not_merge_across_source_generations():
+    from evileye.object_detector.object_detection_base import DetectionResultList
+
+    first_frame = Frame()
+    first_frame.source_id = 2
+    first_frame.frame_id = 17
+    first_frame.connection_generation = 1
+    second_frame = Frame()
+    second_frame.source_id = 2
+    second_frame.frame_id = 17
+    second_frame.connection_generation = 2
+    first = DetectionResultList()
+    first.detections = ["before-reconnect"]
+    second = DetectionResultList()
+    second.detections = ["after-reconnect"]
+
+    merged = ProcessorStep._merge_detector_fanout(
+        [[first, first_frame], [second, second_frame]]
+    )
+
+    assert len(merged) == 2
+    assert [result[0].detections for result in merged] == [
+        ["before-reconnect"],
+        ["after-reconnect"],
+    ]
+
+
 def test_generic_detector_plugin_can_skip_an_unassigned_source():
     from evileye.core.plugins import PLUGIN_API_VERSION, ModuleSpec, PluginSpec, plugin_registry
     from evileye.object_detector.object_detection_base import DetectionResultList

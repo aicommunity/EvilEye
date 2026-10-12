@@ -18,6 +18,14 @@ from .mp_session_registry import (
 )
 
 
+class DropOldestQueueFull(queue.Full):
+    """A latest-frame enqueue timed out after attempting stale-item eviction."""
+
+    def __init__(self, dropped_item=None):
+        super().__init__("input queue stayed full after stale-item eviction")
+        self.dropped_item = dropped_item
+
+
 class MpControl:
     """Controller for a pool of MpWorker processes
 
@@ -172,11 +180,17 @@ class MpControl:
             # A worker may have freed a slot between put and get.
             pass
 
-        # A multiprocessing queue may still report Full for an immediate
-        # non-blocking retry while its feeder semaphore settles after get_nowait.
-        # Wait briefly for the slot we just freed instead of surfacing a false
-        # rejection to the frame pipeline.
-        self.put(data, block=True, timeout=0.1)
+        # A multiprocessing queue may still report Full while its feeder
+        # semaphore settles. If the slot does not become available promptly,
+        # report the evicted item so the runtime can account for it and drop the
+        # incoming frame without crashing the pipeline.
+        try:
+            self.put(data, block=True, timeout=0.1)
+        except queue.Full as exc:
+            if dropped_item is not None:
+                with self._stats_lock:
+                    self._stats["put_drop_oldest_total"] += 1
+            raise DropOldestQueueFull(dropped_item) from exc
         if dropped_item is not None:
             with self._stats_lock:
                 self._stats["put_drop_oldest_total"] += 1
