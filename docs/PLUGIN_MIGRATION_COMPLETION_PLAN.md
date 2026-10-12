@@ -749,3 +749,12 @@ installation из тестов; подобрать воспроизводиму�
 - PipelineSurveillance принимает `detector_fanout_timeout_sec` и `detector_fanout_max_pending`; значения проверяются до запуска модулей и передаются в detector stage.
 - Runtime health показывает эффективную политику, timeout, лимит ожидания, число ожидающих, incomplete и отброшенных кадров даже до первой ошибки.
 - Значения по умолчанию: 30 секунд и 512 кадров. `EVILEYE_DETECTOR_FANOUT_TIMEOUT_SEC` сохранён как legacy источник default timeout; явная настройка pipeline имеет приоритет.
+
+
+### Продолжение 2026-10-12: runtime diagnostics плагинных модулей
+
+- Контроллер отдаёт через существующий control IPC runtime stats активного pipeline, его plugin-модулей/fanout, обработчика объектов, event detector controller, event processor и event buffers. Ошибки чтения статистики представлены как degraded-компонент с причиной.
+- Добавлен GET /api/v1/system/runtime, доступный с правом runtime:view. При остановленном контроллере endpoint возвращает 503 вместо пустого/устаревшего состояния.
+- На странице запусков для пользователей с runtime:view показываются общий health badge и раскрываемые подробности модулей/очередей.
+- Проверки на сервере: controller control command, его JSON/Unix-socket IPC round-trip и API endpoint — 6 профильных тестов прошли; связанные тесты управления зонами — 3 passed. git diff --check прошёл.
+- Сборка Web UI не выполнена: на сервере отсутствуют node, npm и nodejs, хотя каталог node_modules присутствует. Браузерная визуальная проверка этой панели остаётся открытой до появления Node runtime или доступной сессии Web UI.

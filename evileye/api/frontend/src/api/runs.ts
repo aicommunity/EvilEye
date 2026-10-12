@@ -1,5 +1,15 @@
-import { request } from './client';
+import { request, type RequestOptions } from './client';
 import type { ConfigRun } from './types';
+
+export type RuntimeDiagnostics = {
+  available: boolean;
+  degraded: boolean;
+  components: Record<string, unknown>;
+};
+
+export function runtimeDiagnostics(opts?: RequestOptions): Promise<RuntimeDiagnostics> {
+  return request('/system/runtime', opts);
+}
 
 export function runsList(): Promise<Record<number, ConfigRun>> {
   return request('/configs/runs');

@@ -1143,6 +1143,8 @@ class Controller(ControllerProcessingMixin):
             return self._control_apply_roi(command)
         if cmd == "get_objects_handler_stats":
             return self._control_get_objects_handler_stats()
+        if cmd == "get_runtime_stats":
+            return self._control_get_runtime_stats()
         if cmd == "get_memory_attribution":
             return self._control_get_memory_attribution()
         return {"ok": False, "error": "unknown_command"}
@@ -1155,6 +1157,58 @@ class Controller(ControllerProcessingMixin):
             return {"ok": True, "stats": handler.get_runtime_stats()}
         except Exception as exc:
             return {"ok": False, "error": str(exc)}
+
+    def _control_get_runtime_stats(self) -> dict:
+        """Return runtime health for the active pipeline and event delivery path."""
+        components = {}
+        providers = (
+            ("pipeline", getattr(self, "pipeline", None)),
+            ("objects_handler", getattr(self, "obj_handler", None)),
+            ("events_controller", getattr(self, "events_detectors_controller", None)),
+            ("events_processor", getattr(self, "events_processor", None)),
+        )
+        for name, component in providers:
+            getter = getattr(component, "get_runtime_stats", None)
+            if not callable(getter):
+                continue
+            try:
+                components[name] = getter()
+            except Exception as exc:
+                components[name] = {"degraded": True, "diagnostic_error": str(exc)}
+
+        event_buffers = getattr(self, "event_buffers", None) or {}
+        if event_buffers:
+            components["event_buffers"] = {}
+            for source_id, buffer in event_buffers.items():
+                getter = getattr(buffer, "get_runtime_stats", None)
+                if not callable(getter):
+                    continue
+                try:
+                    components["event_buffers"][str(source_id)] = getter()
+                except Exception as exc:
+                    components["event_buffers"][str(source_id)] = {
+                        "degraded": True,
+                        "diagnostic_error": str(exc),
+                    }
+
+        degraded = any(
+            isinstance(value, dict) and bool(value.get("degraded"))
+            for name, value in components.items()
+            if name != "event_buffers"
+        )
+        if "event_buffers" in components:
+            degraded = degraded or any(
+                isinstance(value, dict) and bool(value.get("degraded"))
+                for value in components["event_buffers"].values()
+            )
+        return {
+            "ok": True,
+            "stats": {
+                "available": bool(components),
+                "degraded": degraded,
+                "components": components,
+            },
+        }
 
     def _control_get_memory_attribution(self) -> dict:
         try:

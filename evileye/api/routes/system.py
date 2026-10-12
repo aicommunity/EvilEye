@@ -2,16 +2,40 @@
 
 from __future__ import annotations
 
+import asyncio
 from typing import Optional
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel, Field
 
 from evileye.api.core.config_run_access import get_config_run_manager
 from evileye.api.core.public_base_url import resolve_public_api_base_url
 from evileye.api.core.safe_paths import UnsafePathError
+from evileye.api.security import require_permission
 
 router = APIRouter(prefix="/api/v1/system", tags=["system"])
+
+
+@router.get("/runtime")
+async def system_runtime(request: Request) -> dict:
+    """Return runtime health for plugin modules and the event delivery path."""
+    require_permission(request, "runtime:view")
+    from evileye.api.core.control_ipc import control_socket_path, send_control_command
+
+    if not control_socket_path().exists():
+        raise HTTPException(status_code=503, detail="Runtime controller is not available")
+    response = await asyncio.to_thread(
+        send_control_command,
+        {"cmd": "get_runtime_stats"},
+        timeout=2.0,
+    )
+    if not isinstance(response, dict) or response.get("ok") is not True:
+        error = response.get("error") if isinstance(response, dict) else "invalid_response"
+        raise HTTPException(status_code=503, detail=f"Runtime diagnostics unavailable: {error}")
+    stats = response.get("stats")
+    if not isinstance(stats, dict):
+        raise HTTPException(status_code=503, detail="Runtime diagnostics returned an invalid payload")
+    return stats
 
 
 class SystemRestartPayload(BaseModel):
