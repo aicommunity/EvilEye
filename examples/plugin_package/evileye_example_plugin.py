@@ -86,6 +86,7 @@ def load_plugin():
                 kind="processor_item",
                 factory=AddLabel,
                 execution_modes=("thread", "process"),
+                capabilities=("accepts_frame_handle",),
             ),
         ),
         pipelines=(

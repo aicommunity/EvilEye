@@ -28,6 +28,21 @@ processes one item, and stops/releases it. Expected output includes
 small and has no camera/model dependencies; it demonstrates plugin discovery
 and the complete `IPipeline` lifecycle.
 
+The smoke also inserts `example/add-label` into `PipelineSurveillance` using
+both `extend` and `replace`, then checks `thread` and `process` execution and
+shared-frame restoration. It needs no camera or model.
+
+A no-inference round-trip microbenchmark is available from the EvilEye repository:
+
+```bash
+python scripts/benchmark_plugin_runtime_overhead.py \
+  --module-id example/add-label --count 200 --warmup 20 \
+  --width 1920 --height 1080
+```
+
+See [`docs/PLUGIN_RUNTIME_BENCHMARK.md`](../../docs/PLUGIN_RUNTIME_BENCHMARK.md)
+for measured results and their limitations.
+
 The example processor accepts either a `[data, frame]` pair or a plain mapping
 and returns the corresponding updated item. It supports `thread` and
 `process` execution; process mode requires the plugin package to remain

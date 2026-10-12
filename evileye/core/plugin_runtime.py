@@ -54,7 +54,7 @@ def _serialize_process_value(value: Any, module_id: str, label: str) -> bytes:
 _PROCESS_RESULT_MARKER = "__evileye_plugin_result__"
 _FRAME_RUNTIME_KEY = "_evileye_runtime_frame_key"
 _FRAME_METADATA_FIELDS = (
-    "source_id", "frame_id", "connection_generation", "current_video_frame",
+    "source_id", "frame_id", "frame_version", "connection_generation", "current_video_frame",
     "current_video_position", "source_video_duration", "time_stamp", "pts_ns",
     "media_pts_sec",
 )

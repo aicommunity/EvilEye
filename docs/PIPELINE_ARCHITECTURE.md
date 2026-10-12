@@ -138,7 +138,7 @@ evileye/
 | Event detector / alarm | Plugin package + `AlarmEvent` + `events_detectors.enabled` | [PLUGINS.md](PLUGINS.md) |
 | Custom pipeline | `PipelineSpec` через `evileye.plugins` entry point | [PLUGINS.md](PLUGINS.md) |
 
-**Переход встроенных компонентов:** источники используют `SourceModuleAdapter`, а YOLO/RT-DETR, BoT-SORT и атрибутные компоненты доступны через `LegacyProcessorModuleAdapter`. Адаптер сохраняет проверенный специализированный жизненный цикл и worker-реализации; новые модули используют общий контракт `process_item(item, state)`. Мультикамерный tracker остаётся синхронной batch-стадией.
+**Текущее состояние миграции:** встроенные источники OpenCV/GStreamer используют `SourceModuleAdapter`; YOLO/RT-DETR, BoT-SORT, предобработка и атрибутные компоненты используют общий `processor_item` runtime; `ObjectMultiCameraTracking` использует `batch_processor` и остаётся thread-only. Встроенные модули не используют `LegacyProcessorModuleAdapter`; он сохранён только как явный мост для сторонних реализаций старого `put/get` API. Новые модули подключаются через Plugin SPI из [PLUGINS.md](PLUGINS.md).
 
 **DI / DualMode:** `DIContainer` — roadmap (не product path). `DualModeProcessor` используется внутренними реализациями; публичный путь пользовательских обработчиков — Plugin SPI из [PLUGINS.md](PLUGINS.md).
 

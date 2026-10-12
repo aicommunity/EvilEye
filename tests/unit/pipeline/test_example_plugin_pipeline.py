@@ -27,6 +27,7 @@ def test_example_plugin_exposes_pipeline_spec_and_complete_lifecycle():
     assert [pipeline.pipeline_id for pipeline in plugin.pipelines] == [
         "marker-pipeline"
     ]
+    assert plugin.modules[0].capabilities == ("accepts_frame_handle",)
 
     dependencies = PipelineDependencies(
         config=PipelineConfig(raw_config={"factory_marker": "from-dependencies"})
