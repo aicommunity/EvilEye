@@ -62,8 +62,12 @@ PipelineBase (abstract)
 - **Backlog snapshot:** перед `process()` вызывается `estimate_mp_backlog_stats()` → `_mp_pending_snapshot` для adaptive sync (`EVILEYE_PIPELINE_SYNC_MP`).
 - **mc_trackers:** только `_process_mc_trackers_sync` — без MP wait; `execution_mode: process` на MC не поддерживается.
 - Для совпадающего `source_id` кадр направляется всем подходящим модулям стадии, включая несколько детекторов.
-
 - Неполный fanout управляется настройкой `pipeline.detector_fanout_policy`: `forward_partial` сохраняет прежнее поведение, `drop_frame` не передаёт неполный результат следующей стадии. Второй режим оставляет pipeline degraded и публикует отдельный счётчик отброшенных кадров.
+- Для PipelineSurveillance пределы ожидания detector fanout задаются настройками
+`detector_fanout_timeout_sec` и `detector_fanout_max_pending`. Положительный
+timeout по умолчанию равен 30 секундам (значение можно переопределить legacy
+переменной `EVILEYE_DETECTOR_FANOUT_TIMEOUT_SEC`), лимит по умолчанию — 512
+кадров. Runtime health публикует эффективные значения.
 
 ### PipelineCapture
 

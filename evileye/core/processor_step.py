@@ -1,6 +1,7 @@
 from typing import Any
 import time
 import copy
+import math
 
 from .processor_base import ProcessorBase
 from .frame import Frame
@@ -43,11 +44,7 @@ class ProcessorStep(ProcessorBase):
         self._mc_tick_diag_counter = 0
         self._mp_pending_snapshot = 0
         self._detector_fanout_pending: dict[tuple[int, int, int], dict[str, Any]] = {}
-        self._detector_fanout_timeout_sec = float(
-            os.getenv("EVILEYE_DETECTOR_FANOUT_TIMEOUT_SEC", "30")
-        )
-        if self._detector_fanout_timeout_sec <= 0:
-            raise ValueError("EVILEYE_DETECTOR_FANOUT_TIMEOUT_SEC must be positive")
+        self._detector_fanout_timeout_sec = 30.0
         self._detector_fanout_max_pending = 512
         self._detector_fanout_incomplete_count = 0
         self._detector_fanout_dropped_count = 0
@@ -60,6 +57,26 @@ class ProcessorStep(ProcessorBase):
                 "detector_fanout_policy must be 'forward_partial' or 'drop_frame'"
             )
         self.detector_fanout_policy = policy
+
+    def set_detector_fanout_limits(
+        self,
+        *,
+        timeout_sec: float | None = None,
+        max_pending: int | None = None,
+    ) -> None:
+        if timeout_sec is not None:
+            try:
+                normalized_timeout = float(timeout_sec)
+            except (TypeError, ValueError) as exc:
+                raise ValueError("detector_fanout_timeout_sec must be a positive finite number") from exc
+            if not math.isfinite(normalized_timeout) or normalized_timeout <= 0:
+                raise ValueError("detector_fanout_timeout_sec must be a positive finite number")
+            self._detector_fanout_timeout_sec = normalized_timeout
+
+        if max_pending is not None:
+            if isinstance(max_pending, bool) or not isinstance(max_pending, int) or max_pending <= 0:
+                raise ValueError("detector_fanout_max_pending must be a positive integer")
+            self._detector_fanout_max_pending = max_pending
 
     def _append_processing_result(self, processing_results: list, normalized: Any) -> None:
         if normalized is None:

@@ -40,6 +40,9 @@ def test_detector_initialization_propagates_broken_processor_state(monkeypatch):
         def set_detector_fanout_policy(self, _policy):
             pass
 
+        def set_detector_fanout_limits(self, **_limits):
+            pass
+
         def set_params(self, _params):
             pass
 

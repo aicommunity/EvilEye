@@ -156,10 +156,11 @@ def test_detector_fanout_timeout_is_visible_to_health_and_drain():
                 "delay_sec": 0.15,
                 "return_none": True,
             },
-        ]
+        ],
+        fanout_timeout_sec=0.05,
+        fanout_max_pending=9,
     )
     stage = pipeline.processors[-1]
-    stage._detector_fanout_timeout_sec = 0.05
     frame = Frame()
     frame.source_id = 7
     frame.frame_id = 22
@@ -188,6 +189,8 @@ def test_detector_fanout_timeout_is_visible_to_health_and_drain():
         assert runtime["stages"]["detectors"] == {
             "degraded": True,
             "detector_fanout_policy": "forward_partial",
+            "detector_fanout_timeout_sec": 0.05,
+            "detector_fanout_max_pending": 9,
             "pending_detector_fanout": 0,
             "detector_fanout_incomplete": 1,
             "detector_fanout_dropped": 0,
@@ -225,6 +228,8 @@ def test_drop_frame_fanout_policy_is_explicit_and_diagnostic():
     pipeline = PipelineSurveillance()
     pipeline.set_params(
         detector_fanout_policy="drop_frame",
+        detector_fanout_timeout_sec=0.05,
+        detector_fanout_max_pending=8,
         detectors=[
             {"module_id": module_id, "execution_mode": "thread", "source_ids": [7], "name": "available"},
             {"module_id": module_id, "execution_mode": "thread", "source_ids": [7], "name": "missing", "delay_sec": 0.15, "return_none": True},
@@ -233,7 +238,8 @@ def test_drop_frame_fanout_policy_is_explicit_and_diagnostic():
     assert pipeline.init()
     stage = pipeline.processors[-1]
     assert stage.detector_fanout_policy == "drop_frame"
-    stage._detector_fanout_timeout_sec = 0.05
+    assert stage._detector_fanout_timeout_sec == 0.05
+    assert stage._detector_fanout_max_pending == 8
     frame = Frame()
     frame.source_id = 7
     frame.frame_id = 23
@@ -257,6 +263,8 @@ def test_drop_frame_fanout_policy_is_explicit_and_diagnostic():
         assert runtime["stages"]["detectors"] == {
             "degraded": True,
             "detector_fanout_policy": "drop_frame",
+            "detector_fanout_timeout_sec": 0.05,
+            "detector_fanout_max_pending": 8,
             "pending_detector_fanout": 0,
             "detector_fanout_incomplete": 1,
             "detector_fanout_dropped": 1,
@@ -272,3 +280,28 @@ def test_unknown_detector_fanout_policy_fails_pipeline_initialization():
 
     with pytest.raises(ValueError, match="pipeline.detector_fanout_policy"):
         pipeline.init()
+
+
+@pytest.mark.parametrize(
+    "params, error",
+    [
+        ({"detector_fanout_timeout_sec": 0}, "detector_fanout_timeout_sec"),
+        ({"detector_fanout_timeout_sec": float("inf")}, "detector_fanout_timeout_sec"),
+        ({"detector_fanout_max_pending": 0}, "detector_fanout_max_pending"),
+        ({"detector_fanout_max_pending": 1.5}, "detector_fanout_max_pending"),
+    ],
+)
+def test_detector_fanout_limits_reject_invalid_pipeline_configuration(params, error):
+    pipeline = PipelineSurveillance()
+    pipeline.set_params(**params)
+
+    with pytest.raises(ValueError, match=error):
+        pipeline.init()
+
+
+def test_explicit_detector_fanout_timeout_overrides_legacy_environment(monkeypatch):
+    monkeypatch.setenv("EVILEYE_DETECTOR_FANOUT_TIMEOUT_SEC", "invalid")
+    pipeline = PipelineSurveillance()
+    pipeline.set_params(detector_fanout_timeout_sec=0.25)
+
+    assert pipeline.init()

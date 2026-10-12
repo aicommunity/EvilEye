@@ -737,3 +737,9 @@ installation из тестов; подобрать воспроизводиму�
 - Runtime stage statistics теперь включают выбранную политику и `detector_fanout_dropped`; incomplete frame по-прежнему помечает pipeline как degraded. Неизвестное значение отклоняется при инициализации.
 - Проверено: прежний partial fanout, новая политика drop и отказ неверной конфигурации. Набор `tests/unit/pipeline` и E2E fanout на конечном видео прошёл после обновления test double в тесте доступа к detector-ам.
 - Ограничение: `drop_frame` не означает отсутствие нарушения и не гарантирует генерацию тревоги на отброшенном кадре. Приложение обязано показывать degraded health; требование к частоте кадров и допустимой полноте ensemble остаётся внешним эксплуатационным решением.
+
+### Продолжение 2026-10-12: настраиваемые лимиты detector fanout
+
+- PipelineSurveillance принимает `detector_fanout_timeout_sec` и `detector_fanout_max_pending`; значения проверяются до запуска модулей и передаются в detector stage.
+- Runtime health показывает эффективную политику, timeout, лимит ожидания, число ожидающих, incomplete и отброшенных кадров даже до первой ошибки.
+- Значения по умолчанию: 30 секунд и 512 кадров. `EVILEYE_DETECTOR_FANOUT_TIMEOUT_SEC` сохранён как legacy источник default timeout; явная настройка pipeline имеет приоритет.

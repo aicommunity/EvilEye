@@ -1,10 +1,13 @@
+import math
+import os
+from typing import Any, Tuple, List, Dict
+
 from ..core.base_class import EvilEyeBase
 from ..core.processor_source import ProcessorSource
 from ..core.processor_frame import ProcessorFrame
 from ..core.processor_step import ProcessorStep
 from ..core.processor_base import ProcessorBase
 from ..core.pipeline_processors import PipelineProcessors
-from typing import Any, Tuple, List, Dict
 import evileye.capture  # Import to register builtin sources
 import evileye.preprocessing  # Import to register PreprocessingPipeline
 import evileye.attributes_detection  # Import to register RoiFeeder and AttributeClassifier
@@ -45,6 +48,30 @@ class PipelineSurveillance(PipelineProcessors):
         fanout_policy = self._normalize_detector_fanout_policy(
             pipeline_params.get("detector_fanout_policy")
         )
+        fanout_timeout_sec = pipeline_params.get("detector_fanout_timeout_sec")
+        timeout_setting = "pipeline.detector_fanout_timeout_sec"
+        if fanout_timeout_sec is None:
+            fanout_timeout_sec = os.getenv("EVILEYE_DETECTOR_FANOUT_TIMEOUT_SEC", "30")
+            timeout_setting = "EVILEYE_DETECTOR_FANOUT_TIMEOUT_SEC"
+        try:
+            fanout_timeout_sec = float(fanout_timeout_sec)
+        except (TypeError, ValueError) as exc:
+            raise ValueError(
+                f"{timeout_setting} must be a positive finite number"
+            ) from exc
+        if not math.isfinite(fanout_timeout_sec) or fanout_timeout_sec <= 0:
+            raise ValueError(
+                f"{timeout_setting} must be a positive finite number"
+            )
+        fanout_max_pending = pipeline_params.get("detector_fanout_max_pending")
+        if fanout_max_pending is not None and (
+            isinstance(fanout_max_pending, bool)
+            or not isinstance(fanout_max_pending, int)
+            or fanout_max_pending <= 0
+        ):
+            raise ValueError(
+                "pipeline.detector_fanout_max_pending must be a positive integer"
+            )
 
         # Initialize encoders first
         self._init_encoders(pipeline_params.get("trackers", []))
@@ -53,7 +80,12 @@ class PipelineSurveillance(PipelineProcessors):
         self._init_sources(pipeline_params.get("sources", []), self._credentials)
         self._init_preprocessors(pipeline_params.get("preprocessors", []))
         detectors_params = pipeline_params.get("detectors", [])
-        self._init_detectors(detectors_params, fanout_policy=fanout_policy)
+        self._init_detectors(
+            detectors_params,
+            fanout_policy=fanout_policy,
+            fanout_timeout_sec=fanout_timeout_sec,
+            fanout_max_pending=fanout_max_pending,
+        )
         self._init_trackers(pipeline_params.get("trackers", []))
         self._init_mc_trackers(pipeline_params.get("mc_trackers", []))
 
@@ -202,7 +234,12 @@ class PipelineSurveillance(PipelineProcessors):
         self._add_processor(preprocessors_proc)
 
     def _init_detectors(
-        self, params: List[Dict], *, fanout_policy: str = "forward_partial"
+        self,
+        params: List[Dict],
+        *,
+        fanout_policy: str = "forward_partial",
+        fanout_timeout_sec: float | None = None,
+        fanout_max_pending: int | None = None,
     ):
         """Initialize detector processors for surveillance"""
         if not params:
@@ -224,6 +261,10 @@ class PipelineSurveillance(PipelineProcessors):
             class_names=class_names,
         )
         detectors_proc.set_detector_fanout_policy(fanout_policy)
+        detectors_proc.set_detector_fanout_limits(
+            timeout_sec=fanout_timeout_sec,
+            max_pending=fanout_max_pending,
+        )
         detectors_proc.set_params(params)
         detectors_proc.init()
         self._add_processor(detectors_proc)

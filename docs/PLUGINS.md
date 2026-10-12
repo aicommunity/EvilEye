@@ -176,6 +176,13 @@ ensemble. A dropped frame is not an assertion that no violation occurred; the
 pipeline is degraded and that health state must be handled by the application.
 Unknown policy values fail pipeline initialization.
 
+Fanout bounds can be tuned per surveillance pipeline with positive
+`detector_fanout_timeout_sec` and integer `detector_fanout_max_pending` settings.
+The defaults are 30 seconds and 512 pending frames. The legacy
+`EVILEYE_DETECTOR_FANOUT_TIMEOUT_SEC` environment setting supplies the timeout
+default when the pipeline config omits it. Effective values are included in
+detector-stage runtime health.
+
 `DetectionResultList` can pass directly into the built-in BoT-SORT module. If
 the detector publishes class names, implement
 `get_model_class_mapping() -> Mapping[str, int]` and declare the
