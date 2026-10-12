@@ -187,8 +187,10 @@ def test_detector_fanout_timeout_is_visible_to_health_and_drain():
         assert runtime["degraded"] is True
         assert runtime["stages"]["detectors"] == {
             "degraded": True,
+            "detector_fanout_policy": "forward_partial",
             "pending_detector_fanout": 0,
             "detector_fanout_incomplete": 1,
+            "detector_fanout_dropped": 0,
         }
         labels = {
             detection["label"]
@@ -200,3 +202,73 @@ def test_detector_fanout_timeout_is_visible_to_health_and_drain():
     finally:
         stage.stop()
         stage.release()
+
+
+def test_drop_frame_fanout_policy_is_explicit_and_diagnostic():
+    plugin_id = f"test.surveillance-drop-{uuid.uuid4().hex}"
+    plugin_registry.register_plugin(
+        PluginSpec(
+            plugin_id,
+            PLUGIN_API_VERSION,
+            modules=(
+                ModuleSpec(
+                    "detector",
+                    "processor_item",
+                    _NamedDetector,
+                    execution_modes=("thread",),
+                    default_execution_mode="thread",
+                ),
+            ),
+        )
+    )
+    module_id = f"{plugin_id}/detector"
+    pipeline = PipelineSurveillance()
+    pipeline.set_params(
+        detector_fanout_policy="drop_frame",
+        detectors=[
+            {"module_id": module_id, "execution_mode": "thread", "source_ids": [7], "name": "available"},
+            {"module_id": module_id, "execution_mode": "thread", "source_ids": [7], "name": "missing", "delay_sec": 0.15, "return_none": True},
+        ],
+    )
+    assert pipeline.init()
+    stage = pipeline.processors[-1]
+    assert stage.detector_fanout_policy == "drop_frame"
+    stage._detector_fanout_timeout_sec = 0.05
+    frame = Frame()
+    frame.source_id = 7
+    frame.frame_id = 23
+    emitted = []
+
+    try:
+        stage.start()
+        for detector in stage.processors:
+            assert detector.is_ready(10)
+        emitted.extend(stage.process([({}, frame)]))
+        deadline = time.monotonic() + 1
+        while time.monotonic() < deadline and stage._detector_fanout_pending:
+            emitted.extend(stage.process(None))
+            time.sleep(0.005)
+        time.sleep(0.06)
+        emitted.extend(stage.process(None))
+
+        assert emitted == []
+        runtime = pipeline.get_runtime_stats()
+        assert runtime["degraded"] is True
+        assert runtime["stages"]["detectors"] == {
+            "degraded": True,
+            "detector_fanout_policy": "drop_frame",
+            "pending_detector_fanout": 0,
+            "detector_fanout_incomplete": 1,
+            "detector_fanout_dropped": 1,
+        }
+    finally:
+        stage.stop()
+        stage.release()
+
+
+def test_unknown_detector_fanout_policy_fails_pipeline_initialization():
+    pipeline = PipelineSurveillance()
+    pipeline.set_params(detector_fanout_policy="silently_ignore")
+
+    with pytest.raises(ValueError, match="pipeline.detector_fanout_policy"):
+        pipeline.init()

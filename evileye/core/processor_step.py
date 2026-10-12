@@ -50,6 +50,16 @@ class ProcessorStep(ProcessorBase):
             raise ValueError("EVILEYE_DETECTOR_FANOUT_TIMEOUT_SEC must be positive")
         self._detector_fanout_max_pending = 512
         self._detector_fanout_incomplete_count = 0
+        self._detector_fanout_dropped_count = 0
+        self.detector_fanout_policy = "forward_partial"
+
+    def set_detector_fanout_policy(self, policy: str) -> None:
+        policy = str(policy).strip().lower()
+        if policy not in {"forward_partial", "drop_frame"}:
+            raise ValueError(
+                "detector_fanout_policy must be 'forward_partial' or 'drop_frame'"
+            )
+        self.detector_fanout_policy = policy
 
     def _append_processing_result(self, processing_results: list, normalized: Any) -> None:
         if normalized is None:
@@ -172,13 +182,18 @@ class ProcessorStep(ProcessorBase):
                     for index in sorted(missing)
                 ]
                 self._detector_fanout_incomplete_count += 1
+                drop_frame = self.detector_fanout_policy == "drop_frame"
+                if drop_frame:
+                    self._detector_fanout_dropped_count += 1
+                action = "dropping" if drop_frame else "forwarding"
                 self.logger.warning(
                     "Detector fanout incomplete for source=%s generation=%s frame=%s; "
-                    "missing=%s; forwarding %d available result(s)%s",
+                    "missing=%s; %s %d available result(s)%s",
                     key[0],
                     key[1],
                     key[2],
                     missing_ids,
+                    action,
                     len(state["results"]),
                     (
                         " (pending limit reached)"
@@ -188,7 +203,8 @@ class ProcessorStep(ProcessorBase):
                         else " (worker completed without output)"
                     ),
                 )
-            emitted.extend(self._merge_detector_fanout(state["results"]))
+            if not (missing and self.detector_fanout_policy == "drop_frame"):
+                emitted.extend(self._merge_detector_fanout(state["results"]))
             del self._detector_fanout_pending[key]
 
         return self._merge_detector_fanout(emitted)

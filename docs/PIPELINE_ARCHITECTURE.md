@@ -63,6 +63,8 @@ PipelineBase (abstract)
 - **mc_trackers:** только `_process_mc_trackers_sync` — без MP wait; `execution_mode: process` на MC не поддерживается.
 - Для совпадающего `source_id` кадр направляется всем подходящим модулям стадии, включая несколько детекторов.
 
+- Неполный fanout управляется настройкой `pipeline.detector_fanout_policy`: `forward_partial` сохраняет прежнее поведение, `drop_frame` не передаёт неполный результат следующей стадии. Второй режим оставляет pipeline degraded и публикует отдельный счётчик отброшенных кадров.
+
 ### PipelineCapture
 
 Простая реализация для захвата видео файла, наследуется от PipelineSimple.

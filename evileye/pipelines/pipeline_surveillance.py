@@ -28,11 +28,23 @@ class PipelineSurveillance(PipelineProcessors):
         self.detectors = []
         self.results_selection_mode = "sticky_non_empty"
 
+    @staticmethod
+    def _normalize_detector_fanout_policy(value) -> str:
+        policy = "forward_partial" if value is None else str(value).strip().lower()
+        if policy not in {"forward_partial", "drop_frame"}:
+            raise ValueError(
+                "pipeline.detector_fanout_policy must be 'forward_partial' or 'drop_frame'"
+            )
+        return policy
+
     def init_impl(self, **kwargs):
         """Initialize surveillance pipeline with specific processor sequence"""
 
         # Get pipeline parameters
         pipeline_params = self._normalize_pipeline_params(self.params)
+        fanout_policy = self._normalize_detector_fanout_policy(
+            pipeline_params.get("detector_fanout_policy")
+        )
 
         # Initialize encoders first
         self._init_encoders(pipeline_params.get("trackers", []))
@@ -41,7 +53,7 @@ class PipelineSurveillance(PipelineProcessors):
         self._init_sources(pipeline_params.get("sources", []), self._credentials)
         self._init_preprocessors(pipeline_params.get("preprocessors", []))
         detectors_params = pipeline_params.get("detectors", [])
-        self._init_detectors(detectors_params)
+        self._init_detectors(detectors_params, fanout_policy=fanout_policy)
         self._init_trackers(pipeline_params.get("trackers", []))
         self._init_mc_trackers(pipeline_params.get("mc_trackers", []))
 
@@ -189,7 +201,9 @@ class PipelineSurveillance(PipelineProcessors):
         preprocessors_proc.init()
         self._add_processor(preprocessors_proc)
 
-    def _init_detectors(self, params: List[Dict]):
+    def _init_detectors(
+        self, params: List[Dict], *, fanout_policy: str = "forward_partial"
+    ):
         """Initialize detector processors for surveillance"""
         if not params:
             return
@@ -209,6 +223,7 @@ class PipelineSurveillance(PipelineProcessors):
             order=2,
             class_names=class_names,
         )
+        detectors_proc.set_detector_fanout_policy(fanout_policy)
         detectors_proc.set_params(params)
         detectors_proc.init()
         self._add_processor(detectors_proc)

@@ -474,12 +474,15 @@ class PipelineProcessors(PipelineBase):
                     }
             pending_fanout = getattr(stage, "_detector_fanout_pending", None)
             fanout_incomplete = int(getattr(stage, "_detector_fanout_incomplete_count", 0) or 0)
-            if pending_fanout or fanout_incomplete:
+            fanout_dropped = int(getattr(stage, "_detector_fanout_dropped_count", 0) or 0)
+            if pending_fanout or fanout_incomplete or fanout_dropped:
                 stage_name = stage.get_name()
                 stages[stage_name] = {
                     "degraded": fanout_incomplete > 0,
+                    "detector_fanout_policy": getattr(stage, "detector_fanout_policy", "forward_partial"),
                     "pending_detector_fanout": len(pending_fanout or {}),
                     "detector_fanout_incomplete": fanout_incomplete,
+                    "detector_fanout_dropped": fanout_dropped,
                 }
         return {
             "degraded": any(bool(stats.get("degraded")) for stats in modules.values())

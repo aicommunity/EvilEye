@@ -164,6 +164,18 @@ its identity unchanged. A mismatched or missing frame identity cannot be joined
 and is reported as incomplete fanout. Process-mode outputs, including detection
 objects and custom `detection_data`, must be pickle-serializable.
 
+The pipeline setting `detector_fanout_policy` controls an incomplete join:
+
+- `forward_partial` (default) forwards results that arrived and marks the
+  pipeline degraded, preserving existing configurations.
+- `drop_frame` discards that detector-stage output instead of sending a partial
+  result downstream. Runtime health reports the incomplete and dropped counts.
+
+Use `drop_frame` when a downstream rule must only evaluate a complete detector
+ensemble. A dropped frame is not an assertion that no violation occurred; the
+pipeline is degraded and that health state must be handled by the application.
+Unknown policy values fail pipeline initialization.
+
 `DetectionResultList` can pass directly into the built-in BoT-SORT module. If
 the detector publishes class names, implement
 `get_model_class_mapping() -> Mapping[str, int]` and declare the

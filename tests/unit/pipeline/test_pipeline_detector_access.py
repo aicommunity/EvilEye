@@ -37,6 +37,9 @@ def test_detector_initialization_propagates_broken_processor_state(monkeypatch):
         def __init__(self, **_kwargs):
             self.processor_name = "detectors"
 
+        def set_detector_fanout_policy(self, _policy):
+            pass
+
         def set_params(self, _params):
             pass
 
