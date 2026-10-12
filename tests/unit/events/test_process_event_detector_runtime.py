@@ -222,12 +222,15 @@ def test_process_event_mode_requires_event_update_capability():
         adapter.set_params(execution_mode="process")
 
 
-def test_events_service_process_alarm_reaches_json_journal(tmp_path):
+def test_events_service_process_alarm_reaches_json_journal(tmp_path, monkeypatch):
     from evileye.controller.services.events_service import EventsService
     from evileye.database_controller.json_adapter_alarm_events import JsonAdapterAlarmEvents
     from evileye.events_control.events_processor import EventsProcessor
     from evileye.visualization_modules.journal_data_source_json import JsonLabelJournalDataSource
     from evileye.api.core.journal_grouping import group_events_rows
+    from fastapi.testclient import TestClient
+    from evileye.api.app import create_app
+    from evileye.api.core import journal_service
 
     class _Pipeline:
         def get_sources(self):
@@ -242,6 +245,7 @@ def test_events_service_process_alarm_reaches_json_journal(tmp_path):
             self.subscribers.extend(subscribers)
 
     handler = _SubscribedObjectsHandler()
+    _register_module()
     service = EventsService()
     module_id = "tests.runtime/process_event"
     service.initialize_detectors(
@@ -265,6 +269,7 @@ def test_events_service_process_alarm_reaches_json_journal(tmp_path):
     processor = EventsProcessor([alarm_adapter], None)
     processor.init()
     processor.start()
+    client = None
     try:
         handler.subscribers[0].update()
         controller = service.get_detectors_controller()
@@ -297,7 +302,81 @@ def test_events_service_process_alarm_reaches_json_journal(tmp_path):
         source = JsonLabelJournalDataSource(str(tmp_path))
         row = source._map_item(records[0], "alarm", "2026-10-11", 0)
         assert group_events_rows([row])[0]["event"] == "ppe_violation"
+
+        config_path = tmp_path / "journal-config.json"
+        config_path.write_text(
+            json.dumps(
+                {
+                    "controller": {
+                        "use_database": False,
+                        "image_dir": str(tmp_path),
+                    },
+                    "pipeline": {
+                        "sources": [
+                            {"source_ids": [0], "source_names": ["Cam0"]}
+                        ]
+                    },
+                }
+            ),
+            encoding="utf-8",
+        )
+        (tmp_path / "credentials.json").write_text(
+            json.dumps(
+                {
+                    "web_auth": {
+                        "enabled": False,
+                        "users": [
+                            {
+                                "username": "test",
+                                "password": "test",
+                                "role": "admin",
+                            }
+                        ],
+                    }
+                }
+            ),
+            encoding="utf-8",
+        )
+        monkeypatch.chdir(tmp_path)
+        monkeypatch.setattr(
+            journal_service,
+            "get_current_config_path",
+            lambda: str(config_path),
+        )
+        for name, value in {
+            "_runtime_params_cache": None,
+            "_light_config_path_cache": None,
+            "_image_base_dir_cache": None,
+            "_json_source_cache": {},
+            "_grouped_row_cache": {"events": {}, "objects": {}},
+            "_filters_meta_cache": None,
+            "_journal_stats_page_cache": {},
+            "_path_resolve_cache": {},
+        }.items():
+            monkeypatch.setattr(journal_service, name, value)
+
+        client = TestClient(create_app())
+        response = client.get(
+            "/api/v1/journals/events/grouped",
+            params={"page": 0, "size": 10, "date": "2026-10-11"},
+        )
+        assert response.status_code == 200
+        payload = response.json()
+        assert payload["available"] is True
+        alarm_rows = [
+            item
+            for item in payload["items"]
+            if item.get("event") == "ppe_violation"
+        ]
+        assert len(alarm_rows) == 1
+        alarm_row = alarm_rows[0]
+        assert alarm_row["source"] == "0"
+        assert "critical" in alarm_row["information"]
+        assert "from_service" in alarm_row["information"]
+        assert alarm_row["time"].startswith("2026-10-11T12:00:00")
     finally:
+        if client is not None:
+            client.close()
         processor.stop()
         alarm_adapter.stop()
         service.release()

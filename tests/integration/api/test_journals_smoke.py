@@ -51,6 +51,29 @@ def smoke_client(tmp_path, monkeypatch):
         encoding="utf-8",
     )
 
+    alarm_metadata = base / "Events" / date / "Metadata"
+    alarm_metadata.mkdir(parents=True)
+    (alarm_metadata / "alarm_events.json").write_text(
+        json.dumps(
+            [
+                {
+                    "alarm_id": "web-journal-smoke-ppe-violation",
+                    "ts": f"{date}T10:05:00",
+                    "event_type": "alarm",
+                    "alarm_type": "ppe_violation",
+                    "severity": "critical",
+                    "source_id": 0,
+                    "source_name": "Cam1",
+                    "details": {
+                        "rule": "hardhat_required",
+                        "object_ids": [42],
+                    },
+                }
+            ]
+        ),
+        encoding="utf-8",
+    )
+
     config_path = tmp_path / "poly.json"
     config_path.write_text(
         json.dumps(
@@ -105,6 +128,19 @@ def test_journals_smoke_flow(smoke_client):
 
     events = client.get(f"/api/v1/journals/events/grouped?page=0&size=5&date={date}")
     assert events.status_code == 200
+    events_payload = events.json()
+    assert events_payload["available"] is True
+    alarm_rows = [
+        row
+        for row in events_payload["items"]
+        if row.get("event") == "ppe_violation"
+    ]
+    assert len(alarm_rows) == 1
+    alarm_row = alarm_rows[0]
+    assert alarm_row["source"] == "Cam1"
+    assert "critical" in alarm_row["information"]
+    assert "hardhat_required" in alarm_row["information"]
+    assert alarm_row["time"].startswith(f"{date}T10:05:00")
 
     found = client.get(
         f"/api/v1/journals/preview?path={found_name}&date={date}&journal_type=objects&mode=found"
