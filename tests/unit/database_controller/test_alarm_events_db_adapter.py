@@ -348,3 +348,55 @@ def test_postgres_pool_uses_finite_connection_and_statement_timeouts(monkeypatch
     assert captured["keepalives_idle"] == 10
     assert captured["keepalives_interval"] == 5
     assert captured["keepalives_count"] == 3
+
+
+def test_alarm_database_adapter_bounds_large_burst_and_preserves_accepted_fifo():
+    burst_size = 256
+    max_queue_size = 8
+
+    class _BlockingDatabase(_FakeDatabase):
+        def __init__(self):
+            super().__init__()
+            self.persisted_alarm_ids = []
+
+        def query_checked(self, query, values):
+            self.worker_entered.set()
+            if not self.allow_query.wait(timeout=5):
+                raise TimeoutError("test did not release the blocked database write")
+            self.queries.append((query, values))
+            self.persisted_alarm_ids.append(values[1])
+            self.saved.set()
+
+    db = _BlockingDatabase()
+    adapter = DatabaseAdapterAlarmEvents(db)
+    adapter.set_params(table_name="alarm_events", queue_maxsize=max_queue_size)
+    adapter.init()
+    adapter.start()
+    accepted_ids = []
+    try:
+        adapter.insert(AlarmEvent("ppe_violation", alarm_id="burst-inflight"))
+        assert db.worker_entered.wait(timeout=1)
+
+        for index in range(burst_size):
+            alarm_id = f"burst-{index}"
+            try:
+                adapter.insert(AlarmEvent("ppe_violation", alarm_id=alarm_id))
+            except RuntimeError as error:
+                assert "queue is full" in str(error)
+            else:
+                accepted_ids.append(alarm_id)
+
+        stats = adapter.get_runtime_stats()
+        assert stats["queue_size"] == max_queue_size
+        assert stats["enqueue_rejections"] == burst_size - max_queue_size
+        assert accepted_ids == [f"burst-{index}" for index in range(max_queue_size)]
+    finally:
+        db.allow_query.set()
+        adapter.stop()
+
+    assert db.persisted_alarm_ids == ["burst-inflight", *accepted_ids]
+    stats = adapter.get_runtime_stats()
+    assert stats["queue_size"] == 0
+    assert stats["worker_alive"] is False
+    assert stats["processed_items"] == 1 + len(accepted_ids)
+    assert stats["degraded"] is True
