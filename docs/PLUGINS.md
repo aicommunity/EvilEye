@@ -275,8 +275,11 @@ behavior; it does not need frame pixels. The adapter preserves the
 controller-facing `emit_message`, `emit_started`, and `emit_stopped` calls.
 Modules that declare `event_commands` can receive named commands through
 `EventDetectorModuleAdapter.submit_command()`; command names and payloads must
-be validated by that module. During normal shutdown, accepted worker updates
-are processed and their output is retained for the final event-controller flush.
+be validated by that module. During normal shutdown, accepted worker updates are processed and their output
+is retained for the final event-controller flush. Managed runs signal the
+pipeline owner first, allowing it to stop modules and drain accepted work;
+remaining process-group members are force-killed only after the configured
+grace period.
 
 ```python
 from evileye.core.contracts import EventUpdate

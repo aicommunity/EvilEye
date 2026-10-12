@@ -15,7 +15,7 @@ from pathlib import Path
 from typing import Any, Callable, Literal, Optional
 
 from evileye.core.paths import site_root
-from evileye.core.process_control import find_pids_by_cmdline_regex, pid_exists, terminate_tree
+from evileye.core.process_control import find_pids_by_cmdline_regex, pid_exists, terminate_tree_gracefully
 from evileye.site_profile import (
     gui_default,
     pipeline_launch_mode,
@@ -438,7 +438,7 @@ def stop_pipelines(
         if not pid:
             continue
         try:
-            terminate_tree(int(pid), grace_sec=grace)
+            terminate_tree_gracefully(int(pid), grace_sec=grace)
             result.stopped_pids.append(int(pid))
             if rid is not None:
                 mark_runtime_stopped(int(rid))
@@ -451,7 +451,7 @@ def stop_pipelines(
         for pid in (child_pid, cli_pid):
             if pid and pid_exists(pid):
                 try:
-                    terminate_tree(int(pid), grace_sec=grace)
+                    terminate_tree_gracefully(int(pid), grace_sec=grace)
                     result.stopped_pids.append(int(pid))
                 except Exception:
                     pass
@@ -838,7 +838,7 @@ def _stop_stray_foreground_web_servers(site_dir: Path) -> list[int]:
         if pid in service_tree:
             continue
         try:
-            terminate_tree(int(pid), grace_sec=_stop_grace_sec())
+            terminate_tree_gracefully(int(pid), grace_sec=_stop_grace_sec())
             stopped.append(int(pid))
         except Exception:
             continue

@@ -221,14 +221,14 @@ class ConfigRunManager:
         if not pid:
             return True
         from evileye.api.core.process_restart import pid_hosts_current_process
-        from evileye.core.process_control import pid_exists, terminate_tree
+        from evileye.core.process_control import pid_exists, terminate_tree_gracefully
 
         if pid_hosts_current_process(int(pid)):
             raise RuntimeError(
                 "Refusing to stop the process that hosts this API; use POST /api/v1/system/restart"
             )
         try:
-            terminate_tree(int(pid), grace_sec=grace_sec)
+            terminate_tree_gracefully(int(pid), grace_sec=grace_sec)
         except Exception:
             return False
         return not pid_exists(int(pid))

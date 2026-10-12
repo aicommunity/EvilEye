@@ -13,7 +13,7 @@ from evileye.api.core.process_restart import (
 )
 
 
-def test_stop_uses_terminate_tree():
+def test_stop_uses_graceful_tree_termination():
     manager = ConfigRunManager()
     cfg_item = ConfigRunItem(1, "test", Path("configs/test.json"))
     cfg_item.pid = 4242
@@ -22,7 +22,7 @@ def test_stop_uses_terminate_tree():
     manager._items[1] = cfg_item
 
     with patch("evileye.api.core.process_restart.pid_hosts_current_process", return_value=False), \
-            patch("evileye.core.process_control.terminate_tree") as terminate_tree, \
+            patch("evileye.core.process_control.terminate_tree_gracefully") as terminate_tree, \
             patch("evileye.core.process_control.pid_exists", return_value=False), \
             patch("evileye.api.core.config_run_manager.mark_runtime_stopped") as mark_stopped, \
             patch("evileye.core.mp_session_registry.cleanup_session_by_id") as cleanup_session:
@@ -44,7 +44,7 @@ def test_stop_refuses_to_kill_api_host_process():
     manager._items[1] = cfg_item
 
     with patch("evileye.api.core.process_restart.pid_hosts_current_process", return_value=True), \
-            patch("evileye.core.process_control.terminate_tree") as terminate_tree:
+            patch("evileye.core.process_control.terminate_tree_gracefully") as terminate_tree:
         with pytest.raises(RuntimeError, match="hosts this API"):
             manager.stop(1)
     terminate_tree.assert_not_called()

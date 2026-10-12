@@ -133,14 +133,14 @@ def _scheduler_prepare_next_launch(logger: logging.Logger) -> None:
 
 
 def _scheduler_terminate_child(proc: subprocess.Popen, logger: logging.Logger) -> None:
-    """Terminate the scheduled child process and its process group.
+    """Gracefully stop a scheduled pipeline before cleaning up its process group.
 
-    Polls ``proc`` during grace so a zombie leader is reaped promptly instead of
+    Poll ``proc`` during grace so a zombie leader is reaped promptly instead of
     blocking for the full ``EVILEYE_SCHEDULER_STOP_GRACE_SEC`` window.
     """
     import threading
 
-    from evileye.core.process_control import terminate_tree
+    from evileye.core.process_control import terminate_tree_gracefully
 
     pid = proc.pid
     grace_sec = _scheduler_stop_grace_sec()
@@ -148,14 +148,14 @@ def _scheduler_terminate_child(proc: subprocess.Popen, logger: logging.Logger) -
 
     def _run_terminate() -> None:
         try:
-            terminate_tree(int(pid), grace_sec=grace_sec)
+            terminate_tree_gracefully(int(pid), grace_sec=grace_sec)
         except Exception as exc:
             terminate_errors.append(exc)
 
     # Already exited (zombie until wait/poll) — short PG cleanup then reap.
     if proc.poll() is not None:
         try:
-            terminate_tree(int(pid), grace_sec=min(5.0, grace_sec))
+            terminate_tree_gracefully(int(pid), grace_sec=min(5.0, grace_sec))
         except Exception as exc:
             logger.warning("[scheduler] Post-exit process group cleanup failed for %s: %s", pid, exc)
         try:
@@ -172,7 +172,7 @@ def _scheduler_terminate_child(proc: subprocess.Popen, logger: logging.Logger) -
     )
     worker.start()
 
-    # Poll while terminate_tree runs so we reap as soon as the child exits.
+    # Poll while graceful termination runs so we reap as soon as the child exits.
     deadline = time.monotonic() + grace_sec + 15.0
     while time.monotonic() < deadline:
         if proc.poll() is not None:
