@@ -996,8 +996,10 @@ export function PlaybackPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps -- intentional: once per segmentsLoaded flip / date
   }, [segmentsLoaded, date]);
 
-  const positionLabel = formatPlaybackTime(ctrl.positionSec);
-  const positionDateLabel = formatDate(new Date(ctrl.positionSec * 1000));
+  const hasPlayheadPosition = Number.isFinite(ctrl.positionSec) && ctrl.positionSec > 0;
+  const positionLabel = hasPlayheadPosition
+    ? `${formatDate(new Date(ctrl.positionSec * 1000))} ${formatPlaybackTime(ctrl.positionSec)}`
+    : '\u2014';
   const detectionsReady = !detectionIndex.loading;
 
   let gridEmpty: string | null = null;
@@ -1052,7 +1054,7 @@ export function PlaybackPage() {
               }}
             />
             <span className="playback-position-clock" title={t('playback.currentTime')}>
-              {positionDateLabel} {positionLabel}
+              {positionLabel}
             </span>
             <div className="playback-controls-main">
               <Button size="sm" variant={mode === 'fit' ? 'primary' : 'outline'} onClick={() => setMode('fit')}>

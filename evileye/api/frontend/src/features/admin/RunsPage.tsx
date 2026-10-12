@@ -148,7 +148,12 @@ export function RunsPage() {
         setRuntimeStats(result);
       } catch (e) {
         if (isAbortError(e) || signal?.aborted) return;
-        setRuntimeError(formatApiError(e, t));
+        const detail = e instanceof ApiError ? String(e.message || '').toLowerCase() : '';
+        setRuntimeError(
+          e instanceof ApiError && e.status === 503 && detail.includes('runtime')
+            ? t('runs.runtimeUnavailable')
+            : formatApiError(e, t),
+        );
         setRuntimeStats(null);
       } finally {
         if (!signal?.aborted) setRuntimeLoading(false);

@@ -120,11 +120,11 @@ export function BansPage() {
         <div className="users-create-grid">
           <label className="users-create-field">
             <span>{t('bans.ip')}</span>
-            <input value={ip} onChange={(e) => setIp(e.target.value)} placeholder="203.0.113.10 or 203.0.113.0/24" />
+            <input className="search-input" value={ip} onChange={(e) => setIp(e.target.value)} placeholder="203.0.113.10 or 203.0.113.0/24" />
           </label>
           <label className="users-create-field">
             <span>{t('bans.durationLabel')}</span>
-            <select value={durationKey} onChange={(e) => setDurationKey(e.target.value)}>
+            <select className="search-input" value={durationKey} onChange={(e) => setDurationKey(e.target.value)}>
               {DURATION_PRESETS.map((p) => (
                 <option key={p.key} value={p.key}>
                   {t(`bans.duration.${p.key}`)}
@@ -134,7 +134,7 @@ export function BansPage() {
           </label>
           <label className="users-create-field">
             <span>{t('bans.notes')}</span>
-            <input value={notes} onChange={(e) => setNotes(e.target.value)} />
+            <input className="search-input" value={notes} onChange={(e) => setNotes(e.target.value)} />
           </label>
         </div>
         <Button onClick={() => void onCreate()} disabled={busy || !ip.trim()}>
@@ -143,7 +143,7 @@ export function BansPage() {
       </section>
 
       <div className="table-wrap">
-        <table className="data-table">
+        <table className="journal-table data-table">
           <thead>
             <tr>
               <th>{t('bans.ip')}</th>
