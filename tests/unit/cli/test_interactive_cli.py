@@ -122,6 +122,21 @@ def test_root_menu_dispatches_selected_registered_command(monkeypatch):
     assert dispatch.call_args.args[0] == ["status"]
 
 
+@pytest.mark.parametrize("exception", [EOFError, KeyboardInterrupt])
+def test_root_menu_eof_or_interrupt_exits_without_dispatch(monkeypatch, exception):
+    import evileye.cli_interactive as interactive
+
+    monkeypatch.setattr(interactive, "interactive_available", lambda: True)
+    monkeypatch.setattr(interactive.Prompt, "ask", Mock(side_effect=exception))
+    dispatch = Mock()
+    monkeypatch.setattr(interactive, "_dispatch", dispatch)
+
+    result = runner.invoke(app, [])
+
+    assert result.exit_code == 0, result.output
+    dispatch.assert_not_called()
+
+
 def test_group_menu_dispatches_through_existing_cli_entrypoint(monkeypatch):
     import evileye.cli_interactive as interactive
 
@@ -172,6 +187,70 @@ def test_every_public_leaf_routes_to_its_existing_cli_command(monkeypatch, comma
     args = subprocess_run.call_args.args[0]
     assert args[-len(command_path):] == command_path
     assert subprocess_run.call_args.kwargs["env"][interactive.MENU_SELECTION_ENV] == "1"
+
+
+def test_run_prompts_for_video_when_tty_and_no_target_is_given(tmp_path: Path, monkeypatch):
+    import evileye.cli as cli
+    import evileye.cli_interactive as interactive
+
+    logger = Mock()
+    monkeypatch.setattr(interactive, "interactive_available", lambda: True)
+    monkeypatch.setattr(interactive, "prompt_choice", lambda *args, **kwargs: "video")
+    monkeypatch.setattr(interactive, "prompt_text", lambda *args, **kwargs: "sample.mp4")
+    monkeypatch.setattr(cli, "setup_logging", Mock())
+    monkeypatch.setattr(cli, "get_module_logger", lambda *_args, **_kwargs: logger)
+    monkeypatch.setattr(cli, "log_system_info", Mock())
+    run = Mock()
+    monkeypatch.setattr(cli.subprocess, "run", run)
+    monkeypatch.chdir(tmp_path)
+
+    result = runner.invoke(app, ["run"])
+
+    assert result.exit_code == 0, result.output
+    launched = run.call_args.args[0]
+    assert launched[launched.index("--video") + 1] == "sample.mp4"
+    assert "--gui" in launched
+
+
+def test_watchdog_menu_masters_collect_config_and_default_no_restart(monkeypatch):
+    import evileye.cli_interactive as interactive
+
+    monkeypatch.setattr(interactive, "prompt_config_path", lambda *_args: "configs/watch.json")
+    confirm = Mock(return_value=False)
+    monkeypatch.setattr(interactive, "confirm_action", confirm)
+
+    assert interactive._menu_arguments(["watchdog-install"]) == [
+        "--config",
+        "configs/watch.json",
+    ]
+    assert interactive._menu_arguments(["watchdog-check"]) == [
+        "--config",
+        "configs/watch.json",
+        "--no-restart",
+    ]
+    confirm.assert_called_once_with(
+        "Разрешить watchdog перезапустить pipeline при необходимости?", default=False
+    )
+
+
+def test_reload_web_with_pipeline_prompts_only_when_config_is_unresolved(monkeypatch):
+    import evileye.cli_interactive as interactive
+    import evileye.stack_control as stack_control
+
+    monkeypatch.setattr(interactive, "interactive_available", lambda: True)
+    config_resolver = Mock(return_value="configs/selected.json")
+    monkeypatch.setattr(interactive, "resolve_pipeline_config_for_cli", config_resolver)
+    reload_result = SimpleNamespace(ok=True, message="reloaded", details="")
+    reload_web = Mock(return_value=reload_result)
+    monkeypatch.setattr(stack_control, "reload_web", reload_web)
+
+    result = runner.invoke(app, ["reload", "web", "--with-pipeline"])
+
+    assert result.exit_code == 0, result.output
+    config_resolver.assert_called_once_with(
+        site_dir=Path.cwd(), explicit=None, allow_running=True
+    )
+    assert reload_web.call_args.kwargs["config"] == "configs/selected.json"
 
 
 @pytest.mark.parametrize(
