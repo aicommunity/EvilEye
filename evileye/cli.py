@@ -1083,7 +1083,15 @@ def tls_cert(
     force: bool = typer.Option(False, "--force", help="Overwrite existing files"),
 ) -> None:
     """Issue a local mini-CA and SAN leaf certificate (advanced / CI)."""
+    from evileye.cli_interactive import interactive_available
     from evileye.utils.tls_cert import TlsCertError, generate_minica_leaf
+
+    if interactive_available():
+        console.print(
+            "[red]tls-cert is available only in non-interactive mode. "
+            "Rerun with --no-interactive or --nit.[/red]"
+        )
+        raise typer.Exit(2)
 
     try:
         paths = generate_minica_leaf(

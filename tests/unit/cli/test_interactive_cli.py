@@ -65,6 +65,35 @@ def test_non_interactive_flags_are_removed_regardless_of_position():
     assert forced
 
 
+def test_hidden_tls_cert_is_rejected_in_tty(monkeypatch):
+    import evileye.cli_interactive as interactive
+    import evileye.utils.tls_cert as tls_cert_module
+
+    monkeypatch.setattr(interactive, "interactive_available", lambda: True)
+    generate = Mock()
+    monkeypatch.setattr(tls_cert_module, "generate_minica_leaf", generate)
+
+    result = runner.invoke(app, ["tls-cert"])
+
+    assert result.exit_code == 2
+    assert "only in non-interactive mode" in result.output
+    generate.assert_not_called()
+
+
+def test_hidden_tls_cert_remains_available_with_noninteractive_flag(monkeypatch):
+    import evileye.cli_interactive as interactive
+    import evileye.utils.tls_cert as tls_cert_module
+
+    monkeypatch.setattr(interactive, "interactive_available", lambda: False)
+    generate = Mock(return_value={"server_crt": Path("certs/server.crt"), "ca_crt": Path("certs/ca.crt")})
+    monkeypatch.setattr(tls_cert_module, "generate_minica_leaf", generate)
+
+    result = runner.invoke(app, ["--nit", "tls-cert"])
+
+    assert result.exit_code == 0, result.output
+    generate.assert_called_once()
+
+
 def test_non_interactive_environment_overrides_a_tty(monkeypatch):
     class Tty:
         @staticmethod
