@@ -2,8 +2,8 @@
 
 EvilEye loads installed Python plugins when the application starts. It does not
 install dependencies or reload code in a running process. For editable development installs, use a pip version with PEP 660 support. In a
-fresh or older environment, update pip first with
-`python -m pip install --upgrade pip`, then run `python -m pip install -e .`
+fresh or older environment, update pip and setuptools first with
+`python -m pip install --upgrade pip setuptools`, then run `python -m pip install -e .`
 from the plugin package directory. The package installs into the same Python
 environment EvilEye uses.
 
@@ -28,6 +28,11 @@ valid, or raise an exception with a validation message.
 
 See [`examples/plugin_package`](../examples/plugin_package) for a minimal
 installable package.
+
+To generate a package skeleton from the CLI, run evileye plugin templates and
+evileye plugin create NAME --template TEMPLATE. The templates cover item
+processors, surveillance detectors, event alarms, sources, and custom pipelines.
+See CLI_PLUGIN_COMMAND.md for the generated layout and install workflow.
 
 ## Runtime contracts
 

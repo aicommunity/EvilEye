@@ -5,7 +5,7 @@ through the `evileye.plugins` entry point. Install it into the same Python
 environment as EvilEye with:
 
 ```powershell
-python -m pip install --upgrade pip
+python -m pip install --upgrade pip setuptools
 python -m pip install -e .
 ```
 
