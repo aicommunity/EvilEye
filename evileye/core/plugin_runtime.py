@@ -579,7 +579,7 @@ class ItemModuleAdapter(EvilEyeBase):
                 f"Module '{self.module_id}' must declare parallel_items to use "
                 "worker_count greater than one"
             )
-        reserved = {"type", "module_id", "execution_mode", "source_ids", "queue_size", "ipc_mode", "worker_count"}
+        reserved = {"type", "module_id", "execution_mode", "source_ids", "queue_size", "ipc_mode", "worker_count", "config"}
         for key, value in params.items():
             if key not in reserved:
                 self._config.setdefault(key, value)

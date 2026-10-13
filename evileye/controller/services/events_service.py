@@ -15,6 +15,7 @@ from evileye.database_controller.json_adapter_zone_events import JsonAdapterZone
 from evileye.events_control.events_controller import EventsDetectorsController
 from evileye.events_control.events_processor import EventsProcessor
 from evileye.events_detectors.event_registry import (
+    DEFAULT_ENABLED_EVENT_DETECTORS,
     EventDetectorContext,
     create_event_detector,
     list_event_detectors,
@@ -36,14 +37,8 @@ JSON_EVENT_ADAPTER_CLASSES = (
     JsonAdapterSystemEvents,
 )
 
-# Default bootstrap order when config omits events_detectors.enabled
-_DEFAULT_ENABLED = (
-    "CamEventsDetector",
-    DETECTOR_CONFIG_KEY,
-    "ZoneEventsDetector",
-    "AttributeEventsDetector",
-    "SystemEventsDetector",
-)
+# Compatibility alias; topology and CLI forms use the same source of truth.
+_DEFAULT_ENABLED = DEFAULT_ENABLED_EVENT_DETECTORS
 
 
 class EventsService:

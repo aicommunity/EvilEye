@@ -194,6 +194,7 @@ def test_attribute_detector_uses_item_runtime(execution_mode):
     assert adapter.init() is True
     adapter.start()
     try:
+        assert adapter.is_ready(60), "attribute worker did not finish initialization"
         frame = _frame(source_id=3, frame_id=9)
         adapter.put(frame)
         deadline = time.monotonic() + (15.0 if execution_mode == "process" else 2.0)

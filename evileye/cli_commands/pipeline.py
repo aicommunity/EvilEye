@@ -10,7 +10,7 @@ from rich.table import Table
 
 from evileye.cli_commands.console import console
 
-app = typer.Typer(help="Pipeline runtime lifecycle")
+app = typer.Typer(help="Inspect, configure, and manage pipeline runs")
 
 
 @app.callback(invoke_without_command=True)
@@ -219,3 +219,12 @@ def pipeline_restart_cmd(
     console.print(
         f"[green]Pipeline restarted[/green] mode={spawn.mode} pid={spawn.pid} config={spawn.config_path}"
     )
+
+
+# Keep the inspection and editing implementations separate from lifecycle
+# commands while exposing one coherent ``evileye pipeline`` command group.
+from evileye.cli_commands.pipeline_inspect import inspect_pipeline
+from evileye.cli_commands.pipeline_configure import configure_pipeline
+
+app.command("inspect")(inspect_pipeline)
+app.command("configure")(configure_pipeline)

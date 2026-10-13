@@ -9,6 +9,8 @@
 - **[Руководство по настройке базы данных](DATABASE_SETUP_GUIDE.md)** - Подробное руководство по настройке PostgreSQL базы данных для EvilEye
 - **[Команда deploy](CLI_DEPLOY_COMMAND.md)** - Использование команды `evileye deploy` для развертывания системы
 - **[Управление стеком (status, web, service, pipeline, reload, prod)](CLI_STACK_COMMANDS.md)** — основной гайд CLI
+- **[Просмотр и настройка pipeline](CLI_PIPELINE_COMMANDS.md)** — топология, runtime-состояние, экспорт DOT/JSON и SSH-мастер конфигурации
+- **[Проверка выполнения плана CLI pipeline](CLI_PIPELINE_IMPLEMENTATION_AUDIT.md)** — покрытие пунктов плана и результаты проверки
 - **[Команда service](CLI_SERVICE_COMMANDS.md)** - OS-сервис Web UI и HTTPS
 - **[Команда web](CLI_SETUP_WEB.md)** - Сборка и зависимости Web UI
 - **[Docker-деплой (GPU + CPU)](DOCKER_DEPLOYMENT.md)** - Hub-образы, empty-folder bootstrap, host-CLI, версионные теги

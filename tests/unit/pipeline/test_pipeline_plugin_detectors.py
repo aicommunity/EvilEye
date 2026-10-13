@@ -11,21 +11,7 @@ from evileye.core.plugins import (
     plugin_registry,
 )
 from evileye.pipelines.pipeline_surveillance import PipelineSurveillance
-
-
-class _NamedDetector:
-    def __init__(self, config=None):
-        self.name = (config or {}).get("name", "unnamed")
-        self.delay_sec = float((config or {}).get("delay_sec", 0))
-        self.return_none = bool((config or {}).get("return_none", False))
-
-    def process_item(self, item, state):
-        if self.delay_sec:
-            time.sleep(self.delay_sec)
-        frame = item[-1] if isinstance(item, (list, tuple)) else item
-        if self.return_none:
-            return None
-        return [{"detections": [{"label": self.name}]}, frame]
+from tests.unit.pipeline.plugin_detector_fixtures import NamedDetector as _NamedDetector
 
 
 @pytest.mark.parametrize("execution_mode", ["thread", "process"])
@@ -194,6 +180,8 @@ def test_detector_fanout_timeout_is_visible_to_health_and_drain():
             "pending_detector_fanout": 0,
             "detector_fanout_incomplete": 1,
             "detector_fanout_dropped": 0,
+            "module_count": 2,
+            "unknown_modules": 0,
         }
         labels = {
             detection["label"]
@@ -268,6 +256,8 @@ def test_drop_frame_fanout_policy_is_explicit_and_diagnostic():
             "pending_detector_fanout": 0,
             "detector_fanout_incomplete": 1,
             "detector_fanout_dropped": 1,
+            "module_count": 2,
+            "unknown_modules": 0,
         }
     finally:
         stage.stop()

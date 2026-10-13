@@ -107,7 +107,7 @@ class EvilEyeBase(ABC):
         params = dict(params)
         module_id = params.get("module_id") or params.get("type")
         if module_id:
-            from .plugins import PluginError, plugin_registry
+            from .plugins import PluginError, plugin_registry, MODULE_RUNTIME_FIELDS
 
             registered = getattr(self, "registered_module", None)
             if registered is None:
@@ -125,11 +125,7 @@ class EvilEyeBase(ABC):
             if registered is not None and registered.spec.config_schema is not None:
                 config = params.get("config")
                 if config is None:
-                    reserved = {
-                        "type", "module_id", "execution_mode", "source_ids",
-                        "queue_size", "ipc_mode", "enable", "logger_name",
-                    }
-                    config = {key: value for key, value in params.items() if key not in reserved}
+                    config = {key: value for key, value in params.items() if key not in MODULE_RUNTIME_FIELDS}
                 params["config"] = plugin_registry.validate_module_config(
                     str(module_id), config
                 )

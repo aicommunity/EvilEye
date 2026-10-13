@@ -5,6 +5,7 @@ from __future__ import annotations
 from pathlib import Path
 
 import typer
+from rich.markup import escape
 from rich.table import Table
 
 from evileye.cli_commands.console import console
@@ -17,7 +18,7 @@ from evileye.cli_commands.plugin_scaffold import (
 )
 
 app = typer.Typer(
-    help="Create third-party plugin packages for EvilEye.",
+    help="Create and inspect plugin packages for EvilEye.",
     no_args_is_help=False,
 )
 
@@ -38,6 +39,49 @@ def list_templates() -> None:
     for name, description in template_descriptions().items():
         table.add_row(name, description)
     console.print(table)
+
+
+@app.command("list")
+def list_modules(
+    kind: str | None = typer.Option(None, "--kind", help="Filter by module kind."),
+) -> None:
+    """List installed plugin modules and their declared capabilities."""
+    from evileye.core.builtin_inventory import register_builtins
+    from evileye.core.plugins import MODULE_KINDS, plugin_registry
+    from evileye.cli_commands.pipeline_configure import _schema_mapping
+
+    if kind is not None and kind not in MODULE_KINDS:
+        console.print(
+            f"[red]Unknown module kind {kind!r}.[/red] "
+            f"Available kinds: {', '.join(sorted(MODULE_KINDS))}"
+        )
+        raise typer.Exit(2)
+    try:
+        register_builtins()
+    except Exception as exc:
+        console.print(f"[red]Plugin discovery failed:[/red] {exc}")
+        raise typer.Exit(1) from exc
+
+    console.print("[bold]Installed EvilEye modules[/bold]")
+    module_ids = plugin_registry.list_modules(kind)
+    for module_id in module_ids:
+        registered = plugin_registry.get_module(module_id)
+        if registered is None:
+            continue
+        spec = registered.spec
+        console.print(
+            f"[cyan]{escape(registered.qualified_id)}[/cyan] — "
+            f"{escape(spec.display_name or spec.module_id)}"
+        )
+        console.print(
+            "  "
+            f"kind={escape(spec.kind)}  "
+            f"stages={escape(', '.join(spec.stages) or '—')}  "
+            f"execution={escape(', '.join(spec.execution_modes))}  "
+            f"form_schema={'yes' if _schema_mapping(spec.config_schema) else 'no'}"
+        )
+    if not module_ids:
+        console.print(f"[dim]No modules registered for kind {escape(kind or 'any')}.[/dim]")
 
 
 @app.command("create")

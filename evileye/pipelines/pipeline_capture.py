@@ -217,3 +217,44 @@ class PipelineCapture(PipelineSimple):
         if hasattr(self, 'video_capture') and self.video_capture is not None:
             return [self.video_capture]
         return []
+
+    def get_runtime_stats(self) -> dict[str, Any]:
+        """Expose the capture source state through the shared pipeline snapshot."""
+        source = self.video_capture
+        if source is None:
+            stats = {
+                "state": "unknown",
+                "initialized": False,
+                "worker_running": False,
+            }
+        else:
+            getter = getattr(source, "get_runtime_stats", None)
+            if callable(getter):
+                try:
+                    stats = getter()
+                except Exception as exc:
+                    stats = {"degraded": True, "last_error": str(exc)}
+            else:
+                initialized = bool(getattr(source, "is_inited", False))
+                working = bool(getattr(source, "is_working", False))
+                finished = bool(getattr(source, "finished", False))
+                stats = {
+                    "initialized": initialized,
+                    "worker_running": working,
+                    "finished": finished,
+                    "degraded": initialized and not working and not finished,
+                }
+        if not isinstance(stats, dict):
+            stats = {"state": "unknown", "diagnostic": "runtime statistics must be a mapping"}
+        return {
+            "degraded": bool(stats.get("degraded")),
+            "modules": {"sources/VideoCaptureOpencv": stats},
+            "module_instances": {"sources:0:VideoCaptureOpencv": stats},
+            "stages": {
+                "sources": {
+                    "degraded": bool(stats.get("degraded")),
+                    "module_count": 1 if source is not None else 0,
+                    "unknown_modules": int(stats.get("state") == "unknown"),
+                }
+            },
+        }

@@ -455,41 +455,87 @@ class PipelineProcessors(PipelineBase):
 
     def get_runtime_stats(self) -> dict[str, Any]:
         """Aggregate health of generic plugin modules and detector fanout."""
-        modules = {}
-        stages = {}
+        modules: dict[str, Any] = {}
+        module_instances: dict[str, Any] = {}
+        stages: dict[str, Any] = {}
         for stage in self.processors:
             if stage is None:
                 continue
-            for processor in getattr(stage, "processors", []):
-                get_stats = getattr(processor, "get_runtime_stats", None)
-                if not callable(get_stats):
+            stage_name = str(stage.get_name())
+            configured_stages = self.params.get("stages", []) if isinstance(self.params, dict) else []
+            configured_stage_index = next(
+                (
+                    index
+                    for index, configured in enumerate(configured_stages)
+                    if isinstance(configured, dict)
+                    and str(configured.get("name") or f"stage_{index}") == stage_name
+                ),
+                None,
+            ) if isinstance(configured_stages, list) else None
+            instance_stage_name = "stage" if configured_stage_index is not None else stage_name
+            instance_stage_index = configured_stage_index if configured_stage_index is not None else None
+            stage_processors = list(getattr(stage, "processors", []) or [])
+            processor_params = list(getattr(stage, "params", []) or [])
+            class_names = list(getattr(stage, "_class_names", []) or [])
+            stage_module_stats: list[dict[str, Any]] = []
+            for index, processor in enumerate(stage_processors):
+                if processor is None:
                     continue
+                params = processor_params[index] if index < len(processor_params) else {}
+                params = params if isinstance(params, dict) else {}
+                module_id = (
+                    getattr(processor, "module_id", None)
+                    or params.get("module_id")
+                    or params.get("type")
+                    or (class_names[index] if index < len(class_names) else None)
+                    or processor.__class__.__name__
+                )
+                module_id = str(module_id)
+                if instance_stage_index is None:
+                    instance_key = f"{instance_stage_name}:{index}:{module_id}"
+                else:
+                    instance_key = f"{instance_stage_name}:{instance_stage_index}:{index}:{module_id}"
+                get_stats = getattr(processor, "get_runtime_stats", None)
                 try:
-                    key = f"{stage.get_name()}/{getattr(processor, 'module_id', processor.__class__.__name__)}"
-                    modules[key] = get_stats()
+                    stats = get_stats() if callable(get_stats) else {
+                        "state": "unknown",
+                        "diagnostic": "module does not expose runtime statistics",
+                    }
                 except Exception as exc:
-                    modules[f"{stage.get_name()}/{processor.__class__.__name__}"] = {
+                    stats = {
                         "degraded": True,
                         "diagnostic_error": str(exc),
                     }
+                if not isinstance(stats, dict):
+                    stats = {"state": "unknown", "diagnostic": "runtime statistics must be a mapping"}
+                modules[f"{stage_name}/{module_id}"] = stats
+                module_instances[instance_key] = stats
+                stage_module_stats.append(stats)
             pending_fanout = getattr(stage, "_detector_fanout_pending", None)
             fanout_incomplete = int(getattr(stage, "_detector_fanout_incomplete_count", 0) or 0)
             fanout_dropped = int(getattr(stage, "_detector_fanout_dropped_count", 0) or 0)
+            stage_stats: dict[str, Any] = {
+                "degraded": any(bool(stats.get("degraded")) for stats in stage_module_stats)
+                or fanout_incomplete > 0
+                or fanout_dropped > 0,
+                "module_count": len(stage_module_stats),
+                "unknown_modules": sum(stats.get("state") == "unknown" for stats in stage_module_stats),
+            }
             if pending_fanout is not None:
-                stage_name = stage.get_name()
-                stages[stage_name] = {
-                    "degraded": fanout_incomplete > 0,
+                stage_stats.update({
                     "detector_fanout_policy": stage.detector_fanout_policy,
                     "detector_fanout_timeout_sec": stage._detector_fanout_timeout_sec,
                     "detector_fanout_max_pending": stage._detector_fanout_max_pending,
                     "pending_detector_fanout": len(pending_fanout),
                     "detector_fanout_incomplete": fanout_incomplete,
                     "detector_fanout_dropped": fanout_dropped,
-                }
+                })
+            stages[stage_name] = stage_stats
         return {
             "degraded": any(bool(stats.get("degraded")) for stats in modules.values())
             or any(bool(stats.get("degraded")) for stats in stages.values()),
             "modules": modules,
+            "module_instances": module_instances,
             "stages": stages,
         }
 

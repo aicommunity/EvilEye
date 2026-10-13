@@ -8,6 +8,15 @@ from typing import Any, Callable, List, Type
 from evileye.core.plugins import PluginError, plugin_manager, plugin_registry
 
 
+DEFAULT_ENABLED_EVENT_DETECTORS = (
+    "CamEventsDetector",
+    "ScheduleAlarmEventsDetector",
+    "ZoneEventsDetector",
+    "AttributeEventsDetector",
+    "SystemEventsDetector",
+)
+
+
 @dataclass(frozen=True)
 class EventDetectorContext:
     """Dependencies supplied to every event detector factory."""

@@ -94,6 +94,10 @@ EVILEYE_NON_INTERACTIVE=1 evileye pipeline restart configs/system.json
 
 `--json` включает `suggested_commands` и `command_catalog`.
 
+Для просмотра топологии, health модулей и настройки pipeline из SSH-консоли
+используйте [CLI_PIPELINE_COMMANDS.md](CLI_PIPELINE_COMMANDS.md):
+`evileye pipeline inspect`, `evileye pipeline configure` и `evileye plugin list`.
+
 ## `evileye web`
 
 | Подкоманда | Описание |

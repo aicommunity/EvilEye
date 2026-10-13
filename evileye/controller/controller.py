@@ -350,6 +350,99 @@ class Controller(ControllerProcessingMixin):
         if isinstance(controller, dict):
             controller["use_database"] = bool(self.use_database)
 
+    def _collect_runtime_telemetry(self) -> dict:
+        """Collect health already exposed by live pipeline/event components.
+
+        This method only reads runtime statistics. It must not construct
+        processors, sources, models, or workers: snapshots are also consumed by
+        read-only CLI inspection.
+        """
+        telemetry = {
+            "published_at": time.time(),
+            "modules": {},
+            "module_instances": {},
+            "stages": {},
+        }
+        pipeline_stats = {}
+        get_pipeline_stats = getattr(self.pipeline, "get_runtime_stats", None)
+        if callable(get_pipeline_stats):
+            try:
+                value = get_pipeline_stats()
+                if isinstance(value, dict):
+                    pipeline_stats = value
+            except Exception as exc:
+                telemetry["stages"]["pipeline"] = {
+                    "degraded": True,
+                    "last_error": f"pipeline runtime stats failed: {exc}",
+                }
+        for key in ("modules", "module_instances", "stages"):
+            value = pipeline_stats.get(key)
+            if isinstance(value, dict):
+                telemetry[key].update(value)
+
+        try:
+            event_detectors = self._events_service.get_all_detectors()
+            event_detectors = event_detectors if isinstance(event_detectors, dict) else {}
+            event_config = (self.params or {}).get("events_detectors", {})
+            event_config = event_config if isinstance(event_config, dict) else {}
+            configured = [name for name in event_config if name != "enabled"]
+            enabled = event_config.get("enabled")
+            if not isinstance(enabled, list):
+                from evileye.events_detectors.event_registry import DEFAULT_ENABLED_EVENT_DETECTORS
+
+                enabled = list(DEFAULT_ENABLED_EVENT_DETECTORS)
+            names = list(dict.fromkeys([*(str(name) for name in enabled), *(str(name) for name in configured)]))
+            seen_detectors: set[int] = set()
+            for index, name in enumerate(names):
+                detector = event_detectors.get(name)
+                if detector is None or id(detector) in seen_detectors:
+                    continue
+                seen_detectors.add(id(detector))
+                module_id = name
+                config = event_config.get(name)
+                if isinstance(config, dict):
+                    module_id = str(config.get("module_id") or name)
+                get_stats = getattr(detector, "get_runtime_stats", None)
+                try:
+                    stats = get_stats() if callable(get_stats) else {
+                        "state": "unknown",
+                        "diagnostic": "event detector does not expose runtime statistics",
+                    }
+                except Exception as exc:
+                    stats = {"degraded": True, "last_error": str(exc)}
+                if not isinstance(stats, dict):
+                    stats = {"state": "unknown", "diagnostic": "runtime statistics must be a mapping"}
+                telemetry["modules"][f"events/{module_id}"] = stats
+                telemetry["module_instances"][f"events:{index}:{module_id}"] = stats
+        except Exception as exc:
+            telemetry["stages"]["events"] = {
+                "degraded": True,
+                "last_error": f"event runtime stats failed: {exc}",
+            }
+
+        event_controller = getattr(self, "events_detectors_controller", None)
+        get_event_stats = getattr(event_controller, "get_runtime_stats", None)
+        if callable(get_event_stats):
+            try:
+                event_stats = get_event_stats()
+                if isinstance(event_stats, dict):
+                    telemetry["stages"]["events"] = {
+                        **telemetry["stages"].get("events", {}),
+                        **event_stats,
+                    }
+            except Exception as exc:
+                telemetry["stages"]["events"] = {
+                    **telemetry["stages"].get("events", {}),
+                    "degraded": True,
+                    "last_error": f"event controller runtime stats failed: {exc}",
+                }
+        telemetry["degraded"] = any(
+            isinstance(value, dict) and bool(value.get("degraded"))
+            for collection in (telemetry["modules"], telemetry["module_instances"], telemetry["stages"])
+            for value in collection.values()
+        )
+        return telemetry
+
     def _publish_runtime_snapshot(self, *, state: str | None = None) -> None:
         try:
             runtime_id = int(self.stream_pipeline_id)
@@ -394,6 +487,7 @@ class Controller(ControllerProcessingMixin):
                 config_path=getattr(self, "config_path", None),
                 config=params,
                 sources=sources_payload,
+                runtime_telemetry=self._collect_runtime_telemetry(),
                 module_state={
                     "pipeline_class": self.pipeline.__class__.__name__ if self.pipeline is not None else None,
                     "detector_count": len(getattr(self.pipeline, "detectors", []) or []),

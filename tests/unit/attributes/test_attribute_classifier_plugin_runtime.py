@@ -151,6 +151,7 @@ def test_attribute_classifier_plugin_uses_item_runtime(execution_mode):
     assert adapter.init() is True
     adapter.start()
     try:
+        assert adapter.is_ready(60), "classifier worker did not finish initialization"
         tracking_data = TrackingResultList()
         tracking_data.source_id = 3
         tracking_data.frame_id = 9
@@ -191,6 +192,7 @@ def test_attribute_classifier_runtime_preserves_shared_frame_handle(execution_mo
     assert adapter.init() is True
     adapter.start()
     try:
+        assert adapter.is_ready(60), "classifier worker did not finish initialization"
         tracking_data = TrackingResultList()
         tracking_data.source_id = 3
         tracking_data.frame_id = 9

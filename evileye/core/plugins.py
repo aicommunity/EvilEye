@@ -10,6 +10,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from importlib import metadata
 import inspect
+import math
 import threading
 from typing import Any, Callable, Iterable, Mapping, Sequence
 
@@ -31,6 +32,102 @@ MODULE_KINDS = frozenset(
     }
 )
 EXECUTION_MODES = frozenset({"thread", "process"})
+MODULE_RUNTIME_FIELDS = frozenset({
+    "type", "module_id", "execution_mode", "source_ids", "queue_size", "ipc_mode",
+    "enable", "logger_name", "worker_count", "config",
+})
+
+
+def _validate_json_schema(value: Any, schema: Mapping[str, Any], *, path: str = "") -> None:
+    """Validate the JSON-Schema subset used by module and pipeline forms.
+
+    The editor schemas use object/array/scalar types, enums, required keys,
+    numeric/string bounds, and ``additionalProperties``. Unknown properties
+    are deliberately retained whenever the schema permits them.
+    """
+    expected = schema.get("type")
+    if expected == "any" or expected is None:
+        pass
+    else:
+        expected_types = expected if isinstance(expected, (list, tuple)) else (expected,)
+        type_matches = any(_matches_json_type(value, str(type_name)) for type_name in expected_types)
+        if not type_matches:
+            label = " or ".join(str(item) for item in expected_types)
+            raise ValueError(f"{path or 'config'} must be {label}")
+
+    enum = schema.get("enum")
+    if isinstance(enum, (list, tuple)) and value not in enum:
+        raise ValueError(f"{path or 'config'} must be one of {', '.join(map(str, enum))}")
+
+    if isinstance(value, (int, float)) and not isinstance(value, bool):
+        if isinstance(value, float) and not math.isfinite(value):
+            raise ValueError(f"{path or 'config'} must be finite")
+        if "minimum" in schema and value < schema["minimum"]:
+            raise ValueError(f"{path or 'config'} must be >= {schema['minimum']}")
+        if "maximum" in schema and value > schema["maximum"]:
+            raise ValueError(f"{path or 'config'} must be <= {schema['maximum']}")
+        if "exclusiveMinimum" in schema and value <= schema["exclusiveMinimum"]:
+            raise ValueError(f"{path or 'config'} must be > {schema['exclusiveMinimum']}")
+        if "exclusiveMaximum" in schema and value >= schema["exclusiveMaximum"]:
+            raise ValueError(f"{path or 'config'} must be < {schema['exclusiveMaximum']}")
+    if isinstance(value, str):
+        if "minLength" in schema and len(value) < schema["minLength"]:
+            raise ValueError(f"{path or 'config'} must contain at least {schema['minLength']} characters")
+        if "maxLength" in schema and len(value) > schema["maxLength"]:
+            raise ValueError(f"{path or 'config'} must contain at most {schema['maxLength']} characters")
+
+    if isinstance(value, Mapping):
+        properties = schema.get("properties", {})
+        properties = properties if isinstance(properties, Mapping) else {}
+        for required_key in schema.get("required", ()):
+            if required_key not in value:
+                raise ValueError(f"{path or 'config'}.{required_key} is required")
+        additional = schema.get("additionalProperties", True)
+        for key, child in value.items():
+            child_schema = properties.get(key)
+            child_path = str(key) if not path else (
+                f"{path}.{key}" if path.startswith("config.") else f"config.{path}.{key}"
+            )
+            if child_schema is None:
+                if additional is False:
+                    raise ValueError(f"{child_path} is not allowed")
+                if isinstance(additional, Mapping):
+                    _validate_json_schema(child, additional, path=child_path)
+                continue
+            if isinstance(child_schema, Mapping):
+                _validate_json_schema(child, child_schema, path=child_path)
+        if not path and expected == "object" and not isinstance(value, Mapping):
+            raise ValueError("config must be object")
+
+    if isinstance(value, (list, tuple)):
+        if "minItems" in schema and len(value) < schema["minItems"]:
+            raise ValueError(f"{path or 'config'} must contain at least {schema['minItems']} items")
+        if "maxItems" in schema and len(value) > schema["maxItems"]:
+            raise ValueError(f"{path or 'config'} must contain at most {schema['maxItems']} items")
+        item_schema = schema.get("items")
+        if isinstance(item_schema, Mapping):
+            for index, item in enumerate(value):
+                _validate_json_schema(item, item_schema, path=f"{path or 'config'}[{index}]")
+
+
+def _matches_json_type(value: Any, type_name: str) -> bool:
+    if type_name == "any":
+        return True
+    if type_name == "null":
+        return value is None
+    if type_name == "object":
+        return isinstance(value, Mapping)
+    if type_name == "array":
+        return isinstance(value, (list, tuple))
+    if type_name == "boolean":
+        return isinstance(value, bool)
+    if type_name == "integer":
+        return isinstance(value, int) and not isinstance(value, bool)
+    if type_name == "number":
+        return isinstance(value, (int, float)) and not isinstance(value, bool)
+    if type_name == "string":
+        return isinstance(value, str)
+    return True
 
 
 class PluginError(RuntimeError):
@@ -67,6 +164,9 @@ class ModuleSpec:
     config_schema: Any = None
     legacy_ids: Sequence[str] = ()
     default_execution_mode: str | None = None
+    display_name: str | None = None
+    description: str | None = None
+    stages: Sequence[str] = ()
 
 
 @dataclass(frozen=True)
@@ -76,6 +176,10 @@ class PipelineSpec:
     pipeline_id: str
     factory: Callable[..., Any]
     legacy_ids: Sequence[str] = ()
+    display_name: str | None = None
+    description: str | None = None
+    config_schema: Any = None
+    topology_provider: Callable[[Mapping[str, Any]], Any] | None = None
 
 
 @dataclass(frozen=True)
@@ -276,7 +380,21 @@ class PluginRegistry:
         config_schema: Any = None,
         legacy_ids: Sequence[str] = (),
         default_execution_mode: str | None = None,
+        display_name: str | None = None,
+        description: str | None = None,
+        stages: Sequence[str] = (),
     ) -> None:
+        if display_name is None or description is None or config_schema is None or not stages:
+            from evileye.core.builtin_module_schemas import builtin_module_metadata
+
+            builtin_name, builtin_description, builtin_schema, builtin_stages = (
+                builtin_module_metadata(module_id)
+            )
+            display_name = display_name or builtin_name
+            description = description or builtin_description
+            if config_schema is None:
+                config_schema = builtin_schema
+            stages = stages or builtin_stages
         spec = ModuleSpec(
             module_id=module_id,
             kind=kind,
@@ -286,6 +404,9 @@ class PluginRegistry:
             config_schema=config_schema,
             legacy_ids=tuple(dict.fromkeys([module_id, *legacy_ids])),
             default_execution_mode=default_execution_mode,
+            display_name=display_name,
+            description=description,
+            stages=tuple(stages),
         )
         plugin = PluginSpec("evileye", PLUGIN_API_VERSION, modules=(spec,))
         self.register_plugin(plugin)
@@ -296,11 +417,30 @@ class PluginRegistry:
         factory: Callable[..., Any],
         *,
         legacy_ids: Sequence[str] = (),
+        display_name: str | None = None,
+        description: str | None = None,
+        config_schema: Any = None,
+        topology_provider: Callable[[Mapping[str, Any]], Any] | None = None,
     ) -> None:
+        if display_name is None or description is None or config_schema is None:
+            from evileye.core.builtin_module_schemas import builtin_pipeline_metadata
+
+            builtin_name, builtin_description, builtin_schema, builtin_topology = (
+                builtin_pipeline_metadata(pipeline_id)
+            )
+            display_name = display_name or builtin_name
+            description = description or builtin_description
+            if config_schema is None:
+                config_schema = builtin_schema
+            topology_provider = topology_provider or builtin_topology
         spec = PipelineSpec(
             pipeline_id=pipeline_id,
             factory=factory,
             legacy_ids=tuple(dict.fromkeys([pipeline_id, *legacy_ids])),
+            display_name=display_name,
+            description=description,
+            config_schema=config_schema,
+            topology_provider=topology_provider,
         )
         self.register_plugin(
             PluginSpec("evileye", PLUGIN_API_VERSION, pipelines=(spec,))
@@ -343,10 +483,30 @@ class PluginRegistry:
                 f"Configuration for module '{registered.qualified_id}' must be an object"
             )
         config_data = dict(config)
+        requested_mode = config_data.get("execution_mode")
+        if requested_mode is not None and requested_mode not in registered.spec.execution_modes:
+            raise PluginError(
+                f"Invalid configuration for module '{registered.qualified_id}': "
+                "execution_mode must be one of "
+                f"{', '.join(registered.spec.execution_modes)}"
+            )
         schema = registered.spec.config_schema
         if schema is None:
             return config_data
         try:
+            if isinstance(schema, Mapping):
+                schema = dict(schema)
+                properties = schema.get("properties")
+                if isinstance(properties, Mapping) and "execution_mode" in config_data:
+                    properties = dict(properties)
+                    mode_schema = properties.get("execution_mode")
+                    if isinstance(mode_schema, Mapping):
+                        mode_schema = dict(mode_schema)
+                        mode_schema["enum"] = list(registered.spec.execution_modes)
+                        properties["execution_mode"] = mode_schema
+                        schema["properties"] = properties
+                _validate_json_schema(config_data, schema)
+                return config_data
             if callable(getattr(schema, "model_validate", None)):
                 validated = schema.model_validate(config_data)
             elif callable(getattr(schema, "parse_obj", None)):
@@ -369,6 +529,48 @@ class PluginRegistry:
         except Exception as exc:
             raise PluginError(
                 f"Invalid configuration for module '{registered.qualified_id}': {exc}"
+            ) from exc
+
+    def validate_pipeline_config(
+        self, pipeline_id: str, config: Mapping[str, Any]
+    ) -> dict[str, Any]:
+        registered = self.get_pipeline(pipeline_id)
+        if registered is None:
+            raise PluginError(f"Unknown plugin pipeline '{pipeline_id}'")
+        if not isinstance(config, Mapping):
+            raise PluginError(
+                f"Configuration for pipeline '{registered.qualified_id}' must be an object"
+            )
+        config_data = dict(config)
+        schema = registered.spec.config_schema
+        if schema is None:
+            return config_data
+        try:
+            if isinstance(schema, Mapping):
+                _validate_json_schema(config_data, schema)
+                return config_data
+            if callable(getattr(schema, "model_validate", None)):
+                validated = schema.model_validate(config_data)
+            elif callable(getattr(schema, "parse_obj", None)):
+                validated = schema.parse_obj(config_data)
+            elif callable(schema):
+                validated = schema(config_data)
+            else:
+                raise TypeError("config_schema must be a JSON schema, Pydantic model, or validator")
+            if validated is None or validated is True:
+                return config_data
+            if validated is False:
+                raise ValueError("validator returned False")
+            if callable(getattr(validated, "model_dump", None)):
+                validated = validated.model_dump()
+            elif callable(getattr(validated, "dict", None)) and not isinstance(validated, Mapping):
+                validated = validated.dict()
+            if isinstance(validated, Mapping):
+                return dict(validated)
+            raise TypeError("validator must return a mapping, True, or None")
+        except Exception as exc:
+            raise PluginError(
+                f"Invalid configuration for pipeline '{registered.qualified_id}': {exc}"
             ) from exc
 
     def list_pipelines(self) -> list[str]:
@@ -469,6 +671,9 @@ def register_module(
     config_schema: Any = None,
     legacy_ids: Sequence[str] = (),
     default_execution_mode: str | None = None,
+    display_name: str | None = None,
+    description: str | None = None,
+    stages: Sequence[str] = (),
 ) -> Callable[[Callable[..., Any]], Callable[..., Any]]:
     """Decorator for builtin modules and simple in-process extensions."""
 
@@ -482,6 +687,9 @@ def register_module(
             config_schema=config_schema,
             legacy_ids=legacy_ids,
             default_execution_mode=default_execution_mode,
+            display_name=display_name,
+            description=description,
+            stages=stages,
         )
         return factory
 
@@ -490,11 +698,23 @@ def register_module(
 
 def register_pipeline(
     pipeline_id: str,
+    *,
+    display_name: str | None = None,
+    description: str | None = None,
+    config_schema: Any = None,
+    topology_provider: Callable[[Mapping[str, Any]], Any] | None = None,
 ) -> Callable[[Callable[..., Any]], Callable[..., Any]]:
     """Decorator for builtin pipeline classes or factories."""
 
     def decorate(factory: Callable[..., Any]) -> Callable[..., Any]:
-        plugin_registry.register_builtin_pipeline(pipeline_id, factory)
+        plugin_registry.register_builtin_pipeline(
+            pipeline_id,
+            factory,
+            display_name=display_name,
+            description=description,
+            config_schema=config_schema,
+            topology_provider=topology_provider,
+        )
         return factory
 
     return decorate

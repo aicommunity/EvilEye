@@ -22,9 +22,25 @@ available from `evileye.core.plugins`. Module ids are namespaced at runtime as
 `plugin_id/module_id`; use `legacy_ids` only when preserving an existing config
 name. A duplicate id or legacy alias, incompatible API version, import error,
 or invalid execution capability stops plugin loading with a diagnostic.
-`ModuleSpec.config_schema` accepts a Pydantic model or validator callable. A
-callable can return a normalized mapping, return `True`/`None` when the input is
-valid, or raise an exception with a validation message.
+`ModuleSpec` can also declare `display_name`, `description`, `stages`, and
+`config_schema`. The schema accepts a JSON Schema-compatible mapping, a Pydantic
+model, or a validator callable. A callable can return a normalized mapping,
+return `True`/`None` when the input is valid, or raise an exception with a
+validation message. A mapping or Pydantic model can power the SSH configuration
+form; callable-only validators are used for validation but are not editable as
+forms. Unknown properties are retained when the schema allows them.
+Schemas validate factory parameters. Runtime envelope fields such as
+`module_id`, `execution_mode`, `source_ids`, and `worker_count` are validated
+separately; strict module schemas do not need to allow them. The configuration
+wizard preserves an existing nested `config` payload and offers supported
+execution modes from the module manifest.
+
+`PipelineSpec` optionally accepts `display_name`, `description`,
+`config_schema`, and `topology_provider(config)`. A topology provider returns a
+`PipelineTopology` and describes declared connections without constructing
+runtime modules. A pipeline without one is shown as an opaque node. See
+[CLI_PIPELINE_COMMANDS.md](CLI_PIPELINE_COMMANDS.md) for inspection, export, and
+configuration examples.
 
 See [`examples/plugin_package`](../examples/plugin_package) for a minimal
 installable package.

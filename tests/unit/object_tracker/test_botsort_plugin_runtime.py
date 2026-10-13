@@ -111,6 +111,7 @@ def test_botsort_plugin_emits_empty_result_per_frame(execution_mode):
     assert adapter.init() is True
     adapter.start()
     try:
+        assert adapter.is_ready(60), "tracker worker did not finish initialization"
         frame = _frame(7, 1)
         frame.connection_generation = 3
         empty = DetectionResultList()
@@ -208,6 +209,7 @@ def test_botsort_plugin_process_serializes_live_tracking_output():
     assert adapter.init() is True
     adapter.start()
     try:
+        assert adapter.is_ready(60), "tracker worker did not finish initialization"
         frame = _frame(2, 1)
         frame.image = np.zeros((48, 48, 3), dtype=np.uint8)
         detection = DetectionResult()
@@ -288,6 +290,7 @@ def test_botsort_item_runtime_preserves_track_continuity(execution_mode):
     adapter.start()
     track_ids = []
     try:
+        assert adapter.is_ready(60), "tracker worker did not finish initialization"
         for frame_id in range(1, 6):
             x1 = 60 + frame_id * 3
             image = np.zeros((240, 320, 3), dtype=np.uint8)
@@ -360,6 +363,7 @@ def test_botsort_matches_legacy_frame_sequence_golden(execution_mode):
     ]
 
     try:
+        assert adapter.is_ready(60), "tracker worker did not finish initialization"
         for frame_id, position in enumerate(positions, 1):
             detections = DetectionResultList()
             detections.source_id = 1

@@ -166,7 +166,7 @@ def main():
     )
 
     try:
-        ret = run_config(args.config, gui=args.gui, autoclose=args.autoclose)
+        ret = run_config(config_path, gui=args.gui, autoclose=args.autoclose)
     except Exception as exc:
         update_runtime_snapshot(int(pipeline_id), state="error", error=str(exc))
         mark_runtime_stopped(int(pipeline_id), error=str(exc))

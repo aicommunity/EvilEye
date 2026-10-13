@@ -59,12 +59,15 @@ COMMAND_POLICIES: dict[str, CommandInteractionPolicy] = {
     "service restart": CommandInteractionPolicy(confirmation="Перезапустить веб-службу?"),
     "service status": CommandInteractionPolicy(),
     "pipeline status": CommandInteractionPolicy(),
+    "pipeline inspect": CommandInteractionPolicy(),
+    "pipeline configure": CommandInteractionPolicy(),
     "pipeline stop": CommandInteractionPolicy(wizard="pipeline-stop"),
     "pipeline start": CommandInteractionPolicy(wizard="pipeline-config"),
     "pipeline restart": CommandInteractionPolicy(
         wizard="pipeline-config", confirmation="Перезапустить pipeline?"
     ),
     "plugin templates": CommandInteractionPolicy(),
+    "plugin list": CommandInteractionPolicy(),
     "plugin create": CommandInteractionPolicy(wizard="plugin-create"),
     "reload web": CommandInteractionPolicy(confirmation="Перезапустить веб-слой?"),
     "reload backend": CommandInteractionPolicy(confirmation="Перезапустить backend?"),
