@@ -12,6 +12,13 @@ from evileye.cli_commands.console import console
 app = typer.Typer(help="Web UI build and dependency management")
 
 
+@app.callback(invoke_without_command=True)
+def web_root(ctx: typer.Context) -> None:
+    from evileye.cli_interactive import handle_group_root
+
+    handle_group_root(ctx, "web")
+
+
 def _print_web_setup_failures(report) -> None:
     for item in report.items:
         if item.ok:
@@ -98,7 +105,11 @@ def web_deps(
         console.print("[red]--scope must be 'user' or 'system'[/red]")
         raise typer.Exit(1)
     if scope_norm == "system":
-        if not typer.confirm("Install missing Python packages system-wide with sudo?", default=False):
+        from evileye.cli_interactive import interactive_available
+
+        if not interactive_available() or not typer.confirm(
+            "Install missing Python packages system-wide with sudo?", default=False
+        ):
             raise typer.Exit(1)
     result = sw.ensure_web_environment(
         scope=scope_norm,

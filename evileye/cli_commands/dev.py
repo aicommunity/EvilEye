@@ -17,8 +17,9 @@ app = typer.Typer(help="Development workflows")
 @app.callback(invoke_without_command=True)
 def dev_root(ctx: typer.Context) -> None:
     if ctx.invoked_subcommand is None:
-        console.print("Usage: evileye dev server")
-        raise typer.Exit(2)
+        from evileye.cli_interactive import handle_group_root
+
+        handle_group_root(ctx, "dev", fallback="Usage: evileye dev server")
 
 
 @app.command("server")

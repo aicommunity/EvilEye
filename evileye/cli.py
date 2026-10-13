@@ -570,6 +570,26 @@ register_stack_commands(app)
 console = Console()
 
 
+@app.callback(invoke_without_command=True)
+def cli_root(
+    ctx: typer.Context,
+    no_interactive: bool = typer.Option(
+        False,
+        "--no-interactive",
+        "--nit",
+        help="Disable menus and prompts (also accepted after the command).",
+    ),
+) -> None:
+    """Open the command picker only for a bare invocation in a TTY."""
+    if ctx.invoked_subcommand is not None:
+        return
+    from evileye.cli_interactive import interactive_available, no_command_fallback, run_command_menu
+
+    if interactive_available():
+        run_command_menu(ctx)
+    no_command_fallback(ctx)
+
+
 def setup_logging(verbose: bool = False) -> None:
     """Setup logging configuration"""
     level = "DEBUG" if verbose else "INFO"
@@ -596,6 +616,33 @@ def run(
         evileye run configs/test_sources_detectors_trackers_mc.json
         evileye run --video /path/to/video.mp4
     """
+    from evileye.cli_interactive import (
+        interactive_available,
+        prompt_choice,
+        prompt_config_path,
+        prompt_text,
+    )
+
+    # A bare `run` in a terminal is the guided entry to pipeline execution.
+    # Piped/scripted invocations retain the existing default-config behavior.
+    if not config and not video and interactive_available():
+        from evileye.cli_interactive import InteractiveInputError
+
+        try:
+            mode = prompt_choice(
+                "Что запустить?",
+                [("config", "Пайплайн из конфигурации"), ("video", "Обработать видеофайл")],
+            )
+            if mode == "config":
+                config = Path(prompt_config_path())
+            else:
+                video = prompt_text("Путь к видео")
+                if not video:
+                    raise InteractiveInputError("Путь к видео не указан.")
+        except InteractiveInputError as exc:
+            console.print(f"[yellow]{exc}[/yellow]")
+            raise typer.Exit(2) from exc
+
     # Setup logging
     setup_logging(verbose=verbose)
     logger = get_module_logger("cli")
@@ -775,8 +822,8 @@ def start_api(
 
 @app.command()
 def validate(
-        config: Path = typer.Argument(
-            ...,
+        config: Optional[Path] = typer.Argument(
+            None,
             help="Path to configuration JSON file",
             file_okay=True,
             dir_okay=False,
@@ -789,6 +836,22 @@ def validate(
         evileye validate single_cam.json
         evileye validate configs/single_cam.json
     """
+    if config is None:
+        from evileye.cli_interactive import (
+            InteractiveInputError,
+            interactive_available,
+            prompt_config_path,
+        )
+
+        if not interactive_available():
+            console.print("[red]Configuration path is required.[/red]")
+            raise typer.Exit(2)
+        try:
+            config = Path(prompt_config_path())
+        except InteractiveInputError as exc:
+            console.print(f"[yellow]{exc}[/yellow]")
+            raise typer.Exit(2) from exc
+
     try:
         # Normalize config path
         normalized_config = Path(normalize_config_path(config))
@@ -1359,6 +1422,14 @@ def create(
     import json
     from pathlib import Path
     from evileye.controller.controller import Controller
+    from evileye.cli_interactive import (
+        InteractiveInputError,
+        interactive_available,
+        prompt_choice,
+        prompt_integer,
+        prompt_text,
+        selected_from_menu,
+    )
 
     # Handle list pipelines
     if list_pipelines:
@@ -1389,10 +1460,34 @@ def create(
 
     # Validate config_name is provided when not listing pipelines
     if not config_name:
-        console.print("[red]Configuration name is required![/red]")
-        console.print("[yellow]Usage: evileye create <config_name>[/yellow]")
-        console.print("[yellow]Use --help for more information.[/yellow]")
-        raise typer.Exit(1)
+        if not interactive_available():
+            console.print("[red]Configuration name is required![/red]")
+            console.print("[yellow]Usage: evileye create <config_name>[/yellow]")
+            console.print("[yellow]Use --help for more information.[/yellow]")
+            raise typer.Exit(1)
+        try:
+            config_name = prompt_text("Имя новой конфигурации")
+        except InteractiveInputError as exc:
+            console.print(f"[yellow]{exc}[/yellow]")
+            raise typer.Exit(2) from exc
+        if not config_name:
+            raise typer.Exit(2)
+
+    guided = interactive_available() and (sources <= 0 or selected_from_menu())
+    if guided:
+        try:
+            sources = prompt_integer("Количество видеоисточников", default=max(sources, 1))
+            if sources < 1:
+                console.print("[yellow]Нужно выбрать хотя бы один источник.[/yellow]")
+                raise typer.Exit(2)
+            available_pipelines = Controller().get_available_pipeline_classes()
+            if available_pipelines:
+                options = [(name, name) for name in available_pipelines]
+                default_pipeline = pipeline if pipeline in available_pipelines else None
+                pipeline = prompt_choice("Класс пайплайна", options, default=default_pipeline)
+        except InteractiveInputError as exc:
+            console.print(f"[yellow]{exc}[/yellow]")
+            raise typer.Exit(2) from exc
 
     # Ensure output directory exists
     os.makedirs(output_dir, exist_ok=True)
@@ -1405,9 +1500,15 @@ def create(
 
     # Check if file already exists
     if os.path.exists(output_path) and not force:
-        console.print(f"[red]Configuration file '{output_path}' already exists![/red]")
-        console.print("[yellow]Use --force to overwrite or choose a different name.[/yellow]")
-        raise typer.Exit(1)
+        if selected_from_menu() and interactive_available():
+            if not typer.confirm(f"Файл {output_path} уже существует. Перезаписать?", default=False):
+                console.print("[dim]Создание отменено.[/dim]")
+                raise typer.Exit(0)
+            force = True
+        else:
+            console.print(f"[red]Configuration file '{output_path}' already exists![/red]")
+            console.print("[yellow]Use --force to overwrite or choose a different name.[/yellow]")
+            raise typer.Exit(1)
 
     # Build optional parameters
     detector_params = {}
@@ -1545,7 +1646,20 @@ def get_config_description(config_file: Path) -> str:
 
 def main() -> None:
     """Main entry point for CLI"""
-    app()
+    from evileye.cli_interactive import NON_INTERACTIVE_ENV, strip_non_interactive_flags
+
+    argv, forced_non_interactive = strip_non_interactive_flags(sys.argv[1:])
+    old_value = os.environ.get(NON_INTERACTIVE_ENV)
+    if forced_non_interactive:
+        os.environ[NON_INTERACTIVE_ENV] = "1"
+    try:
+        app(args=argv)
+    finally:
+        if forced_non_interactive:
+            if old_value is None:
+                os.environ.pop(NON_INTERACTIVE_ENV, None)
+            else:
+                os.environ[NON_INTERACTIVE_ENV] = old_value
 
 
 if __name__ == "__main__":

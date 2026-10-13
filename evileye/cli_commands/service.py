@@ -13,6 +13,13 @@ from evileye.cli_commands.web import ensure_web_environment_for_server as _ensur
 app = typer.Typer(help="OS web service install and lifecycle")
 
 
+@app.callback(invoke_without_command=True)
+def service_root(ctx: typer.Context) -> None:
+    from evileye.cli_interactive import handle_group_root
+
+    handle_group_root(ctx, "service")
+
+
 @app.command("install")
 def service_install(
     config: Optional[Path] = typer.Argument(
@@ -40,6 +47,7 @@ def service_install(
     from evileye.site_profile import save_profile
     from evileye.utils.tls_cert import TlsCertError
     from evileye.utils.tls_deploy_wizard import print_https_hints, run_tls_deploy_step
+    from evileye.cli_interactive import interactive_available
 
     site_dir = Path.cwd()
     cfg = str(config) if config is not None else None
@@ -58,7 +66,7 @@ def service_install(
             site_dir=site_dir,
             console=console,
             no_tls=no_tls,
-            non_interactive=non_interactive,
+            non_interactive=non_interactive or not interactive_available(),
             tls_self_signed=tls_self_signed,
             tls_ips=tls_ip or [],
             tls_dns=tls_dns or [],

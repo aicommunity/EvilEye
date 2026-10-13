@@ -16,25 +16,51 @@ app = typer.Typer(help="Production site bootstrap and operations")
 @app.callback(invoke_without_command=True)
 def prod_root(ctx: typer.Context) -> None:
     if ctx.invoked_subcommand is None:
-        console.print("Usage: evileye prod [init|up|down|restart]")
-        raise typer.Exit(2)
+        from evileye.cli_interactive import handle_group_root
+
+        handle_group_root(ctx, "prod", fallback="Usage: evileye prod [init|up|down|restart]")
 
 
 @app.command("init")
 def prod_init(
-    config: Path = typer.Argument(..., help="Production config path"),
+    config: Path | None = typer.Argument(None, help="Production config path"),
     install_watchdog: bool = typer.Option(True, "--watchdog/--no-watchdog"),
 ) -> None:
     """Deploy site files, install web service, optional watchdog, save profile."""
     from evileye.site_profile import save_profile
     from evileye.watchdog_native import install_watchdog
 
+    if config is None:
+        from evileye.cli_interactive import (
+            InteractiveInputError,
+            interactive_available,
+            prompt_config_path,
+        )
+
+        if not interactive_available():
+            console.print("[red]Production config path is required.[/red]")
+            raise typer.Exit(2)
+        try:
+            config = Path(prompt_config_path("конфигурация"))
+        except InteractiveInputError as exc:
+            console.print(f"[yellow]{exc}[/yellow]")
+            raise typer.Exit(2) from exc
+
+    from evileye.cli_interactive import child_cli_environment
+
     site_dir = Path.cwd()
-    subprocess.run([sys.executable, "-m", "evileye.cli_wrapper", "deploy"], check=True, cwd=str(site_dir))
+    child_env = child_cli_environment()
+    subprocess.run(
+        [sys.executable, "-m", "evileye.cli_wrapper", "deploy"],
+        check=True,
+        cwd=str(site_dir),
+        env=child_env,
+    )
     subprocess.run(
         [sys.executable, "-m", "evileye.cli_wrapper", "service", "install", str(config)],
         check=True,
         cwd=str(site_dir),
+        env=child_env,
     )
     cfg = str(config)
     save_profile(

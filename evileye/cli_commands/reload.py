@@ -15,8 +15,9 @@ app = typer.Typer(help="Ordered stack reload operations")
 @app.callback(invoke_without_command=True)
 def reload_root(ctx: typer.Context) -> None:
     if ctx.invoked_subcommand is None:
-        console.print("Usage: evileye reload [web|backend|pipeline]")
-        raise typer.Exit(2)
+        from evileye.cli_interactive import handle_group_root
+
+        handle_group_root(ctx, "reload", fallback="Usage: evileye reload [web|backend|pipeline]")
 
 
 @app.command("web")
@@ -31,6 +32,22 @@ def reload_web_cmd(
     ),
 ) -> None:
     from evileye.stack_control import reload_web
+    if with_pipeline and config is None:
+        from evileye.cli_interactive import (
+            InteractiveInputError,
+            resolve_pipeline_config_for_cli,
+        )
+
+        try:
+            config = resolve_pipeline_config_for_cli(
+                site_dir=Path.cwd(), explicit=None, allow_running=True
+            )
+        except InteractiveInputError as exc:
+            console.print(f"[yellow]{exc}[/yellow]")
+            raise typer.Exit(2) from exc
+        except Exception as exc:
+            console.print(f"[red]{exc}[/red]")
+            raise typer.Exit(1) from exc
 
     result = reload_web(
         site_dir=Path.cwd(),
@@ -81,6 +98,7 @@ def reload_pipeline_cmd(
 ) -> None:
     """Restart pipeline only (alias of `evileye pipeline restart`)."""
     from evileye.cli_commands.pipeline_common import resolve_and_restart_pipeline
+    from evileye.cli_interactive import InteractiveInputError
     from evileye.stack_control import AmbiguousPipelineConfigError
 
     try:
@@ -94,6 +112,9 @@ def reload_pipeline_cmd(
     except AmbiguousPipelineConfigError as exc:
         console.print(f"[red]{exc}[/red]")
         raise typer.Exit(1)
+    except InteractiveInputError as exc:
+        console.print(f"[yellow]{exc}[/yellow]")
+        raise typer.Exit(2) from exc
     except Exception as exc:
         console.print(f"[red]{exc}[/red]")
         raise typer.Exit(1)

@@ -18,8 +18,15 @@ from evileye.cli_commands.plugin_scaffold import (
 
 app = typer.Typer(
     help="Create third-party plugin packages for EvilEye.",
-    no_args_is_help=True,
+    no_args_is_help=False,
 )
+
+
+@app.callback(invoke_without_command=True)
+def plugin_root(ctx: typer.Context) -> None:
+    from evileye.cli_interactive import handle_group_root
+
+    handle_group_root(ctx, "plugin")
 
 
 @app.command("templates")
@@ -35,7 +42,7 @@ def list_templates() -> None:
 
 @app.command("create")
 def create(
-    name: str = typer.Argument(..., help="New plugin directory/name, e.g. site-safety"),
+    name: str = typer.Argument(None, help="New plugin directory/name, e.g. site-safety"),
     template: str = typer.Option(
         "processor",
         "--template",
@@ -50,6 +57,23 @@ def create(
     ),
 ) -> None:
     """Create a ready-to-edit plugin package without overwriting existing files."""
+    if not name:
+        from evileye.cli_interactive import (
+            InteractiveInputError,
+            interactive_available,
+            prompt_text,
+        )
+
+        if not interactive_available():
+            console.print("[red]Plugin name is required.[/red]")
+            raise typer.Exit(2)
+        try:
+            name = prompt_text("Имя нового плагина")
+        except InteractiveInputError as exc:
+            console.print(f"[yellow]{exc}[/yellow]")
+            raise typer.Exit(2) from exc
+        if not name:
+            raise typer.Exit(2)
     try:
         destination = create_plugin_project(name, output_dir, template)
         _, plugin_id = normalize_plugin_name(name)

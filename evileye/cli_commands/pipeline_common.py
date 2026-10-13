@@ -16,10 +16,11 @@ def resolve_and_restart_pipeline(
     detach: bool,
     gui: Optional[bool],
 ) -> SpawnResult:
-    from evileye.stack_control import pipeline_restart, require_pipeline_config
+    from evileye.stack_control import pipeline_restart
+    from evileye.cli_interactive import resolve_pipeline_config_for_cli
 
-    resolved = require_pipeline_config(
-        site_dir,
+    resolved = resolve_pipeline_config_for_cli(
+        site_dir=site_dir,
         explicit=explicit_config,
         allow_running=True,
     )
