@@ -125,6 +125,48 @@ def test_every_registered_group_opens_its_own_menu(monkeypatch):
     subprocess_run.assert_not_called()
 
 
+@pytest.mark.parametrize(
+    "command_path",
+    [path.split() for path, policy in COMMAND_POLICIES.items() if policy.menu],
+)
+def test_every_public_leaf_routes_to_its_existing_cli_command(monkeypatch, command_path):
+    import evileye.cli_interactive as interactive
+
+    monkeypatch.setattr(interactive, "_menu_arguments", lambda _path: [])
+    monkeypatch.setattr(interactive, "confirm_action", lambda _message, default=False: True)
+    subprocess_run = Mock(return_value=SimpleNamespace(returncode=0))
+    monkeypatch.setattr(interactive.subprocess, "run", subprocess_run)
+
+    result = interactive._dispatch(command_path)
+
+    assert result == 0
+    args = subprocess_run.call_args.args[0]
+    assert args[-len(command_path):] == command_path
+    assert subprocess_run.call_args.kwargs["env"][interactive.MENU_SELECTION_ENV] == "1"
+
+
+@pytest.mark.parametrize(
+    "command_path,message",
+    [
+        (path.split(), policy.confirmation)
+        for path, policy in COMMAND_POLICIES.items()
+        if policy.menu and policy.confirmation
+    ],
+)
+def test_declining_each_menu_confirmation_prevents_dispatch(monkeypatch, command_path, message):
+    import evileye.cli_interactive as interactive
+
+    monkeypatch.setattr(interactive, "_menu_arguments", lambda _path: [])
+    confirm = Mock(return_value=False)
+    monkeypatch.setattr(interactive, "confirm_action", confirm)
+    subprocess_run = Mock()
+    monkeypatch.setattr(interactive.subprocess, "run", subprocess_run)
+
+    assert interactive._dispatch(command_path) == 0
+    confirm.assert_called_once_with(message, default=False)
+    subprocess_run.assert_not_called()
+
+
 def test_declining_menu_confirmation_has_no_side_effect(monkeypatch):
     import evileye.cli_interactive as interactive
 
@@ -176,6 +218,26 @@ def test_tty_config_create_prompts_for_name_and_required_source_count(tmp_path: 
     created = json.loads((tmp_path / "configs" / "guided-config.json").read_text())
     assert created["num_sources"] == 2
     assert created["pipeline_class"] == "PipelineSurveillance"
+
+
+def test_complete_create_invocation_does_not_open_a_wizard(tmp_path: Path, monkeypatch):
+    import evileye.cli_interactive as interactive
+    import evileye.controller.controller as controller_module
+
+    class FakeController:
+        def create_config(self, **kwargs):
+            return kwargs
+
+    monkeypatch.setattr(controller_module, "Controller", FakeController)
+    monkeypatch.setattr(interactive, "interactive_available", lambda: True)
+    monkeypatch.setattr(interactive, "prompt_text", Mock(side_effect=AssertionError("unexpected prompt")))
+    monkeypatch.setattr(interactive, "prompt_integer", Mock(side_effect=AssertionError("unexpected prompt")))
+    monkeypatch.chdir(tmp_path)
+
+    result = runner.invoke(app, ["create", "direct-config", "--sources", "2"])
+
+    assert result.exit_code == 0, result.output
+    assert (tmp_path / "configs" / "direct-config.json").is_file()
 
 
 def test_prompt_helpers_report_eof_and_interrupt_as_cancelled(monkeypatch):
@@ -259,6 +321,48 @@ def test_pipeline_stop_uses_interactive_target_picker(tmp_path: Path, monkeypatc
     assert "321" in result.output
     assert stop.call_args.kwargs["config"] == "configs/current.json"
     assert stop.call_args.kwargs["stop_all"] is False
+
+
+@pytest.mark.parametrize("operation", ["start", "restart"])
+def test_pipeline_start_and_restart_prompt_only_after_resolution_fails(monkeypatch, operation):
+    import evileye.cli_interactive as interactive
+    import evileye.stack_control as stack_control
+
+    monkeypatch.setattr(interactive, "interactive_available", lambda: True)
+    monkeypatch.setattr(interactive, "prompt_config_path", lambda label="": "configs/selected.json")
+    require = Mock(side_effect=[FileNotFoundError("no implicit config"), "configs/selected.json"])
+    monkeypatch.setattr(stack_control, "require_pipeline_config", require)
+    spawn = stack_control.SpawnResult(pid=321, mode="managed", config_path="configs/selected.json")
+    monkeypatch.setattr(stack_control, "pipeline_start", Mock(return_value=spawn))
+    monkeypatch.setattr(stack_control, "pipeline_restart", Mock(return_value=spawn))
+    monkeypatch.setattr(stack_control, "should_use_managed_launch", lambda _path: True)
+
+    result = runner.invoke(app, ["pipeline", operation])
+
+    assert result.exit_code == 0, result.output
+    assert require.call_count == 2
+    assert require.call_args_list[-1].kwargs["explicit"] == "configs/selected.json"
+
+
+def test_prod_init_prompts_for_config_and_propagates_noninteractive_to_children(
+    monkeypatch,
+):
+    import evileye.cli_interactive as interactive
+    import evileye.cli_commands.prod as prod
+
+    run = Mock()
+    monkeypatch.setattr(prod.subprocess, "run", run)
+    monkeypatch.setattr("evileye.site_profile.save_profile", Mock())
+    monkeypatch.setattr("evileye.watchdog_native.install_watchdog", Mock())
+    monkeypatch.setattr(interactive, "interactive_available", lambda: True)
+    monkeypatch.setattr(interactive, "prompt_config_path", lambda label="": "configs/prod.json")
+
+    result = runner.invoke(app, ["--nit", "prod", "init"])
+
+    assert result.exit_code == 0, result.output
+    assert run.call_count == 2
+    assert all(call.kwargs["env"][NON_INTERACTIVE_ENV] == "1" for call in run.call_args_list)
+    assert run.call_args_list[1].args[0][-1].replace(chr(92), "/") == "configs/prod.json"
 
 
 @pytest.mark.parametrize(
