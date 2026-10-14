@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState, type ReactNode } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import {
   configsList,
   configGet,
@@ -86,7 +86,15 @@ function moduleCandidates(modules: ExtensionModule[], kind: string, stage: strin
     if (stage === 'step') return true;
     if (stage === 'frame') return !module.stages.length || module.stages.some((item) => ['frame', 'preprocessors', 'preprocessor'].includes(item));
     return !module.stages.length || module.stages.includes(stage);
+  }).sort((left, right) => {
+    const pluginOrder = Number(left.plugin_id === 'evileye') - Number(right.plugin_id === 'evileye');
+    return pluginOrder || left.display_name.localeCompare(right.display_name) || left.id.localeCompare(right.id);
   });
+}
+
+function moduleOptionLabel(module: ExtensionModule, translate: (key: string) => string): string {
+  const marker = module.plugin_id === 'evileye' ? '' : `${translate('builder.pluginMarker')} · `;
+  return `${marker}${module.display_name} · ${module.id}`;
 }
 
 function moduleDefaults(module: ExtensionModule): JsonObject {
@@ -327,7 +335,7 @@ function ModuleListEditor({
     <div className="toolbar extension-add-row">
       <select aria-label={t('builder.chooseModule')} value={selected} onChange={(event) => setSelected(event.target.value)}>
         <option value="">{t('builder.chooseModule')}</option>
-        {candidates.map((module) => <option key={module.id} value={module.id}>{module.display_name} · {module.id}</option>)}
+        {candidates.map((module) => <option key={module.id} value={module.id}>{moduleOptionLabel(module, t)}</option>)}
       </select>
       <Button variant="primary" onClick={add} disabled={!selected || (maxItems !== undefined && items.length >= maxItems)}>{t('builder.addModule')}</Button>
       {!candidates.length ? <span className="hint">{t('builder.noModules')}</span> : null}
@@ -535,7 +543,7 @@ function EventRulesEditor({ config, setConfig, modules, defaultEnabled }: { conf
     })}
     <div className="toolbar extension-add-row">
       <select value={selected} onChange={(event) => setSelected(event.target.value)}><option value="">{t('builder.chooseModule')}</option>
-        {candidates.map((module) => <option key={module.id} value={module.id}>{module.display_name} · {module.id}</option>)}
+        {candidates.map((module) => <option key={module.id} value={module.id}>{moduleOptionLabel(module, t)}</option>)}
       </select>
       <Button variant="primary" onClick={() => { add(selected); setSelected(''); }} disabled={!selected}>{t('builder.addRule')}</Button>
       {!candidates.length ? <span className="hint">{t('builder.noEventModules')}</span> : null}
@@ -624,7 +632,7 @@ function OpaqueConfigEditor({
   </div>;
 }
 
-function PluginWorkshop({ catalog }: { catalog: ExtensionCatalog }) {
+function PluginWorkshop({ catalog, onPluginReady }: { catalog: ExtensionCatalog; onPluginReady: () => void }) {
   const { t } = useI18n();
   const [name, setName] = useState('');
   const [template, setTemplate] = useState(catalog.templates[0]?.id || 'processor');
@@ -633,6 +641,7 @@ function PluginWorkshop({ catalog }: { catalog: ExtensionCatalog }) {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
   const [pollingFailed, setPollingFailed] = useState(false);
+  const refreshedOperations = useRef(new Set<string>());
   useEffect(() => {
     void extensionsApi.operations().then((items) => {
       setRecentOperations(items);
@@ -662,6 +671,12 @@ function PluginWorkshop({ catalog }: { catalog: ExtensionCatalog }) {
     return () => window.clearInterval(timer);
   }, [operation]);
 
+  useEffect(() => {
+    if (operation?.status !== 'completed' || refreshedOperations.current.has(operation.id)) return;
+    refreshedOperations.current.add(operation.id);
+    onPluginReady();
+  }, [operation, onPluginReady]);
+
   const create = async () => {
     setBusy(true);
     setError('');
@@ -678,6 +693,21 @@ function PluginWorkshop({ catalog }: { catalog: ExtensionCatalog }) {
   };
   return <div className="extension-builder-content">
     <p className="hint">{t('builder.pluginHint')}</p>
+    <section className="extension-panel">
+      <div className="extension-section-heading">
+        <h3>{t('builder.installedExtensions', { count: catalog.modules.filter((module) => module.plugin_id !== 'evileye').length + catalog.pipelines.filter((pipeline) => pipeline.plugin_id !== 'evileye').length })}</h3>
+      </div>
+      {catalog.modules.some((module) => module.plugin_id !== 'evileye') || catalog.pipelines.some((pipeline) => pipeline.plugin_id !== 'evileye') ? <ul className="extension-installed-list">
+        {catalog.modules.filter((module) => module.plugin_id !== 'evileye').map((module) => <li key={module.id}>
+          <strong>{module.display_name}</strong> <code>{module.id}</code><span>{t(`builder.moduleKind.${module.kind}`)}</span>
+          <small>{t('builder.modulePlacement', { placement: modulePlacement(module, t) })}</small>
+        </li>)}
+        {catalog.pipelines.filter((pipeline) => pipeline.plugin_id !== 'evileye').map((pipeline) => <li key={pipeline.id}>
+          <strong>{pipeline.display_name}</strong> <code>{pipeline.config_id}</code><span>{t('builder.moduleKind.pipeline')}</span>
+          <small>{t('builder.pipelinePlacement')}</small>
+        </li>)}
+      </ul> : <p className="hint">{t('builder.noInstalledExtensions')}</p>}
+    </section>
     <div className="extension-panel">
       <div className="extension-form-grid">
         <Field label={t('builder.pluginName')} hint={t('builder.pluginNameHint')}>
@@ -715,6 +745,22 @@ function PluginWorkshop({ catalog }: { catalog: ExtensionCatalog }) {
   </div>;
 }
 
+function modulePlacement(module: ExtensionModule, translate: (key: string) => string): string {
+  if (module.kind === 'event_detector' || module.kind === 'alarm_detector') return translate('builder.placement.events');
+  if (module.kind === 'source') return translate('builder.placement.sources');
+  if (module.kind === 'batch_processor') return translate('builder.placement.mc_trackers');
+  const stageLabels: Record<string, string> = {
+    preprocessors: 'builder.placement.preprocessors',
+    detectors: 'builder.placement.detectors',
+    trackers: 'builder.placement.trackers',
+    mc_trackers: 'builder.placement.mc_trackers',
+    attributes_roi: 'builder.placement.attributes_roi',
+    attributes_classifier: 'builder.placement.attributes_classifier',
+  };
+  if (module.stages.length) return module.stages.map((stage) => stageLabels[stage] ? translate(stageLabels[stage]) : stage).join(', ');
+  return translate('builder.placement.processor');
+}
+
 export function ExtensionsPage() {
   const { authEnabled, user } = useAuth();
   const { t } = useI18n();
@@ -731,7 +777,20 @@ export function ExtensionsPage() {
   const [notice, setNotice] = useState('');
   const [review, setReview] = useState(false);
   const [preview, setPreview] = useState<PipelinePreview | null>(null);
+  const [catalogRefreshing, setCatalogRefreshing] = useState(false);
   const pipeline = useMemo(() => catalog?.pipelines.find((item) => item.config_id === pipelineId) || null, [catalog, pipelineId]);
+
+  const refreshCatalog = useCallback(async () => {
+    setCatalogRefreshing(true);
+    try {
+      setCatalog(await extensionsApi.catalog());
+      setError('');
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : String(reason));
+    } finally {
+      setCatalogRefreshing(false);
+    }
+  }, []);
 
   useEffect(() => {
     if (!authEnabled || user?.role !== 'admin') return;
@@ -833,6 +892,10 @@ export function ExtensionsPage() {
     {notice ? <div className="extension-alert extension-alert-success">{notice}</div> : null}
 
     {tab === 'pipeline' ? <>
+      <div className="extension-catalog-toolbar">
+        <p className="hint">{t('builder.moduleCatalogHint')}</p>
+        <Button onClick={() => void refreshCatalog()} disabled={catalogRefreshing}>{catalogRefreshing ? t('builder.refreshingCatalog') : t('builder.refreshCatalog')}</Button>
+      </div>
       <section className="extension-panel">
         <div className="extension-config-header">
           <Field label={t('builder.configToEdit')}>
@@ -862,6 +925,6 @@ export function ExtensionsPage() {
         <div className="toolbar"><Button variant="primary" onClick={() => void save()} disabled={busy}>{t('builder.confirmSave')}</Button>
           <Button onClick={() => setReview(false)}>{t('builder.cancel')}</Button></div>
       </section> : null}
-    </> : <section className="extension-panel"><PluginWorkshop catalog={catalog} /></section>}
+    </> : <section className="extension-panel"><PluginWorkshop catalog={catalog} onPluginReady={() => void refreshCatalog()} /></section>}
   </div>;
 }

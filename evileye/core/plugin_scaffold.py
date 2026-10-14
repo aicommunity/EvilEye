@@ -55,6 +55,7 @@ class ExampleProcessor:
         "module_file": "detector",
         "class_name": "ExampleDetector",
         "kind": "processor_item",
+        "stages": ("detectors",),
         "execution_modes": ("thread", "process"),
         "default_mode": "thread",
         "capabilities": (),
@@ -156,6 +157,7 @@ class ExampleAlarmRule:
         "module_file": "source",
         "class_name": "SyntheticSource",
         "kind": "source",
+        "stages": ("sources", "source"),
         "execution_modes": ("thread", "process"),
         "default_mode": "thread",
         "capabilities": (),
@@ -335,6 +337,11 @@ def load_plugin():
             if default_mode
             else ""
         )
+        stages_line = (
+            f'                stages={tuple(template["stages"])!r},\n'
+            if template.get("stages")
+            else ""
+        )
         body = f'''
 from evileye.core.plugins import (
     ModuleSpec,
@@ -357,6 +364,7 @@ def load_plugin():
                 capabilities={capabilities},
                 config_schema={template["config_schema"]!r},
 {default_line.rstrip()}
+{stages_line.rstrip()}
             ),
         ),
     )
