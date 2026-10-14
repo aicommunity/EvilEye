@@ -12,6 +12,7 @@ import {
 import { Button } from '../../components/ui';
 import { useAuth } from '../../auth/AuthContext';
 import { useI18n } from '../../i18n';
+import { schemaDefaults, schemaFieldValue } from './schemaDefaults';
 
 type JsonObject = Record<string, any>;
 type BuilderTab = 'pipeline' | 'plugins';
@@ -52,18 +53,6 @@ function pipelineOf(config: JsonObject): JsonObject {
 function updatePipeline(config: JsonObject, update: (pipeline: JsonObject) => JsonObject): JsonObject {
   if (isObject(config.pipeline)) return { ...config, pipeline: update(config.pipeline) };
   return update(config);
-}
-
-function schemaDefaults(schema?: Schema | null): JsonObject {
-  const result: JsonObject = {};
-  const properties = isObject(schema?.properties) ? schema.properties : {};
-  for (const [key, field] of Object.entries(properties)) {
-    if (!isObject(field)) continue;
-    if (Object.prototype.hasOwnProperty.call(field, 'default')) result[key] = field.default;
-    else if (field.type === 'object' && isObject(field.properties)) result[key] = schemaDefaults(field);
-    else if (field.type === 'array') result[key] = [];
-  }
-  return result;
 }
 
 function newConfig(pipeline: ExtensionPipeline): JsonObject {
@@ -204,7 +193,7 @@ function SchemaFields({
 
   return <div className="extension-form-grid">
     {fields.map(([key, field]) => {
-      const current = Object.prototype.hasOwnProperty.call(value, key) ? value[key] : field.default;
+      const current = schemaFieldValue(value, key, field);
       const fieldType = Array.isArray(field.type) ? field.type.find((item: string) => item !== 'null') : field.type;
       const secret = Boolean(field.secret || field.writeOnly || /password|secret|token|api_key|private_key/i.test(key));
       const hint = field.description || (secret ? t('builder.secretHint') : undefined);
@@ -229,7 +218,7 @@ function SchemaFields({
           min={field.minimum}
           max={field.maximum}
           placeholder={secret && current ? t('builder.secretConfigured') : ''}
-          value={secret ? '' : current ?? ''}
+          value={secret ? '' : String(current ?? '')}
           onChange={(event) => {
             if (!event.target.value && secret) return;
             if (isNumber) {

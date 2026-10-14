@@ -30,6 +30,25 @@ def test_catalog_exposes_builtin_pipelines_and_module_schemas():
     assert all(modules_by_id[module_id]["config_schema"] for module_id in builtin_ids)
 
 
+def test_builtin_event_schemas_show_only_supported_settings_and_runtime_defaults():
+    from evileye.core.builtin_module_schemas import BUILTIN_MODULE_SCHEMAS
+
+    camera = BUILTIN_MODULE_SCHEMAS["CamEventsDetector"]["properties"]
+    assert not {"event_threshold", "camera_cooldown_sec", "default_schedule"} & camera.keys()
+
+    zone = BUILTIN_MODULE_SCHEMAS["ZoneEventsDetector"]["properties"]
+    assert zone["sources"]["default"] == {}
+    assert zone["event_threshold"]["default"] == 0
+    assert zone["zone_left_threshold"]["default"] == 0
+    assert "default_schedule" not in zone
+
+    schedule = BUILTIN_MODULE_SCHEMAS["ScheduleAlarmEventsDetector"]["properties"]
+    assert schedule["camera_cooldown_sec"]["default"] == 0
+    assert schedule["default_schedule"]["properties"]["enabled"]["default"] is False
+    assert schedule["default_schedule"]["properties"]["weekdays"]["default"] == list(range(7))
+    assert schedule["default_schedule"]["properties"]["periods"]["default"] == []
+
+
 def test_preview_is_metadata_only_and_reports_topology_without_opening_sources():
     config = {
         "pipeline": {

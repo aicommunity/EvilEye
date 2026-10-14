@@ -150,21 +150,42 @@ _ATTRIBUTE = {
     "save": _field("boolean", "Save inference output."),
 }
 
-_EVENT = {
+_EVENT_COMMON = {
     **COMMON,
     "enabled": _field("boolean", "Whether the event detector is enabled.", default=True),
-    "sources": _field("object", "Per-source event rules.", additionalProperties=True),
-    "event_threshold": _field("number", "Event threshold."),
-    "zone_left_threshold": _field("number", "Zone-left event threshold."),
-    "camera_cooldown_sec": _field("integer", "Minimum delay between camera alarms.", minimum=0),
-    "default_schedule": _field("object", "Default alarm schedule.", properties={
-        "enabled": _field("boolean"),
-        "weekdays": {"type": "array", "items": {"type": "integer", "minimum": 0, "maximum": 6}},
-        "periods": {"type": "array", "items": {"type": "array", "items": {"type": "string"}}},
-        "class_ids": _array("integer"),
-    }, additionalProperties=True),
-    "schedule": _field("object", "Schedule rules.", additionalProperties=True),
 }
+
+_EVENT_SOURCES = _field(
+    "object",
+    "Per-source event rules.",
+    default={},
+    additionalProperties=True,
+)
+_SCHEDULE = _field("object", "Default alarm schedule.", properties={
+    "enabled": _field("boolean", default=False),
+    "weekdays": _array("integer", default=list(range(7))),
+    "periods": _field("array", items={"type": "array", "items": {"type": "string"}}, default=[]),
+    "class_ids": _array("integer", default=[]),
+}, additionalProperties=True)
+
+_CAMERA_EVENTS = {**_EVENT_COMMON}
+_ZONE_EVENTS = {
+    **_EVENT_COMMON,
+    "sources": _EVENT_SOURCES,
+    "event_threshold": _field("integer", "Minimum time before a zone event is reported, in seconds.", minimum=0, default=0),
+    "zone_left_threshold": _field("integer", "Time threshold for a zone-left event, in seconds.", minimum=0, default=0),
+}
+_ATTRIBUTE_EVENTS = {
+    **_EVENT_COMMON,
+    "sources": _EVENT_SOURCES,
+}
+_SCHEDULE_EVENTS = {
+    **_EVENT_COMMON,
+    "sources": _EVENT_SOURCES,
+    "camera_cooldown_sec": _field("integer", "Minimum delay between camera alarms.", minimum=0, default=0),
+    "default_schedule": _SCHEDULE,
+}
+_SYSTEM_EVENTS = {**_EVENT_COMMON}
 
 _ROI_FEEDER = {
     **COMMON,
@@ -185,12 +206,12 @@ BUILTIN_MODULE_SCHEMAS: dict[str, dict[str, Any]] = {
     "RoiFeeder": {"type": "object", "properties": _ROI_FEEDER, "additionalProperties": True},
     "AttributeDetector": {"type": "object", "properties": _ATTRIBUTE, "additionalProperties": True},
     "AttributeClassifier": {"type": "object", "properties": _ATTRIBUTE, "additionalProperties": True},
-    "CamEventsDetector": {"type": "object", "properties": _EVENT, "additionalProperties": True},
-    "ZoneEventsDetector": {"type": "object", "properties": _EVENT, "additionalProperties": True},
-    "AttributeEventsDetector": {"type": "object", "properties": _EVENT, "additionalProperties": True},
-    "FieldOfViewEventsDetector": {"type": "object", "properties": _EVENT, "additionalProperties": True},
-    "SystemEventsDetector": {"type": "object", "properties": _EVENT, "additionalProperties": True},
-    "ScheduleAlarmEventsDetector": {"type": "object", "properties": _EVENT, "additionalProperties": True},
+    "CamEventsDetector": {"type": "object", "properties": _CAMERA_EVENTS, "additionalProperties": True},
+    "ZoneEventsDetector": {"type": "object", "properties": _ZONE_EVENTS, "additionalProperties": True},
+    "AttributeEventsDetector": {"type": "object", "properties": _ATTRIBUTE_EVENTS, "additionalProperties": True},
+    "FieldOfViewEventsDetector": {"type": "object", "properties": _SCHEDULE_EVENTS, "additionalProperties": True},
+    "SystemEventsDetector": {"type": "object", "properties": _SYSTEM_EVENTS, "additionalProperties": True},
+    "ScheduleAlarmEventsDetector": {"type": "object", "properties": _SCHEDULE_EVENTS, "additionalProperties": True},
 }
 
 
