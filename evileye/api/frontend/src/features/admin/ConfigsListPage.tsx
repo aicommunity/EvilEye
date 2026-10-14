@@ -11,6 +11,7 @@ import {
   isAbortError,
 } from '../../api';
 import { Button, Modal } from '../../components/ui';
+import { PageHeader } from '../../components/ui/PageHeader';
 import { useToast } from '../../components/ui/Toast';
 import { useAuth } from '../../auth/AuthContext';
 import { useI18n } from '../../i18n';
@@ -127,10 +128,9 @@ export function ConfigsListPage() {
   return (
     <section className="panel active">
       <div className="card">
-        <h2>{t('configs.title')}</h2>
-        <p className="hint">{t('configs.hint')}</p>
-        <div className="toolbar">
-          <input className="search-input" value={search} onChange={(e) => setSearch(e.target.value)} placeholder={t('configs.search')} />
+        <PageHeader title={t('configs.title')} description={t('configs.hint')} actions={
+          <div className="page-header-controls">
+            <input className="search-input" value={search} onChange={(e) => setSearch(e.target.value)} placeholder={t('configs.search')} aria-label={t('configs.search')} />
           {hasPermission('config:edit') ? (
             <Button
               variant="primary"
@@ -143,7 +143,8 @@ export function ConfigsListPage() {
               {t('configs.create')}
             </Button>
           ) : null}
-        </div>
+          </div>
+        } />
         <ul className="configs-list">
           {filtered.map((n) => {
             const count = runCounts[n] ?? 0;

@@ -18,11 +18,28 @@ backend.
 
 Режим поддерживает формы `PipelineSurveillance`, `PipelineDeclarative` и
 `PipelineCapture`. Каталог берётся из того же plugin registry, который
-используют приложение и CLI. Для Surveillance можно добавлять, удалять и
-переставлять модули в группах, выбирать `extend` или `replace`, менять режим
-исполнения и редактировать поля из схемы модуля. Встроенная ветка событий
+используют приложение и CLI. Схема пайплайна показана обзорным графом: узел
+можно выбрать, но нельзя перетаскивать или соединять произвольным образом,
+поскольку порядок задаётся контрактом пайплайна. Ниже редактор показывает
+стадии и список модулей выбранной стадии, а параметры выбранного модуля — в
+отдельном инспекторе. В графе кликом можно перейти к стадии и модулю.
+
+Для Surveillance можно добавлять, удалять и переставлять модули в группах,
+выбирать `extend` или `replace`, менять режим исполнения и назначать детекторы
+на выбранные источники из списка камер. Параметры стадий переключаются вкладками;
+стрелки, Home и End переключают их с клавиатуры. Встроенная ветка событий
 показывает правила, включённые по умолчанию; пользовательские правила можно
-добавлять, не отключая встроенные.
+добавлять, не отключая встроенные. Declarative редактирует одну выбранную
+стадию за раз, а Capture ограничивает список одним видеозахватом.
+
+Поля из JSON Schema отображаются обычными контролами: вложенные объекты —
+группами, массивы — списками с управлением порядком, массивы объектов —
+раскрываемыми элементами, словари — редактируемыми свойствами. Если значение
+объявлено как `default`, интерфейс помечает его как значение схемы; незаданные
+поля явно помечаются как незаданные. Секретные поля маскируются и не очищают
+сохранённый секрет при пустом вводе. Пользовательский `ui_schema` может задать
+порядок полей и виджеты, но не меняет серверную проверку. Для неизвестных форм
+оставлен JSON-режим.
 
 Declarative editor меняет имена, типы, порядок стадий и их модули. `PipelineCapture`
 настраивает единственный поддерживаемый видеозахват. Остальные зарегистрированные
@@ -85,12 +102,23 @@ configured trusted proxy, and unknown addresses are rejected. An operator can
 disable the restriction with `EVILEYE_BUILDER_LOCALHOST_ONLY=0`; restart the Web
 backend after changing the setting.
 
-The builder provides forms for `PipelineSurveillance`, `PipelineDeclarative`, and
-`PipelineCapture`. Surveillance groups support module selection, ordering, and
-`extend`/`replace`; the event branch keeps built-in default rules enabled when a
-custom rule is added. Declarative pipelines expose ordered stages. Other pipelines
-are form-editable when their plugin declares a schema, and remain available in the
-JSON editor otherwise. Unknown fields are preserved.
+The builder supports `PipelineSurveillance`, `PipelineDeclarative`, and
+`PipelineCapture`. A read-only topology graph selects a stage or module; it does
+not allow dragging nodes or creating connections because stage order follows the
+pipeline contract. The selected stage shows a compact module list and one module
+inspector. Surveillance groups support module selection, ordering, source
+assignment, and `extend`/`replace`; its event branch keeps built-in default rules
+enabled when a custom rule is added. Declarative exposes one selected stage at a
+time, and Capture limits the source list to one capture module. Other pipelines are
+form-editable when their plugin declares a schema, and remain available in the JSON
+editor otherwise. Unknown fields are preserved.
+
+JSON Schema fields render as controls, grouped objects, editable arrays, collapsible
+arrays of objects, and editable dictionary properties. Declared defaults are
+identified as schema defaults; fields absent from the configuration are marked as
+unset. Secret fields remain password-masked and an empty edit preserves the saved
+secret. An optional RJSF `ui_schema` controls field order and widgets without
+changing server-side validation. Unknown forms retain the JSON editor.
 
 Preview validates the configuration and displays its declared topology without
 starting a pipeline or opening cameras. A redacted change review appears before an

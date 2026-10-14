@@ -7,17 +7,17 @@ import { useI18n } from '../i18n';
 import { AuthModal } from './AuthModal';
 import { ForcePasswordGate } from './ForcePasswordGate';
 
-const NAV: Array<{ to: string; labelKey: string; permission?: string; adminOnly?: boolean }> = [
-  { to: '/live', labelKey: 'nav.live', permission: 'live:view' },
-  { to: '/events', labelKey: 'nav.events', permission: 'journal:view' },
-  { to: '/playback', labelKey: 'nav.playback', permission: 'journal:view' },
-  { to: '/configure', labelKey: 'nav.configure', permission: 'config:view' },
-  { to: '/admin/runs', labelKey: 'nav.runs', permission: 'runtime:view' },
-  { to: '/admin/configs', labelKey: 'nav.configs', permission: 'config:view' },
-  { to: '/admin/users', labelKey: 'nav.users', permission: 'users:manage' },
-  { to: '/admin/bans', labelKey: 'nav.bans', permission: 'bans:manage' },
-  { to: '/admin/extensions', labelKey: 'nav.extensions', permission: 'system:admin', adminOnly: true },
-  { to: '/settings', labelKey: 'nav.settings' },
+const NAV: Array<{ to: string; labelKey: string; group: 'monitoring' | 'configuration' | 'administration'; permission?: string; adminOnly?: boolean }> = [
+  { to: '/live', labelKey: 'nav.live', group: 'monitoring', permission: 'live:view' },
+  { to: '/events', labelKey: 'nav.events', group: 'monitoring', permission: 'journal:view' },
+  { to: '/playback', labelKey: 'nav.playback', group: 'monitoring', permission: 'journal:view' },
+  { to: '/configure', labelKey: 'nav.configure', group: 'configuration', permission: 'config:view' },
+  { to: '/admin/runs', labelKey: 'nav.runs', group: 'configuration', permission: 'runtime:view' },
+  { to: '/admin/configs', labelKey: 'nav.configs', group: 'configuration', permission: 'config:view' },
+  { to: '/settings', labelKey: 'nav.settings', group: 'configuration' },
+  { to: '/admin/users', labelKey: 'nav.users', group: 'administration', permission: 'users:manage' },
+  { to: '/admin/bans', labelKey: 'nav.bans', group: 'administration', permission: 'bans:manage' },
+  { to: '/admin/extensions', labelKey: 'nav.extensions', group: 'administration', permission: 'system:admin', adminOnly: true },
 ];
 
 export function AppShell() {
@@ -38,11 +38,18 @@ export function AppShell() {
           <p className="tagline">{t('shell.tagline')}</p>
         </div>
         <nav className="sidebar-nav">
-          {NAV.filter((item) => (!item.adminOnly || (authEnabled && user?.role === 'admin')) && (!item.permission || hasPermission(item.permission))).map((item) => (
-            <NavLink key={item.to} to={item.to} className={({ isActive }) => `nav-link${isActive ? ' active' : ''}`}>
-              {t(item.labelKey)}
-            </NavLink>
-          ))}
+          {(['monitoring', 'configuration', 'administration'] as const).map((group) => {
+            const items = NAV.filter((item) => item.group === group
+              && (!item.adminOnly || (authEnabled && user?.role === 'admin'))
+              && (!item.permission || hasPermission(item.permission)));
+            if (!items.length) return null;
+            return <section className="sidebar-nav-group" key={group} aria-label={t(`nav.group.${group}`)}>
+              <h2>{t(`nav.group.${group}`)}</h2>
+              {items.map((item) => <NavLink key={item.to} to={item.to} className={({ isActive }) => `nav-link${isActive ? ' active' : ''}`}>
+                {t(item.labelKey)}
+              </NavLink>)}
+            </section>;
+          })}
         </nav>
         <div className="sidebar-footer">
           {authEnabled && user ? (

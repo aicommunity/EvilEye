@@ -14,8 +14,10 @@ export function schemaDefaults(schema?: JsonSchema | null): Record<string, any> 
   for (const [key, field] of Object.entries(properties)) {
     if (!field || typeof field !== 'object' || Array.isArray(field)) continue;
     if (Object.prototype.hasOwnProperty.call(field, 'default')) result[key] = field.default;
-    else if (effectiveType(field) === 'object') result[key] = schemaDefaults(field);
-    else if (effectiveType(field) === 'array') result[key] = [];
+    else if (effectiveType(field) === 'object') {
+      const nested = schemaDefaults(field);
+      if (Object.keys(nested).length) result[key] = nested;
+    }
   }
   return result;
 }
@@ -23,8 +25,9 @@ export function schemaDefaults(schema?: JsonSchema | null): Record<string, any> 
 export function schemaFieldValue(value: Record<string, any>, key: string, field: JsonSchema): unknown {
   if (Object.prototype.hasOwnProperty.call(value, key)) return value[key];
   if (Object.prototype.hasOwnProperty.call(field, 'default')) return field.default;
-  const type = effectiveType(field);
-  if (type === 'object') return schemaDefaults(field);
-  if (type === 'array') return [];
+  if (effectiveType(field) === 'object') {
+    const nested = schemaDefaults(field);
+    if (Object.keys(nested).length) return nested;
+  }
   return undefined;
 }

@@ -13,6 +13,7 @@ import {
   type RuntimeDiagnostics,
 } from '../../api';
 import { Badge, Button, Modal } from '../../components/ui';
+import { PageHeader } from '../../components/ui/PageHeader';
 import { useToast } from '../../components/ui/Toast';
 import { useAuth } from '../../auth/AuthContext';
 import { useI18n } from '../../i18n';
@@ -347,8 +348,7 @@ export function RunsPage() {
   return (
     <section className="panel active">
       <div className="card runs-card">
-        <div className="toolbar">
-          <h2 style={{ margin: 0 }}>{t('runs.title')}</h2>
+        <PageHeader title={t('runs.title')} description={t('runs.hint')} actions={
           <Button
             variant="outline"
             onClick={() => {
@@ -359,8 +359,7 @@ export function RunsPage() {
           >
             {t('runs.refresh')}
           </Button>
-        </div>
-        <p className="hint">{t('runs.hint')}</p>
+        } />
 
         {configFilter ? (
           <div className="setup-banner" style={{ marginBottom: '0.75rem' }}>

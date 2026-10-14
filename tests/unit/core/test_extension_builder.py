@@ -30,6 +30,31 @@ def test_catalog_exposes_builtin_pipelines_and_module_schemas():
     assert all(modules_by_id[module_id]["config_schema"] for module_id in builtin_ids)
 
 
+def test_catalog_exposes_plugin_ui_schema_without_expanding_it(monkeypatch):
+    from evileye.core import plugins
+    from evileye.core.plugins import ModuleSpec, PluginRegistry, PluginSpec
+
+    registry = PluginRegistry()
+    monkeypatch.setattr(plugins, "plugin_registry", registry)
+    from evileye.core.builtin_inventory import register_builtins
+
+    register_builtins()
+    registry.register_plugin(PluginSpec(
+        "ui_hints",
+        plugins.PLUGIN_API_VERSION,
+        modules=(ModuleSpec(
+            "sample",
+            "processor_item",
+            lambda: None,
+            config_schema={"type": "object", "properties": {"mode": {"type": "string", "enum": ["a", "b"]}}},
+            ui_schema={"mode": {"ui:widget": "radio", "ui:help": "Choose mode"}},
+        ),),
+    ))
+    catalog = extension_catalog()
+    item = next(module for module in catalog["modules"] if module["id"] == "ui_hints/sample")
+    assert item["ui_schema"] == {"mode": {"ui:widget": "radio", "ui:help": "Choose mode"}}
+
+
 def test_builtin_event_schemas_show_only_supported_settings_and_runtime_defaults():
     from evileye.core.builtin_module_schemas import BUILTIN_MODULE_SCHEMAS
 

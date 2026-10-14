@@ -12,6 +12,7 @@ export type ExtensionModule = {
   default_execution_mode?: string | null;
   capabilities: string[];
   config_schema?: Record<string, unknown> | null;
+  ui_schema?: Record<string, unknown> | null;
 };
 
 export type ExtensionPipeline = {
@@ -22,6 +23,7 @@ export type ExtensionPipeline = {
   display_name: string;
   description: string;
   config_schema?: Record<string, unknown> | null;
+  ui_schema?: Record<string, unknown> | null;
   has_topology: boolean;
 };
 
@@ -40,7 +42,7 @@ export type PipelinePreview = {
     pipeline_id: string;
     title: string;
     description: string;
-    nodes: Array<{ node_id: string; label: string; kind: string; stage: string; module_id?: string | null }>;
+    nodes: Array<{ node_id: string; label: string; kind: string; stage: string; module_id?: string | null; status?: string; detail?: string }>;
     edges: Array<{ source: string; target: string; label: string }>;
   };
 };

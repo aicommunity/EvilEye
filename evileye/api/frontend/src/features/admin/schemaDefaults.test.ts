@@ -18,7 +18,7 @@ describe('schema defaults for builder forms', () => {
     };
 
     expect(schemaDefaults(schema)).toEqual({
-      default_schedule: { enabled: false, weekdays: [0, 1, 2, 3, 4, 5, 6], periods: [] },
+      default_schedule: { enabled: false, weekdays: [0, 1, 2, 3, 4, 5, 6] },
     });
     expect(schemaFieldValue({}, 'default_schedule', schema.properties.default_schedule)).toEqual(
       schemaDefaults(schema).default_schedule,
@@ -31,5 +31,6 @@ describe('schema defaults for builder forms', () => {
     expect(schemaFieldValue({ enabled: true }, 'enabled', field)).toBe(true);
     expect(schemaFieldValue({}, 'threshold', { type: 'integer', default: 0 })).toBe(0);
     expect(schemaFieldValue({}, 'unset', { type: 'number' })).toBeUndefined();
+    expect(schemaDefaults({ type: 'object', properties: { unset: { type: 'array', items: { type: 'string' } } } })).toEqual({});
   });
 });

@@ -13,6 +13,7 @@ import {
   ApiError,
 } from '../../api';
 import { Button } from '../../components/ui';
+import { PageHeader } from '../../components/ui/PageHeader';
 import { useToast } from '../../components/ui/Toast';
 import { useAuth } from '../../auth/AuthContext';
 import { SourcesForm } from './sectionForms/SourcesForm';
@@ -273,7 +274,7 @@ export function ConfigStudio({
     return (
       <section className="panel active">
         <div className="card">
-          <h2>{t('configure.title')}</h2>
+          <PageHeader title={t('configure.title')} />
           <p className="empty">
             {mode === 'current'
               ? t('configure.noActiveRun')
@@ -287,7 +288,7 @@ export function ConfigStudio({
   return (
     <section className="panel active">
       <div className="card">
-        <h2>
+        <PageHeader title={<>
           {t('configure.title')}{' '}
           {currentBadge || mode === 'current' ? (
             <span className="config-active-badge">{t('configure.activeConfig', { name: configBasename(name) ?? name })}</span>
@@ -295,18 +296,7 @@ export function ConfigStudio({
             <span className="hint">· {name}</span>
           )}
           {dirty ? <span className="hint"> · {t('configure.dirty')}</span> : null}
-        </h2>
-        {pendingApply ? (
-          <div className="setup-banner setup-banner--pending">
-            <span>{t('setup.pendingApplyBanner')}</span>
-            {canRun ? (
-              <Button size="sm" variant="primary" disabled={applying} onClick={() => void applyRestart()}>
-                {t('setup.restart')}
-              </Button>
-            ) : null}
-          </div>
-        ) : null}
-        <div className="toolbar" style={{ gap: '0.75rem', flexWrap: 'wrap' }}>
+        </>} actions={<div className="toolbar">
           <ConfigModeToggle mode={uiMode} onChange={setUiMode} needsSetup={needsSetup} />
           {uiMode === 'advanced' ? (
             <Button
@@ -323,7 +313,17 @@ export function ConfigStudio({
               {t('configure.validate')}
             </Button>
           ) : null}
-        </div>
+        </div>} />
+        {pendingApply ? (
+          <div className="setup-banner setup-banner--pending">
+            <span>{t('setup.pendingApplyBanner')}</span>
+            {canRun ? (
+              <Button size="sm" variant="primary" disabled={applying} onClick={() => void applyRestart()}>
+                {t('setup.restart')}
+              </Button>
+            ) : null}
+          </div>
+        ) : null}
         {uiMode === 'basic' ? (
           <>
             <p className="hint">{t('setup.basicHint')}</p>

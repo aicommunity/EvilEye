@@ -65,6 +65,13 @@ def _json_schema(schema: Any) -> dict[str, Any] | None:
     return schema_mapping(schema)
 
 
+def _ui_schema(schema: Any) -> dict[str, Any] | None:
+    """Copy UI hints as JSON without applying JSON Schema expansion rules."""
+    if not isinstance(schema, Mapping):
+        return None
+    return json.loads(json.dumps(schema))
+
+
 def extension_catalog() -> dict[str, Any]:
     """Return installed extension metadata without constructing modules or pipelines."""
     from evileye.core.builtin_inventory import register_builtins
@@ -89,6 +96,7 @@ def extension_catalog() -> dict[str, Any]:
             "default_execution_mode": spec.default_execution_mode,
             "capabilities": list(spec.capabilities),
             "config_schema": _json_schema(spec.config_schema),
+            "ui_schema": _ui_schema(spec.ui_schema),
         })
     pipelines = []
     for identity in plugin_registry.list_pipelines():
@@ -104,6 +112,7 @@ def extension_catalog() -> dict[str, Any]:
             "display_name": spec.display_name or spec.pipeline_id,
             "description": spec.description or "",
             "config_schema": _json_schema(spec.config_schema),
+            "ui_schema": _ui_schema(spec.ui_schema),
             "has_topology": callable(spec.topology_provider),
         })
     from evileye.events_detectors.event_registry import DEFAULT_ENABLED_EVENT_DETECTORS

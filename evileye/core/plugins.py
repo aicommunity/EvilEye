@@ -167,6 +167,7 @@ class ModuleSpec:
     display_name: str | None = None
     description: str | None = None
     stages: Sequence[str] = ()
+    ui_schema: Mapping[str, Any] | None = None
 
 
 @dataclass(frozen=True)
@@ -180,6 +181,7 @@ class PipelineSpec:
     description: str | None = None
     config_schema: Any = None
     topology_provider: Callable[[Mapping[str, Any]], Any] | None = None
+    ui_schema: Mapping[str, Any] | None = None
 
 
 @dataclass(frozen=True)
@@ -378,6 +380,7 @@ class PluginRegistry:
         execution_modes: Sequence[str] = ("thread", "process"),
         capabilities: Sequence[str] = (),
         config_schema: Any = None,
+        ui_schema: Mapping[str, Any] | None = None,
         legacy_ids: Sequence[str] = (),
         default_execution_mode: str | None = None,
         display_name: str | None = None,
@@ -402,6 +405,7 @@ class PluginRegistry:
             execution_modes=execution_modes,
             capabilities=capabilities,
             config_schema=config_schema,
+            ui_schema=ui_schema,
             legacy_ids=tuple(dict.fromkeys([module_id, *legacy_ids])),
             default_execution_mode=default_execution_mode,
             display_name=display_name,
@@ -420,6 +424,7 @@ class PluginRegistry:
         display_name: str | None = None,
         description: str | None = None,
         config_schema: Any = None,
+        ui_schema: Mapping[str, Any] | None = None,
         topology_provider: Callable[[Mapping[str, Any]], Any] | None = None,
     ) -> None:
         if display_name is None or description is None or config_schema is None:
@@ -440,6 +445,7 @@ class PluginRegistry:
             display_name=display_name,
             description=description,
             config_schema=config_schema,
+            ui_schema=ui_schema,
             topology_provider=topology_provider,
         )
         self.register_plugin(
@@ -669,6 +675,7 @@ def register_module(
     execution_modes: Sequence[str] = ("thread",),
     capabilities: Sequence[str] = (),
     config_schema: Any = None,
+    ui_schema: Mapping[str, Any] | None = None,
     legacy_ids: Sequence[str] = (),
     default_execution_mode: str | None = None,
     display_name: str | None = None,
@@ -685,6 +692,7 @@ def register_module(
             execution_modes=execution_modes,
             capabilities=capabilities,
             config_schema=config_schema,
+            ui_schema=ui_schema,
             legacy_ids=legacy_ids,
             default_execution_mode=default_execution_mode,
             display_name=display_name,
@@ -702,6 +710,7 @@ def register_pipeline(
     display_name: str | None = None,
     description: str | None = None,
     config_schema: Any = None,
+    ui_schema: Mapping[str, Any] | None = None,
     topology_provider: Callable[[Mapping[str, Any]], Any] | None = None,
 ) -> Callable[[Callable[..., Any]], Callable[..., Any]]:
     """Decorator for builtin pipeline classes or factories."""
@@ -713,6 +722,7 @@ def register_pipeline(
             display_name=display_name,
             description=description,
             config_schema=config_schema,
+            ui_schema=ui_schema,
             topology_provider=topology_provider,
         )
         return factory

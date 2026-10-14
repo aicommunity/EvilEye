@@ -10,9 +10,12 @@ import {
   type PluginOperation,
 } from '../../api';
 import { Button } from '../../components/ui';
+import { PageHeader } from '../../components/ui/PageHeader';
 import { useAuth } from '../../auth/AuthContext';
 import { useI18n } from '../../i18n';
-import { schemaDefaults, schemaFieldValue } from './schemaDefaults';
+import { schemaDefaults } from './schemaDefaults';
+import { SchemaForm } from './SchemaForm';
+import { PipelineGraph } from './PipelineGraph';
 
 type JsonObject = Record<string, any>;
 type BuilderTab = 'pipeline' | 'plugins';
@@ -97,15 +100,70 @@ function moduleOptionLabel(module: ExtensionModule, translate: (key: string) => 
   return `${marker}${module.display_name} · ${module.id}`;
 }
 
-function moduleDefaults(module: ExtensionModule): JsonObject {
+function moduleDefaults(module: ExtensionModule, sourceId = 0): JsonObject {
   const value = schemaDefaults(module.config_schema);
   for (const key of RESERVED_MODULE_FIELDS) delete value[key];
   const item: JsonObject = { module_id: module.id, enable: true, ...value };
   if (module.execution_modes.length) {
     item.execution_mode = module.default_execution_mode || module.execution_modes[0];
   }
-  if (module.kind === 'source') item.source_ids = [0];
+  if (module.kind === 'source') {
+    item.source_ids = [sourceId];
+    const schemaProperties = isObject(module.config_schema?.properties) ? module.config_schema?.properties : {};
+    if (Object.prototype.hasOwnProperty.call(schemaProperties, 'source_id')) item.source_id = sourceId;
+  }
   return item;
+}
+
+type SourceChoice = { id: number; label: string };
+
+function pipelineSources(body: JsonObject): SourceChoice[] {
+  const moduleSources = isObject(body.modules) && isObject(body.modules.sources) ? body.modules.sources : {};
+  const extensionItems = Array.isArray(moduleSources.items) ? moduleSources.items.filter(isObject) : [];
+  const legacyItems = Array.isArray(body.sources) ? body.sources.filter(isObject) : [];
+  const declarativeItems = Array.isArray(body.stages)
+    ? body.stages.filter(isObject).filter((stage) => stage.kind === 'source').flatMap((stage) => Array.isArray(stage.items) ? stage.items.filter(isObject) : [])
+    : [];
+  const sourceItems = moduleSources.mode === 'replace' ? [...extensionItems, ...declarativeItems] : [...legacyItems, ...extensionItems, ...declarativeItems];
+  const choices = new Map<number, string>();
+  sourceItems.forEach((item, index) => {
+    const ids = Array.isArray(item.source_ids) ? item.source_ids : [item.source_id ?? index];
+    const names = Array.isArray(item.source_names) ? item.source_names : [];
+    ids.forEach((rawId, nameIndex) => {
+      const id = Number(rawId);
+      if (!Number.isInteger(id) || choices.has(id)) return;
+      const explicit = names[nameIndex] ?? item.source_name ?? item.camera_name ?? item.name ?? item.display_name;
+      choices.set(id, String(explicit || `Source ${id + 1}`));
+    });
+  });
+  return [...choices.entries()].sort(([left], [right]) => left - right).map(([id, label]) => ({ id, label }));
+}
+
+function SourceIdsField({ value, choices, onChange, label }: {
+  value: unknown;
+  choices: SourceChoice[];
+  onChange: (value: number[]) => void;
+  label: string;
+}) {
+  const { t } = useI18n();
+  const selected = Array.isArray(value) ? value.map(Number).filter(Number.isInteger) : [];
+  if (!choices.length) return <Field label={label} hint={t('builder.jsonArrayHint')}>
+    <JsonField value={Array.isArray(value) ? value : []} onChange={(next) => { if (Array.isArray(next) && next.every((item) => Number.isInteger(Number(item)))) onChange(next.map(Number)); }} rows={2} />
+  </Field>;
+  const allChoices = [...choices];
+  for (const id of selected) if (!allChoices.some((item) => item.id === id)) allChoices.push({ id, label: t('builder.unknownSource', { id }) });
+  return <fieldset className="source-id-picker">
+    <legend>{label}</legend>
+    {allChoices.map((source) => <label key={source.id}>
+      <input type="checkbox" checked={selected.includes(source.id)} onChange={(event) => {
+        const next = new Set(selected);
+        if (event.target.checked) next.add(source.id);
+        else next.delete(source.id);
+        onChange([...next].sort((left, right) => left - right));
+      }} />
+      <span>{source.label}</span><code>{source.id}</code>
+    </label>)}
+  </fieldset>;
 }
 
 function declarativeStages(body: JsonObject): JsonObject[] {
@@ -190,69 +248,20 @@ function SchemaFields({
   schema,
   value,
   onChange,
+  uiSchema,
   excluded = new Set<string>(),
 }: {
   schema?: Schema | null;
   value: JsonObject;
   onChange: (next: JsonObject) => void;
   excluded?: Set<string>;
+  uiSchema?: Record<string, unknown> | null;
 }) {
   const { t } = useI18n();
-  const properties = isObject(schema?.properties) ? schema.properties as Record<string, Schema> : {};
-  const fields = Object.entries(properties).filter(([key]) => !excluded.has(key));
-  if (!schema || !fields.length) return <p className="hint">{t('builder.noSchemaFields')}</p>;
-
-  function setValue(key: string, next: unknown) {
-    const result = { ...value };
-    if (next === undefined) delete result[key];
-    else result[key] = next;
-    onChange(result);
-  }
-
-  return <div className="extension-form-grid">
-    {fields.map(([key, field]) => {
-      const current = schemaFieldValue(value, key, field);
-      const fieldType = Array.isArray(field.type) ? field.type.find((item: string) => item !== 'null') : field.type;
-      const secret = Boolean(field.secret || field.writeOnly || /password|secret|token|api_key|private_key/i.test(key));
-      const hint = field.description || (secret ? t('builder.secretHint') : undefined);
-      let input: ReactNode;
-      if (Array.isArray(field.enum)) {
-        input = <select value={String(current ?? '')} onChange={(event) => {
-          const option = field.enum.find((entry: unknown) => String(entry) === event.target.value);
-          setValue(key, option);
-        }}>
-          {!field.enum.some((entry: unknown) => String(entry) === String(current ?? '')) ? <option value="">—</option> : null}
-          {field.enum.map((option: unknown) => <option key={String(option)} value={String(option)}>{String(option)}</option>)}
-        </select>;
-      } else if (fieldType === 'boolean') {
-        input = <input type="checkbox" checked={Boolean(current)} onChange={(event) => setValue(key, event.target.checked)} />;
-      } else if (fieldType === 'object' || fieldType === 'array' || fieldType === undefined) {
-        input = <JsonField value={current ?? (fieldType === 'array' ? [] : {})} onChange={(next) => setValue(key, next)} />;
-      } else {
-        const isNumber = fieldType === 'number' || fieldType === 'integer';
-        input = <input
-          type={secret ? 'password' : isNumber ? 'number' : 'text'}
-          step={fieldType === 'integer' ? 1 : 'any'}
-          min={field.minimum}
-          max={field.maximum}
-          placeholder={secret && current ? t('builder.secretConfigured') : ''}
-          value={secret ? '' : String(current ?? '')}
-          onChange={(event) => {
-            if (!event.target.value && secret) return;
-            if (isNumber) {
-              if (event.target.value === '') return setValue(key, undefined);
-              const numberValue = Number(event.target.value);
-              if (Number.isFinite(numberValue)) setValue(key, numberValue);
-            } else setValue(key, event.target.value);
-          }}
-        />;
-      }
-      return <Field key={key} label={field.title || key} hint={hint}>{input}</Field>;
-    })}
-  </div>;
+  return <SchemaForm schema={schema} value={value} onChange={onChange} excluded={excluded} uiSchema={uiSchema} emptyMessage={t('builder.noSchemaFields')} />;
 }
 
-function ModuleListEditor({
+export function ModuleListEditor({
   modules,
   items,
   kind,
@@ -260,6 +269,9 @@ function ModuleListEditor({
   title,
   onChange,
   maxItems,
+  focusModuleId,
+  allowAdd = true,
+  sourceChoices = [],
 }: {
   modules: ExtensionModule[];
   items: JsonObject[];
@@ -268,14 +280,27 @@ function ModuleListEditor({
   title: string;
   onChange: (items: JsonObject[]) => void;
   maxItems?: number;
+  focusModuleId?: string;
+  allowAdd?: boolean;
+  sourceChoices?: SourceChoice[];
 }) {
   const { t } = useI18n();
   const [selected, setSelected] = useState('');
+  const [activeIndex, setActiveIndex] = useState(0);
   const candidates = moduleCandidates(modules, kind, stage);
+  useEffect(() => {
+    if (!focusModuleId) return;
+    const index = items.findIndex((item) => String(item.module_id || item.type || '') === focusModuleId);
+    if (index >= 0) setActiveIndex(index);
+  }, [focusModuleId, items]);
   const add = () => {
     const module = candidates.find((item) => item.id === selected);
     if (!module || (maxItems !== undefined && items.length >= maxItems)) return;
-    onChange([...items, moduleDefaults(module)]);
+    const usedSourceIds = new Set(sourceChoices.map((item) => item.id));
+    let sourceId = 0;
+    while (usedSourceIds.has(sourceId)) sourceId += 1;
+    onChange([...items, moduleDefaults(module, sourceId)]);
+    setActiveIndex(items.length);
     setSelected('');
   };
   const move = (index: number, shift: number) => {
@@ -284,61 +309,72 @@ function ModuleListEditor({
     const next = [...items];
     [next[index], next[target]] = [next[target], next[index]];
     onChange(next);
+    if (activeIndex === index) setActiveIndex(target);
+    else if (activeIndex === target) setActiveIndex(index);
+  };
+  const active = items[activeIndex] ? activeIndex : Math.max(0, items.length - 1);
+  const activeItem = items[active];
+  const moduleId = activeItem?.module_id || activeItem?.type || candidates[0]?.id || '';
+  const activeSpec = modules.find((module) => module.id === moduleId || module.module_id === moduleId);
+  const executionModes = activeSpec?.execution_modes || [];
+  const configIsNested = isObject(activeItem?.config);
+  const formValue = configIsNested ? activeItem.config : activeItem;
+  const updateActive = (update: (item: JsonObject) => JsonObject) => onChange(items.map((item, itemIndex) => itemIndex === active ? update(item) : item));
+  const updateForm = (next: JsonObject) => {
+    const clean = { ...next };
+    for (const key of RESERVED_MODULE_FIELDS) delete clean[key];
+    updateActive((entry) => configIsNested ? { ...entry, config: clean } : { ...entry, ...clean });
   };
   return <section className="extension-subpanel">
-    <h3>{title} <span className="extension-count">{items.length}</span></h3>
-    {items.map((item, index) => {
+    <div className="extension-section-heading"><h3>{title} <span className="extension-count">{items.length}</span></h3></div>
+    <div className="module-inspector-layout">
+      <div className="module-list" role="group" aria-label={title}>
+        {items.map((item, index) => {
       const moduleId = item.module_id || item.type || candidates[0]?.id || '';
       const spec = modules.find((module) => module.id === moduleId || module.module_id === moduleId);
-      const schema = spec?.config_schema;
-      const executionModes = spec?.execution_modes || [];
-      const configIsNested = isObject(item.config);
-      const formValue = configIsNested ? item.config : item;
-      const updateForm = (next: JsonObject) => {
-        const clean = { ...next };
-        for (const key of RESERVED_MODULE_FIELDS) delete clean[key];
-        onChange(items.map((entry, itemIndex) => itemIndex === index
-          ? (configIsNested ? { ...entry, config: clean } : { ...entry, ...clean })
-          : entry));
-      };
-      return <article key={`${String(moduleId)}-${index}`} className="extension-module-card">
+          return <button key={`${String(moduleId)}-${index}`} type="button" aria-pressed={active === index}
+            className={`module-list-item${active === index ? ' is-active' : ''}`} onClick={() => setActiveIndex(index)}>
+            <span className="module-list-name">{spec?.display_name || shortId(moduleId)}</span>
+            <small>{String(moduleId)}</small>
+            <span className={`module-enabled-dot${item.enable === false || item.enabled === false ? ' is-disabled' : ''}`} aria-label={item.enable === false || item.enabled === false ? t('builder.disabled') : t('builder.enabled')} />
+          </button>;
+        })}
+        {!items.length ? <p className="hint">{t('builder.noModules')}</p> : null}
+        {allowAdd ? <div className="module-add-control">
+          <select aria-label={t('builder.chooseModule')} value={selected} onChange={(event) => setSelected(event.target.value)}>
+            <option value="">{t('builder.chooseModule')}</option>
+            {candidates.map((module) => <option key={module.id} value={module.id}>{moduleOptionLabel(module, t)}</option>)}
+          </select>
+          <Button variant="primary" onClick={add} disabled={!selected || (maxItems !== undefined && items.length >= maxItems)}>{t('builder.addModule')}</Button>
+        </div> : null}
+        {allowAdd && !candidates.length ? <span className="hint">{t('builder.noModules')}</span> : null}
+      </div>
+      {activeItem ? <article className="module-inspector">
         <div className="extension-module-heading">
-          <strong>{spec?.display_name || shortId(moduleId)} <small>{String(moduleId)}</small></strong>
+          <div><strong>{activeSpec?.display_name || shortId(moduleId)}</strong><small>{String(moduleId)}</small></div>
           <div className="toolbar">
-            <Button size="sm" onClick={() => move(index, -1)} disabled={index === 0} aria-label={t('builder.moveUp')}>↑</Button>
-            <Button size="sm" onClick={() => move(index, 1)} disabled={index === items.length - 1} aria-label={t('builder.moveDown')}>↓</Button>
-            <Button size="sm" variant="danger" onClick={() => onChange(items.filter((_, itemIndex) => itemIndex !== index))}>{t('builder.remove')}</Button>
+            <Button size="sm" onClick={() => move(active, -1)} disabled={active === 0} aria-label={t('builder.moveUp')}>↑</Button>
+            <Button size="sm" onClick={() => move(active, 1)} disabled={active === items.length - 1} aria-label={t('builder.moveDown')}>↓</Button>
+            <Button size="sm" variant="danger" onClick={() => { onChange(items.filter((_, index) => index !== active)); setActiveIndex(Math.max(0, active - 1)); }}>{t('builder.remove')}</Button>
           </div>
         </div>
-        {!spec ? <p className="extension-warning">{t('builder.unknownModule')}</p> : null}
+        {!activeSpec ? <p className="extension-warning">{t('builder.unknownModule')}</p> : null}
         <div className="extension-module-controls">
-          <label><input type="checkbox" checked={item.enable !== false && item.enabled !== false} onChange={(event) => {
-            onChange(items.map((entry, itemIndex) => itemIndex === index ? { ...entry, enable: event.target.checked } : entry));
-          }} /> {t('builder.enabled')}</label>
+          <label><input type="checkbox" checked={activeItem.enable !== false && activeItem.enabled !== false} onChange={(event) => updateActive((entry) => ({ ...entry, enable: event.target.checked }))} /> {t('builder.enabled')}</label>
           {executionModes.length > 0 ? <Field label={t('builder.executionMode')}>
-            <select value={String(item.execution_mode || spec?.default_execution_mode || executionModes[0])}
-              onChange={(event) => onChange(items.map((entry, itemIndex) => itemIndex === index ? { ...entry, execution_mode: event.target.value } : entry))}>
+            <select value={String(activeItem.execution_mode || activeSpec?.default_execution_mode || executionModes[0])}
+              onChange={(event) => updateActive((entry) => ({ ...entry, execution_mode: event.target.value }))}>
               {executionModes.map((mode) => <option key={mode} value={mode}>{mode}</option>)}
             </select>
           </Field> : null}
-          {Array.isArray(item.source_ids) ? <Field label={t('builder.sourceIds')} hint={t('builder.jsonArrayHint')}>
-            <JsonField value={item.source_ids} onChange={(value) => onChange(items.map((entry, itemIndex) => itemIndex === index ? { ...entry, source_ids: value } : entry))} rows={2} />
-          </Field> : null}
+          {(Array.isArray(activeItem.source_ids) || sourceChoices.length > 0) ? <SourceIdsField
+            label={t('builder.sourceIds')} value={activeItem.source_ids} choices={sourceChoices}
+            onChange={(value) => updateActive((entry) => ({ ...entry, source_ids: value }))} /> : null}
         </div>
-        {spec?.config_schema ? <SchemaFields schema={schema} value={formValue} onChange={updateForm} excluded={RESERVED_MODULE_FIELDS} /> : (
-          <details><summary>{t('builder.rawModule')}</summary><JsonField value={item} onChange={(value) => {
-            if (isObject(value)) onChange(items.map((entry, itemIndex) => itemIndex === index ? value : entry));
-          }} /></details>
+        {activeSpec?.config_schema ? <SchemaFields key={`${active}-${moduleId}`} schema={activeSpec.config_schema} uiSchema={activeSpec.ui_schema} value={formValue || {}} onChange={updateForm} excluded={RESERVED_MODULE_FIELDS} /> : (
+          <details><summary>{t('builder.rawModule')}</summary><JsonField value={activeItem} onChange={(value) => { if (isObject(value)) updateActive(() => value); }} /></details>
         )}
-      </article>;
-    })}
-    <div className="toolbar extension-add-row">
-      <select aria-label={t('builder.chooseModule')} value={selected} onChange={(event) => setSelected(event.target.value)}>
-        <option value="">{t('builder.chooseModule')}</option>
-        {candidates.map((module) => <option key={module.id} value={module.id}>{moduleOptionLabel(module, t)}</option>)}
-      </select>
-      <Button variant="primary" onClick={add} disabled={!selected || (maxItems !== undefined && items.length >= maxItems)}>{t('builder.addModule')}</Button>
-      {!candidates.length ? <span className="hint">{t('builder.noModules')}</span> : null}
+      </article> : null}
     </div>
   </section>;
 }
@@ -377,13 +413,27 @@ function PipelineEditor({
   const { t } = useI18n();
   const [preview, setPreview] = useState<PipelinePreview | null>(null);
   const [previewError, setPreviewError] = useState('');
+  const [activeStage, setActiveStage] = useState('sources');
+  const [declarativeStage, setDeclarativeStage] = useState(0);
+  const [graphModuleFocus, setGraphModuleFocus] = useState('');
   const [raw, setRaw] = useState(false);
   const [rawText, setRawText] = useState(() => JSON.stringify(config, null, 2));
   const body = pipelineOf(config);
+  const sourceChoices = pipelineSources(body);
   const pipelineSchema = pipeline.config_schema;
   useEffect(() => {
     if (!raw) setRawText(JSON.stringify(config, null, 2));
     setPreview(null);
+    if (raw) return;
+    let current = true;
+    const timer = window.setTimeout(() => {
+      void extensionsApi.preview(config).then((result) => {
+        if (current) { setPreview(result); setPreviewError(''); }
+      }).catch((error) => {
+        if (current) setPreviewError(error instanceof Error ? error.message : String(error));
+      });
+    }, 350);
+    return () => { current = false; window.clearTimeout(timer); };
   }, [config, raw]);
 
   const changeBody = (next: JsonObject) => setConfig(updatePipeline(config, () => next));
@@ -412,6 +462,29 @@ function PipelineEditor({
     }
   };
 
+  const selectGraphNode = (node: PipelinePreview['topology']['nodes'][number]) => {
+    setGraphModuleFocus(node.module_id || '');
+    if (pipeline.pipeline_id === 'PipelineDeclarative' && node.node_id.startsWith('stage:')) {
+      const stageIndex = Number(node.node_id.split(':')[1]);
+      if (Number.isInteger(stageIndex)) setDeclarativeStage(stageIndex);
+      setActiveStage('declarative');
+      return;
+    }
+    if (node.node_id.startsWith('events:') || node.stage.toLowerCase() === 'events') { setActiveStage('events'); return; }
+    const stageMap: Record<string, string> = {
+      sources: 'sources', preprocessors: 'preprocessors', detectors: 'detectors', trackers: 'trackers',
+      mc_trackers: 'mc_trackers', attributes_roi: 'attributes_roi', attributes_classifier: 'attributes_classifier',
+    };
+    const sourceStage = node.node_id.split(':')[0];
+    if (stageMap[sourceStage]) setActiveStage(stageMap[sourceStage]);
+  };
+
+  const surveillanceStageTabs = [
+    ...SURVEILLANCE_GROUPS.map((group) => ({ id: group.id, label: t(group.title) })),
+    { id: 'events', label: t('builder.eventBranch') },
+    { id: 'general', label: t('builder.pipelineSettings') },
+  ];
+
   return <div className="extension-builder-content">
     <div className="extension-form-grid extension-pipeline-picker">
       <Field label={t('builder.pipelineType')}>
@@ -422,14 +495,39 @@ function PipelineEditor({
       {pipeline.description ? <p className="hint extension-description">{pipeline.description}</p> : null}
     </div>
 
+    {!raw && preview ? <section className="extension-subpanel pipeline-topology-panel">
+      <div className="extension-section-heading"><h3>{t('builder.pipelineTopology')}</h3><span className="hint">{preview.topology.description}</span></div>
+      <PipelineGraph preview={preview} onSelect={selectGraphNode} />
+      {preview.errors.length || preview.warnings.length ? <div className="pipeline-topology-messages">
+        {preview.errors.map((message) => <p className="extension-error" key={message}>{message}</p>)}
+        {preview.warnings.map((message) => <p className="extension-warning" key={message}>{message}</p>)}
+      </div> : null}
+    </section> : null}
+
     {!raw && pipeline.pipeline_id === 'PipelineSurveillance' ? <>
-      {SURVEILLANCE_GROUPS.map((group) => {
+      <div className="pipeline-stage-tabs" role="tablist" aria-label={t('builder.pipelineStages')}>
+        {surveillanceStageTabs.map((stage) => <button key={stage.id} type="button" role="tab" aria-selected={activeStage === stage.id}
+          tabIndex={activeStage === stage.id ? 0 : -1} onClick={() => setActiveStage(stage.id)}
+          onKeyDown={(event) => {
+            if (!['ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(event.key)) return;
+            event.preventDefault();
+            const currentIndex = surveillanceStageTabs.findIndex((item) => item.id === activeStage);
+            const nextIndex = event.key === 'Home' ? 0 : event.key === 'End' ? surveillanceStageTabs.length - 1
+              : (currentIndex + (event.key === 'ArrowRight' ? 1 : -1) + surveillanceStageTabs.length) % surveillanceStageTabs.length;
+            const next = surveillanceStageTabs[nextIndex];
+            setActiveStage(next.id);
+            document.getElementById(`pipeline-stage-tab-${next.id}`)?.focus();
+          }} id={`pipeline-stage-tab-${stage.id}`} aria-controls="pipeline-stage-panel">{stage.label}</button>)}
+      </div>
+      {activeStage !== 'events' && activeStage !== 'general' ? (() => {
+        const group = SURVEILLANCE_GROUPS.find((item) => item.id === activeStage);
+        if (!group) return null;
         const moduleMap = isObject(body.modules) ? body.modules : {};
         const override = isObject(moduleMap[group.id]) ? moduleMap[group.id] : {};
         const mode = override.mode === 'replace' ? 'replace' : 'extend';
         const items = Array.isArray(override.items) ? override.items.filter(isObject) : [];
         const legacy = Array.isArray(body[group.id]) ? body[group.id].filter(isObject) : [];
-        return <section className="extension-subpanel" key={group.id}>
+        return <section className="extension-subpanel" key={group.id} role="tabpanel" id="pipeline-stage-panel" aria-labelledby={`pipeline-stage-tab-${activeStage}`}>
           <div className="extension-section-heading">
             <h3>{t(group.title)}</h3>
             <Field label={t('builder.extensionMode')}>
@@ -443,26 +541,39 @@ function PipelineEditor({
               </select>
             </Field>
           </div>
-          {mode === 'extend' && legacy.length ? <p className="hint">{t('builder.baseModules', { count: legacy.length })}</p> : null}
+          {mode === 'extend' && legacy.length ? <ModuleListEditor
+            modules={catalog.modules}
+            items={legacy}
+            kind={group.kind}
+            stage={group.id}
+            title={t('builder.baseModulesEditor', { count: legacy.length })}
+            focusModuleId={graphModuleFocus}
+            sourceChoices={sourceChoices}
+            allowAdd={false}
+            onChange={(next) => changeBody({ ...body, [group.id]: next })}
+          /> : null}
           {mode === 'replace' && legacy.length ? <p className="hint">{t('builder.replacedModules', { count: legacy.length })}</p> : null}
           <ModuleListEditor
             modules={catalog.modules}
             items={items}
             kind={group.kind}
             stage={group.id}
-            title={t('builder.customModules')}
+            title={t(mode === 'extend' ? 'builder.additionalModules' : 'builder.customModules')}
+            focusModuleId={graphModuleFocus}
+            sourceChoices={sourceChoices}
             onChange={(next) => changeGroup(group.id, next)}
           />
         </section>;
-      })}
-      <EventRulesEditor config={config} setConfig={setConfig} modules={catalog.modules} defaultEnabled={catalog.default_event_detectors} />
-      <SchemaFields schema={pipelineSchema} value={body} onChange={changeBody}
+      })() : null}
+      {activeStage === 'events' ? <div role="tabpanel" id="pipeline-stage-panel" aria-labelledby="pipeline-stage-tab-events"><EventRulesEditor config={config} setConfig={setConfig} modules={catalog.modules} defaultEnabled={catalog.default_event_detectors} focusModuleId={graphModuleFocus} /></div> : null}
+      {activeStage === 'general' ? <div role="tabpanel" id="pipeline-stage-panel" aria-labelledby="pipeline-stage-tab-general"><SchemaFields schema={pipelineSchema} uiSchema={pipeline.ui_schema} value={body} onChange={changeBody}
         excluded={new Set([...SURVEILLANCE_GROUPS.map((group) => group.id), 'pipeline_class', 'modules'])} />
+      </div> : null}
     </> : null}
 
     {!raw && pipeline.pipeline_id === 'PipelineDeclarative' ? <>
-      <DeclarativeEditor body={body} changeBody={changeBody} modules={catalog.modules} />
-      <EventRulesEditor config={config} setConfig={setConfig} modules={catalog.modules} defaultEnabled={catalog.default_event_detectors} />
+      <DeclarativeEditor body={body} changeBody={changeBody} modules={catalog.modules} activeStage={declarativeStage} onStageChange={setDeclarativeStage} focusModuleId={graphModuleFocus} sourceChoices={sourceChoices} />
+      <EventRulesEditor config={config} setConfig={setConfig} modules={catalog.modules} defaultEnabled={catalog.default_event_detectors} focusModuleId={graphModuleFocus} />
     </> : null}
     {!raw && pipeline.pipeline_id === 'PipelineCapture' ? <ModuleListEditor
       modules={catalog.modules}
@@ -471,10 +582,11 @@ function PipelineEditor({
       stage="capture-source"
       title={t('builder.sources')}
       maxItems={1}
+      sourceChoices={sourceChoices}
       onChange={(sources) => changeBody({ ...body, sources })}
     /> : null}
     {!raw && !['PipelineSurveillance', 'PipelineDeclarative', 'PipelineCapture'].includes(pipeline.pipeline_id) ? (
-      pipelineSchema ? <SchemaFields schema={pipelineSchema} value={body} onChange={changeBody} excluded={new Set(['pipeline_class'])} /> : (
+      pipelineSchema ? <SchemaFields schema={pipelineSchema} uiSchema={pipeline.ui_schema} value={body} onChange={changeBody} excluded={new Set(['pipeline_class'])} /> : (
         <p className="extension-warning">{t('builder.opaquePipeline')}</p>
       )
     ) : null}
@@ -501,11 +613,16 @@ function PipelineEditor({
       {preview && !preview.valid ? <span className="extension-error">{t('builder.invalid')}</span> : null}
       {previewError ? <span className="extension-error">{previewError}</span> : null}
     </div>
-    {preview ? <TopologyView preview={preview} /> : null}
   </div>;
 }
 
-function EventRulesEditor({ config, setConfig, modules, defaultEnabled }: { config: JsonObject; setConfig: (value: JsonObject) => void; modules: ExtensionModule[]; defaultEnabled: string[] }) {
+function EventRulesEditor({ config, setConfig, modules, defaultEnabled, focusModuleId }: {
+  config: JsonObject;
+  setConfig: (value: JsonObject) => void;
+  modules: ExtensionModule[];
+  defaultEnabled: string[];
+  focusModuleId?: string;
+}) {
   const { t } = useI18n();
   const rules = isObject(config.events_detectors) ? config.events_detectors : {};
   const enabled = Array.isArray(rules.enabled) ? rules.enabled.map(String) : defaultEnabled;
@@ -520,71 +637,127 @@ function EventRulesEditor({ config, setConfig, modules, defaultEnabled }: { conf
     update({ ...rules, enabled: [...enabled, id], [id]: moduleDefaults(module) });
   };
   const [selected, setSelected] = useState('');
+  const [activeId, setActiveId] = useState('');
+  useEffect(() => {
+    if (!focusModuleId) return;
+    if (items.some(([id, item]) => id === focusModuleId || item.module_id === focusModuleId)) setActiveId(focusModuleId);
+  }, [focusModuleId, rules]);
+  const active = items.find(([id, item]) => id === activeId || item.module_id === activeId) || items[0];
   return <section className="extension-subpanel">
     <div className="extension-section-heading"><h3>{t('builder.eventBranch')}</h3><span className="hint">{t('builder.eventBranchHint')}</span></div>
-    {items.map(([id, item]) => {
-      const spec = candidates.find((module) => module.id === id || module.module_id === id || module.id === item.module_id);
-      return <article key={id} className="extension-module-card">
-        <div className="extension-module-heading">
-          <label><input type="checkbox" checked={enabled.includes(id)} onChange={(event) => update({
+    <div className="module-inspector-layout">
+      <div className="module-list" role="list" aria-label={t('builder.eventBranch')}>
+        {items.map(([id, item]) => {
+          const spec = candidates.find((module) => module.id === id || module.module_id === id || module.id === item.module_id);
+          const isActive = active?.[0] === id;
+          return <div className={`module-list-item-wrap${isActive ? ' is-active' : ''}`} key={id}>
+            <button type="button" className={`module-list-item${isActive ? ' is-active' : ''}`} aria-pressed={isActive} onClick={() => setActiveId(id)}>
+              <span className="module-list-name">{spec?.display_name || shortId(id)}</span><small>{id}</small>
+              <span className={`module-enabled-dot${enabled.includes(id) ? '' : ' is-disabled'}`} />
+            </button>
+            <label className="module-list-enabled"><input type="checkbox" checked={enabled.includes(id)} onChange={(event) => update({
             ...rules,
             enabled: event.target.checked ? [...enabled, id] : enabled.filter((name) => name !== id),
-          })} /> <strong>{spec?.display_name || shortId(id)} <small>{id}</small></strong></label>
-          {!defaultEnabled.includes(id) ? <Button size="sm" variant="danger" onClick={() => {
-            const next = { ...rules };
-            delete next[id];
-            update({ ...next, enabled: enabled.filter((name) => name !== id) });
-          }}>{t('builder.remove')}</Button> : null}
+          })} /> {t('builder.enabled')}</label>
+          </div>;
+        })}
+        <div className="module-add-control">
+          <select value={selected} onChange={(event) => setSelected(event.target.value)} aria-label={t('builder.chooseModule')}><option value="">{t('builder.chooseModule')}</option>
+            {candidates.map((module) => <option key={module.id} value={module.id}>{moduleOptionLabel(module, t)}</option>)}
+          </select>
+          <Button variant="primary" onClick={() => { add(selected); setActiveId(selected); setSelected(''); }} disabled={!selected}>{t('builder.addRule')}</Button>
         </div>
-        {spec?.config_schema ? <SchemaFields schema={spec.config_schema} value={item} onChange={(next) => update({ ...rules, [id]: { ...item, ...next } })} excluded={RESERVED_MODULE_FIELDS} /> : (
-          <details><summary>{t('builder.rawModule')}</summary><JsonField value={item} onChange={(next) => { if (isObject(next)) update({ ...rules, [id]: next }); }} /></details>
-        )}
-      </article>;
-    })}
-    <div className="toolbar extension-add-row">
-      <select value={selected} onChange={(event) => setSelected(event.target.value)}><option value="">{t('builder.chooseModule')}</option>
-        {candidates.map((module) => <option key={module.id} value={module.id}>{moduleOptionLabel(module, t)}</option>)}
-      </select>
-      <Button variant="primary" onClick={() => { add(selected); setSelected(''); }} disabled={!selected}>{t('builder.addRule')}</Button>
-      {!candidates.length ? <span className="hint">{t('builder.noEventModules')}</span> : null}
+        {!candidates.length ? <span className="hint">{t('builder.noEventModules')}</span> : null}
+      </div>
+      {active ? (() => {
+        const [id, item] = active;
+        const spec = candidates.find((module) => module.id === id || module.module_id === id || module.id === item.module_id);
+        return <article className="module-inspector">
+          <div className="extension-module-heading"><div><strong>{spec?.display_name || shortId(id)}</strong><small>{id}</small></div>
+            {!defaultEnabled.includes(id) ? <Button size="sm" variant="danger" onClick={() => {
+              const next = { ...rules };
+              delete next[id];
+              update({ ...next, enabled: enabled.filter((name) => name !== id) });
+              setActiveId('');
+            }}>{t('builder.remove')}</Button> : null}
+          </div>
+          {spec?.config_schema ? <SchemaFields schema={spec.config_schema} uiSchema={spec.ui_schema} value={item} onChange={(next) => update({ ...rules, [id]: { ...item, ...next } })} excluded={RESERVED_MODULE_FIELDS} /> : (
+            <details><summary>{t('builder.rawModule')}</summary><JsonField value={item} onChange={(next) => { if (isObject(next)) update({ ...rules, [id]: next }); }} /></details>
+          )}
+        </article>;
+      })() : <div className="module-inspector"><p className="hint">{t('builder.noEventModules')}</p></div>}
     </div>
   </section>;
 }
 
-function DeclarativeEditor({ body, changeBody, modules }: { body: JsonObject; changeBody: (body: JsonObject) => void; modules: ExtensionModule[] }) {
+export function DeclarativeEditor({ body, changeBody, modules, activeStage, onStageChange, focusModuleId, sourceChoices }: {
+  body: JsonObject;
+  changeBody: (body: JsonObject) => void;
+  modules: ExtensionModule[];
+  activeStage: number;
+  onStageChange: (index: number) => void;
+  focusModuleId?: string;
+  sourceChoices: SourceChoice[];
+}) {
   const { t } = useI18n();
   const stages = declarativeStages(body);
   const updateStages = (next: JsonObject[]) => changeBody({ ...body, stages: next });
+  useEffect(() => {
+    if (stages.length && activeStage >= stages.length) onStageChange(stages.length - 1);
+  }, [activeStage, onStageChange, stages.length]);
   const move = (index: number, shift: number) => {
     const target = index + shift;
     if (target < 0 || target >= stages.length) return;
     const next = [...stages];
     [next[index], next[target]] = [next[target], next[index]];
     updateStages(next);
+    const activeIndex = next.indexOf(stages[activeStage]);
+    if (activeIndex >= 0) onStageChange(activeIndex);
+  };
+  const removeStage = (index: number) => {
+    const selected = stages[activeStage];
+    const next = stages.filter((_, stageIndex) => stageIndex !== index);
+    const nextActive = selected && selected !== stages[index] ? next.indexOf(selected) : Math.min(index, next.length - 1);
+    updateStages(next);
+    onStageChange(Math.max(0, nextActive));
   };
   return <section className="extension-subpanel">
     <div className="extension-section-heading"><h3>{t('builder.linearStages')}</h3>
       <Button variant="primary" onClick={() => updateStages([...stages, { name: `stage_${stages.length + 1}`, kind: 'step', items: [] }])}>{t('builder.addStage')}</Button>
     </div>
-    {stages.map((stage, index) => {
+    <div className="pipeline-stage-tabs declarative-stage-tabs" role="tablist" aria-label={t('builder.pipelineStages')}>
+      {stages.map((stage, index) => <button key={`${String(stage.name)}-${index}`} type="button" role="tab" aria-selected={activeStage === index}
+        tabIndex={activeStage === index ? 0 : -1} onClick={() => onStageChange(index)}
+        onKeyDown={(event) => {
+          if (!['ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(event.key)) return;
+          event.preventDefault();
+          const target = event.key === 'Home' ? 0 : event.key === 'End' ? stages.length - 1
+            : (index + (event.key === 'ArrowRight' ? 1 : -1) + stages.length) % stages.length;
+          onStageChange(target);
+          document.getElementById(`declarative-stage-tab-${target}`)?.focus();
+        }} id={`declarative-stage-tab-${index}`} aria-controls="declarative-stage-panel">{String(stage.name || `Stage ${index + 1}`)}</button>)}
+    </div>
+    {stages[activeStage] ? (() => {
+      const index = activeStage;
+      const stage = stages[index];
       const kind = ['source', 'frame', 'step'].includes(String(stage.kind)) ? String(stage.kind) : 'step';
       const moduleKind = kind === 'source' ? 'source' : 'processor_item';
-      return <article className="extension-stage-card" key={`${String(stage.name)}-${index}`}>
+      return <article className="extension-stage-card" key={`${String(stage.name)}-${index}`} role="tabpanel" id="declarative-stage-panel" aria-labelledby={`declarative-stage-tab-${index}`}>
         <div className="extension-stage-heading">
           <Field label={t('builder.stageName')}><input value={String(stage.name || '')} onChange={(event) => updateStages(stages.map((item, i) => i === index ? { ...item, name: event.target.value } : item))} /></Field>
           <Field label={t('builder.stageKind')}><select value={kind} onChange={(event) => updateStages(stages.map((item, i) => i === index ? { ...item, kind: event.target.value } : item))}>
             <option value="source">{t('builder.sourceStage')}</option><option value="frame">{t('builder.frameStage')}</option><option value="step">{t('builder.stepStage')}</option>
           </select></Field>
           <div className="toolbar">
-            <Button size="sm" onClick={() => move(index, -1)} disabled={index === 0}>↑</Button>
-            <Button size="sm" onClick={() => move(index, 1)} disabled={index === stages.length - 1}>↓</Button>
-            <Button size="sm" variant="danger" onClick={() => updateStages(stages.filter((_, i) => i !== index))}>{t('builder.removeStage')}</Button>
+            <Button size="sm" onClick={() => move(index, -1)} disabled={index === 0} aria-label={t('builder.moveUp')}>↑</Button>
+            <Button size="sm" onClick={() => move(index, 1)} disabled={index === stages.length - 1} aria-label={t('builder.moveDown')}>↓</Button>
+          <Button size="sm" variant="danger" onClick={() => removeStage(index)}>{t('builder.removeStage')}</Button>
           </div>
         </div>
         <ModuleListEditor modules={modules} items={(Array.isArray(stage.items) ? stage.items : []).filter(isObject)} kind={moduleKind} stage={kind}
-          title={t('builder.stageModules')} onChange={(items) => updateStages(stages.map((item, i) => i === index ? { ...item, items } : item))} />
+          title={t('builder.stageModules')} focusModuleId={focusModuleId} sourceChoices={sourceChoices} onChange={(items) => updateStages(stages.map((item, i) => i === index ? { ...item, items } : item))} />
       </article>;
-    })}
+    })() : <p className="hint">{t('builder.noStages')}</p>}
     {pipelineSchemaFields(body) ? <p className="hint">{t('builder.finalResultsField')} <input value={String(body.final_results || '')} placeholder={t('builder.finalResultsPlaceholder')}
       onChange={(event) => changeBody({ ...body, final_results: event.target.value || undefined })} /></p> : null}
   </section>;
@@ -883,7 +1056,7 @@ export function ExtensionsPage() {
   const changes = jsonDiff(original, config);
 
   return <div className="layout extensions-page">
-    <header className="header"><div><h2>{t('builder.title')}</h2><p className="hint">{t('builder.hint')}</p></div></header>
+    <PageHeader title={t('builder.title')} description={t('builder.hint')} />
     <div className="config-studio-tabs">
       <button className={`tab ${tab === 'pipeline' ? 'active' : ''}`} onClick={() => setTab('pipeline')}>{t('builder.pipelineTab')}</button>
       <button className={`tab ${tab === 'plugins' ? 'active' : ''}`} onClick={() => setTab('plugins')}>{t('builder.pluginsTab')}</button>
