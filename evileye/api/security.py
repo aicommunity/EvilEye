@@ -294,6 +294,8 @@ def required_permissions_for_request(path: str, method: str) -> set[str]:
         return set()
     if path.startswith("/api/v1/internal/"):
         return set()
+    if path.startswith("/api/v1/admin/extensions"):
+        return {"system:admin"}
     if path.startswith("/api/v1/playback"):
         return {"journal:view"}
     if path.startswith("/api/v1/journals/config-history"):

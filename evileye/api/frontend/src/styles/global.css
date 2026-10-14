@@ -3221,6 +3221,298 @@ body {
 .app-main { padding: 1.5rem; max-width: 1400px; width: 100%; }
 .app-main .panel { display: block; }
 .app-main .panel.active { display: block; }
+
+.extensions-page {
+  max-width: 1440px;
+}
+
+.extension-panel,
+.extension-subpanel,
+.extension-module-card,
+.extension-stage-card {
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--bg-card);
+  padding: 1rem;
+  margin: 0 0 1rem;
+}
+
+.extension-subpanel {
+  background: rgba(255, 255, 255, 0.015);
+}
+
+.extension-module-card,
+.extension-stage-card {
+  padding: 0.8rem;
+}
+
+.extension-section-heading,
+.extension-config-header,
+.extension-module-heading,
+.extension-stage-heading {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+}
+
+.extension-section-heading h3,
+.extension-subpanel h3,
+.extension-review h3 {
+  margin: 0 0 0.75rem;
+}
+
+.extension-module-heading strong small {
+  display: block;
+  color: var(--text-muted);
+  font-family: var(--font-mono);
+  font-weight: 400;
+  overflow-wrap: anywhere;
+}
+
+.extension-field {
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+  min-width: 0;
+  color: var(--text-muted);
+  font-size: 0.875rem;
+}
+
+.extension-field input:not([type='checkbox']),
+.extension-field select,
+.extension-field textarea,
+.extension-add-row select,
+.extension-raw-editor {
+  width: 100%;
+  min-width: 0;
+  font: inherit;
+  color: var(--text);
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 0.5rem 0.65rem;
+}
+
+.extension-field textarea,
+.extension-raw-editor {
+  font-family: var(--font-mono);
+  font-size: 0.82rem;
+  resize: vertical;
+}
+
+.extension-field input[type='checkbox'] {
+  accent-color: var(--accent);
+}
+
+.extension-field small {
+  color: var(--text-muted);
+  font-size: 0.78rem;
+}
+
+.extension-form-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 250px), 1fr));
+  gap: 0.75rem 1rem;
+  margin: 0.75rem 0;
+}
+
+.extension-form-grid > .hint {
+  align-self: center;
+}
+
+.extension-description {
+  align-self: end;
+  margin-bottom: 0.5rem;
+}
+
+.extension-pipeline-picker {
+  align-items: end;
+}
+
+.extension-module-controls {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: end;
+  gap: 0.6rem 1rem;
+  margin: 0.75rem 0;
+}
+
+.extension-module-controls > label {
+  display: flex;
+  align-items: center;
+  gap: 0.45rem;
+  color: var(--text-muted);
+}
+
+.extension-module-controls .extension-field {
+  width: min(100%, 260px);
+}
+
+.extension-count {
+  color: var(--text-muted);
+  font-weight: 400;
+}
+
+.extension-add-row select {
+  flex: 1 1 280px;
+  max-width: 700px;
+}
+
+.extension-builder-content {
+  display: flex;
+  flex-direction: column;
+  gap: 0.8rem;
+}
+
+.extension-builder-content .extension-subpanel,
+.extension-builder-content .extension-module-card {
+  margin-bottom: 0.65rem;
+}
+
+.extension-stage-heading > .extension-field {
+  flex: 1 1 220px;
+}
+
+.extension-save-toolbar {
+  padding-top: 1rem;
+  border-top: 1px solid var(--border);
+}
+
+.extension-json-editor textarea {
+  width: 100%;
+  min-height: min(55vh, 620px);
+  font-family: var(--font-mono);
+  font-size: 0.82rem;
+  color: var(--text);
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 0.75rem;
+  resize: vertical;
+}
+
+.extension-json-editor summary,
+.extension-topology details summary {
+  cursor: pointer;
+  color: var(--accent);
+}
+
+.extension-alert {
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  padding: 0.75rem 1rem;
+  margin-bottom: 0.75rem;
+  white-space: pre-wrap;
+}
+
+.extension-alert-error,
+.extension-error {
+  color: #fca5a5;
+}
+
+.extension-alert-error {
+  border-color: rgba(239, 68, 68, 0.55);
+  background: rgba(127, 29, 29, 0.2);
+}
+
+.extension-alert-success,
+.extension-valid {
+  color: #86efac;
+}
+
+.extension-alert-success {
+  border-color: rgba(34, 197, 94, 0.45);
+  background: rgba(20, 83, 45, 0.2);
+}
+
+.extension-warning {
+  color: #fcd34d;
+}
+
+.extension-topology {
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  padding: 0.8rem;
+  background: var(--bg);
+}
+
+.extension-topology-stage {
+  display: grid;
+  grid-template-columns: minmax(140px, 0.3fr) 1fr;
+  gap: 0.75rem;
+  align-items: center;
+  padding: 0.5rem 0;
+  border-bottom: 1px solid var(--border);
+}
+
+.extension-topology-stage > strong {
+  color: var(--text-muted);
+}
+
+.extension-topology-nodes {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.4rem;
+}
+
+.extension-topology-nodes span {
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: var(--bg-card);
+  padding: 0.25rem 0.6rem;
+}
+
+.extension-diff {
+  max-height: 420px;
+  overflow: auto;
+  padding: 0.8rem 0.8rem 0.8rem 2rem;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--bg);
+  font-family: var(--font-mono);
+  font-size: 0.82rem;
+  overflow-wrap: anywhere;
+}
+
+.extension-operation-details {
+  display: grid;
+  grid-template-columns: minmax(120px, 0.25fr) 1fr;
+  gap: 0.45rem 1rem;
+}
+
+.extension-operation-details dt {
+  color: var(--text-muted);
+}
+
+.extension-operation-details dd {
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+
+.extension-operation-state {
+  border-radius: 999px;
+  padding: 0.2rem 0.6rem;
+  background: rgba(59, 130, 246, 0.15);
+  color: #93c5fd;
+}
+
+.extension-operation-state.state-completed { color: #86efac; background: rgba(34, 197, 94, 0.15); }
+.extension-operation-state.state-failed,
+.extension-operation-state.state-dependencies_missing { color: #fca5a5; background: rgba(239, 68, 68, 0.15); }
+.extension-operation-state.state-pending_restart { color: #fcd34d; background: rgba(245, 158, 11, 0.15); }
+
+@media (max-width: 680px) {
+  .extension-topology-stage,
+  .extension-operation-details {
+    grid-template-columns: 1fr;
+  }
+
+  .extension-module-heading {
+    align-items: flex-start;
+  }
+}
 .mobile-shell { padding: 0.75rem; }
 .mobile-header {
   display: flex;

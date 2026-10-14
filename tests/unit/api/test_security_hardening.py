@@ -344,6 +344,112 @@ def test_internal_token_length_mismatch_is_401(secured_client):
     assert res.status_code == 401
 
 
+def test_extension_workspace_is_admin_only_and_localhost_only_by_default(secured_client, monkeypatch):
+    client, _ = secured_client
+    monkeypatch.delenv("EVILEYE_BUILDER_LOCALHOST_ONLY", raising=False)
+    assert client.post("/api/v1/auth/login", json={"username": "admin", "password": "correct-horse"}).status_code == 200
+    denied = client.get("/api/v1/admin/extensions/catalog")
+    assert denied.status_code == 403
+    monkeypatch.setenv("EVILEYE_BUILDER_LOCALHOST_ONLY", "0")
+    allowed = client.get("/api/v1/admin/extensions/catalog")
+    assert allowed.status_code == 200
+    assert {item["config_id"] for item in allowed.json()["pipelines"]} >= {
+        "PipelineSurveillance", "PipelineDeclarative", "PipelineCapture",
+    }
+
+
+def test_extension_workspace_rejects_spoofed_forwarded_localhost(secured_client, monkeypatch):
+    client, tmp_path = secured_client
+    monkeypatch.delenv("EVILEYE_BUILDER_LOCALHOST_ONLY", raising=False)
+    assert client.post("/api/v1/auth/login", json={"username": "admin", "password": "correct-horse"}).status_code == 200
+    path = tmp_path / "credentials.json"
+    payload = json.loads(path.read_text(encoding="utf-8"))
+    payload["web_auth"]["protection"].update({"trust_proxy": True, "trusted_proxy_ips": ["10.0.0.2"]})
+    path.write_text(json.dumps(payload), encoding="utf-8")
+    response = client.get("/api/v1/admin/extensions/catalog", headers={"X-Forwarded-For": "127.0.0.1"})
+    assert response.status_code == 403
+
+
+def test_extension_workspace_accepts_localhost_from_trusted_proxy(secured_client, monkeypatch):
+    client, tmp_path = secured_client
+    monkeypatch.delenv("EVILEYE_BUILDER_LOCALHOST_ONLY", raising=False)
+    assert client.post("/api/v1/auth/login", json={"username": "admin", "password": "correct-horse"}).status_code == 200
+    path = tmp_path / "credentials.json"
+    payload = json.loads(path.read_text(encoding="utf-8"))
+    payload["web_auth"]["protection"].update({"trust_proxy": True, "trusted_proxy_ips": ["testclient"]})
+    path.write_text(json.dumps(payload), encoding="utf-8")
+
+    response = client.get("/api/v1/admin/extensions/catalog", headers={"X-Forwarded-For": "127.0.0.1"})
+
+    assert response.status_code == 200
+
+
+def test_extension_api_rechecks_current_admin_role(secured_client, monkeypatch):
+    client, tmp_path = secured_client
+    monkeypatch.setenv("EVILEYE_BUILDER_LOCALHOST_ONLY", "0")
+    assert client.post("/api/v1/auth/login", json={"username": "admin", "password": "correct-horse"}).status_code == 200
+    path = tmp_path / "credentials.json"
+    payload = json.loads(path.read_text(encoding="utf-8"))
+    payload["web_auth"]["users"][0]["role"] = "user"
+    path.write_text(json.dumps(payload), encoding="utf-8")
+    assert client.get("/api/v1/admin/extensions/catalog").status_code == 403
+
+
+def test_extension_config_save_uses_backup_and_metadata_preview(secured_client, monkeypatch):
+    client, tmp_path = secured_client
+    monkeypatch.setenv("EVILEYE_BUILDER_LOCALHOST_ONLY", "0")
+    assert client.post("/api/v1/auth/login", json={"username": "admin", "password": "correct-horse"}).status_code == 200
+    config = {"pipeline": {"pipeline_class": "PipelineSurveillance", "sources": [], "detectors": []}, "vendor": {"marker": 1}}
+    preview = client.post("/api/v1/admin/extensions/preview", json={"config": config})
+    assert preview.status_code == 200
+    assert preview.json()["valid"] is True
+    created = client.post("/api/v1/admin/extensions/configs", json={"name": "builder-api.json", "config": config, "create_only": True})
+    assert created.status_code == 200, created.text
+    changed = {**config, "vendor": {"marker": 2}}
+    updated = client.post("/api/v1/admin/extensions/configs", json={"name": "builder-api.json", "config": changed, "create_only": False})
+    assert updated.status_code == 200, updated.text
+    backup = Path(updated.json()["backup"])
+    assert backup.is_file()
+    assert json.loads(backup.read_text(encoding="utf-8"))["vendor"]["marker"] == 1
+
+
+def test_extension_plugin_operation_and_archive_routes_share_saved_status(secured_client, monkeypatch):
+    from evileye.api.routes import extensions as extension_routes
+
+    client, tmp_path = secured_client
+    monkeypatch.setenv("EVILEYE_BUILDER_LOCALHOST_ONLY", "0")
+    assert client.post("/api/v1/auth/login", json={"username": "admin", "password": "correct-horse"}).status_code == 200
+    archive = tmp_path / "plugin.zip"
+    archive.write_bytes(b"zip contents")
+    operation = {
+        "id": "12345678-abcd",
+        "status": "pending_restart",
+        "name": "demo-plugin",
+        "plugin_id": "demo_plugin",
+        "template": "alarm",
+        "directory": str(tmp_path / "plugins" / "demo-plugin"),
+        "archive": str(archive),
+        "message": "Restart required",
+    }
+    monkeypatch.setattr(extension_routes, "create_plugin_operation", lambda *_args: operation)
+    monkeypatch.setattr(extension_routes, "get_plugin_operation", lambda _operation_id: operation)
+    monkeypatch.setattr(extension_routes, "list_plugin_operations", lambda: [operation])
+    monkeypatch.setattr(extension_routes, "plugin_operation_archive", lambda _operation_id: archive)
+
+    created = client.post("/api/v1/admin/extensions/plugins", json={"name": "demo-plugin", "template": "alarm"})
+    assert created.status_code == 200
+    assert created.json()["status"] == "pending_restart"
+    status = client.get("/api/v1/admin/extensions/operations/12345678-abcd")
+    assert status.status_code == 200
+    assert status.json()["plugin_id"] == "demo_plugin"
+    history = client.get("/api/v1/admin/extensions/operations")
+    assert history.status_code == 200
+    assert history.json()[0]["id"] == "12345678-abcd"
+    download = client.get("/api/v1/admin/extensions/operations/12345678-abcd/archive")
+    assert download.status_code == 200
+    assert download.content == b"zip contents"
+
+
 def _security_headers_client(tmp_path, monkeypatch, *, hsts_env=None, secure_cookies=True):
     monkeypatch.chdir(tmp_path)
     monkeypatch.delenv("EVILEYE_ENV", raising=False)

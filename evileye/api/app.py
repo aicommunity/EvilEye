@@ -28,6 +28,7 @@ from evileye.api.routes.realtime import router as realtime_router
 from evileye.api.routes.playback import router as playback_router
 from evileye.api.routes.internal import router as internal_router
 from evileye.api.routes.setup import router as setup_router
+from evileye.api.routes.extensions import router as extensions_router
 from evileye.api.routes.system import router as system_router
 from evileye.api.core.config_run_access import get_config_run_manager
 from evileye.api.core.web_auth_bootstrap import ensure_default_admin_credentials
@@ -139,6 +140,12 @@ def _shutdown_runtime_components() -> None:
 @asynccontextmanager
 async def lifespan(_app: FastAPI):
     logger.info("FastAPI lifespan startup")
+    try:
+        from evileye.core.extension_builder import reconcile_plugin_operations
+
+        reconcile_plugin_operations()
+    except Exception as exc:
+        logger.warning("Plugin operation reconciliation failed: %s", exc)
     ensure_default_admin_credentials()
     web_auth = load_web_auth_config()
     _app.state.web_auth = web_auth
@@ -491,13 +498,14 @@ def create_app() -> FastAPI:
     app.include_router(config_editors_router)
     app.include_router(configs_router)
     app.include_router(setup_router)
+    app.include_router(extensions_router)
     app.include_router(system_router)
     app.include_router(streaming_router)
     app.include_router(realtime_router)
     app.include_router(playback_router)
     app.include_router(internal_router)
     logger.info(
-        "Routers registered: auth, state, journals, logs, diagnostics, users, bans, config_editors, configs, setup, system, streaming, realtime, playback, internal"
+        "Routers registered: auth, state, journals, logs, diagnostics, users, bans, config_editors, configs, setup, extensions, system, streaming, realtime, playback, internal"
     )
 
     static_dir = Path(__file__).parent / "static"

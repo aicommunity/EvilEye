@@ -16,6 +16,7 @@ from evileye.cli_commands.plugin_scaffold import (
     template_descriptions,
     template_module_id,
 )
+from evileye.core.extension_builder import create_plugin_archive
 
 app = typer.Typer(
     help="Create and inspect plugin packages for EvilEye.",
@@ -46,9 +47,8 @@ def list_modules(
     kind: str | None = typer.Option(None, "--kind", help="Filter by module kind."),
 ) -> None:
     """List installed plugin modules and their declared capabilities."""
-    from evileye.core.builtin_inventory import register_builtins
-    from evileye.core.plugins import MODULE_KINDS, plugin_registry
-    from evileye.cli_commands.pipeline_configure import _schema_mapping
+    from evileye.core.plugins import MODULE_KINDS
+    from evileye.core.extension_builder import extension_catalog
 
     if kind is not None and kind not in MODULE_KINDS:
         console.print(
@@ -57,30 +57,26 @@ def list_modules(
         )
         raise typer.Exit(2)
     try:
-        register_builtins()
+        catalog = extension_catalog()
     except Exception as exc:
         console.print(f"[red]Plugin discovery failed:[/red] {exc}")
         raise typer.Exit(1) from exc
 
     console.print("[bold]Installed EvilEye modules[/bold]")
-    module_ids = plugin_registry.list_modules(kind)
-    for module_id in module_ids:
-        registered = plugin_registry.get_module(module_id)
-        if registered is None:
-            continue
-        spec = registered.spec
+    modules = [item for item in catalog["modules"] if kind is None or item["kind"] == kind]
+    for spec in modules:
         console.print(
-            f"[cyan]{escape(registered.qualified_id)}[/cyan] — "
-            f"{escape(spec.display_name or spec.module_id)}"
+            f"[cyan]{escape(spec['id'])}[/cyan] — "
+            f"{escape(spec['display_name'])}"
         )
         console.print(
             "  "
-            f"kind={escape(spec.kind)}  "
-            f"stages={escape(', '.join(spec.stages) or '—')}  "
-            f"execution={escape(', '.join(spec.execution_modes))}  "
-            f"form_schema={'yes' if _schema_mapping(spec.config_schema) else 'no'}"
+            f"kind={escape(spec['kind'])}  "
+            f"stages={escape(', '.join(spec['stages']) or '—')}  "
+            f"execution={escape(', '.join(spec['execution_modes']))}  "
+            f"form_schema={'yes' if spec['config_schema'] else 'no'}"
         )
-    if not module_ids:
+    if not modules:
         console.print(f"[dim]No modules registered for kind {escape(kind or 'any')}.[/dim]")
 
 
@@ -99,6 +95,7 @@ def create(
         "-d",
         help="Parent directory for the new plugin folder (default: current directory).",
     ),
+    zip_archive: bool = typer.Option(False, "--zip", help="Also create a ZIP next to the plugin folder."),
 ) -> None:
     """Create a ready-to-edit plugin package without overwriting existing files."""
     if not name:
@@ -121,12 +118,15 @@ def create(
     try:
         destination = create_plugin_project(name, output_dir, template)
         _, plugin_id = normalize_plugin_name(name)
+        archive = create_plugin_archive(destination, destination.with_suffix(".zip")) if zip_archive else None
     except (PluginScaffoldError, OSError) as exc:
         console.print(f"[red]Plugin scaffold failed:[/red] {exc}")
         raise typer.Exit(1) from exc
 
     console.print(f"[dim]Module identifier: {plugin_id}/{template_module_id(template)}[/dim]")
     console.print(f"[green]Created {template} plugin:[/green] {destination}")
+    if archive:
+        console.print(f"[green]Created plugin archive:[/green] {archive}")
     console.print("[dim]Use the same Python environment as EvilEye; refresh editable-build tooling if needed:[/dim]")
     console.print("  python -m pip install --upgrade pip setuptools")
     console.print(f'  python -m pip install -e "{destination}"')

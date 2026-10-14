@@ -7,7 +7,7 @@ import { useI18n } from '../i18n';
 import { AuthModal } from './AuthModal';
 import { ForcePasswordGate } from './ForcePasswordGate';
 
-const NAV: Array<{ to: string; labelKey: string; permission?: string }> = [
+const NAV: Array<{ to: string; labelKey: string; permission?: string; adminOnly?: boolean }> = [
   { to: '/live', labelKey: 'nav.live', permission: 'live:view' },
   { to: '/events', labelKey: 'nav.events', permission: 'journal:view' },
   { to: '/playback', labelKey: 'nav.playback', permission: 'journal:view' },
@@ -16,6 +16,7 @@ const NAV: Array<{ to: string; labelKey: string; permission?: string }> = [
   { to: '/admin/configs', labelKey: 'nav.configs', permission: 'config:view' },
   { to: '/admin/users', labelKey: 'nav.users', permission: 'users:manage' },
   { to: '/admin/bans', labelKey: 'nav.bans', permission: 'bans:manage' },
+  { to: '/admin/extensions', labelKey: 'nav.extensions', permission: 'system:admin', adminOnly: true },
   { to: '/settings', labelKey: 'nav.settings' },
 ];
 
@@ -37,7 +38,7 @@ export function AppShell() {
           <p className="tagline">{t('shell.tagline')}</p>
         </div>
         <nav className="sidebar-nav">
-          {NAV.filter((item) => !item.permission || hasPermission(item.permission)).map((item) => (
+          {NAV.filter((item) => (!item.adminOnly || (authEnabled && user?.role === 'admin')) && (!item.permission || hasPermission(item.permission))).map((item) => (
             <NavLink key={item.to} to={item.to} className={({ isActive }) => `nav-link${isActive ? ' active' : ''}`}>
               {t(item.labelKey)}
             </NavLink>

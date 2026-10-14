@@ -17,6 +17,7 @@
 - **[Windows: native pip](WINDOWS_NATIVE.md)** - Установка и watchdog без Docker
 - **[Windows: Docker Desktop](WINDOWS_DOCKER_DEPLOYMENT.md)** - Compose + PowerShell + Docker watchdog
 - **[Web UI](WEB_UI_GUIDE.md)** - React SPA, first-run, API
+- **[Конструктор пайплайнов и плагинов Web UI](WEB_UI_EXTENSION_BUILDER.md)** — отдельный admin-only режим, формы, localhost-политика и установка плагинов
 - **[Web UI за Traefik / без proxy](WEB_UI_REVERSE_PROXY.md)** - HTTP/HTTPS на uvicorn vs TLS на Traefik, trust_proxy, типичные ошибки
 - **[Руководство по конфигурациям](CONFIGURATION_GUIDE.md)** - Полное описание структуры конфигурационных файлов, всех параметров и примеры конфигураций
 

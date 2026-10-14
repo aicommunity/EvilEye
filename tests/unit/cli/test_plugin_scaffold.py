@@ -125,6 +125,25 @@ def test_create_command_writes_package_in_requested_directory(tmp_path: Path):
     assert "pip install --upgrade pip setuptools" in result.output
 
 
+def test_create_command_uses_shared_archive_service(tmp_path: Path):
+    result = runner.invoke(
+        app,
+        ["plugin", "create", "zip-sample", "--template", "alarm", "--output-dir", str(tmp_path), "--zip"],
+    )
+    assert result.exit_code == 0, result.output
+    archive = tmp_path / "zip-sample.zip"
+    assert archive.is_file()
+    assert "Created plugin archive" in result.output
+
+
+def test_generated_templates_expose_configuration_schemas(tmp_path: Path, monkeypatch):
+    project_dir = create_plugin_project("schema-sample", tmp_path, "alarm")
+    monkeypatch.syspath_prepend(str(project_dir))
+    manifest = importlib.import_module("schema_sample.plugin").load_plugin()
+    schema = manifest.modules[0].config_schema
+    assert schema["properties"]["required_attributes"]["type"] == "array"
+
+
 def test_template_list_shows_available_starters():
     result = runner.invoke(app, ["plugin", "templates"])
 

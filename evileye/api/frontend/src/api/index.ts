@@ -14,3 +14,4 @@ export * from './playback';
 export * from './editors';
 export * from './dataCache';
 export * from './setup';
+export * from './extensions';

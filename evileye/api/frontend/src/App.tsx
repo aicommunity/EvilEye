@@ -28,6 +28,7 @@ const ConfigFilePage = lazy(() =>
 const LogsPage = lazy(() => import('./features/admin/LogsPage').then((m) => ({ default: m.LogsPage })));
 const UsersPage = lazy(() => import('./features/admin/UsersPage').then((m) => ({ default: m.UsersPage })));
 const BansPage = lazy(() => import('./features/admin/BansPage').then((m) => ({ default: m.BansPage })));
+const ExtensionsPage = lazy(() => import('./features/admin/ExtensionsPage').then((m) => ({ default: m.ExtensionsPage })));
 const SettingsPage = lazy(() =>
   import('./features/settings/SettingsPage').then((m) => ({ default: m.SettingsPage })),
 );
@@ -172,6 +173,16 @@ export default function App() {
                     <RequirePermission permission="bans:manage">
                       <LazyRoute>
                         <BansPage />
+                      </LazyRoute>
+                    </RequirePermission>
+                  }
+                />
+                <Route
+                  path="/admin/extensions"
+                  element={
+                    <RequirePermission permission="system:admin">
+                      <LazyRoute>
+                        <ExtensionsPage />
                       </LazyRoute>
                     </RequirePermission>
                   }

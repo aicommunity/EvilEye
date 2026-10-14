@@ -50,6 +50,7 @@ window.__playbackDebug.snapshot();
 | `/admin/logs` | `logs:view` | Log files + Follow (SSE tail) |
 | `/admin/users` | `users:manage` | User management (credentials.json + web_users.json; role/password/disable/delete; **camera ACL** by `source_name`) |
 | `/admin/bans` | `bans:manage` | IP ban list (auto + manual add/remove) |
+| `/admin/extensions` | exact role `admin`, localhost by default | Pipeline builder, topology preview, plugin scaffold/install |
 | `/settings` | authenticated | Language, date format, visible cameras (prefs), change password |
 | `/admin/overview` | — | Redirect → `/live` |
 | `/admin/history` | — | Redirect → `/admin/runs` |
@@ -57,6 +58,11 @@ window.__playbackDebug.snapshot();
 
 Language and date format live on **Settings** (`/settings`) and sync to the server via `PUT /api/v1/auth/prefs` when auth is enabled (localStorage keys `evileye.ui.lang` / `evileye.ui.dateFormat` still used as client cache).
 Config mode Basic/Advanced is stored in `localStorage` key `evileye.config.mode` (default **basic**).
+
+The extension builder uses the same Python catalog, validation, config writer,
+and plugin scaffold as the CLI. It is admin-only and localhost-only by default.
+See [Pipeline and plugin builder](WEB_UI_EXTENSION_BUILDER.md) for its forms,
+backup behavior, plugin installation workflow, API routes, and operator setting.
 
 ### Camera ACL and visible cameras
 
