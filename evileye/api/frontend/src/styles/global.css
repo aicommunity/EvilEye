@@ -3502,6 +3502,7 @@ body {
 .extension-operation-state.state-failed,
 .extension-operation-state.state-dependencies_missing { color: #fca5a5; background: rgba(239, 68, 68, 0.15); }
 .extension-operation-state.state-pending_restart { color: #fcd34d; background: rgba(245, 158, 11, 0.15); }
+.extension-operation-state.state-settling { color: #93c5fd; background: rgba(59, 130, 246, 0.15); }
 
 @media (max-width: 680px) {
   .extension-topology-stage,

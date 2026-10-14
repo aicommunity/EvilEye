@@ -18,6 +18,16 @@ type JsonObject = Record<string, any>;
 type BuilderTab = 'pipeline' | 'plugins';
 type Schema = Record<string, any>;
 
+function isRecentOperationFailure(operation: PluginOperation): boolean {
+  return operation.status === 'failed'
+    && typeof operation.updated_at === 'number'
+    && Date.now() / 1000 - operation.updated_at < 30;
+}
+
+function operationStatusLabel(operation: PluginOperation): string {
+  return isRecentOperationFailure(operation) ? 'builder.status.settling' : `builder.status.${operation.status}`;
+}
+
 const SURVEILLANCE_GROUPS: Array<{ id: string; kind: string; title: string }> = [
   { id: 'sources', kind: 'source', title: 'builder.sources' },
   { id: 'preprocessors', kind: 'processor_item', title: 'builder.preprocessors' },
@@ -687,14 +697,14 @@ function PluginWorkshop({ catalog }: { catalog: ExtensionCatalog }) {
     {recentOperations.length ? <section className="extension-panel extension-recent-operations">
       <h3>{t('builder.recentOperations')}</h3>
       <div className="toolbar">
-        {recentOperations.map((item) => <Button key={item.id} variant={item.id === operation?.id ? 'primary' : 'outline'} onClick={() => setOperation(item)}>
-          {item.name} · {t(`builder.status.${item.status}`)}
+            {recentOperations.map((item) => <Button key={item.id} variant={item.id === operation?.id ? 'primary' : 'outline'} onClick={() => setOperation(item)}>
+              {item.name} · {t(operationStatusLabel(item))}
         </Button>)}
       </div>
     </section> : null}
     {operation ? <section className="extension-panel">
-      <div className="extension-section-heading"><h3>{t('builder.operation')}</h3><span className={`extension-operation-state state-${operation.status}`}>{t(`builder.status.${operation.status}`)}</span></div>
-      <p>{operation.message}</p>
+      <div className="extension-section-heading"><h3>{t('builder.operation')}</h3><span className={`extension-operation-state ${isRecentOperationFailure(operation) ? 'state-settling' : `state-${operation.status}`}`}>{t(operationStatusLabel(operation))}</span></div>
+      <p>{isRecentOperationFailure(operation) ? t('builder.operationSettlingHint') : operation.message}</p>
       <dl className="extension-operation-details"><dt>{t('builder.pluginId')}</dt><dd><code>{operation.plugin_id}</code></dd>
         <dt>{t('builder.directory')}</dt><dd><code>{operation.directory}</code></dd>
       </dl>
