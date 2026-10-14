@@ -767,6 +767,7 @@ const en: Dict = {
     createInstall: 'Create and install',
     creating: 'Creating…',
     operation: 'Operation status',
+    operationReconnectWarning: 'The Web UI connection was interrupted. The server may be restarting; the operation status will be checked automatically when the connection returns.',
     recentOperations: 'Recent plugin operations',
     pluginId: 'Plugin ID',
     directory: 'Server folder',

@@ -54,6 +54,8 @@ export type PluginOperation = {
   directory: string;
   archive: string;
   message: string;
+  created_at?: number;
+  updated_at?: number;
   missing_dependencies?: string[];
 };
 

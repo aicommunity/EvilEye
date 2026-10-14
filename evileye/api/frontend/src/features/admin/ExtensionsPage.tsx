@@ -622,6 +622,7 @@ function PluginWorkshop({ catalog }: { catalog: ExtensionCatalog }) {
   const [recentOperations, setRecentOperations] = useState<PluginOperation[]>([]);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
+  const [pollingFailed, setPollingFailed] = useState(false);
   useEffect(() => {
     void extensionsApi.operations().then((items) => {
       setRecentOperations(items);
@@ -629,12 +630,24 @@ function PluginWorkshop({ catalog }: { catalog: ExtensionCatalog }) {
     }).catch((reason) => setError(reason instanceof Error ? reason.message : String(reason)));
   }, []);
   useEffect(() => {
-    if (!operation || ['completed', 'pending_restart', 'dependencies_missing', 'failed'].includes(operation.status)) return;
+    if (!operation || ['completed', 'pending_restart', 'dependencies_missing'].includes(operation.status)) return;
+    // The API process can be stopped while the detached installer is restarting
+    // it. During that handoff the request handler may briefly report failure;
+    // keep checking for a short window in case the worker records completion.
+    const recentDispatchFailure = operation.status === 'failed'
+      && typeof operation.updated_at === 'number'
+      && Date.now() / 1000 - operation.updated_at < 30;
+    if (operation.status === 'failed' && !recentDispatchFailure) return;
     const timer = window.setInterval(() => {
       void extensionsApi.operation(operation.id).then((next) => {
         setOperation(next);
         setRecentOperations((items) => [next, ...items.filter((item) => item.id !== next.id)].slice(0, 20));
-      }).catch((reason) => setError(reason instanceof Error ? reason.message : String(reason)));
+        setPollingFailed(false);
+      }).catch(() => {
+        // Restarting the Web backend briefly interrupts status requests. Keep
+        // polling and do not present this transport error as an install failure.
+        setPollingFailed(true);
+      });
     }, 1500);
     return () => window.clearInterval(timer);
   }, [operation]);
@@ -646,6 +659,7 @@ function PluginWorkshop({ catalog }: { catalog: ExtensionCatalog }) {
       const created = await extensionsApi.createPlugin(name, template);
       setOperation(created);
       setRecentOperations((items) => [created, ...items.filter((item) => item.id !== created.id)].slice(0, 20));
+      setPollingFailed(false);
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : String(reason));
     } finally {
@@ -669,6 +683,7 @@ function PluginWorkshop({ catalog }: { catalog: ExtensionCatalog }) {
       <Button variant="primary" onClick={() => void create()} disabled={busy || !name.trim()}>{busy ? t('builder.creating') : t('builder.createInstall')}</Button>
       {error ? <p className="extension-error">{error}</p> : null}
     </div>
+    {pollingFailed ? <p className="extension-warning" role="status" aria-live="polite">{t('builder.operationReconnectWarning')}</p> : null}
     {recentOperations.length ? <section className="extension-panel extension-recent-operations">
       <h3>{t('builder.recentOperations')}</h3>
       <div className="toolbar">
