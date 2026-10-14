@@ -42,6 +42,42 @@ describe('ModuleListEditor', () => {
     ]);
   });
 
+  it('selects the exact duplicate module instance identified by the graph node', () => {
+    const duplicateItems = [
+      { module_id: module.id, threshold: 0.3 },
+      { module_id: module.id, threshold: 0.8 },
+    ];
+    render(<I18nProvider><ModuleListEditor
+      modules={[module]}
+      items={duplicateItems}
+      kind="processor_item"
+      stage="detectors"
+      title="Detectors"
+      focusNodeId={'detectors:1:' + module.id}
+      focusModuleId={module.id}
+      onChange={() => undefined}
+    /></I18nProvider>);
+
+    expect((screen.getByLabelText('threshold') as HTMLInputElement).value).toBe('0.8');
+  });
+
+  it('does not map a base graph node onto a same-ID extension module', () => {
+    const tracker: ExtensionModule = { ...module, id: 'acme/tracker', module_id: 'tracker', display_name: 'Tracker' };
+    render(<I18nProvider><ModuleListEditor
+      modules={[module, tracker]}
+      items={[{ module_id: tracker.id, threshold: 0.1 }, { module_id: module.id, threshold: 0.8 }]}
+      kind="processor_item"
+      stage="detectors"
+      title="Additional detectors"
+      focusNodeId={'detectors:1:' + module.id}
+      focusModuleId={module.id}
+      nodeIndexOffset={2}
+      onChange={() => undefined}
+    /></I18nProvider>);
+
+    expect(screen.getByRole('article').querySelector('strong')?.textContent).toBe('Tracker');
+  });
+
   it('shows module-specific fields only for the selected list item', () => {
     const other: ExtensionModule = { ...module, id: 'acme/tracker', module_id: 'tracker', display_name: 'Tracker' };
     render(<I18nProvider><ModuleListEditor

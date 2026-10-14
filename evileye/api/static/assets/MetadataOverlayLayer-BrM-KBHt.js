@@ -1,1 +1,0 @@
-import{j as n}from"./schema-forms-72X2lb6a.js";import{O as o}from"./OverlayCanvas-BG1-2HkC.js";function i({meta:r,layoutBox:a,density:t="full",visible:e=!0,renderMode:l="live"}){return!e||!r?null:n.jsx(o,{meta:r,layoutBox:a,density:t,renderMode:l})}export{i as M};

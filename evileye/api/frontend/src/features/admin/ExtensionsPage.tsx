@@ -270,6 +270,9 @@ export function ModuleListEditor({
   onChange,
   maxItems,
   focusModuleId,
+  focusNodeId,
+  focusStageIndex,
+  nodeIndexOffset = 0,
   allowAdd = true,
   sourceChoices = [],
 }: {
@@ -281,6 +284,9 @@ export function ModuleListEditor({
   onChange: (items: JsonObject[]) => void;
   maxItems?: number;
   focusModuleId?: string;
+  focusNodeId?: string;
+  focusStageIndex?: number;
+  nodeIndexOffset?: number;
   allowAdd?: boolean;
   sourceChoices?: SourceChoice[];
 }) {
@@ -289,10 +295,26 @@ export function ModuleListEditor({
   const [activeIndex, setActiveIndex] = useState(0);
   const candidates = moduleCandidates(modules, kind, stage);
   useEffect(() => {
-    if (!focusModuleId) return;
-    const index = items.findIndex((item) => String(item.module_id || item.type || '') === focusModuleId);
-    if (index >= 0) setActiveIndex(index);
-  }, [focusModuleId, items]);
+    let index = -1;
+    let nodeTargetsThisList = false;
+    if (focusNodeId) {
+      const parts = focusNodeId.split(':');
+      if (focusStageIndex !== undefined && parts[0] === 'stage' && Number(parts[1]) === focusStageIndex) {
+        nodeTargetsThisList = true;
+        index = Number(parts[2]);
+      } else if (/^\d+$/.test(parts[1] || '') &&
+          (parts[0] === stage || (stage === 'capture-source' && parts[0] === 'sources'))) {
+        nodeTargetsThisList = true;
+        index = Number(parts[1]) - nodeIndexOffset;
+      }
+    }
+    if (!nodeTargetsThisList) {
+      index = focusModuleId
+        ? items.findIndex((item) => String(item.module_id || item.type || '') === focusModuleId)
+        : -1;
+    }
+    if (Number.isInteger(index) && index >= 0 && index < items.length) setActiveIndex(index);
+  }, [focusNodeId, focusStageIndex, nodeIndexOffset, focusModuleId, items, stage]);
   const add = () => {
     const module = candidates.find((item) => item.id === selected);
     if (!module || (maxItems !== undefined && items.length >= maxItems)) return;
@@ -416,6 +438,7 @@ function PipelineEditor({
   const [activeStage, setActiveStage] = useState('sources');
   const [declarativeStage, setDeclarativeStage] = useState(0);
   const [graphModuleFocus, setGraphModuleFocus] = useState('');
+  const [graphNodeFocus, setGraphNodeFocus] = useState('');
   const [raw, setRaw] = useState(false);
   const [rawText, setRawText] = useState(() => JSON.stringify(config, null, 2));
   const body = pipelineOf(config);
@@ -464,6 +487,7 @@ function PipelineEditor({
 
   const selectGraphNode = (node: PipelinePreview['topology']['nodes'][number]) => {
     setGraphModuleFocus(node.module_id || '');
+    setGraphNodeFocus(node.node_id);
     if (pipeline.pipeline_id === 'PipelineDeclarative' && node.node_id.startsWith('stage:')) {
       const stageIndex = Number(node.node_id.split(':')[1]);
       if (Number.isInteger(stageIndex)) setDeclarativeStage(stageIndex);
@@ -548,6 +572,7 @@ function PipelineEditor({
             stage={group.id}
             title={t('builder.baseModulesEditor', { count: legacy.length })}
             focusModuleId={graphModuleFocus}
+            focusNodeId={graphNodeFocus}
             sourceChoices={sourceChoices}
             allowAdd={false}
             onChange={(next) => changeBody({ ...body, [group.id]: next })}
@@ -560,6 +585,8 @@ function PipelineEditor({
             stage={group.id}
             title={t(mode === 'extend' ? 'builder.additionalModules' : 'builder.customModules')}
             focusModuleId={graphModuleFocus}
+            focusNodeId={graphNodeFocus}
+            nodeIndexOffset={mode === 'extend' ? legacy.length : 0}
             sourceChoices={sourceChoices}
             onChange={(next) => changeGroup(group.id, next)}
           />
@@ -572,7 +599,8 @@ function PipelineEditor({
     </> : null}
 
     {!raw && pipeline.pipeline_id === 'PipelineDeclarative' ? <>
-      <DeclarativeEditor body={body} changeBody={changeBody} modules={catalog.modules} activeStage={declarativeStage} onStageChange={setDeclarativeStage} focusModuleId={graphModuleFocus} sourceChoices={sourceChoices} />
+      <DeclarativeEditor body={body} changeBody={changeBody} modules={catalog.modules} activeStage={declarativeStage} onStageChange={setDeclarativeStage}
+        focusModuleId={graphModuleFocus} focusNodeId={graphNodeFocus} sourceChoices={sourceChoices} />
       <EventRulesEditor config={config} setConfig={setConfig} modules={catalog.modules} defaultEnabled={catalog.default_event_detectors} focusModuleId={graphModuleFocus} />
     </> : null}
     {!raw && pipeline.pipeline_id === 'PipelineCapture' ? <ModuleListEditor
@@ -690,13 +718,14 @@ function EventRulesEditor({ config, setConfig, modules, defaultEnabled, focusMod
   </section>;
 }
 
-export function DeclarativeEditor({ body, changeBody, modules, activeStage, onStageChange, focusModuleId, sourceChoices }: {
+export function DeclarativeEditor({ body, changeBody, modules, activeStage, onStageChange, focusModuleId, focusNodeId, sourceChoices }: {
   body: JsonObject;
   changeBody: (body: JsonObject) => void;
   modules: ExtensionModule[];
   activeStage: number;
   onStageChange: (index: number) => void;
   focusModuleId?: string;
+  focusNodeId?: string;
   sourceChoices: SourceChoice[];
 }) {
   const { t } = useI18n();
@@ -755,7 +784,8 @@ export function DeclarativeEditor({ body, changeBody, modules, activeStage, onSt
           </div>
         </div>
         <ModuleListEditor modules={modules} items={(Array.isArray(stage.items) ? stage.items : []).filter(isObject)} kind={moduleKind} stage={kind}
-          title={t('builder.stageModules')} focusModuleId={focusModuleId} sourceChoices={sourceChoices} onChange={(items) => updateStages(stages.map((item, i) => i === index ? { ...item, items } : item))} />
+          title={t('builder.stageModules')} focusModuleId={focusModuleId} focusNodeId={focusNodeId} focusStageIndex={index}
+          sourceChoices={sourceChoices} onChange={(items) => updateStages(stages.map((item, i) => i === index ? { ...item, items } : item))} />
       </article>;
     })() : <p className="hint">{t('builder.noStages')}</p>}
     {pipelineSchemaFields(body) ? <p className="hint">{t('builder.finalResultsField')} <input value={String(body.final_results || '')} placeholder={t('builder.finalResultsPlaceholder')}
