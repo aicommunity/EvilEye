@@ -54,7 +54,8 @@ def test_process_runtime_transports_frame_handle_and_restores_parent_frame(monke
             serialized_inputs.append(len(result))
         return result
 
-    monkeypatch.setattr(plugin_runtime, "_serialize_process_value", observe_serialization)
+    # ItemModuleAdapter.put resolves the helper in the module that uses it.
+    monkeypatch.setattr(plugin_runtime.item, "_serialize_process_value", observe_serialization)
     adapter.start()
     frame = Frame()
     frame.source_id = 4

@@ -172,3 +172,7 @@ models/
 *.json.backup
 test_install/
 certs/*.key
+
+# Local runtime artifacts
+/gui_state.json
+/pytest_log.txt
