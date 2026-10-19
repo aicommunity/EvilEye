@@ -3,10 +3,17 @@ import time
 import copy
 import math
 
+from .health_window import RollingEventCounter
 from .processor_base import ProcessorBase
 from .frame import Frame
 import os
 from collections import defaultdict
+
+
+# A detector that has not answered after a few seconds is stuck; holding hundreds of
+# 1080p frames for 30 s used to pin gigabytes of memory.
+DEFAULT_FANOUT_TIMEOUT_SEC = 3.0
+DEFAULT_FANOUT_MAX_PENDING = 64
 
 
 class ProcessorStep(ProcessorBase):
@@ -44,10 +51,17 @@ class ProcessorStep(ProcessorBase):
         self._mc_tick_diag_counter = 0
         self._mp_pending_snapshot = 0
         self._detector_fanout_pending: dict[tuple[int, int, int], dict[str, Any]] = {}
-        self._detector_fanout_timeout_sec = 30.0
-        self._detector_fanout_max_pending = 512
+        self._detector_fanout_timeout_sec = DEFAULT_FANOUT_TIMEOUT_SEC
+        self._detector_fanout_max_pending = DEFAULT_FANOUT_MAX_PENDING
         self._detector_fanout_incomplete_count = 0
         self._detector_fanout_dropped_count = 0
+        # Incomplete joins inside the sliding window make the stage "degraded now";
+        # the cumulative counters above stay available for metrics.
+        self._detector_fanout_events = RollingEventCounter()
+        # Detectors that answered with nothing (``None``) for a frame: a valid empty answer.
+        self._detector_fanout_empty_responses = 0
+        # processor index -> {detector-local class id: global class id}
+        self._class_id_remap: dict[int, dict[int, int]] = {}
         self.detector_fanout_policy = "forward_partial"
 
     def set_detector_fanout_policy(self, policy: str) -> None:
@@ -77,6 +91,66 @@ class ProcessorStep(ProcessorBase):
             if isinstance(max_pending, bool) or not isinstance(max_pending, int) or max_pending <= 0:
                 raise ValueError("detector_fanout_max_pending must be a positive integer")
             self._detector_fanout_max_pending = max_pending
+
+    def set_class_id_remap(self, processor, remap: dict[int, int] | None) -> bool:
+        """Translate the class ids produced by ``processor`` into the global class space.
+
+        Returns True when ``processor`` belongs to this stage.
+        """
+        for index, candidate in enumerate(self.processors):
+            if candidate is processor:
+                break
+        else:
+            return False
+        effective = {int(k): int(v) for k, v in (remap or {}).items() if int(k) != int(v)}
+        if effective:
+            self._class_id_remap[index] = effective
+        else:
+            self._class_id_remap.pop(index, None)
+        return True
+
+    def _apply_class_remap(self, result, processor_index: int):
+        remap = self._class_id_remap.get(processor_index)
+        if not remap or not isinstance(result, (list, tuple)) or not result:
+            return result
+        data = result[0]
+        detections = data.get("detections") if isinstance(data, dict) else getattr(data, "detections", None)
+        if not isinstance(detections, list):
+            return result
+        for detection in detections:
+            if isinstance(detection, dict):
+                current = detection.get("class_id")
+                if current in remap:
+                    detection["class_id"] = remap[current]
+                continue
+            current = getattr(detection, "class_id", None)
+            if current in remap:
+                try:
+                    detection.class_id = remap[current]
+                except AttributeError:
+                    pass
+        return result
+
+    def get_class_space_report(self) -> dict[str, Any]:
+        """Which detectors are remapped and which cannot be verified (no class mapping)."""
+        detectors = [
+            processor for processor in self.processors
+            if callable(getattr(processor, "get_model_class_mapping", None))
+        ]
+        unmapped = []
+        for index, processor in enumerate(self.processors):
+            provider = getattr(processor, "get_model_class_mapping", None)
+            try:
+                mapping = provider() if callable(provider) else None
+            except Exception:
+                mapping = None
+            if not mapping:
+                unmapped.append(f"{getattr(processor, 'module_id', self.class_name)}[{index}]")
+        return {
+            "remapped_detectors": sorted(self._class_id_remap),
+            "unmapped_detectors": unmapped if len(self.processors) > 1 else [],
+            "detectors_with_mapping_api": len(detectors),
+        }
 
     def _append_processing_result(self, processing_results: list, normalized: Any) -> None:
         if normalized is None:
@@ -168,6 +242,7 @@ class ProcessorStep(ProcessorBase):
         emitted = list(passthrough)
         for processor_index, results in outputs_by_processor.items():
             for result in results:
+                result = self._apply_class_remap(result, processor_index)
                 key = self._detector_frame_key(result)
                 state = self._detector_fanout_pending.get(key) if key is not None else None
                 if state is None or processor_index not in state["expected"]:
@@ -193,12 +268,24 @@ class ProcessorStep(ProcessorBase):
             overflowed = key in overflow_keys
             if missing and not expired and not missing_modules_idle and not overflowed:
                 continue
+            if missing and missing_modules_idle and not expired and not overflowed:
+                # Every missing detector finished without output (``None``: frame skipped,
+                # ``vid_stride`` ...). That is a valid empty answer, not a lost result.
+                self._detector_fanout_empty_responses += len(missing)
+                self.logger.debug(
+                    "Detector fanout for source=%s frame=%s: %d detector(s) returned no output",
+                    key[0], key[2], len(missing),
+                )
+                emitted.extend(self._merge_detector_fanout(state["results"]))
+                del self._detector_fanout_pending[key]
+                continue
             if missing:
                 missing_ids = [
                     f"{getattr(self.processors[index], 'module_id', self.class_name)}[{index}]"
                     for index in sorted(missing)
                 ]
                 self._detector_fanout_incomplete_count += 1
+                self._detector_fanout_events.record()
                 drop_frame = self.detector_fanout_policy == "drop_frame"
                 if drop_frame:
                     self._detector_fanout_dropped_count += 1
@@ -216,8 +303,6 @@ class ProcessorStep(ProcessorBase):
                         " (pending limit reached)"
                         if overflowed
                         else " (timeout)"
-                        if expired
-                        else " (worker completed without output)"
                     ),
                 )
             if not (missing and self.detector_fanout_policy == "drop_frame"):

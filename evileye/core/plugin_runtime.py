@@ -12,6 +12,7 @@ import time
 from typing import Any, Mapping
 
 from .base_class import EvilEyeBase
+from .health_window import RollingEventCounter
 from .mp_worker import MpWorker
 from .plugins import ModuleRuntimeContext, PluginError, plugin_registry
 from .contracts import EventFrameSnapshot, EventUpdate
@@ -672,6 +673,9 @@ class ItemModuleAdapter(EvilEyeBase):
         self._module = None
         self._state = None
         self._mp_control = None
+        # ``degraded`` = permanent failure OR transient trouble inside the sliding window.
+        self._failed = False
+        self._transient_problems = RollingEventCounter()
         self.degraded = False
         self.input_queue_dropped = 0
         self.input_queue_rejected = 0
@@ -711,6 +715,16 @@ class ItemModuleAdapter(EvilEyeBase):
             "requires_materialized_frame" in capabilities
             or bool(getattr(factory, "requires_materialized_frame", not self.accepts_frame_handle))
         )
+
+    @property
+    def degraded(self) -> bool:
+        return self._failed or self._transient_problems.active()
+
+    @degraded.setter
+    def degraded(self, value: bool) -> None:
+        self._failed = bool(value)
+        if not value:
+            self._transient_problems.reset()
 
     def set_params_impl(self):
         params = dict(self.params or {})
@@ -777,7 +791,7 @@ class ItemModuleAdapter(EvilEyeBase):
 
     def _record_input_drop(self) -> None:
         self.input_queue_dropped += 1
-        self.degraded = True
+        self._transient_problems.record()
         self.logger.warning(
             "Plugin module %s dropped stale frame input (dropped=%d)",
             self.module_id,
@@ -1072,7 +1086,7 @@ class ItemModuleAdapter(EvilEyeBase):
 
         deadline = time.monotonic() + timeout
         while True:
-            if self.degraded:
+            if self._failed:
                 return False
             if any(event.is_set() for event in failed_events):
                 if self.execution_mode == "process":
@@ -1093,7 +1107,7 @@ class ItemModuleAdapter(EvilEyeBase):
 
             if self.execution_mode == "process":
                 self._check_process_health()
-                if self.degraded:
+                if self._failed:
                     return False
             remaining = deadline - time.monotonic()
             if remaining <= 0:
@@ -1146,7 +1160,7 @@ class ItemModuleAdapter(EvilEyeBase):
         except queue.Full:
             self._release_process_request(request_id)
             self.input_queue_rejected += 1
-            self.degraded = True
+            self._transient_problems.record()
             self.logger.error("Plugin module %s input queue is full", self.module_id)
             raise RuntimeError(f"Plugin module '{self.module_id}' input queue is full")
         except PluginError as exc:
@@ -1363,6 +1377,9 @@ class ItemModuleAdapter(EvilEyeBase):
             "error_policy": self._error_policy.policy,
             "item_errors": self.item_errors,
             "worker_restarts": self.worker_restarts,
+            "failed": self._failed,
+            "recent_overload_events": self._transient_problems.recent(),
+            "degraded_window_sec": self._transient_problems.window_sec,
         }
 
     def get_debug_info(self, debug_info: dict | None):
@@ -1674,7 +1691,7 @@ class ParallelItemModuleAdapter(ItemModuleAdapter):
                 self._ordered_results[dropped_sequence] = _ORDERED_EVICTED
         except queue.Full:
             self.input_queue_rejected += 1
-            self.degraded = True
+            self._transient_problems.record()
             self.logger.error("Plugin module %s input queue is full", self.module_id)
             raise RuntimeError(f"Plugin module '{self.module_id}' input queue is full")
         except PluginError as exc:

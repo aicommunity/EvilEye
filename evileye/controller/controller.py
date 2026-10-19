@@ -2439,6 +2439,20 @@ class Controller(ControllerProcessingMixin):
         provider = getattr(detector, "get_model_class_mapping", None)
         return provider() if callable(provider) else None
 
+    def _apply_detector_class_remap(self, detector, remap) -> None:
+        """Make the detectors stage emit class ids from the global class space."""
+        detector_name = str(getattr(detector, "module_id", None) or detector.__class__.__name__)
+        changed = {k: v for k, v in (remap or {}).items() if k != v}
+        if changed:
+            self.logger.warning(
+                "Detector %s uses class ids that collide with other models; "
+                "remapping to the global class space: %s", detector_name, changed,
+            )
+        for container in getattr(self.pipeline, "processors", None) or ():
+            setter = getattr(container, "set_class_id_remap", None)
+            if callable(setter) and setter(detector, remap):
+                return
+
     def _merge_detector_class_mapping(self, detector, mapping) -> bool:
         """Merge a newly published detector mapping into controller metadata."""
         if not mapping:
@@ -2454,10 +2468,13 @@ class Controller(ControllerProcessingMixin):
             return False
 
         cache[detector_name] = normalized
-        if not self.class_manager.add_class_mapping(normalized, detector_name):
+        conflicts_before = len(self.class_manager.get_conflicts())
+        remap = self.class_manager.register_detector_mapping(normalized, detector_name)
+        if len(self.class_manager.get_conflicts()) > conflicts_before:
             self.logger.warning(
                 "Conflicts detected when adding mapping from %s", detector_name
             )
+        self._apply_detector_class_remap(detector, remap)
         self.class_mapping = self.class_manager.get_class_mapping()
         if self.visualizer:
             self.visualizer.class_mapping = self.class_mapping

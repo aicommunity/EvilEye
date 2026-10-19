@@ -5,7 +5,7 @@ from __future__ import annotations
 import asyncio
 from typing import Optional
 
-from fastapi import APIRouter, HTTPException, Request
+from fastapi import APIRouter, HTTPException, Request, Response
 from pydantic import BaseModel, Field
 
 from evileye.api.core.config_run_access import get_config_run_manager
@@ -19,6 +19,10 @@ router = APIRouter(prefix="/api/v1/system", tags=["system"])
 @router.get("/runtime")
 async def system_runtime(request: Request) -> dict:
     """Return runtime health for plugin modules and the event delivery path."""
+    return await _runtime_stats(request)
+
+
+async def _runtime_stats(request: Request) -> dict:
     require_permission(request, "runtime:view")
     from evileye.api.core.control_ipc import control_socket_path, send_control_command
 
@@ -36,6 +40,18 @@ async def system_runtime(request: Request) -> dict:
     if not isinstance(stats, dict):
         raise HTTPException(status_code=503, detail="Runtime diagnostics returned an invalid payload")
     return stats
+
+
+@router.get("/metrics")
+async def system_metrics(request: Request) -> Response:
+    """Pipeline runtime health as Prometheus text (module counters, queues, degraded flags)."""
+    from evileye.api.core.runtime_metrics import render_prometheus
+
+    stats = await _runtime_stats(request)
+    return Response(
+        content=render_prometheus(stats),
+        media_type="text/plain; version=0.0.4; charset=utf-8",
+    )
 
 
 class SystemRestartPayload(BaseModel):

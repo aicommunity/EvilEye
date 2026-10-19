@@ -514,10 +514,13 @@ class PipelineProcessors(PipelineBase):
             pending_fanout = getattr(stage, "_detector_fanout_pending", None)
             fanout_incomplete = int(getattr(stage, "_detector_fanout_incomplete_count", 0) or 0)
             fanout_dropped = int(getattr(stage, "_detector_fanout_dropped_count", 0) or 0)
+            fanout_events = getattr(stage, "_detector_fanout_events", None)
+            # "Degraded" describes the present: incomplete joins only count while they keep
+            # happening (sliding window); cumulative totals stay in the counters below.
+            fanout_recent = int(fanout_events.recent()) if fanout_events is not None else fanout_incomplete
             stage_stats: dict[str, Any] = {
                 "degraded": any(bool(stats.get("degraded")) for stats in stage_module_stats)
-                or fanout_incomplete > 0
-                or fanout_dropped > 0,
+                or fanout_recent > 0,
                 "module_count": len(stage_module_stats),
                 "unknown_modules": sum(stats.get("state") == "unknown" for stats in stage_module_stats),
             }
@@ -529,7 +532,14 @@ class PipelineProcessors(PipelineBase):
                     "pending_detector_fanout": len(pending_fanout),
                     "detector_fanout_incomplete": fanout_incomplete,
                     "detector_fanout_dropped": fanout_dropped,
+                    "detector_fanout_recent_incomplete": fanout_recent,
+                    "detector_fanout_empty_responses": int(
+                        getattr(stage, "_detector_fanout_empty_responses", 0) or 0
+                    ),
                 })
+                report = getattr(stage, "get_class_space_report", None)
+                if callable(report):
+                    stage_stats["class_space"] = report()
             stages[stage_name] = stage_stats
         return {
             "degraded": any(bool(stats.get("degraded")) for stats in modules.values())

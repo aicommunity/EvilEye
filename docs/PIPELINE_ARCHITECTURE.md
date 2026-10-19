@@ -65,9 +65,13 @@ PipelineBase (abstract)
 - Неполный fanout управляется настройкой `pipeline.detector_fanout_policy`: `forward_partial` сохраняет прежнее поведение, `drop_frame` не передаёт неполный результат следующей стадии. Второй режим оставляет pipeline degraded и публикует отдельный счётчик отброшенных кадров.
 - Для PipelineSurveillance пределы ожидания detector fanout задаются настройками
 `detector_fanout_timeout_sec` и `detector_fanout_max_pending`. Положительный
-timeout по умолчанию равен 30 секундам (значение можно переопределить legacy
-переменной `EVILEYE_DETECTOR_FANOUT_TIMEOUT_SEC`), лимит по умолчанию — 512
-кадров. Runtime health публикует эффективные значения.
+timeout по умолчанию равен 3 секундам (значение можно переопределить legacy
+переменной `EVILEYE_DETECTOR_FANOUT_TIMEOUT_SEC`), лимит по умолчанию — 64
+кадра (около двух секунд при 30 FPS). Runtime health публикует эффективные значения.
+Детектор, вернувший `None`, считается давшим пустой ответ и не делает fanout неполным.
+Флаг `degraded` у стадии и модулей учитывает неполные fanout и перегрузку очередей
+только за последние `EVILEYE_DEGRADED_WINDOW_SEC` секунд (по умолчанию 60); накопительные
+счётчики доступны в `/api/v1/system/runtime` и в формате Prometheus на `/api/v1/system/metrics`.
 
 ### PipelineCapture
 

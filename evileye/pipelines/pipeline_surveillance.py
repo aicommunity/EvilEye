@@ -5,7 +5,7 @@ from typing import Any, Tuple, List, Dict
 from ..core.base_class import EvilEyeBase
 from ..core.processor_source import ProcessorSource
 from ..core.processor_frame import ProcessorFrame
-from ..core.processor_step import ProcessorStep
+from ..core.processor_step import DEFAULT_FANOUT_TIMEOUT_SEC, ProcessorStep
 from ..core.processor_base import ProcessorBase
 from ..core.pipeline_processors import PipelineProcessors
 import evileye.capture  # Import to register builtin sources
@@ -51,7 +51,9 @@ class PipelineSurveillance(PipelineProcessors):
         fanout_timeout_sec = pipeline_params.get("detector_fanout_timeout_sec")
         timeout_setting = "pipeline.detector_fanout_timeout_sec"
         if fanout_timeout_sec is None:
-            fanout_timeout_sec = os.getenv("EVILEYE_DETECTOR_FANOUT_TIMEOUT_SEC", "30")
+            fanout_timeout_sec = os.getenv(
+                "EVILEYE_DETECTOR_FANOUT_TIMEOUT_SEC", str(DEFAULT_FANOUT_TIMEOUT_SEC)
+            )
             timeout_setting = "EVILEYE_DETECTOR_FANOUT_TIMEOUT_SEC"
         try:
             fanout_timeout_sec = float(fanout_timeout_sec)

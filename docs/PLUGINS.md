@@ -152,6 +152,41 @@ Skipped items are counted in `item_errors`, restarts in `worker_restarts` (see r
 `degraded`. A worker killed by a signal restarts the whole worker pool on fresh queues, so in-flight items of that pool
 are lost. Invalid values are configuration errors.
 
+### Class ids from several detectors
+
+Each detector may publish a `model_class_mapping` (`{class name: model-local id}`). The
+controller registers every mapping in the global `ClassManager` by class **name**: a name that
+is already known keeps its global id, a new name keeps its own id when it is free and otherwise
+gets the next free one. Detections of each detector are translated into this global space
+before they are joined, so a person model (`0 = person`) and a PPE model (`0 = helmet`) give
+`person = 0` and `helmet = 1` to the tracker. A detector without a published mapping cannot be
+translated: give it one (declare the `model_class_mapping` capability) when it shares a source
+with other detectors, otherwise its ids may collide with the global ones. The `classes` filter
+of a built-in detector keeps using the model's own ids.
+
+### Health signals
+
+`degraded` describes the present. Real failures (worker died, restart budget spent, invalid
+output) keep it set until the module is reset. Overload (input queue drops or rejections) and
+incomplete fanout count only while they happened during the last `EVILEYE_DEGRADED_WINDOW_SEC`
+seconds (default 60), so a short load peak no longer leaves the pipeline degraded forever.
+Cumulative counters (`input_queue_dropped`, `input_queue_rejected`, `item_errors`,
+`worker_restarts`, `detector_fanout_incomplete`, ...) are never reset by the window and are
+exported in Prometheus text format at `GET /api/v1/system/metrics` (permission `runtime:view`),
+next to the JSON at `GET /api/v1/system/runtime`.
+
+### What crosses the process boundary
+
+In `process` mode a `Frame` is passed as a descriptor: only `source_id`, `frame_id`,
+`frame_version`, `connection_generation`, `current_video_frame`, `current_video_position`,
+`source_video_duration`, `time_stamp`, `pts_ns` and `media_pts_sec` are copied, and the image
+travels through shared memory (a module that declares `accepts_frame_handle` receives the
+handle instead of the pixels). Any other attribute set on the frame object is **not** visible
+inside the worker, but the original frame object stays in the parent and is what the pipeline
+continues with, so such attributes are not lost for later stages. Every `process` stage
+copies the image into a new shared-memory segment (about 7-8 ms per 1080p frame); the copy is
+needed because an earlier stage may have changed the pixels, so segments are not shared between stages.
+
 ## Sources
 
 A source plugin uses `kind="source"` and implements `open()`, `read()`, and
@@ -212,7 +247,10 @@ When several detectors are assigned to the same source, the pipeline joins
 their `detections` lists by `(source_id, connection_generation, frame_id)`
 and sends one combined item to the next stage. Return the original frame with
 its identity unchanged. A mismatched or missing frame identity cannot be joined
-and is reported as incomplete fanout. Process-mode outputs, including detection
+and is reported as incomplete fanout. A detector that returns `None` (for example it
+skips frames with `vid_stride`) has given a valid empty answer: the join completes with
+the other detectors' results and is counted in `detector_fanout_empty_responses`, not as
+incomplete. Process-mode outputs, including detection
 objects and custom `detection_data`, must be pickle-serializable.
 
 The pipeline setting `detector_fanout_policy` controls an incomplete join:
@@ -229,7 +267,10 @@ Unknown policy values fail pipeline initialization.
 
 Fanout bounds can be tuned per surveillance pipeline with positive
 `detector_fanout_timeout_sec` and integer `detector_fanout_max_pending` settings.
-The defaults are 30 seconds and 512 pending frames. The legacy
+The defaults are 3 seconds and 64 pending frames (about two seconds of a 30 FPS
+camera); a detector that has not answered after that is considered stuck, and a
+longer wait only pins frames in memory (512 pending 1080p frames were roughly 3 GB).
+Raise the values for slow models, for example a detector that needs 5 s per frame. The legacy
 `EVILEYE_DETECTOR_FANOUT_TIMEOUT_SEC` environment setting supplies the timeout
 default when the pipeline config omits it. Effective values are included in
 detector-stage runtime health.

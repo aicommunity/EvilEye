@@ -172,7 +172,7 @@ def test_detector_fanout_timeout_is_visible_to_health_and_drain():
         assert stage._detector_fanout_pending == {}
         runtime = pipeline.get_runtime_stats()
         assert runtime["degraded"] is True
-        assert runtime["stages"]["detectors"] == {
+        expected_stage = {
             "degraded": True,
             "detector_fanout_policy": "forward_partial",
             "detector_fanout_timeout_sec": 0.05,
@@ -180,9 +180,13 @@ def test_detector_fanout_timeout_is_visible_to_health_and_drain():
             "pending_detector_fanout": 0,
             "detector_fanout_incomplete": 1,
             "detector_fanout_dropped": 0,
+            "detector_fanout_recent_incomplete": 1,
+            "detector_fanout_empty_responses": 0,
             "module_count": 2,
             "unknown_modules": 0,
         }
+        actual_stage = runtime["stages"]["detectors"]
+        assert {key: actual_stage[key] for key in expected_stage} == expected_stage
         labels = {
             detection["label"]
             for result in emitted
@@ -190,6 +194,103 @@ def test_detector_fanout_timeout_is_visible_to_health_and_drain():
             for detection in (result[0].get("detections") or [])
         }
         assert labels == {"available"}
+    finally:
+        stage.stop()
+        stage.release()
+
+
+def _two_detector_pipeline(second_params, **limits):
+    plugin_id = f"test.surveillance-empty-{uuid.uuid4().hex}"
+    plugin_registry.register_plugin(
+        PluginSpec(
+            plugin_id,
+            PLUGIN_API_VERSION,
+            modules=(
+                ModuleSpec(
+                    "detector",
+                    "processor_item",
+                    _NamedDetector,
+                    execution_modes=("thread",),
+                    default_execution_mode="thread",
+                ),
+            ),
+        )
+    )
+    module_id = f"{plugin_id}/detector"
+    pipeline = PipelineSurveillance()
+    pipeline._init_detectors(
+        [
+            {"module_id": module_id, "execution_mode": "thread", "source_ids": [7], "name": "available"},
+            {"module_id": module_id, "execution_mode": "thread", "source_ids": [7], **second_params},
+        ],
+        **limits,
+    )
+    return pipeline
+
+
+def test_detector_returning_none_is_a_valid_empty_fanout_answer():
+    pipeline = _two_detector_pipeline({"name": "skipped", "return_none": True})
+    stage = pipeline.processors[-1]
+    emitted = []
+    try:
+        stage.start()
+        for detector in stage.processors:
+            assert detector.is_ready(10)
+        for frame_id in range(1, 6):
+            frame = Frame()
+            frame.source_id = 7
+            frame.frame_id = frame_id
+            stage.process([({}, frame)])
+        deadline = time.monotonic() + 5
+        while time.monotonic() < deadline and (
+            len(emitted) < 5 or stage._detector_fanout_pending
+        ):
+            emitted.extend(stage.process(None))
+            time.sleep(0.005)
+        runtime = pipeline.get_runtime_stats()
+    finally:
+        stage.stop()
+        stage.release()
+
+    labels = [
+        detection["label"]
+        for result in emitted
+        if isinstance(result, (list, tuple)) and len(result) >= 2
+        for detection in (result[0].get("detections") or [])
+    ]
+    assert labels == ["available"] * 5
+    detectors = runtime["stages"]["detectors"]
+    assert detectors["detector_fanout_incomplete"] == 0
+    assert detectors["detector_fanout_empty_responses"] == 5
+    assert detectors["degraded"] is False
+    assert runtime["degraded"] is False
+
+
+def test_fanout_degraded_flag_clears_after_the_window(monkeypatch):
+    monkeypatch.setenv("EVILEYE_DEGRADED_WINDOW_SEC", "0.2")
+    pipeline = _two_detector_pipeline(
+        {"name": "slow", "delay_sec": 0.15, "return_none": True},
+        fanout_timeout_sec=0.05,
+    )
+    stage = pipeline.processors[-1]
+    frame = Frame()
+    frame.source_id = 7
+    frame.frame_id = 31
+    try:
+        stage.start()
+        for detector in stage.processors:
+            assert detector.is_ready(10)
+        stage.process([({}, frame)])
+        time.sleep(0.07)
+        stage.process(None)
+        assert pipeline.get_runtime_stats()["stages"]["detectors"]["degraded"] is True
+
+        time.sleep(0.4)
+        stats = pipeline.get_runtime_stats()["stages"]["detectors"]
+        # Cumulative counters survive, the health flag does not.
+        assert stats["detector_fanout_incomplete"] == 1
+        assert stats["detector_fanout_recent_incomplete"] == 0
+        assert stats["degraded"] is False
     finally:
         stage.stop()
         stage.release()
@@ -248,7 +349,7 @@ def test_drop_frame_fanout_policy_is_explicit_and_diagnostic():
         assert emitted == []
         runtime = pipeline.get_runtime_stats()
         assert runtime["degraded"] is True
-        assert runtime["stages"]["detectors"] == {
+        expected_stage = {
             "degraded": True,
             "detector_fanout_policy": "drop_frame",
             "detector_fanout_timeout_sec": 0.05,
@@ -256,9 +357,13 @@ def test_drop_frame_fanout_policy_is_explicit_and_diagnostic():
             "pending_detector_fanout": 0,
             "detector_fanout_incomplete": 1,
             "detector_fanout_dropped": 1,
+            "detector_fanout_recent_incomplete": 1,
+            "detector_fanout_empty_responses": 0,
             "module_count": 2,
             "unknown_modules": 0,
         }
+        actual_stage = runtime["stages"]["detectors"]
+        assert {key: actual_stage[key] for key in expected_stage} == expected_stage
     finally:
         stage.stop()
         stage.release()
