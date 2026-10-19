@@ -643,9 +643,13 @@ class ItemModuleAdapter(_HealthMixin, EvilEyeBase):
             remaining = deadline - time.monotonic()
             if remaining <= 0:
                 return False
+            # The last worker may become ready right after the check above: do not raise
+            # StopIteration (an empty-message startup failure), just poll again.
             next_event = next(
-                event for event in ready_events if not event.is_set()
+                (event for event in ready_events if not event.is_set()), None
             )
+            if next_event is None:
+                continue
             next_event.wait(min(0.05, remaining))
 
     def put(self, item):

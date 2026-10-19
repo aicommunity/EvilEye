@@ -295,6 +295,7 @@ class JsonLabelJournalDataSource(EventJournalDataSource):
                     'event_type': event_type,
                     'ts': timestamp,
                     'source_id': item.get('source_id'),
+                    'source_name': item.get('source_name') or self._source_name_for_id(item.get('source_id')),
                     'object_id': item.get('object_id'),
                     'class_id': item.get('class_id'),
                     'class_name': item.get('class_name'),
@@ -314,6 +315,8 @@ class JsonLabelJournalDataSource(EventJournalDataSource):
                     'event_type': normalized_type,
                     'ts': timestamp,
                     'source_id': item.get('source_id'),
+                    # Alarm records carry only the numeric id; the camera name drives labels and ACL.
+                    'source_name': item.get('source_name') or self._source_name_for_id(item.get('source_id')),
                     'object_id': item.get('object_id'),
                     'class_id': item.get('class_id'),
                     'image_filename': item.get('preview_path'),

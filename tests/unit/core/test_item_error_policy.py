@@ -299,3 +299,26 @@ def test_invalid_degraded_threshold_is_a_configuration_error(value):
         adapter.set_params(
             module_id=f"{plugin_id}/m", execution_mode="thread", error_degraded_threshold=value
         )
+
+
+def test_is_ready_survives_a_worker_becoming_ready_during_the_poll():
+    """Regression: next() on an exhausted generator raised StopIteration (empty startup error)."""
+    import threading
+
+    class _RacyEvent:
+        """Reports "not set" for the all() check, then "set" when asked again."""
+
+        def __init__(self):
+            self.calls = 0
+
+        def is_set(self):
+            self.calls += 1
+            return self.calls > 1
+
+        def wait(self, timeout=None):
+            return True
+
+    adapter = _make_adapter(_Echo, "thread", "racyready")
+    adapter._thread_ready_events = [_RacyEvent()]
+    adapter._thread_init_failed_events = [threading.Event()]
+    assert adapter.is_ready(2.0) is True
