@@ -176,3 +176,16 @@ certs/*.key
 # Local runtime artifacts
 /gui_state.json
 /pytest_log.txt
+
+# Images written by integration tests (text rendering, font scaling, attributes, background)
+/tests/data/images/
+/data/images/
+
+# Data produced by test runs and by running the system on a developer machine/server
+/tests/data/test_*/
+/monitor/
+/plugins/
+/configs/system.json
+/reports/ipc_kpi_gate_*/
+/reports/poly_videos_mode_compare/
+web_*.json.lock
