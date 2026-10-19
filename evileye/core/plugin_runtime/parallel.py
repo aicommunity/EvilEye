@@ -371,6 +371,7 @@ class ParallelItemModuleAdapter(ItemModuleAdapter):
                 continue
             if isinstance(value, tuple) and len(value) == 2 and value[0] == "error":
                 self.item_errors += 1
+                self._record_item_error_event()
                 if self._error_policy.policy != "fail_stop":
                     self._track_completed_item()
                     self.logger.warning(

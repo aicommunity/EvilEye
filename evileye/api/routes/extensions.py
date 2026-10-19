@@ -5,7 +5,9 @@ from __future__ import annotations
 import ipaddress
 import json
 import os
+import logging
 import threading
+import time
 from typing import Any
 
 from fastapi import APIRouter, HTTPException, Request
@@ -26,6 +28,8 @@ from evileye.core.extension_builder import (
     save_pipeline,
     set_plugin_disabled,
 )
+
+logger = logging.getLogger("evileye.api.extensions")
 
 router = APIRouter(prefix="/api/v1/admin/extensions", tags=["admin extensions"])
 
@@ -132,13 +136,105 @@ def _assert_builder_access(request: Request) -> dict[str, Any]:
     return user
 
 
-def _confirm_password(user: dict[str, Any], password: str) -> None:
-    """Re-authenticate the admin before an action that installs code."""
+class _PasswordAttemptLimiter:
+    """Locks password re-entry for a user or client address after repeated failures.
+
+    Deliberately separate from the site-wide IP ban: a mistyped confirmation must not lock
+    an administrator out of the whole UI, only out of this action.
+    """
+
+    def __init__(self, clock=time.monotonic):
+        self._clock = clock
+        self._lock = threading.Lock()
+        self._failures: dict[str, list[float]] = {}
+        self._locked_until: dict[str, float] = {}
+
+    def retry_after(self, keys: list[str]) -> int:
+        now = self._clock()
+        with self._lock:
+            remaining = [self._locked_until.get(key, 0.0) - now for key in keys]
+            for key in keys:
+                if self._locked_until.get(key, 0.0) <= now:
+                    self._locked_until.pop(key, None)
+        longest = max(remaining + [0.0])
+        return int(longest) + 1 if longest > 0 else 0
+
+    def record_failure(self, keys: list[str], *, max_failures: int, window_sec: float, lock_sec: float) -> int:
+        """Record a failure; returns the lock duration in seconds when a lock started, else 0."""
+        now = self._clock()
+        locked = 0
+        with self._lock:
+            for key in keys:
+                recent = [t for t in self._failures.get(key, []) if now - t < window_sec]
+                recent.append(now)
+                self._failures[key] = recent
+                if len(recent) >= max_failures:
+                    self._locked_until[key] = now + lock_sec
+                    self._failures.pop(key, None)
+                    locked = int(lock_sec)
+        return locked
+
+    def reset(self, keys: list[str]) -> None:
+        with self._lock:
+            for key in keys:
+                self._failures.pop(key, None)
+
+    def clear(self) -> None:
+        with self._lock:
+            self._failures.clear()
+            self._locked_until.clear()
+
+
+_password_limiter = _PasswordAttemptLimiter()
+
+
+def reset_password_limiter_for_tests(limiter: _PasswordAttemptLimiter | None = None) -> None:
+    global _password_limiter
+    _password_limiter = limiter or _PasswordAttemptLimiter()
+
+
+def _too_many_attempts(seconds: int) -> HTTPException:
+    return HTTPException(
+        status_code=429,
+        detail=f"Too many failed password confirmations; try again in {seconds} s",
+        headers={"Retry-After": str(seconds)},
+    )
+
+
+def _confirm_password(user: dict[str, Any], password: str, request: Request) -> None:
+    """Re-authenticate the admin before an action that installs code.
+
+    Failures are limited per user and per client address (see ``builder_password_*``).
+    """
     from evileye.api.security import authenticate_user, load_web_auth_config
 
     username = str(user.get("username") or "")
-    if not username or authenticate_user(username, password, load_web_auth_config()) is None:
-        raise HTTPException(status_code=403, detail="Password confirmation failed")
+    try:
+        config = _protection_config()
+        client = resolve_client_ip(
+            request, trust_proxy=config.trust_proxy, trusted_proxy_ips=config.trusted_proxy_ips
+        )
+    except Exception:
+        config, client = load_protection_config({}), "unknown"
+    keys = [f"user:{username.lower()}", f"ip:{client}"]
+    wait = _password_limiter.retry_after(keys)
+    if wait:
+        raise _too_many_attempts(wait)
+    if username and authenticate_user(username, password, load_web_auth_config()) is not None:
+        _password_limiter.reset(keys)
+        return
+    locked = _password_limiter.record_failure(
+        keys,
+        max_failures=int(config.builder_password_max_failures),
+        window_sec=float(config.builder_password_window_sec),
+        lock_sec=float(config.builder_password_lock_sec),
+    )
+    if locked:
+        logger.warning(
+            "Plugin install password confirmation locked for %s s (user=%s ip=%s)", locked, username, client
+        )
+        raise _too_many_attempts(locked)
+    raise HTTPException(status_code=403, detail="Password confirmation failed")
 
 
 @router.get("/catalog")
@@ -175,7 +271,7 @@ def save_pipeline_config(payload: PipelineSaveRequest, request: Request) -> dict
 @router.post("/plugins")
 def create_plugin(payload: PluginCreateRequest, request: Request) -> dict[str, Any]:
     user = _assert_builder_access(request)
-    _confirm_password(user, payload.password)
+    _confirm_password(user, payload.password, request)
     try:
         return create_plugin_operation(payload.name, payload.template)
     except PluginScaffoldError as exc:

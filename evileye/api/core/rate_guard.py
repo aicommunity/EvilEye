@@ -51,6 +51,10 @@ class ProtectionConfig:
     whitelist_ips: list[str] = field(default_factory=lambda: ["127.0.0.1", "::1"])
     # Extra client addresses/CIDRs allowed to use the plugin/pipeline builder besides loopback.
     builder_allowed_ips: list[str] = field(default_factory=list)
+    # Password re-entry before installing a plugin: failures per user/IP before a lockout.
+    builder_password_max_failures: int = 5
+    builder_password_window_sec: float = 300
+    builder_password_lock_sec: float = 900
 
     def public_snapshot(self) -> dict[str, Any]:
         return {
@@ -113,6 +117,9 @@ def load_protection_config(web_auth_section: dict[str, Any] | None = None) -> Pr
         "oversized_max",
         "oversized_window_sec",
         "oversized_ban_sec",
+        "builder_password_max_failures",
+        "builder_password_window_sec",
+        "builder_password_lock_sec",
     ):
         if key in protection:
             try:

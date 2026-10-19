@@ -147,10 +147,25 @@ An exception in `process_item` no longer stops the module. The reaction is confi
 | `restart_window_s` | `60` | Window for `max_restarts`. |
 | `mp_restart_on_exit` | `true` (`false` for `fail_stop`) | Restart a process worker that died (for example `SIGKILL`, out of memory). |
 | `mp_no_restart_exit_codes` | `[-15]` | Exit codes that are never restarted. |
+| `error_degraded_threshold` | `5` | This many item errors inside the degraded window turn the module `degraded`; fewer do not. |
 
-Skipped items are counted in `item_errors`, restarts in `worker_restarts` (see runtime stats). Skipping does not set
-`degraded`. A worker killed by a signal restarts the whole worker pool on fresh queues, so in-flight items of that pool
+Skipped items are counted in `item_errors`, restarts in `worker_restarts` (see runtime stats). A single skipped
+item does not set `degraded`; `error_degraded_threshold` errors inside the window do, and so does a restart (both
+fade after `EVILEYE_DEGRADED_WINDOW_SEC`). `failed` in the stats is the permanent part. A worker killed by a signal restarts the whole worker pool on fresh queues, so in-flight items of that pool
 are lost. Invalid values are configuration errors.
+
+The same parameters apply to the other adapters, with these differences:
+
+- **Batch processors** (`process_batch`): a failing batch is skipped and the stage emits nothing for that
+  tick; after `error_burst_limit` consecutive failures the module is recreated (`set_params`, `init`, `start`).
+  When the restart budget is spent, or with `fail_stop`, the exception propagates and the module is `failed`.
+- **Event detectors in `process` mode**: the default stays `fail_stop`, because a restart loses the detector's
+  state (open events). Set `error_policy: "skip_item"` to drop only the update that failed; a burst or a killed
+  worker then restarts the process (budgeted) and the detector starts from a fresh state. `thread` mode is
+  unchanged.
+- **Sources** (`open`/`read`/`close`, `thread` and `process`): an exception in `read()` is retried after a short
+  pause instead of ending the source; a burst re-opens it with `close()` + `open()` (budgeted). Capture backends
+  keep their own reconnect logic. `fail_stop` restores the old "end and mark degraded" behavior.
 
 ### Class ids from several detectors
 

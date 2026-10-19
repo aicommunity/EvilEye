@@ -13,6 +13,12 @@ from ..base_class import EvilEyeBase
 from ..contracts import EventFrameSnapshot, EventUpdate
 from ..mp_worker import MpWorker
 from ..plugins import ModuleRuntimeContext, PluginError, plugin_registry
+from .policy import (
+    _ERROR_POLICY_PARAMS,
+    _HealthMixin,
+    _ItemErrorPolicy,
+    _ItemErrorTracker,
+)
 from .transport import _call_factory, _close_item_resources, _create_state, _serialize_process_value
 
 _EVENT_UPDATE_INPUT = "__evileye_event_update_input__"
@@ -32,6 +38,18 @@ class EventDetectorUpdateWorker(MpWorker):
         self.module = None
         self.module_state = None
         self.drop_oldest_on_full = False
+        self.error_policy_state = state.get("error_policy")
+        self._error_tracker = None
+
+    error_policy_state: dict[str, Any] | None = None
+    _error_tracker: _ItemErrorTracker | None = None
+
+    def _tracker(self) -> _ItemErrorTracker:
+        if self._error_tracker is None:
+            self._error_tracker = _ItemErrorTracker(
+                _ItemErrorPolicy.from_state(self.error_policy_state)
+            )
+        return self._error_tracker
 
     def _publish_error(self, message: str) -> None:
         try:
@@ -93,14 +111,19 @@ class EventDetectorUpdateWorker(MpWorker):
             payload = _serialize_process_value(
                 events, self.module_id, "process_update result"
             )
+            self._tracker().success()
             return (_EVENT_UPDATE_OUTPUT, "output", payload)
         except Exception as exc:
             if self.logger:
                 self.logger.exception(
                     "Event detector %s failed while processing update", self.module_id
                 )
-            self._stop_event.set()
-            return (_EVENT_UPDATE_OUTPUT, "error", str(exc))
+            action = self._tracker().failure()
+            if action != "skip":
+                # restart: the worker exits and MpControl starts a fresh one; fail: stay down.
+                self._stop_event.set()
+            kind = "error" if action == "fail" else "item_error"
+            return (_EVENT_UPDATE_OUTPUT, kind, str(exc))
 
     def get_spawn_state(self) -> dict[str, Any]:
         return {
@@ -108,6 +131,7 @@ class EventDetectorUpdateWorker(MpWorker):
             "config": self.config,
             "factory_module": self.factory_module,
             "factory_qualname": self.factory_qualname,
+            "error_policy": self.error_policy_state,
         }
 
     def cleanup(self) -> None:
@@ -123,7 +147,7 @@ class EventDetectorUpdateWorker(MpWorker):
         self.module_state = None
 
 
-class EventDetectorModuleAdapter(EvilEyeBase):
+class EventDetectorModuleAdapter(_HealthMixin, EvilEyeBase):
     """Own event-detector construction, config, and thread/process lifecycle."""
 
     def __init__(self, registered_module, context):
@@ -134,6 +158,12 @@ class EventDetectorModuleAdapter(EvilEyeBase):
         self._config: dict[str, Any] = {}
         self._started = False
         self.execution_mode = "thread"
+        # Event detectors keep state (open events), so a restart loses it: the default
+        # stays ``fail_stop``; ``skip_item``/``restart`` must be requested explicitly.
+        self._error_policy = _ItemErrorPolicy(policy="fail_stop")
+        self.item_errors = 0
+        self.worker_restarts = 0
+        self._seen_process_restarts = 0
         self.degraded = False
         self.last_error = None
         self._queue_size = 32
@@ -231,7 +261,11 @@ class EventDetectorModuleAdapter(EvilEyeBase):
         reserved = {
             "module_id", "type", "execution_mode", "logger_name",
             "queue_size", "config",
-        }
+        } | _ERROR_POLICY_PARAMS
+        self._error_policy = _ItemErrorPolicy.from_params(
+            params, self.module_id, default_policy="fail_stop"
+        )
+        self._set_degraded_threshold(self._error_policy.degraded_threshold)
         config = params.get("config")
         if config is None:
             config = {key: value for key, value in params.items() if key not in reserved}
@@ -305,9 +339,11 @@ class EventDetectorModuleAdapter(EvilEyeBase):
                 max_input_size=self._queue_size,
                 max_output_size=self._queue_size,
                 name=f"Event-{self.module_id.replace('/', '-')}",
-                restart_on_exit=False,
+                **self._error_policy.mp_control_kwargs(),
             )
+            self._seen_process_restarts = 0
             worker = self._mp_control.add_worker(EventDetectorUpdateWorker)
+            worker.error_policy_state = self._error_policy.to_state()
             worker.module_id = self.module_id
             worker.config = self._config
             worker.factory_module = self.registered_module.spec.factory.__module__
@@ -723,6 +759,17 @@ class EventDetectorModuleAdapter(EvilEyeBase):
                     "worker output", RuntimeError("worker returned an invalid envelope")
                 )
                 continue
+            if envelope[1] == "item_error":
+                self.item_errors += 1
+                self._record_item_error_event()
+                self.logger.warning(
+                    "Event detector %s skipped an update after an error: %s",
+                    self.module_id, envelope[2],
+                )
+                continue
+            if envelope[1] == "ready":
+                # A restarted worker announces itself again; the first one is consumed in start().
+                continue
             if envelope[1] == "error":
                 self._record_failure("worker", RuntimeError(str(envelope[2])))
                 self._failure_reported = True
@@ -803,10 +850,21 @@ class EventDetectorModuleAdapter(EvilEyeBase):
             or self._failure_reported
         ):
             return
-        exited = [
-            process for process in self._mp_control.processes
-            if process.exitcode is not None
-        ]
+        restart_count = getattr(self._mp_control, "restart_count", None)
+        restarts = restart_count() if callable(restart_count) else 0
+        if restarts != self._seen_process_restarts:
+            self.worker_restarts += restarts - self._seen_process_restarts
+            self._transient_problems.record(restarts - self._seen_process_restarts)
+            self._seen_process_restarts = restarts
+            self.logger.warning(
+                "Event detector %s worker was restarted (restarts=%d)",
+                self.module_id, self.worker_restarts,
+            )
+        is_final = getattr(
+            self._mp_control, "worker_exit_is_final",
+            lambda process: process.exitcode is not None,
+        )
+        exited = [p for p in self._mp_control.processes if is_final(p)]
         if exited:
             self._failure_reported = True
             self._record_failure(
@@ -891,6 +949,10 @@ class EventDetectorModuleAdapter(EvilEyeBase):
             "events_received": self._events_received,
             "degraded": self.degraded,
             "last_error": self.last_error,
+            "error_policy": self._error_policy.policy,
+            "item_errors": self.item_errors,
+            "worker_restarts": self.worker_restarts,
+            **self._health_stats(),
             "module": (
                 module_stats() if self.execution_mode != "process"
                 and callable(module_stats) else None
@@ -956,6 +1018,8 @@ class EventDetectorModuleAdapter(EvilEyeBase):
         if self.module is not None:
             self._call_module("reset")
         self.degraded = False
+        self.item_errors = 0
+        self.worker_restarts = 0
         self.last_error = None
         self._failure_reported = False
         self._sequence = 0

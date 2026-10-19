@@ -19,6 +19,15 @@ def _set_protection(tmp_path, **values):
     path.write_text(json.dumps(payload), encoding="utf-8")
 
 
+@pytest.fixture(autouse=True)
+def _fresh_password_limiter():
+    from evileye.api.routes import extensions as routes
+
+    routes.reset_password_limiter_for_tests()
+    yield
+    routes.reset_password_limiter_for_tests()
+
+
 @pytest.fixture()
 def loopback(secured_client, monkeypatch):  # noqa: F811
     """A client whose TCP peer is 127.0.0.1, like a reverse proxy on the same host."""

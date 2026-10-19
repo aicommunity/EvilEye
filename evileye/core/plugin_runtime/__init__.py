@@ -3,6 +3,14 @@
 The implementation is split by module family; this package re-exports every name
 that used to live in the single ``evileye.core.plugin_runtime`` module."""
 
+from .policy import (
+    RestartBudget,
+    _ERROR_POLICIES,
+    _ERROR_POLICY_PARAMS,
+    _HealthMixin,
+    _ItemErrorPolicy,
+    _ItemErrorTracker,
+)
 from .transport import (
     _FRAME_METADATA_FIELDS,
     _FRAME_RUNTIME_KEY,
@@ -25,10 +33,6 @@ from .transport import (
 from .item import (
     ItemModuleAdapter,
     ItemModuleWorker,
-    _ERROR_POLICIES,
-    _ERROR_POLICY_PARAMS,
-    _ItemErrorPolicy,
-    _ItemErrorTracker,
 )
 from .parallel import (
     OrderedItemModuleWorker,
@@ -57,7 +61,9 @@ __all__ = [
     "OrderedItemModuleWorker",
     "ParallelItemModuleAdapter",
     "SourceModuleAdapter",
+    "RestartBudget",
     "_ERROR_POLICIES",
+    "_HealthMixin",
     "_ERROR_POLICY_PARAMS",
     "_EVENT_UPDATE_INPUT",
     "_EVENT_UPDATE_OUTPUT",

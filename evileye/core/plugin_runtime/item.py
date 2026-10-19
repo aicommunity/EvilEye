@@ -7,12 +7,18 @@ import pickle
 import queue
 import threading
 import time
-from typing import Any, Mapping
+from typing import Any
 
 from ..base_class import EvilEyeBase
-from ..health_window import RollingEventCounter
 from ..mp_worker import MpWorker
 from ..plugins import ModuleRuntimeContext, PluginError, plugin_registry
+from .policy import (
+    RestartBudget,
+    _ERROR_POLICY_PARAMS,
+    _HealthMixin,
+    _ItemErrorPolicy,
+    _ItemErrorTracker,
+)
 from .transport import (
     _IncomingFrameDropped,
     _PROCESS_INPUT_MARKER,
@@ -30,134 +36,6 @@ from .transport import (
     _serialize_process_value,
     _validate_model_class_mapping_capability,
 )
-
-_ERROR_POLICIES = ("skip_item", "restart", "fail_stop")
-
-
-_ERROR_POLICY_PARAMS = frozenset({
-    "error_policy", "error_burst_limit", "max_restarts", "restart_window_s",
-    "mp_restart_on_exit", "mp_no_restart_exit_codes",
-})
-
-
-class _ItemErrorPolicy:
-    """How an item module reacts to exceptions raised by ``process_item``.
-
-    ``skip_item`` drops the failing item and escalates to a worker restart after
-    ``error_burst_limit`` consecutive failures, ``restart`` recreates the worker
-    after every failure and ``fail_stop`` keeps the legacy "stop for good"
-    behavior. Restarts are limited to ``max_restarts`` per ``restart_window_s``.
-    """
-
-    def __init__(
-        self,
-        policy: str = "skip_item",
-        burst_limit: int = 50,
-        max_restarts: int = 5,
-        restart_window_s: float = 60.0,
-        restart_on_exit: bool | None = None,
-        no_restart_exit_codes: Any = None,
-    ):
-        self.policy = policy
-        self.burst_limit = burst_limit
-        self.max_restarts = max_restarts
-        self.restart_window_s = restart_window_s
-        self.restart_on_exit = (
-            policy != "fail_stop" if restart_on_exit is None else bool(restart_on_exit)
-        )
-        self.no_restart_exit_codes = (
-            None if no_restart_exit_codes is None else tuple(sorted(no_restart_exit_codes))
-        )
-
-    @classmethod
-    def from_params(cls, params: Mapping[str, Any], module_id: str) -> "_ItemErrorPolicy":
-        policy = params.get("error_policy", "skip_item")
-        if policy not in _ERROR_POLICIES:
-            raise PluginError(
-                f"Module '{module_id}' error_policy must be one of "
-                f"{', '.join(_ERROR_POLICIES)}, got {policy!r}"
-            )
-
-        def _number(key, default, kind, minimum):
-            value = params.get(key, default)
-            if isinstance(value, bool) or not isinstance(value, (int, float)):
-                raise PluginError(f"Module '{module_id}' {key} must be a number, got {value!r}")
-            value = kind(value)
-            if value < minimum:
-                raise PluginError(f"Module '{module_id}' {key} must be >= {minimum}, got {value!r}")
-            return value
-
-        restart_on_exit = params.get("mp_restart_on_exit")
-        if restart_on_exit is not None and (
-            isinstance(restart_on_exit, bool) is False and restart_on_exit not in (0, 1)
-        ):
-            raise PluginError(
-                f"Module '{module_id}' mp_restart_on_exit must be a boolean, got {restart_on_exit!r}"
-            )
-        codes = params.get("mp_no_restart_exit_codes")
-        if codes is not None:
-            raw = codes if isinstance(codes, (list, tuple, set, frozenset)) else [codes]
-            if any(isinstance(code, bool) or not isinstance(code, int) for code in raw):
-                raise PluginError(
-                    f"Module '{module_id}' mp_no_restart_exit_codes must be an integer "
-                    f"or a list of integers, got {codes!r}"
-                )
-            codes = set(raw)
-        return cls(
-            policy=policy,
-            burst_limit=_number("error_burst_limit", 50, int, 1),
-            max_restarts=_number("max_restarts", 5, int, 0),
-            restart_window_s=_number("restart_window_s", 60.0, float, 0.0),
-            restart_on_exit=None if restart_on_exit is None else bool(restart_on_exit),
-            no_restart_exit_codes=codes,
-        )
-
-    def to_state(self) -> dict[str, Any]:
-        return {
-            "policy": self.policy,
-            "burst_limit": self.burst_limit,
-            "max_restarts": self.max_restarts,
-            "restart_window_s": self.restart_window_s,
-            "restart_on_exit": self.restart_on_exit,
-            "no_restart_exit_codes": self.no_restart_exit_codes,
-        }
-
-    @classmethod
-    def from_state(cls, state: Mapping[str, Any] | None) -> "_ItemErrorPolicy":
-        return cls(**dict(state)) if state else cls()
-
-    def mp_control_kwargs(self) -> dict[str, Any]:
-        kwargs: dict[str, Any] = {
-            "restart_on_exit": self.restart_on_exit,
-            "max_restarts": self.max_restarts,
-            "restart_window_s": self.restart_window_s,
-        }
-        if self.no_restart_exit_codes is not None:
-            kwargs["no_restart_exit_codes"] = set(self.no_restart_exit_codes)
-        return kwargs
-
-
-class _ItemErrorTracker:
-    """Counts consecutive ``process_item`` failures and picks the reaction."""
-
-    def __init__(self, policy: _ItemErrorPolicy):
-        self.policy = policy
-        self.consecutive = 0
-        self.total = 0
-
-    def success(self) -> None:
-        self.consecutive = 0
-
-    def failure(self) -> str:
-        """Return ``"skip"``, ``"restart"`` or ``"fail"``."""
-        self.total += 1
-        self.consecutive += 1
-        if self.policy.policy == "fail_stop":
-            return "fail"
-        if self.policy.policy == "restart" or self.consecutive >= self.policy.burst_limit:
-            return "restart"
-        return "skip"
-
 
 class ItemModuleWorker(MpWorker):
     """Spawn-safe bridge that recreates a plugin module inside the child."""
@@ -308,7 +186,7 @@ class ItemModuleWorker(MpWorker):
         self.module_state = None
 
 
-class ItemModuleAdapter(EvilEyeBase):
+class ItemModuleAdapter(_HealthMixin, EvilEyeBase):
     """Expose ``process_item(item, state)`` plugins as pipeline processors.
 
     The adapter has the same ``put/get`` lifecycle expected by ProcessorStep
@@ -334,9 +212,6 @@ class ItemModuleAdapter(EvilEyeBase):
         self._module = None
         self._state = None
         self._mp_control = None
-        # ``degraded`` = permanent failure OR transient trouble inside the sliding window.
-        self._failed = False
-        self._transient_problems = RollingEventCounter()
         self.degraded = False
         self.input_queue_dropped = 0
         self.input_queue_rejected = 0
@@ -344,7 +219,9 @@ class ItemModuleAdapter(EvilEyeBase):
         self.worker_restarts = 0
         self._error_policy = _ItemErrorPolicy()
         self._thread_error_tracker = _ItemErrorTracker(self._error_policy)
-        self._thread_restart_times: list[float] = []
+        self._thread_restart_budget = RestartBudget(
+            self._error_policy.max_restarts, self._error_policy.restart_window_s
+        )
         self._seen_process_restarts = 0
         self._failure_reported = False
         self._thread_ready_events: list[threading.Event] = []
@@ -377,16 +254,6 @@ class ItemModuleAdapter(EvilEyeBase):
             or bool(getattr(factory, "requires_materialized_frame", not self.accepts_frame_handle))
         )
 
-    @property
-    def degraded(self) -> bool:
-        return self._failed or self._transient_problems.active()
-
-    @degraded.setter
-    def degraded(self, value: bool) -> None:
-        self._failed = bool(value)
-        if not value:
-            self._transient_problems.reset()
-
     def set_params_impl(self):
         params = dict(self.params or {})
         self.module_id = str(params.get("module_id") or params.get("type") or self.module_id)
@@ -410,6 +277,10 @@ class ItemModuleAdapter(EvilEyeBase):
                 "worker_count greater than one"
             )
         self._error_policy = _ItemErrorPolicy.from_params(params, self.module_id)
+        self._set_degraded_threshold(self._error_policy.degraded_threshold)
+        self._thread_restart_budget = RestartBudget(
+            self._error_policy.max_restarts, self._error_policy.restart_window_s
+        )
         self._thread_error_tracker = _ItemErrorTracker(self._error_policy)
         reserved = {
             "type", "module_id", "execution_mode", "source_ids", "queue_size",
@@ -610,7 +481,9 @@ class ItemModuleAdapter(EvilEyeBase):
         self.item_errors = 0
         self.worker_restarts = 0
         self._thread_error_tracker = _ItemErrorTracker(self._error_policy)
-        self._thread_restart_times = []
+        self._thread_restart_budget = RestartBudget(
+            self._error_policy.max_restarts, self._error_policy.restart_window_s
+        )
         self._seen_process_restarts = 0
 
     def _init_thread_module(self) -> None:
@@ -634,18 +507,13 @@ class ItemModuleAdapter(EvilEyeBase):
     def _restart_thread_module(self) -> bool:
         """Recreate the module after repeated failures; False when the budget is spent."""
         policy = self._error_policy
-        now = time.monotonic()
-        self._thread_restart_times = [
-            t for t in self._thread_restart_times if now - t < policy.restart_window_s
-        ]
-        if len(self._thread_restart_times) >= policy.max_restarts:
+        if not self._thread_restart_budget.try_acquire():
             self.logger.error(
                 "Plugin module %s exhausted its restart budget (%d restarts in %.0fs)",
                 self.module_id, policy.max_restarts, policy.restart_window_s,
             )
             return False
-        self._thread_restart_times.append(now)
-        backoff = min(0.5 * (2 ** (len(self._thread_restart_times) - 1)), 5.0)
+        backoff = min(0.5 * (2 ** (self._thread_restart_budget.recent() - 1)), 5.0)
         if self._stop_event.wait(backoff):
             return False
         _close_item_resources(self._module, self._state, self.logger, self.module_id)
@@ -659,6 +527,7 @@ class ItemModuleAdapter(EvilEyeBase):
             )
             return False
         self.worker_restarts += 1
+        self._transient_problems.record()
         self._thread_error_tracker.success()
         self.logger.warning(
             "Plugin module %s restarted after repeated item errors (restarts=%d)",
@@ -699,6 +568,7 @@ class ItemModuleAdapter(EvilEyeBase):
                         self._track_completed_item()
                 except Exception:
                     self.item_errors += 1
+                    self._record_item_error_event()
                     action = self._thread_error_tracker.failure()
                     if self._thread_error_tracker.consecutive == 1:
                         self.logger.exception(
@@ -896,6 +766,7 @@ class ItemModuleAdapter(EvilEyeBase):
                         self._release_process_request(request_id)
                         self._track_completed_item()
                         self.item_errors += 1
+                        self._record_item_error_event()
                         self.logger.warning(
                             "Plugin module %s skipped an item after an error: %s",
                             self.module_id, message,
@@ -995,6 +866,7 @@ class ItemModuleAdapter(EvilEyeBase):
         if restarts != self._seen_process_restarts:
             # A restarted worker drops everything queued for its predecessor.
             self.worker_restarts += restarts - self._seen_process_restarts
+            self._transient_problems.record(restarts - self._seen_process_restarts)
             self._seen_process_restarts = restarts
             self._release_all_process_requests()
             self._clear_pending_items()
@@ -1038,9 +910,7 @@ class ItemModuleAdapter(EvilEyeBase):
             "error_policy": self._error_policy.policy,
             "item_errors": self.item_errors,
             "worker_restarts": self.worker_restarts,
-            "failed": self._failed,
-            "recent_overload_events": self._transient_problems.recent(),
-            "degraded_window_sec": self._transient_problems.window_sec,
+            **self._health_stats(),
         }
 
     def get_debug_info(self, debug_info: dict | None):

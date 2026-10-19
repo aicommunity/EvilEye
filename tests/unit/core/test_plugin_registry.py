@@ -533,12 +533,16 @@ def test_batch_processor_adapter_preserves_batch_semantics_and_state():
     assert second == ["camera-1:1:2"]
     assert module.get_source_ids() == [1, 2]
     assert isinstance(module, IRuntimeStatusProvider)
-    assert module.get_runtime_stats() == {
+    stats = module.get_runtime_stats()
+    assert {key: stats[key] for key in (
+        "module_id", "execution_mode", "module_initialized", "degraded"
+    )} == {
         "module_id": "vendor.batch_adapter/merge",
         "execution_mode": "thread",
         "module_initialized": True,
         "degraded": False,
     }
+    assert stats["item_errors"] == 0 and stats["worker_restarts"] == 0
     module.release()
 
 
@@ -1116,6 +1120,7 @@ def test_process_source_failure_is_visible_when_output_queue_is_full():
         execution_mode="process",
         queue_size=1,
         source_ids=[5],
+        error_policy="fail_stop",  # the default would retry read() instead of ending
     )
     source.init()
     source.start()

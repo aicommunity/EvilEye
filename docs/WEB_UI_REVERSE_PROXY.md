@@ -287,6 +287,10 @@ EVILEYE_ALLOWED_HOSTS=eye.example.com,127.0.0.1
 - Все не-GET запросы к `/api/v1/admin/*` с `Origin`/`Referer` другого сайта отклоняются (защита от CSRF поверх
   `SameSite=lax`). Если прокси подменяет `Host`, передавайте исходный через `X-Forwarded-Host`.
 - Для создания плагина UI запрашивает пароль текущего администратора.
+  Неверный пароль ограничен по пользователю и по адресу: после `builder_password_max_failures` (5) ошибок за
+  `builder_password_window_sec` (300 с) действие блокируется на `builder_password_lock_sec` (900 с) с ответом
+  429 и заголовком `Retry-After`. Блокируется только установка плагина, а не весь UI. Значения задаются в
+  `web_auth.protection`.
 - `EVILEYE_BUILDER_LOCALHOST_ONLY=0` полностью снимает ограничение по адресу; используйте только в изолированной сети.
 
 ---

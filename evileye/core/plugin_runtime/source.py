@@ -12,15 +12,49 @@ from typing import Any
 from ..base_class import EvilEyeBase
 from ..mp_context import get_spawn_context
 from ..plugins import PluginError, plugin_registry
+from .policy import (
+    RestartBudget,
+    _ERROR_POLICY_PARAMS,
+    _HealthMixin,
+    _ItemErrorPolicy,
+    _ItemErrorTracker,
+)
 from .transport import _call_factory, _serialize_process_value
 
 _SOURCE_ITEM_MARKER = "__evileye_source_item__"
 
 
-def _source_worker_entry(module_id, factory_module, factory_qualname, config, output_queue, stop_event):
+def _reopen_source(module, tracker, budget, stop_event, logger, module_id) -> bool:
+    """close() + open() after repeated read errors; False when the restart budget is spent."""
+    if not budget.try_acquire():
+        logger.error("Source %s exhausted its restart budget", module_id)
+        return False
+    if stop_event.wait(min(0.5 * (2 ** (budget.recent() - 1)), 5.0)):
+        return False
+    try:
+        module.close()
+    except Exception:
+        logger.exception("Source %s close failed before a restart", module_id)
+    try:
+        module.open()
+    except Exception:
+        logger.exception("Source %s failed to reopen", module_id)
+        return False
+    tracker.success()
+    logger.warning("Source %s reopened after repeated read errors", module_id)
+    return True
+
+
+def _source_worker_entry(
+    module_id, factory_module, factory_qualname, config, output_queue, stop_event,
+    error_policy_state=None,
+):
     """Spawn target for source plugins implementing open/read/close."""
     logger = logging.getLogger("evileye.plugin_source")
     module = None
+    policy = _ItemErrorPolicy.from_state(error_policy_state)
+    tracker = _ItemErrorTracker(policy)
+    budget = RestartBudget(policy.max_restarts, policy.restart_window_s)
     try:
         factory = importlib.import_module(factory_module)
         for component in factory_qualname.split("."):
@@ -28,7 +62,22 @@ def _source_worker_entry(module_id, factory_module, factory_qualname, config, ou
         module = _call_factory(factory, config)
         module.open()
         while not stop_event.is_set():
-            item = module.read()
+            try:
+                item = module.read()
+            except Exception:
+                action = tracker.failure()
+                if tracker.consecutive == 1:
+                    logger.exception("Source %s read failed (policy=%s)", module_id, policy.policy)
+                if action == "skip":
+                    if stop_event.wait(0.1):
+                        break
+                    continue
+                if action == "restart" and _reopen_source(
+                    module, tracker, budget, stop_event, logger, module_id
+                ):
+                    continue
+                raise
+            tracker.success()
             if item is None:
                 break
             serialized_item = _serialize_process_value(item, module_id, "source output")
@@ -60,7 +109,7 @@ def _source_worker_entry(module_id, factory_module, factory_qualname, config, ou
             pass
 
 
-class SourceModuleAdapter(EvilEyeBase):
+class SourceModuleAdapter(_HealthMixin, EvilEyeBase):
     """Adapt ``open/read/close`` source plugins to ProcessorSource."""
 
     def __init__(self, registered_module):
@@ -80,6 +129,9 @@ class SourceModuleAdapter(EvilEyeBase):
         self._module = None
         self._backend_worker_exitcodes: list[int | None] | None = None
         self._finished = False
+        self._error_policy = _ItemErrorPolicy()
+        self.item_errors = 0
+        self.worker_restarts = 0
         self.degraded = False
         self.last_error = None
         self._thread_stop_timeout_secs = 2.0
@@ -125,7 +177,11 @@ class SourceModuleAdapter(EvilEyeBase):
             params.get("source_ids") or nested_config.get("source_ids") or []
         )
         self._queue_size = max(1, int(params.get("queue_size", 16)))
-        reserved = {"module_id", "queue_size", "ipc_mode", "config", "type", "execution_mode"}
+        reserved = {
+            "module_id", "queue_size", "ipc_mode", "config", "type", "execution_mode",
+        } | _ERROR_POLICY_PARAMS
+        self._error_policy = _ItemErrorPolicy.from_params(params, self.module_id)
+        self._set_degraded_threshold(self._error_policy.degraded_threshold)
         self._config = dict(nested_config)
         for key, value in params.items():
             if key not in reserved:
@@ -253,7 +309,8 @@ class SourceModuleAdapter(EvilEyeBase):
             self._process = context.Process(
                 target=_source_worker_entry,
                 args=(self.module_id, factory.__module__, factory.__qualname__,
-                      self._config, self._output_queue, self._process_stop_event),
+                      self._config, self._output_queue, self._process_stop_event,
+                      self._error_policy.to_state()),
                 daemon=True,
                 name=f"PluginSource-{self.module_id.replace('/', '-')}",
             )
@@ -293,8 +350,34 @@ class SourceModuleAdapter(EvilEyeBase):
             if self._subscribers and callable(getattr(self._module, "subscribe", None)):
                 self._module.subscribe(*self._subscribers)
             self._module.open()
+            tracker = _ItemErrorTracker(self._error_policy)
+            budget = RestartBudget(
+                self._error_policy.max_restarts, self._error_policy.restart_window_s
+            )
             while not self._stop_event.is_set():
-                item = self._module.read()
+                try:
+                    item = self._module.read()
+                except Exception:
+                    self.item_errors += 1
+                    self._record_item_error_event()
+                    action = tracker.failure()
+                    if tracker.consecutive == 1:
+                        self.logger.exception(
+                            "Source plugin %s read failed (policy=%s)",
+                            self.module_id, self._error_policy.policy,
+                        )
+                    if action == "skip":
+                        if self._stop_event.wait(0.1):
+                            return
+                        continue
+                    if action == "restart" and _reopen_source(
+                        self._module, tracker, budget, self._stop_event, self.logger, self.module_id
+                    ):
+                        self.worker_restarts += 1
+                        self._transient_problems.record()
+                        continue
+                    raise
+                tracker.success()
                 if item is None:
                     self._finished = True
                     return
@@ -455,6 +538,10 @@ class SourceModuleAdapter(EvilEyeBase):
             "last_error": self.last_error,
             "queue_size": queue_size,
             "degraded": self.degraded,
+            "error_policy": self._error_policy.policy,
+            "item_errors": self.item_errors,
+            "worker_restarts": self.worker_restarts,
+            **self._health_stats(),
         }
 
     def get_debug_info(self, debug_info: dict | None):
