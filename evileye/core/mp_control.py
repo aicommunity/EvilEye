@@ -47,8 +47,16 @@ class MpControl:
             fatal_exit_codes=None,
             on_worker_fatal_exit: Optional[Callable[[int, int, str], None]] = None,
             on_before_worker_restart: Optional[Callable[[int, int | None, str], None]] = None,
+            max_restarts: int | None = None,
+            restart_window_s: float = 60.0,
     ):
         self.name = name
+        # Restart budget: at most ``max_restarts`` automatic restarts within
+        # ``restart_window_s`` seconds; ``None`` keeps the unbounded legacy behavior.
+        self.max_restarts = None if max_restarts is None else max(0, int(max_restarts))
+        self.restart_window_s = max(0.0, float(restart_window_s))
+        self._restart_times: list[float] = []
+        self._pool_restarting = False
         self.logger = get_module_logger(f"mp_control.{name}")
         self.workers_list = []
         self.restart_on_exit = bool(restart_on_exit)
@@ -61,6 +69,7 @@ class MpControl:
 
         if max_input_size is None:
             max_input_size = 8
+        self._max_input_size = max_input_size
         if max_input_size:
             self.input_queue = self._mp_ctx.Queue(maxsize=max_input_size)
         else:
@@ -68,6 +77,7 @@ class MpControl:
 
         if max_output_size is None:
             max_output_size = 8
+        self._max_output_size = max_output_size
         if max_output_size:
             self.output_queue = self._mp_ctx.Queue(maxsize=max_output_size)
         else:
@@ -391,6 +401,99 @@ class MpControl:
             except Exception as exc:
                 self.logger.error("on_worker_fatal_exit callback failed: %s", exc, exc_info=True)
 
+    def _reserve_restart(self) -> bool:
+        """Consume one restart from the sliding-window budget."""
+        if self.max_restarts is None:
+            return True
+        now = time.monotonic()
+        self._restart_times = [
+            t for t in self._restart_times if now - t < self.restart_window_s
+        ]
+        if len(self._restart_times) >= self.max_restarts:
+            return False
+        self._restart_times.append(now)
+        return True
+
+    def _spawn_worker_process(self, index: int):
+        w = self.workers_list[index]
+        new_p = self._mp_ctx.Process(
+            target=run_mp_worker_entry,
+            args=(
+                type(w),
+                self.input_queue,
+                self.output_queue,
+                self._log_queue,
+                w._stop_event,
+                w.get_spawn_state(),
+            ),
+            daemon=True,
+            name=f"{self.name}-worker",
+        )
+        new_p.start()
+        self.processes[index] = new_p
+        try:
+            register_worker_pid(int(new_p.pid), self.name)
+        except Exception:
+            pass
+        return new_p
+
+    def _restart_pool_with_fresh_queues(self) -> None:
+        """Restart every worker on new IPC queues.
+
+        A worker killed by a signal while blocked in ``Queue.get`` still owns the
+        queue's read lock (or a writer lock while flushing results), so the old
+        queues can never be used again. Peers share those queues and are therefore
+        replaced together with the dead worker.
+        """
+        self._pool_restarting = True
+        try:
+            self._swap_pool_processes_and_queues()
+        finally:
+            self._pool_restarting = False
+
+    def _swap_pool_processes_and_queues(self) -> None:
+        for peer in self.processes:
+            if peer.is_alive():
+                # SIGKILL on purpose: SIGTERM exits (-15) are "do not restart" codes.
+                peer.kill()
+                peer.join(timeout=1.0)
+        old_queues = (self.input_queue, self.output_queue)
+        self.input_queue = (
+            self._mp_ctx.Queue(maxsize=self._max_input_size)
+            if self._max_input_size else self._mp_ctx.Queue()
+        )
+        self.output_queue = (
+            self._mp_ctx.Queue(maxsize=self._max_output_size)
+            if self._max_output_size else self._mp_ctx.Queue()
+        )
+        for old in old_queues:
+            try:
+                old.cancel_join_thread()
+                old.close()
+            except Exception:
+                pass
+        for index, worker in enumerate(self.workers_list):
+            if hasattr(worker, "_stop_event") and worker._stop_event.is_set():
+                worker._stop_event.clear()
+            self._spawn_worker_process(index)
+
+    def restart_count(self) -> int:
+        with self._stats_lock:
+            return int(self._stats["worker_restart_total"])
+
+    def worker_exit_is_final(self, process) -> bool:
+        """True when an exited worker will not be restarted by this pool."""
+        exit_code = process.exitcode
+        if exit_code is None or self._pool_restarting:
+            return False
+        if process.pid in self._suppressed_restart_pids or self._fatal_shutdown:
+            return True
+        return (
+            not self.restart_on_exit
+            or exit_code in self.fatal_exit_codes
+            or exit_code in self.no_restart_exit_codes
+        )
+
     def _health_monitor_loop(self):
         while not self._monitor_stop.is_set():
             for i, p in enumerate(self.processes):
@@ -419,11 +522,40 @@ class MpControl:
                             self._stats["restart_suppressed_total"] += 1
                         self._suppressed_restart_pids.add(p.pid)
                         continue
+                    if not self._reserve_restart():
+                        self.logger.error(
+                            "Worker pid=%s exited with code %s; restart budget exhausted "
+                            "(%s restarts in %.0fs), leaving it stopped",
+                            p.pid, p.exitcode, self.max_restarts, self.restart_window_s,
+                        )
+                        with self._stats_lock:
+                            self._stats["restart_suppressed_total"] += 1
+                        self._suppressed_restart_pids.add(p.pid)
+                        continue
                     self.logger.warning(
                         f"Worker pid={p.pid} exited with code {p.exitcode}, "
                         f"restarting"
                     )
                     try:
+                        if exit_code is not None and exit_code < 0:
+                            callback = self.on_before_worker_restart
+                            if callback is not None:
+                                try:
+                                    callback(i, exit_code, self.name)
+                                except Exception as cb_exc:
+                                    self.logger.error(
+                                        "on_before_worker_restart failed: %s",
+                                        cb_exc,
+                                        exc_info=True,
+                                    )
+                            self._restart_pool_with_fresh_queues()
+                            with self._stats_lock:
+                                self._stats["worker_restart_total"] += 1
+                            self.logger.info(
+                                "Restarted pool '%s' on fresh IPC queues after worker "
+                                "died with signal %s", self.name, -exit_code,
+                            )
+                            continue
                         # Reset FIFO pairing before a new worker reads orphaned
                         # payloads or drain pairs results with stale pending jobs.
                         self.drain_ipc_queues()

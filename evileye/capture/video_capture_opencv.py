@@ -6,7 +6,7 @@ import time
 from timeit import default_timer as timer
 from .video_capture_base import VideoCaptureBase, CaptureImage, CaptureDeviceType
 from .constants import CaptureConstants
-from .exceptions import CaptureInitializationError, CaptureConnectionError
+from .exceptions import CaptureConfigurationError, CaptureInitializationError, CaptureConnectionError
 from enum import IntEnum
 
 from ..core.base_class import EvilEyeBase

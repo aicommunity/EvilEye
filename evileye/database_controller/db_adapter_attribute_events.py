@@ -1,3 +1,4 @@
+import os
 import time
 from .db_adapter import DatabaseAdapterBase
 from .constants import QueryType, EventType

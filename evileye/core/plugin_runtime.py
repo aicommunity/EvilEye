@@ -28,6 +28,132 @@ class _IncomingFrameDropped:
         self.evicted_payload = evicted_payload
 
 
+_ERROR_POLICIES = ("skip_item", "restart", "fail_stop")
+_ERROR_POLICY_PARAMS = frozenset({
+    "error_policy", "error_burst_limit", "max_restarts", "restart_window_s",
+    "mp_restart_on_exit", "mp_no_restart_exit_codes",
+})
+
+
+class _ItemErrorPolicy:
+    """How an item module reacts to exceptions raised by ``process_item``.
+
+    ``skip_item`` drops the failing item and escalates to a worker restart after
+    ``error_burst_limit`` consecutive failures, ``restart`` recreates the worker
+    after every failure and ``fail_stop`` keeps the legacy "stop for good"
+    behavior. Restarts are limited to ``max_restarts`` per ``restart_window_s``.
+    """
+
+    def __init__(
+        self,
+        policy: str = "skip_item",
+        burst_limit: int = 50,
+        max_restarts: int = 5,
+        restart_window_s: float = 60.0,
+        restart_on_exit: bool | None = None,
+        no_restart_exit_codes: Any = None,
+    ):
+        self.policy = policy
+        self.burst_limit = burst_limit
+        self.max_restarts = max_restarts
+        self.restart_window_s = restart_window_s
+        self.restart_on_exit = (
+            policy != "fail_stop" if restart_on_exit is None else bool(restart_on_exit)
+        )
+        self.no_restart_exit_codes = (
+            None if no_restart_exit_codes is None else tuple(sorted(no_restart_exit_codes))
+        )
+
+    @classmethod
+    def from_params(cls, params: Mapping[str, Any], module_id: str) -> "_ItemErrorPolicy":
+        policy = params.get("error_policy", "skip_item")
+        if policy not in _ERROR_POLICIES:
+            raise PluginError(
+                f"Module '{module_id}' error_policy must be one of "
+                f"{', '.join(_ERROR_POLICIES)}, got {policy!r}"
+            )
+
+        def _number(key, default, kind, minimum):
+            value = params.get(key, default)
+            if isinstance(value, bool) or not isinstance(value, (int, float)):
+                raise PluginError(f"Module '{module_id}' {key} must be a number, got {value!r}")
+            value = kind(value)
+            if value < minimum:
+                raise PluginError(f"Module '{module_id}' {key} must be >= {minimum}, got {value!r}")
+            return value
+
+        restart_on_exit = params.get("mp_restart_on_exit")
+        if restart_on_exit is not None and (
+            isinstance(restart_on_exit, bool) is False and restart_on_exit not in (0, 1)
+        ):
+            raise PluginError(
+                f"Module '{module_id}' mp_restart_on_exit must be a boolean, got {restart_on_exit!r}"
+            )
+        codes = params.get("mp_no_restart_exit_codes")
+        if codes is not None:
+            raw = codes if isinstance(codes, (list, tuple, set, frozenset)) else [codes]
+            if any(isinstance(code, bool) or not isinstance(code, int) for code in raw):
+                raise PluginError(
+                    f"Module '{module_id}' mp_no_restart_exit_codes must be an integer "
+                    f"or a list of integers, got {codes!r}"
+                )
+            codes = set(raw)
+        return cls(
+            policy=policy,
+            burst_limit=_number("error_burst_limit", 50, int, 1),
+            max_restarts=_number("max_restarts", 5, int, 0),
+            restart_window_s=_number("restart_window_s", 60.0, float, 0.0),
+            restart_on_exit=None if restart_on_exit is None else bool(restart_on_exit),
+            no_restart_exit_codes=codes,
+        )
+
+    def to_state(self) -> dict[str, Any]:
+        return {
+            "policy": self.policy,
+            "burst_limit": self.burst_limit,
+            "max_restarts": self.max_restarts,
+            "restart_window_s": self.restart_window_s,
+            "restart_on_exit": self.restart_on_exit,
+            "no_restart_exit_codes": self.no_restart_exit_codes,
+        }
+
+    @classmethod
+    def from_state(cls, state: Mapping[str, Any] | None) -> "_ItemErrorPolicy":
+        return cls(**dict(state)) if state else cls()
+
+    def mp_control_kwargs(self) -> dict[str, Any]:
+        kwargs: dict[str, Any] = {
+            "restart_on_exit": self.restart_on_exit,
+            "max_restarts": self.max_restarts,
+            "restart_window_s": self.restart_window_s,
+        }
+        if self.no_restart_exit_codes is not None:
+            kwargs["no_restart_exit_codes"] = set(self.no_restart_exit_codes)
+        return kwargs
+
+
+class _ItemErrorTracker:
+    """Counts consecutive ``process_item`` failures and picks the reaction."""
+
+    def __init__(self, policy: _ItemErrorPolicy):
+        self.policy = policy
+        self.consecutive = 0
+        self.total = 0
+
+    def success(self) -> None:
+        self.consecutive = 0
+
+    def failure(self) -> str:
+        """Return ``"skip"``, ``"restart"`` or ``"fail"``."""
+        self.total += 1
+        self.consecutive += 1
+        if self.policy.policy == "fail_stop":
+            return "fail"
+        if self.policy.policy == "restart" or self.consecutive >= self.policy.burst_limit:
+            return "restart"
+        return "skip"
+
+
 def _is_frame_work_item(item: Any) -> bool:
     """Frame work can shed stale queued frames; other payloads reject overflow."""
     from .frame import Frame
@@ -283,6 +409,30 @@ class ItemModuleWorker(MpWorker):
         self.reports_model_class_mapping = bool(
             state.get("reports_model_class_mapping", False)
         )
+        self.error_policy_state = state.get("error_policy")
+        self._error_tracker = None
+
+    error_policy_state: dict[str, Any] | None = None
+    _error_tracker: _ItemErrorTracker | None = None
+
+    def _tracker(self) -> _ItemErrorTracker:
+        if self._error_tracker is None:
+            self._error_tracker = _ItemErrorTracker(
+                _ItemErrorPolicy.from_state(self.error_policy_state)
+            )
+        return self._error_tracker
+
+    def _handle_item_failure(self, request_id: int, exc: BaseException):
+        """Apply the error policy; returns the envelope to send to the parent."""
+        action = self._tracker().failure()
+        if action == "restart":
+            # The worker exits after delivering this envelope; MpControl restarts it.
+            self._stop_event.set()
+        elif action == "fail":
+            self._stop_event.set()
+        payload = pickle.dumps((request_id, str(exc)), protocol=pickle.HIGHEST_PROTOCOL)
+        kind = "error" if action == "fail" else "item_error"
+        return (_PROCESS_OUTPUT_MARKER, kind, payload)
 
     def init_worker(self) -> None:
         try:
@@ -354,10 +504,9 @@ class ItemModuleWorker(MpWorker):
         except Exception as exc:
             if self.logger:
                 self.logger.exception("Plugin module %s failed while processing item", self.module_id)
-            self._stop_event.set()
-            error = pickle.dumps((request_id, str(exc)), protocol=pickle.HIGHEST_PROTOCOL)
-            return (_PROCESS_OUTPUT_MARKER, "error", error)
+            return self._handle_item_failure(request_id, exc)
         if result is None:
+            self._tracker().success()
             return (_PROCESS_OUTPUT_MARKER, "skip", request_id)
         try:
             serialized_result = _serialize_process_value(
@@ -368,9 +517,8 @@ class ItemModuleWorker(MpWorker):
         except PluginError as exc:
             if self.logger:
                 self.logger.error("%s", exc)
-            self._stop_event.set()
-            error = pickle.dumps((request_id, str(exc)), protocol=pickle.HIGHEST_PROTOCOL)
-            return (_PROCESS_OUTPUT_MARKER, "error", error)
+            return self._handle_item_failure(request_id, exc)
+        self._tracker().success()
         return (_PROCESS_OUTPUT_MARKER, "output", serialized_result)
 
     def get_spawn_state(self) -> dict[str, Any]:
@@ -383,6 +531,7 @@ class ItemModuleWorker(MpWorker):
             "reports_model_class_mapping": self.reports_model_class_mapping,
             "ready_event": self.ready_event,
             "init_failed_event": self.init_failed_event,
+            "error_policy": self.error_policy_state,
         }
 
     def cleanup(self) -> None:
@@ -526,6 +675,12 @@ class ItemModuleAdapter(EvilEyeBase):
         self.degraded = False
         self.input_queue_dropped = 0
         self.input_queue_rejected = 0
+        self.item_errors = 0
+        self.worker_restarts = 0
+        self._error_policy = _ItemErrorPolicy()
+        self._thread_error_tracker = _ItemErrorTracker(self._error_policy)
+        self._thread_restart_times: list[float] = []
+        self._seen_process_restarts = 0
         self._failure_reported = False
         self._thread_ready_events: list[threading.Event] = []
         self._thread_init_failed_events: list[threading.Event] = []
@@ -579,7 +734,12 @@ class ItemModuleAdapter(EvilEyeBase):
                 f"Module '{self.module_id}' must declare parallel_items to use "
                 "worker_count greater than one"
             )
-        reserved = {"type", "module_id", "execution_mode", "source_ids", "queue_size", "ipc_mode", "worker_count", "config"}
+        self._error_policy = _ItemErrorPolicy.from_params(params, self.module_id)
+        self._thread_error_tracker = _ItemErrorTracker(self._error_policy)
+        reserved = {
+            "type", "module_id", "execution_mode", "source_ids", "queue_size",
+            "ipc_mode", "worker_count", "config",
+        } | _ERROR_POLICY_PARAMS
         for key, value in params.items():
             if key not in reserved:
                 self._config.setdefault(key, value)
@@ -719,6 +879,7 @@ class ItemModuleAdapter(EvilEyeBase):
         self._stop_event.clear()
         self._failure_reported = False
         self.degraded = False
+        self._reset_error_state()
         self._clear_pending_items()
         if self.execution_mode == "process":
             from .mp_context import get_spawn_context
@@ -735,9 +896,10 @@ class ItemModuleAdapter(EvilEyeBase):
                 max_input_size=self._queue_size,
                 max_output_size=self._queue_size,
                 name=f"Plugin-{self.module_id.replace('/', '-')}",
-                restart_on_exit=False,
+                **self._error_policy.mp_control_kwargs(),
             )
             worker = self._mp_control.add_worker(ItemModuleWorker)
+            worker.error_policy_state = self._error_policy.to_state()
             worker.module_id = self.module_id
             worker.config = self._config
             worker.runtime_context = self._module_runtime_context()
@@ -765,25 +927,70 @@ class ItemModuleAdapter(EvilEyeBase):
         )
         self._thread.start()
 
+    def _reset_error_state(self) -> None:
+        self.item_errors = 0
+        self.worker_restarts = 0
+        self._thread_error_tracker = _ItemErrorTracker(self._error_policy)
+        self._thread_restart_times = []
+        self._seen_process_restarts = 0
+
+    def _init_thread_module(self) -> None:
+        self._module = _call_factory(
+            self.registered_module.spec.factory, self._config
+        )
+        if not callable(getattr(self._module, "process_item", None)):
+            raise PluginError(
+                f"Module '{self.module_id}' must implement process_item(item, state)"
+            )
+        _validate_model_class_mapping_capability(
+            self._module,
+            self.module_id,
+            self.reports_model_class_mapping,
+        )
+        self._state = _create_state(
+            self._module, self._config, self._module_runtime_context()
+        )
+        self._refresh_thread_model_class_mapping()
+
+    def _restart_thread_module(self) -> bool:
+        """Recreate the module after repeated failures; False when the budget is spent."""
+        policy = self._error_policy
+        now = time.monotonic()
+        self._thread_restart_times = [
+            t for t in self._thread_restart_times if now - t < policy.restart_window_s
+        ]
+        if len(self._thread_restart_times) >= policy.max_restarts:
+            self.logger.error(
+                "Plugin module %s exhausted its restart budget (%d restarts in %.0fs)",
+                self.module_id, policy.max_restarts, policy.restart_window_s,
+            )
+            return False
+        self._thread_restart_times.append(now)
+        backoff = min(0.5 * (2 ** (len(self._thread_restart_times) - 1)), 5.0)
+        if self._stop_event.wait(backoff):
+            return False
+        _close_item_resources(self._module, self._state, self.logger, self.module_id)
+        self._module = None
+        self._state = None
+        try:
+            self._init_thread_module()
+        except Exception:
+            self.logger.exception(
+                "Plugin module %s failed to restart after repeated errors", self.module_id
+            )
+            return False
+        self.worker_restarts += 1
+        self._thread_error_tracker.success()
+        self.logger.warning(
+            "Plugin module %s restarted after repeated item errors (restarts=%d)",
+            self.module_id, self.worker_restarts,
+        )
+        return True
+
     def _run_thread(self):
         try:
             try:
-                self._module = _call_factory(
-                    self.registered_module.spec.factory, self._config
-                )
-                if not callable(getattr(self._module, "process_item", None)):
-                    raise PluginError(
-                        f"Module '{self.module_id}' must implement process_item(item, state)"
-                    )
-                _validate_model_class_mapping_capability(
-                    self._module,
-                    self.module_id,
-                    self.reports_model_class_mapping,
-                )
-                self._state = _create_state(
-                    self._module, self._config, self._module_runtime_context()
-                )
-                self._refresh_thread_model_class_mapping()
+                self._init_thread_module()
             except Exception:
                 self.degraded = True
                 self._thread_init_failed_events[0].set()
@@ -801,6 +1008,7 @@ class ItemModuleAdapter(EvilEyeBase):
                 try:
                     result = self._module.process_item(item, self._state)
                     self._refresh_thread_model_class_mapping()
+                    self._thread_error_tracker.success()
                     if result is not None:
                         while not self._stop_event.is_set():
                             try:
@@ -811,9 +1019,27 @@ class ItemModuleAdapter(EvilEyeBase):
                     else:
                         self._track_completed_item()
                 except Exception:
+                    self.item_errors += 1
+                    action = self._thread_error_tracker.failure()
+                    if self._thread_error_tracker.consecutive == 1:
+                        self.logger.exception(
+                            "Plugin module %s failed while processing item (policy=%s)",
+                            self.module_id, self._error_policy.policy,
+                        )
+                    else:
+                        self.logger.warning(
+                            "Plugin module %s failed again while processing item "
+                            "(consecutive=%d, policy=%s)",
+                            self.module_id, self._thread_error_tracker.consecutive,
+                            self._error_policy.policy,
+                        )
+                    self._track_completed_item()
+                    if action == "skip":
+                        continue
+                    if action == "restart" and self._restart_thread_module():
+                        continue
                     self.degraded = True
                     self._clear_pending_items()
-                    self.logger.exception("Plugin module %s failed while processing item", self.module_id)
                     break
         finally:
             _close_item_resources(self._module, self._state, self.logger, self.module_id)
@@ -846,6 +1072,10 @@ class ItemModuleAdapter(EvilEyeBase):
                 return False
             if any(event.is_set() for event in failed_events):
                 if self.execution_mode == "process":
+                    if self._mp_control is not None:
+                        # Initialization errors are configuration/environment
+                        # problems; restarting the worker cannot fix them.
+                        self._mp_control.restart_on_exit = False
                     self.get()
                 if not self.degraded:
                     self.degraded = True
@@ -977,6 +1207,21 @@ class ItemModuleAdapter(EvilEyeBase):
                                 exc,
                             )
                         continue
+                    if result[1] == "item_error":
+                        request_id, message = None, result[2]
+                        if isinstance(message, bytes):
+                            try:
+                                request_id, message = pickle.loads(message)
+                            except Exception:
+                                pass
+                        self._release_process_request(request_id)
+                        self._track_completed_item()
+                        self.item_errors += 1
+                        self.logger.warning(
+                            "Plugin module %s skipped an item after an error: %s",
+                            self.module_id, message,
+                        )
+                        continue
                     if result[1] == "error":
                         request_id = None
                         message = result[2]
@@ -1055,6 +1300,9 @@ class ItemModuleAdapter(EvilEyeBase):
                 return None
             raise
 
+    def _on_workers_restarted(self) -> None:
+        """Hook: a pool restart discarded all in-flight work."""
+
     def _check_process_health(self):
         if (
             self._mp_control is None
@@ -1063,10 +1311,20 @@ class ItemModuleAdapter(EvilEyeBase):
             or any(event.is_set() for event in self._process_init_failed_events)
         ):
             return
-        exited = [
-            process for process in self._mp_control.processes
-            if process.exitcode is not None
-        ]
+        restart_count = getattr(self._mp_control, "restart_count", None)
+        restarts = restart_count() if callable(restart_count) else 0
+        if restarts != self._seen_process_restarts:
+            # A restarted worker drops everything queued for its predecessor.
+            self.worker_restarts += restarts - self._seen_process_restarts
+            self._seen_process_restarts = restarts
+            self._release_all_process_requests()
+            self._clear_pending_items()
+            self._on_workers_restarted()
+        is_final = getattr(
+            self._mp_control, "worker_exit_is_final",
+            lambda process: process.exitcode is not None,
+        )
+        exited = [p for p in self._mp_control.processes if is_final(p)]
         if exited:
             self.degraded = True
             self._failure_reported = True
@@ -1098,6 +1356,9 @@ class ItemModuleAdapter(EvilEyeBase):
             "input_queue_rejected": self.input_queue_rejected,
             "in_flight": self.pending_work_count(),
             "degraded": self.degraded,
+            "error_policy": self._error_policy.policy,
+            "item_errors": self.item_errors,
+            "worker_restarts": self.worker_restarts,
         }
 
     def get_debug_info(self, debug_info: dict | None):
@@ -1129,6 +1390,7 @@ class ItemModuleAdapter(EvilEyeBase):
         self.degraded = False
         self.input_queue_dropped = 0
         self.input_queue_rejected = 0
+        self._reset_error_state()
         self._failure_reported = False
         self._clear_pending_items()
         while True:
@@ -1168,10 +1430,12 @@ class OrderedItemModuleWorker(ItemModuleWorker):
             result = self.module.process_item(item, self.module_state)
             self._publish_model_class_mapping()
             if result is None:
+                self._tracker().success()
                 return (_PROCESS_OUTPUT_MARKER, "skip", sequence, None)
             payload = _serialize_process_value(
                 result, self.module_id, "process_item result"
             )
+            self._tracker().success()
             return (_PROCESS_OUTPUT_MARKER, "output", sequence, payload)
         except Exception as exc:
             if self.logger:
@@ -1180,7 +1444,8 @@ class OrderedItemModuleWorker(ItemModuleWorker):
                     self.module_id,
                     sequence,
                 )
-            self._stop_event.set()
+            if self._tracker().failure() != "skip":
+                self._stop_event.set()
             return (_PROCESS_OUTPUT_MARKER, "error", sequence, str(exc))
 
 
@@ -1225,6 +1490,7 @@ class ParallelItemModuleAdapter(ItemModuleAdapter):
         self._stop_event.clear()
         self._failure_reported = False
         self.degraded = False
+        self._reset_error_state()
         self._clear_pending_items()
         if self.execution_mode == "process":
             from .mp_context import get_spawn_context
@@ -1239,10 +1505,11 @@ class ParallelItemModuleAdapter(ItemModuleAdapter):
                 max_input_size=self._queue_size,
                 max_output_size=self._queue_size,
                 name=f"Plugin-{self.module_id.replace('/', '-')}Pool",
-                restart_on_exit=False,
+                **self._error_policy.mp_control_kwargs(),
             )
             for _ in range(self.worker_count):
                 worker = self._mp_control.add_worker(OrderedItemModuleWorker)
+                worker.error_policy_state = self._error_policy.to_state()
                 worker.module_id = self.module_id
                 worker.config = self._config
                 worker.runtime_context = self._module_runtime_context()
@@ -1323,6 +1590,7 @@ class ParallelItemModuleAdapter(ItemModuleAdapter):
                 return
 
             self._thread_ready_events[worker_index].set()
+            tracker = _ItemErrorTracker(self._error_policy)
             while not self._stop_event.is_set():
                 try:
                     sequence, item = self._input_queue.get(timeout=0.1)
@@ -1333,13 +1601,12 @@ class ParallelItemModuleAdapter(ItemModuleAdapter):
                     mapping = _get_model_class_mapping(module, self.module_id)
                     if mapping:
                         self._set_model_class_mapping(mapping)
+                    tracker.success()
                     if result is None:
                         envelope = (_ORDERED_THREAD_OUTPUT_MARKER, "skip", sequence, None)
                     else:
                         envelope = (_ORDERED_THREAD_OUTPUT_MARKER, "output", sequence, result)
                 except Exception as exc:
-                    self.degraded = True
-                    self._clear_pending_items()
                     self.logger.exception(
                         "Plugin module %s worker %s failed on item %s",
                         self.module_id,
@@ -1347,7 +1614,11 @@ class ParallelItemModuleAdapter(ItemModuleAdapter):
                         sequence,
                     )
                     envelope = (_ORDERED_THREAD_OUTPUT_MARKER, "error", sequence, str(exc))
-                    self._stop_event.set()
+                    if tracker.failure() != "skip":
+                        # In-process pools do not restart workers: escalate to a stop.
+                        self.degraded = True
+                        self._clear_pending_items()
+                        self._stop_event.set()
                 while not self._stop_event.is_set():
                     try:
                         self._output_queue.put(envelope, timeout=0.1)
@@ -1406,6 +1677,11 @@ class ParallelItemModuleAdapter(ItemModuleAdapter):
             self.degraded = True
             self.logger.error("%s", exc)
             raise
+
+    def _on_workers_restarted(self) -> None:
+        # Sequences in flight at restart time never come back; do not wait for them.
+        self._ordered_results.clear()
+        self._next_output_sequence = self._next_input_sequence
 
     def _store_ordered_message(self, result, *, process_mode: bool) -> None:
         expected_marker = _PROCESS_OUTPUT_MARKER if process_mode else _ORDERED_THREAD_OUTPUT_MARKER
@@ -1477,6 +1753,14 @@ class ParallelItemModuleAdapter(ItemModuleAdapter):
                 self._track_completed_item()
                 continue
             if isinstance(value, tuple) and len(value) == 2 and value[0] == "error":
+                self.item_errors += 1
+                if self._error_policy.policy != "fail_stop":
+                    self._track_completed_item()
+                    self.logger.warning(
+                        "Plugin module %s skipped an ordered item after an error: %s",
+                        self.module_id, value[1],
+                    )
+                    continue
                 self.degraded = True
                 self._clear_pending_items()
                 self.logger.error("Plugin module %s failed on ordered item: %s", self.module_id, value[1])

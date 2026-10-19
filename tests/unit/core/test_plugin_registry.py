@@ -424,6 +424,7 @@ def test_process_item_rejects_unserializable_output_in_worker():
     worker.module_state = None
     worker.logger = logging.getLogger("test.plugin-runtime")
     worker._stop_event = threading.Event()
+    worker.error_policy_state = {"policy": "fail_stop"}
 
     result = worker.worker_impl(
         ("__evileye_plugin_input__", 41, pickle.dumps("frame"))
@@ -594,6 +595,7 @@ def test_item_module_worker_failure_is_visible_in_runtime_diagnostics(execution_
     adapter.set_params(
         module_id=f"{plugin_id}/failure",
         execution_mode=execution_mode,
+        error_policy="fail_stop",
     )
     adapter.init()
     adapter.start()

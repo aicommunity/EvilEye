@@ -6,6 +6,7 @@ from .gstreamer_capture_common import (
     CaptureConstants,
     CaptureDeviceType,
     CaptureImage,
+    Any,
     Empty,
     Frame,
     Full,
