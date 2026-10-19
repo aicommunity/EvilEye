@@ -21,6 +21,9 @@ runner = CliRunner()
 def test_generated_plugin_templates_import_and_register(
     tmp_path: Path, monkeypatch, template: str
 ):
+    # The name collision check inspects installed packages; a developer machine may already
+    # have a real "sample_<template>" plugin installed, which is irrelevant to this test.
+    monkeypatch.setattr("evileye.core.plugin_scaffold._module_origin", lambda _plugin_id: None)
     project_dir = create_plugin_project(f"sample-{template}", tmp_path, template)
     package_name = f"sample_{template}"
     monkeypatch.syspath_prepend(str(project_dir))

@@ -135,6 +135,23 @@ parallel modules mark an evicted frame sequence as skipped so later outputs are
 not blocked. Worker output queues apply backpressure and do not silently discard
 results.
 
+### Errors in `process_item`
+
+An exception in `process_item` no longer stops the module. The reaction is configured on the module entry:
+
+| Parameter | Default | Meaning |
+| --- | --- | --- |
+| `error_policy` | `skip_item` | `skip_item` drops the failing item and continues; `restart` recreates the worker/module after every failure; `fail_stop` keeps the old "stop and mark degraded" behavior. |
+| `error_burst_limit` | `50` | With `skip_item`, this many consecutive failures count as a permanent problem and the module is restarted. |
+| `max_restarts` | `5` | Restart budget per `restart_window_s`; when it is spent the module stops and is reported `degraded`. |
+| `restart_window_s` | `60` | Window for `max_restarts`. |
+| `mp_restart_on_exit` | `true` (`false` for `fail_stop`) | Restart a process worker that died (for example `SIGKILL`, out of memory). |
+| `mp_no_restart_exit_codes` | `[-15]` | Exit codes that are never restarted. |
+
+Skipped items are counted in `item_errors`, restarts in `worker_restarts` (see runtime stats). Skipping does not set
+`degraded`. A worker killed by a signal restarts the whole worker pool on fresh queues, so in-flight items of that pool
+are lost. Invalid values are configuration errors.
+
 ## Sources
 
 A source plugin uses `kind="source"` and implements `open()`, `read()`, and
@@ -436,3 +453,16 @@ contain the requested runtime configuration. The returned object must satisfy
 the existing `IPipeline` contract. Builtin pipeline class names remain
 available; an unknown or invalid requested pipeline now fails startup rather
 than falling back to `PipelineSurveillance`.
+
+## Broken and disabled plugins
+
+A plugin whose entry point cannot be imported or registered is skipped and reported as failed (log, the `plugin_status`
+block of the extension catalog and the Extensions page); other plugins and the Web UI keep working. A configuration that
+uses a failed plugin fails with the recorded reason.
+
+Disable a plugin without uninstalling it with `EVILEYE_DISABLED_PLUGINS=name1,name2` (entry point names) or with the
+Disable button on the Extensions page (stored in `plugins/.evileye/disabled_plugins.json`). Both take effect after a
+restart.
+
+Plugin names for the Web workshop must not be Python standard library modules or already importable packages
+(`torch`, `numpy`, ...), because the plugin becomes a top-level package.

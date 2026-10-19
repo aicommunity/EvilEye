@@ -314,7 +314,7 @@ def test_operation_worker_is_dispatched_detached_from_the_web_process(tmp_path: 
         assert captured["options"]["start_new_session"] is True
 
 
-def test_restart_operation_is_reconciled_after_backend_startup(tmp_path: Path):
+def test_restart_operation_is_reconciled_after_backend_startup(tmp_path: Path, monkeypatch):
     from evileye.core import extension_builder
 
     record = {
@@ -327,16 +327,46 @@ def test_restart_operation_is_reconciled_after_backend_startup(tmp_path: Path):
         "updated_at": 1,
     }
     extension_builder._store_operation(record, tmp_path)
+    monkeypatch.setattr(extension_builder, "_plugin_is_loaded", lambda _plugin_id: (True, ""))
     extension_builder.reconcile_plugin_operations(root=tmp_path)
     updated = get_plugin_operation(record["id"], root=tmp_path)
     assert updated["status"] == "completed"
 
 
+def test_restart_operation_fails_when_plugin_did_not_load(tmp_path: Path, monkeypatch):
+    from evileye.core import extension_builder
+
+    record = {
+        "id": "12345678-abce",
+        "status": "restarting",
+        "name": "sample",
+        "plugin_id": "sample",
+        "template": "processor",
+        "created_at": 1,
+        "updated_at": 1,
+    }
+    extension_builder._store_operation(record, tmp_path)
+    monkeypatch.setattr(
+        extension_builder, "_plugin_is_loaded", lambda _plugin_id: (False, "plugin failed to load: boom")
+    )
+    extension_builder.reconcile_plugin_operations(root=tmp_path)
+    updated = get_plugin_operation(record["id"], root=tmp_path)
+    assert updated["status"] == "failed"
+    assert "boom" in updated["message"]
+
+
 @pytest.mark.parametrize(
-    ("restart_ok", "web_ready", "expected"),
-    [(True, True, "completed"), (True, False, "pending_restart"), (False, False, "pending_restart")],
+    ("restart_ok", "web_ready", "reconciled", "expected"),
+    [
+        (True, True, True, "completed"),
+        (True, True, False, "pending_restart"),
+        (True, False, False, "pending_restart"),
+        (False, False, False, "pending_restart"),
+    ],
 )
-def test_managed_service_restart_records_result_and_readiness(tmp_path: Path, monkeypatch, restart_ok, web_ready, expected):
+def test_managed_service_restart_records_result_and_readiness(
+    tmp_path: Path, monkeypatch, restart_ok, web_ready, reconciled, expected
+):
     from types import SimpleNamespace
 
     from evileye import service_manager, stack_control
@@ -354,7 +384,16 @@ def test_managed_service_restart_records_result_and_readiness(tmp_path: Path, mo
     extension_builder._store_operation(record, tmp_path)
     monkeypatch.setattr(service_manager, "control_service", lambda *_args, **_kwargs: SimpleNamespace(ok=restart_ok, message="service error"))
     monkeypatch.setattr(service_manager.state, "load_state", lambda _root: {"port": 8181})
-    monkeypatch.setattr(stack_control, "wait_web_ready", lambda **_kwargs: web_ready)
+
+    def _wait_web_ready(**_kwargs):
+        if reconciled:
+            # The restarted Web process confirms discovery itself during startup.
+            extension_builder._update_operation(
+                record["id"], root=tmp_path, status="completed", message="confirmed"
+            )
+        return web_ready
+
+    monkeypatch.setattr(stack_control, "wait_web_ready", _wait_web_ready)
 
     extension_builder.restart_plugin_service(record["id"], tmp_path)
 

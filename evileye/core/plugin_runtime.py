@@ -857,7 +857,11 @@ class ItemModuleAdapter(EvilEyeBase):
     def init_impl(self, **kwargs):
         registered = plugin_registry.get_module(self.module_id)
         if registered is None:
-            raise PluginError(f"Unknown plugin module '{self.module_id}'")
+            from .plugins import plugin_manager
+
+            raise PluginError(
+                f"Unknown plugin module '{self.module_id}'{plugin_manager.failure_hint()}"
+            )
         if registered.spec.kind != "processor_item":
             raise PluginError(
                 f"Module '{self.module_id}' has kind '{registered.spec.kind}', "

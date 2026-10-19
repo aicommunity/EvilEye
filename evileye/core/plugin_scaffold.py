@@ -1,7 +1,9 @@
 from __future__ import annotations
 
+import importlib.util
 import keyword
 import re
+import sys
 from pathlib import Path
 from typing import Any
 
@@ -282,8 +284,28 @@ def template_module_id(template_name: str) -> str:
     return str(_TEMPLATES[template_name]["module_id"])
 
 
-def normalize_plugin_name(name: str) -> tuple[str, str]:
-    """Return (directory name, Python-safe plugin id) for a simple user name."""
+def _module_origin(plugin_id: str) -> Path | None | bool:
+    """Where ``import plugin_id`` would load from; ``None`` if it cannot be imported."""
+    try:
+        spec = importlib.util.find_spec(plugin_id)
+    except (ImportError, ValueError, AttributeError):
+        return None
+    if spec is None:
+        return None
+    locations = list(spec.submodule_search_locations or [])
+    if not locations and spec.origin and spec.origin not in {"built-in", "frozen"}:
+        locations = [spec.origin]
+    return Path(locations[0]).resolve() if locations else False
+
+
+def normalize_plugin_name(name: str, *, allow_existing_under: Path | None = None) -> tuple[str, str]:
+    """Return (directory name, Python-safe plugin id) for a simple user name.
+
+    The plugin id becomes a top-level Python package, so it must not shadow the standard
+    library or any importable distribution (``torch``, ``numpy`` ...). A module that already
+    lives under ``allow_existing_under`` is a previous scaffold of the same plugin and is
+    left to the caller's "already registered" check.
+    """
     value = str(name or "").strip()
     if not re.fullmatch(r"[a-z][a-z0-9]*(?:[-_][a-z0-9]+)*", value):
         raise PluginScaffoldError(
@@ -293,6 +315,24 @@ def normalize_plugin_name(name: str) -> tuple[str, str]:
     plugin_id = value.replace("-", "_")
     if keyword.iskeyword(plugin_id) or plugin_id == "evileye":
         raise PluginScaffoldError(f"'{name}' is reserved and cannot be used as a plugin name")
+    if plugin_id in getattr(sys, "stdlib_module_names", frozenset()) or plugin_id in sys.builtin_module_names:
+        raise PluginScaffoldError(
+            f"'{name}' is a Python standard library module name and cannot be used as a plugin name"
+        )
+    origin = _module_origin(plugin_id)
+    if origin is not None:
+        inside_site = False
+        if origin and allow_existing_under is not None:
+            try:
+                origin.relative_to(Path(allow_existing_under).resolve())
+                inside_site = True
+            except ValueError:
+                pass
+        if not inside_site:
+            raise PluginScaffoldError(
+                f"'{name}' conflicts with an importable Python module and would shadow it; "
+                "choose a different plugin name"
+            )
     return value, plugin_id
 
 

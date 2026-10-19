@@ -436,7 +436,7 @@ def test_extension_plugin_operation_and_archive_routes_share_saved_status(secure
     monkeypatch.setattr(extension_routes, "list_plugin_operations", lambda: [operation])
     monkeypatch.setattr(extension_routes, "plugin_operation_archive", lambda _operation_id: archive)
 
-    created = client.post("/api/v1/admin/extensions/plugins", json={"name": "demo-plugin", "template": "alarm"})
+    created = client.post("/api/v1/admin/extensions/plugins", json={"name": "demo-plugin", "template": "alarm", "password": "correct-horse"})
     assert created.status_code == 200
     assert created.json()["status"] == "pending_restart"
     status = client.get("/api/v1/admin/extensions/operations/12345678-abcd")

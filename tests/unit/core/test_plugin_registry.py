@@ -255,18 +255,72 @@ def test_plugin_manager_loads_entry_point_manifest():
 def test_plugin_import_failure_names_entry_point_and_reason():
     manager = PluginManager(PluginRegistry())
 
-    with pytest.raises(PluginError, match="broken-plugin.*dependency is missing"):
-        manager.load([_BrokenEntryPoint()])
+    manager.load([_BrokenEntryPoint()])
+
+    assert "dependency is missing" in manager.failed_plugins["broken-plugin"]
+    assert any(error.startswith("broken-plugin:") for error in manager.load_errors)
+    assert "broken-plugin" in manager.failure_hint()
 
 
 def test_missing_plugin_dependency_names_distribution_and_import():
     manager = PluginManager(PluginRegistry())
 
-    with pytest.raises(
-        PluginError,
-        match=r"missing-dependency-plugin: missing dependency 'vendor_runtime'",
-    ):
-        manager.load([_MissingDependencyEntryPoint()])
+    manager.load([_MissingDependencyEntryPoint()])
+
+    assert manager.failed_plugins["missing-dependency-plugin"].startswith(
+        "missing dependency 'vendor_runtime'"
+    )
+
+
+def test_broken_plugin_does_not_block_other_plugins_or_repeat_errors():
+    registry = PluginRegistry()
+    manager = PluginManager(registry)
+
+    manager.load([_BrokenEntryPoint(), _EntryPoint("sample-echo", _echo_plugin)])
+    manager.load()  # already loaded: must not raise or reload
+
+    assert registry.get_module("sample.echo/echo") is not None
+    assert manager.loaded_plugins == ("sample-echo",)
+    assert set(manager.failed_plugins) == {"broken-plugin"}
+
+
+def test_disabled_plugin_is_not_loaded_even_if_it_would_fail():
+    registry = PluginRegistry()
+    manager = PluginManager(registry, disabled=lambda: {"broken-plugin", "sample-echo"})
+
+    manager.load([_BrokenEntryPoint(), _EntryPoint("sample-echo", _echo_plugin)])
+
+    assert registry.get_module("sample.echo/echo") is None
+    assert manager.failed_plugins == {}
+    assert set(manager.disabled_plugins) == {"broken-plugin", "sample-echo"}
+    assert "disabled" in manager.failure_hint()
+
+
+def test_disabled_plugins_come_from_environment_and_state_file(tmp_path, monkeypatch):
+    from evileye.core.plugins import _default_disabled_plugins
+
+    monkeypatch.setenv("EVILEYE_SITE_DIR", str(tmp_path))
+    monkeypatch.chdir(tmp_path)
+    state = tmp_path / "plugins" / ".evileye"
+    state.mkdir(parents=True)
+    (state / "disabled_plugins.json").write_text('["from-file"]', encoding="utf-8")
+    monkeypatch.setenv("EVILEYE_DISABLED_PLUGINS", "from-env, another")
+
+    assert _default_disabled_plugins() == {"from-file", "from-env", "another"}
+
+    (state / "disabled_plugins.json").write_text("not json", encoding="utf-8")
+    assert _default_disabled_plugins() == {"from-env", "another"}
+
+
+def test_config_using_failed_plugin_reports_the_load_failure(monkeypatch):
+    from evileye.core import plugins
+
+    manager = PluginManager(PluginRegistry())
+    manager.load([_BrokenEntryPoint()])
+    monkeypatch.setattr(plugins, "plugin_manager", manager)
+
+    with pytest.raises(PluginError, match="Unknown plugin module 'broken-plugin/x'.*broken-plugin"):
+        plugins.plugin_registry.validate_module_config("broken-plugin/x", {})
 
 
 def test_plugins_with_same_local_module_id_are_namespaced():

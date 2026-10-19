@@ -29,11 +29,16 @@ def collect() -> Counter:
          "--output-format", "json", *TARGETS],
         cwd=ROOT, capture_output=True, text=True,
     )
-    if result.returncode not in (0, 1):
+    try:
+        # ruff always prints a JSON array (``[]`` when clean); empty output means it did not run.
+        findings_json = json.loads(result.stdout)
+    except ValueError:
+        findings_json = None
+    if result.returncode not in (0, 1) or findings_json is None:
         sys.stderr.write(result.stdout + result.stderr)
         raise SystemExit(f"ruff failed with exit code {result.returncode}")
     findings = Counter()
-    for item in json.loads(result.stdout or "[]"):
+    for item in findings_json:
         path = Path(item["filename"]).resolve().relative_to(ROOT).as_posix()
         findings[f"{path}|{item['code']}|{item['message']}"] += 1
     return findings

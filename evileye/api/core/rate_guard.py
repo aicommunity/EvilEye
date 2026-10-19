@@ -49,6 +49,8 @@ class ProtectionConfig:
     oversized_window_sec: float = 60
     oversized_ban_sec: float = 3600
     whitelist_ips: list[str] = field(default_factory=lambda: ["127.0.0.1", "::1"])
+    # Extra client addresses/CIDRs allowed to use the plugin/pipeline builder besides loopback.
+    builder_allowed_ips: list[str] = field(default_factory=list)
 
     def public_snapshot(self) -> dict[str, Any]:
         return {
@@ -79,6 +81,11 @@ def load_protection_config(web_auth_section: dict[str, Any] | None = None) -> Pr
         cfg.trusted_proxy_ips = [str(x) for x in protection["trusted_proxy_ips"]]
     if isinstance(protection.get("whitelist_ips"), list):
         cfg.whitelist_ips = [str(x) for x in protection["whitelist_ips"]]
+    if isinstance(protection.get("builder_allowed_ips"), list):
+        cfg.builder_allowed_ips = [str(x).strip() for x in protection["builder_allowed_ips"] if str(x).strip()]
+    else:
+        env_allowed = os.getenv("EVILEYE_BUILDER_ALLOWED_IPS", "")
+        cfg.builder_allowed_ips = [item for item in env_allowed.replace(",", " ").split() if item]
     for key in (
         "login_max_failures",
         "login_window_sec",

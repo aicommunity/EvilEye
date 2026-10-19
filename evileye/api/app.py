@@ -37,6 +37,7 @@ from evileye.api.core.rate_guard import get_rate_guard, load_protection_config
 from evileye.api.middleware.ip_protection import ProtectionMiddleware
 from evileye.api.middleware.adaptive_session import AdaptiveSessionMiddleware
 from evileye.api.security import (
+    csrf_origin_violation,
     current_user,
     is_api_request_protected,
     load_web_auth_config,
@@ -85,6 +86,11 @@ class AuthGuardMiddleware(BaseHTTPMiddleware):
         granted = set(user.get("permissions") or permissions_for_role(str(user.get("role") or "user")))
         if needed and not needed.issubset(granted):
             return Response('{"detail":"Insufficient permissions"}', status_code=403, media_type="application/json")
+        if path.startswith("/api/v1/admin/"):
+            violation = csrf_origin_violation(request, getattr(request.app.state, "allowed_origins", ()))
+            if violation:
+                logger.warning("Blocked admin request %s %s: %s", request.method, path, violation)
+                return Response('{"detail":"Cross-origin admin request rejected"}', status_code=403, media_type="application/json")
         return await call_next(request)
 
 
@@ -323,6 +329,7 @@ def create_app() -> FastAPI:
         pass
 
     allow_origins = _cors_origins(web_auth)
+    app.state.allowed_origins = list(allow_origins or [])
 
     protection_cfg = load_protection_config({})
     try:

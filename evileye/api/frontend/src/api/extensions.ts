@@ -27,7 +27,16 @@ export type ExtensionPipeline = {
   has_topology: boolean;
 };
 
+export type PluginStatus = {
+  loaded: string[];
+  failed: Array<{ name: string; reason: string }>;
+  disabled: string[];
+  disabled_in_ui: string[];
+  disabled_by_env: string[];
+};
+
 export type ExtensionCatalog = {
+  plugin_status?: PluginStatus;
   modules: ExtensionModule[];
   pipelines: ExtensionPipeline[];
   default_event_detectors: string[];
@@ -74,8 +83,14 @@ export const extensionsApi = {
       body: JSON.stringify({ name, config, create_only: createOnly }),
     });
   },
-  createPlugin(name: string, template: string): Promise<PluginOperation> {
-    return request('/admin/extensions/plugins', { method: 'POST', body: JSON.stringify({ name, template }) });
+  createPlugin(name: string, template: string, password: string): Promise<PluginOperation> {
+    return request('/admin/extensions/plugins', { method: 'POST', body: JSON.stringify({ name, template, password }) });
+  },
+  setPluginDisabled(name: string, disabled: boolean): Promise<{ name: string; disabled: boolean; restart_required: boolean; disabled_plugins: string[] }> {
+    return request(`/admin/extensions/plugins/${encodeURIComponent(name)}/disabled`, {
+      method: 'POST',
+      body: JSON.stringify({ disabled }),
+    });
   },
   operation(operationId: string): Promise<PluginOperation> {
     return request(`/admin/extensions/operations/${encodeURIComponent(operationId)}`);

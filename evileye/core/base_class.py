@@ -66,7 +66,7 @@ class EvilEyeBase(ABC):
                 return SourceModuleAdapter(registered)
             return registered.spec.factory(*args, **kwargs)
         raise ValueError(
-            f"Module not found in plugin registry: {class_name}"
+            f"Module not found in plugin registry: {class_name}{plugin_manager.failure_hint()}"
         )
 
     def __init__(self):

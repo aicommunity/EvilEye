@@ -11,9 +11,12 @@ from dataclasses import dataclass
 from importlib import metadata
 import inspect
 import math
+import logging
 import threading
 from typing import Any, Callable, Iterable, Mapping, Sequence
 
+
+_logger = logging.getLogger("evileye.plugins")
 
 PLUGIN_API_VERSION = 1
 PLUGIN_ENTRY_POINT_GROUP = "evileye.plugins"
@@ -483,7 +486,7 @@ class PluginRegistry:
         """
         registered = self.get_module(module_id)
         if registered is None:
-            raise PluginError(f"Unknown plugin module '{module_id}'")
+            raise PluginError(f"Unknown plugin module '{module_id}'{plugin_manager.failure_hint()}")
         if not isinstance(config, Mapping):
             raise PluginError(
                 f"Configuration for module '{registered.qualified_id}' must be an object"
@@ -618,49 +621,125 @@ class PluginRegistry:
 plugin_registry = PluginRegistry()
 
 
-class PluginManager:
-    """Loads installed Python plugins once, during application startup."""
+DISABLED_PLUGINS_ENV = "EVILEYE_DISABLED_PLUGINS"
 
-    def __init__(self, registry: PluginRegistry | None = None) -> None:
+
+def parse_disabled_plugins(value: str | None) -> set[str]:
+    """Split a comma/space separated plugin name list."""
+    return {item for item in (value or "").replace(",", " ").split() if item}
+
+
+def _default_disabled_plugins() -> set[str]:
+    """Plugins disabled by environment or by the Web UI (``disabled_plugins.json``)."""
+    import json
+    import os
+
+    disabled = parse_disabled_plugins(os.environ.get(DISABLED_PLUGINS_ENV))
+    try:
+        from .paths import site_root
+
+        state_file = site_root() / "plugins" / ".evileye" / "disabled_plugins.json"
+        if state_file.is_file():
+            payload = json.loads(state_file.read_text(encoding="utf-8"))
+            if isinstance(payload, list):
+                disabled.update(str(item) for item in payload if str(item).strip())
+    except Exception:
+        # A damaged state file must not stop EvilEye; the env var still applies.
+        pass
+    return disabled
+
+
+class PluginManager:
+    """Loads installed Python plugins once, during application startup.
+
+    A plugin whose entry point fails to import or register is recorded in
+    :attr:`failed_plugins` and skipped; it never prevents other plugins, the built-in
+    modules or the Web UI from loading. Configurations that use the failed plugin
+    fail at module lookup with the recorded reason.
+    """
+
+    def __init__(
+        self,
+        registry: PluginRegistry | None = None,
+        disabled: Callable[[], Iterable[str]] | None = None,
+    ) -> None:
         self.registry = registry or plugin_registry
         self._loaded = False
         self._loading = False
         self._lock = threading.RLock()
         self._load_errors: list[str] = []
+        self._failed: dict[str, str] = {}
+        self._disabled_names: list[str] = []
+        self._loaded_names: list[str] = []
+        self._disabled_provider = disabled or _default_disabled_plugins
 
     @property
     def load_errors(self) -> tuple[str, ...]:
         return tuple(self._load_errors)
 
+    @property
+    def failed_plugins(self) -> dict[str, str]:
+        """Entry-point name -> reason for plugins that could not be loaded."""
+        return dict(self._failed)
+
+    @property
+    def disabled_plugins(self) -> tuple[str, ...]:
+        """Installed entry points skipped because they are disabled."""
+        return tuple(self._disabled_names)
+
+    @property
+    def loaded_plugins(self) -> tuple[str, ...]:
+        return tuple(self._loaded_names)
+
+    def failure_hint(self) -> str:
+        """Text appended to "unknown module" errors so a failed plugin is visible."""
+        parts = [f"{name}: {reason}" for name, reason in self._failed.items()]
+        if self._disabled_names:
+            parts.append("disabled: " + ", ".join(self._disabled_names))
+        return f" (plugin problems: {'; '.join(parts)})" if parts else ""
+
     def load(self, entry_points: Iterable[Any] | None = None, *, force: bool = False) -> None:
         with self._lock:
             if self._loaded and not force:
-                if self._load_errors:
-                    raise PluginError("Plugin loading failed: " + "; ".join(self._load_errors))
                 return
             if self._loading:
                 return
             self._loading = True
             self._load_errors = []
+            self._failed = {}
+            self._disabled_names = []
+            self._loaded_names = []
             try:
                 if entry_points is None:
                     entry_points = metadata.entry_points(group=PLUGIN_ENTRY_POINT_GROUP)
+                try:
+                    disabled = set(self._disabled_provider())
+                except Exception:
+                    disabled = set()
                 for entry_point in sorted(entry_points, key=lambda ep: (ep.name, ep.value)):
+                    entry_name = getattr(entry_point, "name", "<unknown>")
+                    if entry_name in disabled:
+                        self._disabled_names.append(entry_name)
+                        continue
                     try:
                         loaded = entry_point.load()
                         plugin = loaded() if callable(loaded) and not isinstance(loaded, PluginSpec) else loaded
+                        if getattr(plugin, "plugin_id", None) in disabled:
+                            self._disabled_names.append(entry_name)
+                            continue
                         self.registry.register_plugin(plugin)
+                        self._loaded_names.append(entry_name)
                     except Exception as exc:
-                        entry_name = getattr(entry_point, "name", "<unknown>")
                         if isinstance(exc, ModuleNotFoundError):
                             dependency = exc.name or "<unknown>"
                             reason = f"missing dependency '{dependency}': {exc}"
                         else:
                             reason = str(exc)
+                        self._failed[entry_name] = reason
                         self._load_errors.append(f"{entry_name}: {reason}")
                 self._loaded = True
-                if self._load_errors:
-                    raise PluginError("Plugin loading failed: " + "; ".join(self._load_errors))
+                for message in self._load_errors:
+                    _logger.error("Plugin skipped, failed to load: %s", message)
             finally:
                 self._loading = False
 

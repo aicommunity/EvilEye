@@ -838,6 +838,8 @@ function OpaqueConfigEditor({
 function PluginWorkshop({ catalog, onPluginReady }: { catalog: ExtensionCatalog; onPluginReady: () => void }) {
   const { t } = useI18n();
   const [name, setName] = useState('');
+  const [password, setPassword] = useState('');
+  const [pluginStateNote, setPluginStateNote] = useState('');
   const [template, setTemplate] = useState(catalog.templates[0]?.id || 'processor');
   const [operation, setOperation] = useState<PluginOperation | null>(null);
   const [recentOperations, setRecentOperations] = useState<PluginOperation[]>([]);
@@ -884,7 +886,8 @@ function PluginWorkshop({ catalog, onPluginReady }: { catalog: ExtensionCatalog;
     setBusy(true);
     setError('');
     try {
-      const created = await extensionsApi.createPlugin(name, template);
+      const created = await extensionsApi.createPlugin(name, template, password);
+      setPassword('');
       setOperation(created);
       setRecentOperations((items) => [created, ...items.filter((item) => item.id !== created.id)].slice(0, 20));
       setPollingFailed(false);
@@ -894,8 +897,35 @@ function PluginWorkshop({ catalog, onPluginReady }: { catalog: ExtensionCatalog;
       setBusy(false);
     }
   };
+  const toggleDisabled = async (pluginName: string, disabled: boolean) => {
+    setError('');
+    try {
+      await extensionsApi.setPluginDisabled(pluginName, disabled);
+      setPluginStateNote(t(disabled ? 'builder.pluginDisabledNote' : 'builder.pluginEnabledNote', { name: pluginName }));
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : String(reason));
+    }
+  };
+  const pluginStatus = catalog.plugin_status;
   return <div className="extension-builder-content">
     <p className="hint">{t('builder.pluginHint')}</p>
+    {pluginStatus && (pluginStatus.failed.length || pluginStatus.disabled.length) ? <section className="extension-panel" aria-label={t('builder.pluginProblems')}>
+      <div className="extension-section-heading"><h3>{t('builder.pluginProblems')}</h3></div>
+      <ul className="extension-installed-list">
+        {pluginStatus.failed.map((item) => <li key={`failed-${item.name}`}>
+          <strong>{item.name}</strong><span className="extension-error">{t('builder.pluginFailed')}</span>
+          <small>{item.reason}</small>
+          <Button onClick={() => void toggleDisabled(item.name, true)}>{t('builder.pluginDisable')}</Button>
+        </li>)}
+        {pluginStatus.disabled.map((pluginName) => <li key={`disabled-${pluginName}`}>
+          <strong>{pluginName}</strong><span>{t('builder.pluginDisabled')}</span>
+          {pluginStatus.disabled_by_env.includes(pluginName) && !pluginStatus.disabled_in_ui.includes(pluginName)
+            ? <small>{t('builder.pluginDisabledByEnv')}</small>
+            : <Button onClick={() => void toggleDisabled(pluginName, false)}>{t('builder.pluginEnable')}</Button>}
+        </li>)}
+      </ul>
+      {pluginStateNote ? <p className="hint" role="status">{pluginStateNote}</p> : null}
+    </section> : null}
     <section className="extension-panel">
       <div className="extension-section-heading">
         <h3>{t('builder.installedExtensions', { count: catalog.modules.filter((module) => module.plugin_id !== 'evileye').length + catalog.pipelines.filter((pipeline) => pipeline.plugin_id !== 'evileye').length })}</h3>
@@ -916,6 +946,9 @@ function PluginWorkshop({ catalog, onPluginReady }: { catalog: ExtensionCatalog;
         <Field label={t('builder.pluginName')} hint={t('builder.pluginNameHint')}>
           <input value={name} onChange={(event) => setName(event.target.value)} placeholder="site-safety" autoComplete="off" />
         </Field>
+        <Field label={t('builder.confirmPassword')} hint={t('builder.confirmPasswordHint')}>
+          <input type="password" value={password} onChange={(event) => setPassword(event.target.value)} autoComplete="current-password" />
+        </Field>
         <Field label={t('builder.template')}>
           <select value={template} onChange={(event) => setTemplate(event.target.value)}>
             {catalog.templates.map((item) => <option key={item.id} value={item.id}>{item.id} · {item.module_id}</option>)}
@@ -923,7 +956,7 @@ function PluginWorkshop({ catalog, onPluginReady }: { catalog: ExtensionCatalog;
         </Field>
       </div>
       {catalog.templates.find((item) => item.id === template)?.description ? <p className="hint">{catalog.templates.find((item) => item.id === template)?.description}</p> : null}
-      <Button variant="primary" onClick={() => void create()} disabled={busy || !name.trim()}>{busy ? t('builder.creating') : t('builder.createInstall')}</Button>
+      <Button variant="primary" onClick={() => void create()} disabled={busy || !name.trim() || !password}>{busy ? t('builder.creating') : t('builder.createInstall')}</Button>
       {error ? <p className="extension-error">{error}</p> : null}
     </div>
     {pollingFailed ? <p className="extension-warning" role="status" aria-live="polite">{t('builder.operationReconnectWarning')}</p> : null}
