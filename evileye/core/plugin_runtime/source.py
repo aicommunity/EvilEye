@@ -190,6 +190,11 @@ class SourceModuleAdapter(_HealthMixin, EvilEyeBase):
             self._config.setdefault("source_ids", self._source_ids)
         if managed_backend:
             self._config["execution_mode"] = configured_mode
+            # The capture worker picks its backend class (GStreamer vs OpenCV) from ``type``;
+            # without it a GStreamer source silently ran through OpenCV.
+            self._config["type"] = str(
+                params.get("type") or nested_config.get("type") or self.registered_module.spec.module_id
+            )
         self._output_queue = queue.Queue(maxsize=self._queue_size)
 
     def get_params_impl(self):

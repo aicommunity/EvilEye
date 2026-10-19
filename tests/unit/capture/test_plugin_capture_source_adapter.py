@@ -229,3 +229,22 @@ def test_gstreamer_source_does_not_fall_back_when_backend_is_unavailable(monkeyp
     finally:
         source.stop()
         source.release()
+
+
+def test_capture_backend_type_is_passed_to_the_capture_worker():
+    """The worker chooses GStreamer vs OpenCV from ``type``; the adapter must not drop it."""
+    from evileye.core.builtin_inventory import register_builtins
+    from evileye.core.plugins import plugin_registry
+
+    register_builtins()
+    for module_id, configured in (
+        ("VideoCaptureGStreamer", "VideoCaptureGStreamer"),
+        ("VideoCaptureOpencv", "VideoCaptureOpencv"),
+    ):
+        registered = plugin_registry.get_module(module_id)
+        explicit = SourceModuleAdapter(registered)
+        explicit.set_params(module_id=module_id, type=configured, camera="rtsp://127.0.0.1/x", source_ids=[0])
+        implicit = SourceModuleAdapter(registered)
+        implicit.set_params(module_id=module_id, camera="rtsp://127.0.0.1/x", source_ids=[0])
+        assert explicit._config["type"] == configured
+        assert implicit._config["type"] == module_id
