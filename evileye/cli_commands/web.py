@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-from typing import Optional
 
 import typer
 from rich.table import Table
@@ -136,7 +135,7 @@ def web_build(force: bool = typer.Option(False, "--force", help="Force npm rebui
         sw.build_frontend()
     except Exception as exc:
         console.print(f"[red]Build failed: {exc}[/red]")
-        raise typer.Exit(1)
+        raise typer.Exit(1) from exc
     console.print("[green]Frontend build completed.[/green]")
 
 
@@ -151,8 +150,8 @@ def web_refresh(
         restart_web_layer(force_build=force, log=lambda msg: console.print(f"[blue]{msg}[/blue]"))
     except ContainerOperationError as exc:
         console.print(f"[yellow]{exc}[/yellow]")
-        raise typer.Exit(1)
+        raise typer.Exit(1) from exc
     except Exception as exc:
         console.print(f"[red]{exc}[/red]")
-        raise typer.Exit(1)
+        raise typer.Exit(1) from exc
     console.print("[green]Web layer refreshed.[/green]")

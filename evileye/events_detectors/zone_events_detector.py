@@ -1,12 +1,11 @@
 import time
-from threading import Lock, Event
+from threading import Event
 from .events_detector import EventsDetector
 from evileye.core.event_time import obj_found_datetime, obj_lost_datetime
 from .zone import Zone, ZoneForm
 from ..utils import threading_events
 from queue import Queue
 from .event_zone import ZoneEvent
-import math
 
 _DEFAULT_FRAME_SIZE = (1920, 1080)
 

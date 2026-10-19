@@ -1,5 +1,3 @@
-import json
-from pathlib import Path
 
 from evileye.api.core.schedule_alarm_config import (
     get_global_schedule_alarm_params,

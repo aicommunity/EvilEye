@@ -111,13 +111,13 @@ def reload_pipeline_cmd(
         )
     except AmbiguousPipelineConfigError as exc:
         console.print(f"[red]{exc}[/red]")
-        raise typer.Exit(1)
+        raise typer.Exit(1) from exc
     except InteractiveInputError as exc:
         console.print(f"[yellow]{exc}[/yellow]")
         raise typer.Exit(2) from exc
     except Exception as exc:
         console.print(f"[red]{exc}[/red]")
-        raise typer.Exit(1)
+        raise typer.Exit(1) from exc
 
     if spawn.mode == "direct-foreground":
         code = 0 if spawn.exit_code is None else int(spawn.exit_code)

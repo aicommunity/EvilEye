@@ -1,6 +1,5 @@
 #!/usr/bin/env python3
 
-import sys
 import os
 def test_journal_time_and_double_click(journal_test_logger, qapp):
     """Test time formatting and double click functionality in JSON journal"""

@@ -1,6 +1,6 @@
 import cv2
 import os
-from typing import Dict, Any, Optional
+from typing import Dict, Any
 from ..core.pipeline_simple import PipelineSimple
 from ..capture.video_capture_base import CaptureImage
 from ..capture.video_capture_opencv import VideoCaptureOpencv

@@ -4,7 +4,6 @@
 """
 
 import sys
-import os
 from pathlib import Path
 
 # Добавить корневую директорию проекта в путь
@@ -13,7 +12,6 @@ sys.path.insert(0, str(project_root))
 
 import pytest
 import datetime
-from unittest.mock import Mock, MagicMock, patch
 import tempfile
 import shutil
 

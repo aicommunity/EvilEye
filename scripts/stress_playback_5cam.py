@@ -14,7 +14,6 @@ import urllib.error
 import urllib.parse
 import urllib.request
 from concurrent.futures import ThreadPoolExecutor, as_completed
-from pathlib import Path
 
 BASE = os.environ.get("EVILEYE_E2E_BASE", "http://127.0.0.1:8181").rstrip("/")
 USER = os.environ.get("EVILEYE_E2E_USER", "playback-test@example.com")

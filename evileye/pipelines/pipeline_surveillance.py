@@ -1,6 +1,6 @@
 import math
 import os
-from typing import Any, Tuple, List, Dict
+from typing import Any, List, Dict
 
 from ..core.base_class import EvilEyeBase
 from ..core.processor_source import ProcessorSource

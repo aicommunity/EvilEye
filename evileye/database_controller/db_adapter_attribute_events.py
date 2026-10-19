@@ -1,10 +1,8 @@
 import os
-import time
 from .db_adapter import DatabaseAdapterBase
 from .constants import QueryType, EventType
 from ..utils import threading_events
 from ..utils import utils
-import copy
 from psycopg2 import sql
 from .event_image_writer import EventImageWriter
 

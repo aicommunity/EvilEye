@@ -1,7 +1,6 @@
 import os
-import json
 import datetime
-from typing import Dict, List
+from typing import Dict
 
 try:
     from PyQt6.QtCore import Qt, pyqtSlot

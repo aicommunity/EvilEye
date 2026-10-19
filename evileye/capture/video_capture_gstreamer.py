@@ -25,9 +25,7 @@ except ImportError:
 import numpy as np
 import threading
 import time
-import datetime
-from typing import Optional, List, Tuple, Any
-from queue import Queue, Empty, Full
+from queue import Queue
 from .video_capture_base import VideoCaptureBase, CaptureDeviceType, EXEC_MODE_PROCESS
 from .constants import CaptureConstants
 from .exceptions import CaptureInitializationError, CaptureConnectionError

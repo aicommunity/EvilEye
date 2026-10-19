@@ -1,6 +1,5 @@
 import numpy as np
 import datetime
-from typing import List
 from queue import Empty
 from ultralytics.trackers.bot_sort import BOTrack
 from .object_tracking_base import ObjectTrackingBase

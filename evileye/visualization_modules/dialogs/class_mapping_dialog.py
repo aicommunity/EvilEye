@@ -1,6 +1,5 @@
 import json
-import os
-from typing import Dict, List, Optional, Tuple
+from typing import Dict, Optional
 
 try:
     from PyQt6.QtWidgets import (

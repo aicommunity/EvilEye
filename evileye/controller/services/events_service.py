@@ -96,8 +96,8 @@ class EventsService:
                     name,
                     context=detector_context,
                 )
-            except KeyError:
-                raise ValueError(f"Unknown event detector '{name}'")
+            except KeyError as exc:
+                raise ValueError(f"Unknown event detector '{name}'") from exc
             except Exception as exc:
                 self.logger.error("Failed to create event detector %s: %s", name, exc, exc_info=True)
                 raise RuntimeError(f"Failed to create event detector '{name}'") from exc

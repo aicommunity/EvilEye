@@ -76,7 +76,7 @@ def service_install(
         )
     except (TlsCertError, SslConfigError) as exc:
         console.print(f"[red]HTTPS setup failed: {exc}[/red]")
-        raise typer.Exit(1)
+        raise typer.Exit(1) from exc
     print_https_hints(console, tls_result)
 
     try:
@@ -93,7 +93,7 @@ def service_install(
         )
     except Exception as e:
         console.print(f"[red]service install failed: {e}[/red]")
-        raise typer.Exit(1)
+        raise typer.Exit(1) from e
 
     if dry_run and result.unit_text:
         console.print("[blue]Dry-run unit file:[/blue]")
@@ -133,7 +133,7 @@ def service_uninstall(
         result = uninstall_service(site_dir=Path.cwd(), dry_run=dry_run)
     except Exception as e:
         console.print(f"[red]service uninstall failed: {e}[/red]")
-        raise typer.Exit(1)
+        raise typer.Exit(1) from e
     console.print(f"[green]{result.message}[/green]")
 
 

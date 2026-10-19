@@ -6,7 +6,7 @@ import json
 import os
 import tempfile
 from pathlib import Path
-from typing import Any, Optional
+from typing import Any
 
 STATE_FILENAME = ".evileye_service.json"
 SERVICE_NAME = "evileye"

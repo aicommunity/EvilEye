@@ -98,7 +98,7 @@ def prod_up() -> None:
         cfg = resolve_pipeline_config(site_dir, allow_running=True)
     except AmbiguousPipelineConfigError as exc:
         console.print(f"[red]{exc}[/red]")
-        raise typer.Exit(1)
+        raise typer.Exit(1) from exc
     if is_service_installed(site_dir):
         result = control_service("start", site_dir=site_dir)
         if not result.ok:
@@ -148,7 +148,7 @@ def prod_restart(
         )
     except AmbiguousPipelineConfigError as exc:
         console.print(f"[red]{exc}[/red]")
-        raise typer.Exit(1)
+        raise typer.Exit(1) from exc
     result = reload_web(
         site_dir=site_dir,
         with_pipeline=with_pipeline,

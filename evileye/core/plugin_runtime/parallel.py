@@ -285,11 +285,11 @@ class ParallelItemModuleAdapter(ItemModuleAdapter):
                     else int(dropped_payload[0])
                 )
                 self._ordered_results[dropped_sequence] = _ORDERED_EVICTED
-        except queue.Full:
+        except queue.Full as exc:
             self.input_queue_rejected += 1
             self._transient_problems.record()
             self.logger.error("Plugin module %s input queue is full", self.module_id)
-            raise RuntimeError(f"Plugin module '{self.module_id}' input queue is full")
+            raise RuntimeError(f"Plugin module '{self.module_id}' input queue is full") from exc
         except PluginError as exc:
             self.degraded = True
             self.logger.error("%s", exc)

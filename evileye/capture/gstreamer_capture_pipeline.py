@@ -568,7 +568,7 @@ class GStreamerCapturePipelineMixin:
                                 f"GStreamer pipeline (recording disabled): {self._mask_credentials_in_pipeline(pipeline_str)}")
                             self.pipeline = Gst.parse_launch(pipeline_str)
                             if not self.pipeline:
-                                raise RuntimeError("Failed to create GStreamer pipeline after disabling recording")
+                                raise RuntimeError("Failed to create GStreamer pipeline after disabling recording") from e
                             self.bus = self.pipeline.get_bus()
                             if self.bus is not None:
                                 try:
@@ -578,7 +578,7 @@ class GStreamerCapturePipelineMixin:
                                     pass
                             self.appsink = self.pipeline.get_by_name("sink")
                             if not self.appsink:
-                                raise RuntimeError("Failed to get appsink element after disabling recording")
+                                raise RuntimeError("Failed to get appsink element after disabling recording") from e
                             try:
                                 self._appsink_handler_id = self.appsink.connect("new-sample", self._on_new_sample)
                             except Exception:

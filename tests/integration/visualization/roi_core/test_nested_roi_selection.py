@@ -6,7 +6,7 @@
 
 import unittest
 import time
-from unittest.mock import Mock, MagicMock, patch
+from unittest.mock import Mock, patch
 from PyQt6.QtWidgets import QApplication, QGraphicsScene, QGraphicsView
 from PyQt6.QtCore import Qt, QTimer, QPointF, QRectF, QEvent
 from PyQt6.QtGui import QPen, QColor

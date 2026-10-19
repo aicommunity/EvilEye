@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import threading
-import multiprocessing as _mp
 from queue import Queue, Full, Empty
 from typing import Any, Dict, List, Tuple
 

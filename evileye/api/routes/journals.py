@@ -313,8 +313,8 @@ async def journal_row_meta(
         payload = await asyncio.to_thread(
             load_row_meta, row_key_value=row_key, journal_type=journal_type, meta_only=meta_only,
         )
-    except JournalPathNotFound:
-        raise HTTPException(status_code=404, detail="Row metadata not found")
+    except JournalPathNotFound as exc:
+        raise HTTPException(status_code=404, detail="Row metadata not found") from exc
     access = resolve_camera_access(request)
     src = str(payload.get("source_name") or payload.get("source") or "").strip()
     if src and not name_allowed_hard(access, src):
@@ -339,10 +339,10 @@ async def journal_preview(
             ),
         )
         _authorize_journal_media(request, secured, allow_kinds=frozenset({"image"}))
-    except JournalPathForbidden:
-        raise HTTPException(status_code=403, detail="Path outside data directory")
-    except JournalPathNotFound:
-        raise HTTPException(status_code=404, detail="Preview image not found")
+    except JournalPathForbidden as exc:
+        raise HTTPException(status_code=403, detail="Path outside data directory") from exc
+    except JournalPathNotFound as exc:
+        raise HTTPException(status_code=404, detail="Preview image not found") from exc
     if w:
         thumb = await asyncio.to_thread(_resize_jpeg, secured, int(w))
         if thumb is not None:
@@ -378,15 +378,15 @@ async def journal_frame(
             ),
         )
         _authorize_journal_media(request, secured, allow_kinds=frozenset({"image"}))
-    except JournalPathForbidden:
+    except JournalPathForbidden as exc:
         diag_logger.info(
             "journal_frame user=%s status=403 path_hash=%s ms=%.1f",
             username,
             path_hash,
             (time.perf_counter() - t0) * 1000.0,
         )
-        raise HTTPException(status_code=403, detail="Path outside data directory")
-    except JournalPathNotFound:
+        raise HTTPException(status_code=403, detail="Path outside data directory") from exc
+    except JournalPathNotFound as exc:
         diag_logger.info(
             "journal_frame user=%s status=404 path_hash=%s basename=%s ms=%.1f",
             username,
@@ -394,7 +394,7 @@ async def journal_frame(
             os.path.basename(path),
             (time.perf_counter() - t0) * 1000.0,
         )
-        raise HTTPException(status_code=404, detail="Frame image not found")
+        raise HTTPException(status_code=404, detail="Frame image not found") from exc
     except HTTPException as exc:
         if exc.status_code == 403:
             diag_logger.info(
@@ -421,10 +421,10 @@ async def journal_video(request: Request, path: str = Query(..., min_length=1)):
             resolver=lambda: resolve_journal_video_path(path=path),
         )
         _authorize_journal_media(request, secured, allow_kinds=frozenset({"video"}))
-    except JournalPathForbidden:
-        raise HTTPException(status_code=403, detail="Path outside data directory")
-    except JournalPathNotFound:
-        raise HTTPException(status_code=404, detail="Video not found")
+    except JournalPathForbidden as exc:
+        raise HTTPException(status_code=403, detail="Path outside data directory") from exc
+    except JournalPathNotFound as exc:
+        raise HTTPException(status_code=404, detail="Video not found") from exc
     return _file_response(secured, media_type=_media_type_for_path(secured, "video/mp4"))
 
 

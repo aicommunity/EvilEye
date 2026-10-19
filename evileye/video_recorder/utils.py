@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import os
-import time
 from pathlib import Path
 from typing import Iterable, List, Tuple
 from evileye.video_recorder.constants import RecorderConstants

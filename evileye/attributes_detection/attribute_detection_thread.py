@@ -1,8 +1,7 @@
 from queue import Queue
-import threading
 from ultralytics import YOLO
 from ..object_detector.detection_thread_base import DetectionThreadBase
-from typing import Dict, Any, List
+from typing import Dict
 import numpy as np
 from ..core.logger import get_module_logger
 

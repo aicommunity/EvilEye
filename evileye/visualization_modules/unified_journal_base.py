@@ -2,10 +2,9 @@
 Базовый класс для унифицированных журналов объектов и событий
 """
 
-import os
 import sys
 from pathlib import Path
-from typing import Optional, Dict
+from typing import Optional
 
 try:
     from PyQt6.QtWidgets import QWidget

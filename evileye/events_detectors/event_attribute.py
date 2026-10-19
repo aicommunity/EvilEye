@@ -1,6 +1,5 @@
 from evileye.core.contracts import EventFrameSnapshot
 from .event import Event
-import copy
 
 
 class AttributeEvent(Event):

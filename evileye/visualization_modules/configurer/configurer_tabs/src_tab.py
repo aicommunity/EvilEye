@@ -1,6 +1,4 @@
 import copy
-import json
-import os.path
 from ..jobs_history_journal import JobsHistory
 from ..db_connection_window import DatabaseConnectionWindow
 from ....core.logger import get_module_logger
@@ -42,7 +40,6 @@ from ..validators import (
     ValidatedLineEdit, ValidatedComboBox, ValidatedCheckBox, ValidatedSpinBox,
     Validators, PathValidator, NumericValidator, NetworkValidator
 )
-import sys
 from evileye.utils import utils
 
 

@@ -3,10 +3,9 @@ Integration tests for video seeking synchronization
 """
 import unittest
 import datetime
-import os
 import sys
 from pathlib import Path
-from unittest.mock import Mock, patch
+from unittest.mock import Mock
 
 # Add parent directory to path
 sys.path.insert(0, str(Path(__file__).parent.parent.parent.parent.parent))

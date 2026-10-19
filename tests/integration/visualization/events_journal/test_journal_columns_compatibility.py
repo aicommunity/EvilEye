@@ -1,6 +1,5 @@
 #!/usr/bin/env python3
 
-import sys
 import os
 def test_journal_columns_compatibility(journal_test_logger, qapp):
     """Test that JSON journal columns match database journal structure"""

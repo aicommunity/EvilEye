@@ -1,11 +1,8 @@
 import datetime
 import json
-import time
 import cv2
 from ..utils import utils
 import psycopg2
-import pathlib
-import os
 from ..utils import utils
 from .database_controller_base import DatabaseControllerBase
 from psycopg2 import sql
@@ -14,7 +11,6 @@ import copy
 from ..utils import threading_events
 from ..core.logger import get_module_logger
 
-from timeit import default_timer as timer
 from .constants import QueryType, EventType
 from .database_error_handler import DatabaseErrorHandler
 from .image_storage_service import ImageStorageService

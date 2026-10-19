@@ -1,7 +1,5 @@
 #!/usr/bin/env python3
 
-import sys
-import os
 def test_journal_updated(journal_test_logger, qapp):
     """Test updated journal with new structure"""
     

@@ -4,7 +4,6 @@
 """
 
 import unittest
-import time
 from unittest.mock import Mock, patch
 
 from PyQt6.QtWidgets import QApplication, QGraphicsScene, QGraphicsView

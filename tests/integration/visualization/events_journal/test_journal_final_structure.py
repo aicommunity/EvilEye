@@ -1,6 +1,5 @@
 #!/usr/bin/env python3
 
-import sys
 import os
 def test_journal_final_structure(journal_test_logger, qapp):
     """Test journal with correct folder structure"""

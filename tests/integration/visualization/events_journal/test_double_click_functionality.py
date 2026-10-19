@@ -1,6 +1,5 @@
 #!/usr/bin/env python3
 
-import sys
 import os
 def test_double_click_functionality(journal_test_logger, qapp):
     """Test double click functionality in JSON journal"""

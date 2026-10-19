@@ -1,6 +1,5 @@
 #!/usr/bin/env python3
 
-import sys
 import os
 def test_real_double_click(journal_test_logger, qapp):
     """Test real double click functionality in GUI"""

@@ -18,7 +18,6 @@ def test_pipeline_capture_simple():
     
     try:
         from evileye.pipelines.pipeline_capture import PipelineCapture
-        import json
         
         # Create pipeline
         pipeline = PipelineCapture()

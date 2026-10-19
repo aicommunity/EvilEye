@@ -6,7 +6,6 @@ import threading
 import queue
 from pathlib import Path
 from typing import Optional, List, Tuple
-from datetime import datetime
 import numpy as np
 
 from evileye.core.logger import get_module_logger

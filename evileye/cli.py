@@ -284,7 +284,7 @@ def _run_with_scheduler(
             except Exception as e:
                 logger.error(f"[scheduler] Failed to start process: {e}", exc_info=True)
                 console.print(f"[red]Failed to start process: {e}[/red]")
-                raise typer.Exit(1)
+                raise typer.Exit(1) from e
 
             start_time = datetime.now()
 
@@ -437,7 +437,7 @@ def _run_with_scheduler(
 
                     time.sleep(1.0)
 
-            except KeyboardInterrupt:
+            except KeyboardInterrupt as exc:
                 logger.info("[scheduler] Interrupted by user, terminating child and stopping loop")
                 if proc.poll() is None:
                     try:
@@ -447,7 +447,7 @@ def _run_with_scheduler(
                             proc.kill()
                         except Exception:
                             pass
-                raise typer.Exit(0)
+                raise typer.Exit(0) from exc
 
             # Если процесс завершился сам до наступления следующего планового запуска —
             # выходим из основного цикла и НЕ перезапускаем приложение снова.
@@ -546,10 +546,10 @@ def _run_with_scheduler(
                         f"[scheduler] Ready to start next iteration, next_run time: {next_run.isoformat()}"
                     )
                     prev_iteration_end_time = wait_end_time
-                except KeyboardInterrupt:
+                except KeyboardInterrupt as exc:
                     logger.info("[scheduler] Interrupted during wait, stopping scheduler loop")
                     console.print("[yellow][scheduler] Interrupted during wait, stopping loop[/yellow]")
-                    raise typer.Exit(0)
+                    raise typer.Exit(0) from exc
     finally:
         signal.signal(signal.SIGTERM, prev_sigterm)
         if prev_sighup is not None:
@@ -707,7 +707,7 @@ def run(
         except DuplicatePipelineError as exc:
             logger.error(str(exc))
             console.print(f"[red]{exc}[/red]")
-            raise typer.Exit(1)
+            raise typer.Exit(1) from exc
 
     try:
         logger.info(f"Launching command: {' '.join(cmd)}")
@@ -726,11 +726,11 @@ def run(
     except subprocess.CalledProcessError as e:
         logger.error(f"Launch error: {e}")
         console.print(f"[red]Error launching: {e}[/red]")
-        raise typer.Exit(1)
-    except KeyboardInterrupt:
+        raise typer.Exit(1) from e
+    except KeyboardInterrupt as exc:
         logger.info("Launch interrupted by user")
         console.print("[yellow]Launch interrupted by user[/yellow]")
-        raise typer.Exit(0)
+        raise typer.Exit(0) from exc
 
 
 @app.command("server")
@@ -760,9 +760,6 @@ def start_api(
         evileye server --config ./configs/poly-videos.json
     """
 
-    import time
-    import urllib.request
-    import urllib.error
 
     setup_logging(verbose=verbose)
     logger = get_module_logger("cli")
@@ -777,7 +774,7 @@ def start_api(
     except DuplicateWebError as exc:
         logger.error(str(exc))
         console.print(f"[red]{exc}[/red]")
-        raise typer.Exit(1)
+        raise typer.Exit(1) from exc
 
     # Use server.py instead of process.py for API server
     cmd = [sys.executable, str(Path(__file__).parent / "server.py")]
@@ -799,7 +796,7 @@ def start_api(
     except SslConfigError as exc:
         logger.error("TLS configuration error: %s", exc)
         console.print(f"[red]TLS configuration error: {exc}[/red]")
-        raise typer.Exit(1)
+        raise typer.Exit(1) from exc
     if cert and key:
         cmd.extend(["--ssl-certfile", str(cert), "--ssl-keyfile", str(key)])
 
@@ -813,11 +810,11 @@ def start_api(
     except subprocess.CalledProcessError as e:
         logger.error(f"Web server failed: {e}")
         console.print(f"[red]Web server failed: {e}[/red]")
-        raise typer.Exit(1)
-    except KeyboardInterrupt:
+        raise typer.Exit(1) from e
+    except KeyboardInterrupt as exc:
         logger.info("Web server interrupted by user")
         console.print("[yellow]Web server interrupted by user[/yellow]")
-        raise typer.Exit(0)
+        raise typer.Exit(0) from exc
 
 
 @app.command()
@@ -877,7 +874,7 @@ def validate(
 
     except Exception as e:
         console.print(f"[red]Configuration validation failed: {e}[/red]")
-        raise typer.Exit(1)
+        raise typer.Exit(1) from e
 
 
 @app.command()
@@ -1040,7 +1037,7 @@ def deploy() -> None:
                 console.print(f"[green]Copied credentials_proto.json to credentials.json[/green]")
             except Exception as e:
                 console.print(f"[red]Error copying credentials file: {e}[/red]")
-                raise typer.Exit(1)
+                raise typer.Exit(1) from e
         else:
             console.print("[red]credentials_proto.json not found in package[/red]")
             raise typer.Exit(1)
@@ -1055,17 +1052,17 @@ def deploy() -> None:
             console.print(f"[green]Created configs folder[/green]")
         except Exception as e:
             console.print(f"[red]Error creating configs folder: {e}[/red]")
-            raise typer.Exit(1)
+            raise typer.Exit(1) from e
 
     # Step 3: Monitor / watchdog assets (files only — no systemd enable, no process start)
     try:
         _deploy_monitor_assets(current_dir)
     except FileNotFoundError as e:
         console.print(f"[red]Error deploying monitor assets: {e}[/red]")
-        raise typer.Exit(1)
+        raise typer.Exit(1) from e
     except Exception as e:
         console.print(f"[red]Error deploying monitor assets: {e}[/red]")
-        raise typer.Exit(1)
+        raise typer.Exit(1) from e
 
     console.print("[green]Deployment completed successfully![/green]")
     console.print(
@@ -1103,7 +1100,7 @@ def tls_cert(
         )
     except TlsCertError as exc:
         console.print(f"[red]{exc}[/red]")
-        raise typer.Exit(1)
+        raise typer.Exit(1) from exc
     console.print(f"[green]Wrote {paths['server_crt']} and {paths['ca_crt']}[/green]")
 
 
@@ -1126,7 +1123,7 @@ def watchdog_install(
         result = install_watchdog(config=cfg, dry_run=dry_run)
     except Exception as exc:
         console.print(f"[red]watchdog-install failed: {exc}[/red]")
-        raise typer.Exit(1)
+        raise typer.Exit(1) from exc
     console.print(f"[green]Watchdog installed[/green] backend={result.get('backend')} config={cfg}")
     if dry_run:
         console.print(str(result))
@@ -1143,7 +1140,7 @@ def watchdog_uninstall(
         uninstall_watchdog(dry_run=dry_run)
     except Exception as exc:
         console.print(f"[red]watchdog-uninstall failed: {exc}[/red]")
-        raise typer.Exit(1)
+        raise typer.Exit(1) from exc
     console.print("[green]Watchdog uninstalled[/green]")
 
 
@@ -1428,7 +1425,6 @@ def create(
     """
     import os
     import json
-    from pathlib import Path
     from evileye.controller.controller import Controller
     from evileye.cli_interactive import (
         InteractiveInputError,
@@ -1464,7 +1460,7 @@ def create(
 
         except Exception as e:
             console.print(f"[red]Error listing pipeline classes: {e}[/red]")
-            raise typer.Exit(1)
+            raise typer.Exit(1) from e
 
     # Validate config_name is provided when not listing pipelines
     if not config_name:
@@ -1564,7 +1560,7 @@ def create(
 
     except Exception as e:
         console.print(f"[red]Error creating configuration: {e}[/red]")
-        raise typer.Exit(1)
+        raise typer.Exit(1) from e
 
 
 @app.command()

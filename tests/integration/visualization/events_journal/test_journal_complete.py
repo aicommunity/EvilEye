@@ -1,7 +1,5 @@
 #!/usr/bin/env python3
 
-import sys
-import os
 def test_journal_complete(journal_test_logger, qapp):
     """Complete journal test"""
     

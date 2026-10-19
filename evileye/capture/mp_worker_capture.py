@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import sys
 import time
-from queue import Empty, Full
+from queue import Empty
 
 from ..core.mp_worker import MpWorker
 from ..core.processor_base import EXEC_MODE_THREAD

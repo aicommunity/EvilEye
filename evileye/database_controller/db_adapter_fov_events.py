@@ -1,8 +1,5 @@
-import time
 from .db_adapter import DatabaseAdapterBase
 from .constants import QueryType, EventType
-import copy
-import datetime
 import os
 import cv2
 from ..utils import threading_events

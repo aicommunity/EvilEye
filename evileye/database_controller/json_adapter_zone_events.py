@@ -2,7 +2,6 @@ import os
 from evileye.core.event_time import date_folder_from_ts, require_datetime
 from .json_event_io import append_json_record
 from .event_image_paths import ensure_event_image_dirs, owner_from_event, write_owner_sidecar
-import copy
 import cv2
 from .db_adapter import DatabaseAdapterBase
 from .image_storage_service import ImageStorageService

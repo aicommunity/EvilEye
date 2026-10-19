@@ -1,14 +1,13 @@
 import copy
 import datetime
 import time
-from abc import ABC, abstractmethod
+from abc import abstractmethod
 import threading
-from queue import Queue, Empty
+from queue import Empty
 from enum import Enum
 from urllib.parse import urlparse, ParseResult
-from threading import Lock, RLock
+from threading import RLock
 from collections import deque
-from typing import Optional, Any
 
 try:
     import numpy as np

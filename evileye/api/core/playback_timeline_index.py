@@ -8,7 +8,7 @@ import os
 import threading
 import time
 from pathlib import Path
-from typing import Any, Optional
+from typing import Any
 
 from evileye.api.core.cache_policy import DEFAULT_CACHE_POLICY
 from evileye.api.core.index_repository import project_event_items

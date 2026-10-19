@@ -3,10 +3,7 @@ import time
 from .db_adapter import DatabaseAdapterBase
 from .constants import QueryType, EventType
 from ..utils.utils import ObjectResultEncoder
-import copy
-import datetime
 import os
-from timeit import default_timer as timer
 import cv2
 import numpy as np
 from ..utils import threading_events

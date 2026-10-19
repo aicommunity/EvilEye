@@ -14,11 +14,8 @@ project_root = Path(__file__).parent.parent.parent.parent.parent
 sys.path.insert(0, str(project_root))
 
 import pytest
-import datetime
-from unittest.mock import Mock, MagicMock, patch
 import tempfile
 import shutil
-import glob
 
 try:
     from PyQt6.QtWidgets import QApplication

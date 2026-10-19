@@ -3,7 +3,6 @@ import datetime
 from ..core.base_class import EvilEyeBase
 from queue import Full, Queue, Empty
 import threading
-import time
 from .tracking_results import TrackingResultList
 from ..core.frame_transport import SharedFrameTransport
 from ..core.frame import Frame

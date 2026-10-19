@@ -1,6 +1,5 @@
 #!/usr/bin/env python3
 
-import sys
 import os
 def test_image_fixes(journal_test_logger, qapp):
     """Test image fixes: original images and bounding boxes"""

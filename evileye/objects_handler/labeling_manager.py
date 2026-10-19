@@ -7,12 +7,9 @@ import json
 import os
 import datetime
 import time
-import threading
 import weakref
 import atexit
-from typing import Dict, List, Any, Optional
-from pathlib import Path
-from queue import Queue
+from typing import Dict, List, Any
 from threading import Thread, Lock
 from ..core.logger import get_module_logger
 

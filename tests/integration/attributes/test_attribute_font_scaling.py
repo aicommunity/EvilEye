@@ -5,7 +5,6 @@
 
 import cv2
 import numpy as np
-import os
 from evileye.utils.utils import draw_object_attributes, calculate_font_scale_for_resolution
 
 def create_test_image(width, height):

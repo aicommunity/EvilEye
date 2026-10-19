@@ -14,8 +14,6 @@ def test_journal_columns_structure(journal_test_logger, qapp, tmp_path):
     
     try:
         from evileye.visualization_modules.events_journal_json import EventsJournalJson
-        import datetime
-        import json
         
         # Use QApplication from fixture
         app = qapp

@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, Optional
 
 from evileye.core.interfaces import IDatabaseAdapter
 from evileye.core.logger import get_module_logger

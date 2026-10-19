@@ -1,4 +1,4 @@
-from abc import ABC, abstractmethod
+from abc import abstractmethod
 from ..core.base_class import EvilEyeBase
 import threading
 from queue import Queue

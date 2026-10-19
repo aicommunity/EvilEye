@@ -1,4 +1,3 @@
-import time
 from .db_adapter import DatabaseAdapterBase
 from .constants import EventType
 from psycopg2 import sql

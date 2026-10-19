@@ -5,7 +5,6 @@
 
 import pytest
 import time
-from unittest.mock import Mock, patch
 
 from evileye.core.logging_config import setup_evileye_logging
 from evileye.core.logger import get_module_logger

@@ -6,7 +6,6 @@ import mimetypes
 import threading
 import time
 from concurrent.futures import ThreadPoolExecutor
-from copy import deepcopy
 from typing import Any, Callable, Optional
 
 from fastapi import APIRouter, HTTPException, Query, Request
@@ -130,13 +129,13 @@ async def _to_thread_with_timeout_or_cached(
         remaining = max(0.0, deadline - loop.time())
         try:
             await asyncio.wait_for(slot_sem.acquire(), timeout=remaining)
-        except asyncio.TimeoutError:
+        except asyncio.TimeoutError as exc:
             _thread_timeouts += 1
             cached = cached_fn()
             if cached is not None:
                 return cached
             _thread_503s += 1
-            raise HTTPException(status_code=503, detail=err_detail)
+            raise HTTPException(status_code=503, detail=err_detail) from exc
     held_sem = slot_sem or release_sem_on_done
     if executor is not None:
         fut = loop.run_in_executor(executor, value_fn)
@@ -160,7 +159,7 @@ async def _to_thread_with_timeout_or_cached(
     try:
         # shield: timeout must not cancel the worker; slot tracking keeps fut in _thread_inflight.
         return await asyncio.wait_for(asyncio.shield(fut), timeout=remaining)
-    except asyncio.TimeoutError:
+    except asyncio.TimeoutError as exc:
         _thread_timeouts += 1
         logger.warning(
             "playback route timeout detail=%s timeout_sec=%s executor=%s inflight=%s %s",
@@ -194,7 +193,7 @@ async def _to_thread_with_timeout_or_cached(
         if cached is not None:
             return cached
         _thread_503s += 1
-        raise HTTPException(status_code=503, detail=err_detail)
+        raise HTTPException(status_code=503, detail=err_detail) from exc
 
 
 def _require_cameras(access, names: list[str], *, single: bool) -> list[str]:
@@ -795,11 +794,11 @@ async def _coalesced_detections_load(
         try:
             payload = await asyncio.wait_for(asyncio.shield(shared), timeout=timeout)
             return _slice(payload)
-        except asyncio.TimeoutError:
+        except asyncio.TimeoutError as exc:
             cached = _recall(scan_key)
             if cached is not None:
                 return _slice(cached)
-            raise HTTPException(status_code=503, detail="playback_detections timeout")
+            raise HTTPException(status_code=503, detail="playback_detections timeout") from exc
         except asyncio.CancelledError:
             raise
         except Exception as exc:
@@ -816,7 +815,7 @@ async def _coalesced_detections_load(
         try:
             await asyncio.wait_for(_detections_slots.acquire(), timeout=2.0)
             acquired = True
-        except asyncio.TimeoutError:
+        except asyncio.TimeoutError as exc:
             logger.warning(
                 "playback detections busy %s",
                 " ".join(f"{k}={v}" for k, v in (log_ctx or {}).items()),
@@ -828,7 +827,7 @@ async def _coalesced_detections_load(
             if not shared.done():
                 shared.set_exception(busy)
             _silence_future_exception(shared)
-            raise busy
+            raise busy from exc
 
         # Re-check cache: a sibling scan may have finished while we waited for a slot.
         fresh = _recall(scan_key, require_fresh=True)
@@ -882,7 +881,7 @@ async def _coalesced_detections_load(
         try:
             payload = await asyncio.wait_for(asyncio.shield(shared), timeout=timeout)
             return _slice(payload)
-        except asyncio.TimeoutError:
+        except asyncio.TimeoutError as exc:
             logger.warning(
                 "playback route timeout detail=playback_detections timeout timeout_sec=%s executor=detections %s",
                 timeout,
@@ -891,7 +890,7 @@ async def _coalesced_detections_load(
             cached = _recall(scan_key)
             if cached is not None:
                 return _slice(cached)
-            raise HTTPException(status_code=503, detail="playback_detections timeout")
+            raise HTTPException(status_code=503, detail="playback_detections timeout") from exc
     finally:
         async with _detections_inflight_lock:
             if _detections_inflight.get(scan_key) is shared and shared.done():

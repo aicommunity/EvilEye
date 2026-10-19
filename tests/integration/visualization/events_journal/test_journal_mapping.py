@@ -1,7 +1,5 @@
 #!/usr/bin/env python3
 
-import sys
-import os
 def test_journal_mapping(journal_test_logger):
     """Test journal data mapping"""
     

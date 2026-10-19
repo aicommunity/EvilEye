@@ -35,7 +35,6 @@ def apply_resource_tracker_patch() -> None:
     def _main(fd):
         import signal
         import sys
-        import warnings
 
         from multiprocessing.resource_tracker import (
             _CLEANUP_FUNCS,

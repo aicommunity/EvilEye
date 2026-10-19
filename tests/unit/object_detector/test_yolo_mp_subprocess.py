@@ -4,7 +4,7 @@ import multiprocessing as mp
 import os
 import threading
 from queue import Queue
-from unittest.mock import MagicMock, patch
+from unittest.mock import patch
 
 import pytest
 

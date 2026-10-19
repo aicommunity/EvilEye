@@ -1,6 +1,5 @@
 #!/usr/bin/env python3
 
-import sys
 import os
 try:
     from PyQt6.QtWidgets import QApplication

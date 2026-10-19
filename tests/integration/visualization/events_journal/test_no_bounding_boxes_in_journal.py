@@ -1,6 +1,5 @@
 #!/usr/bin/env python3
 
-import sys
 import os
 def test_no_bounding_boxes_in_journal(journal_test_logger, qapp):
     """Test that bounding boxes are not displayed in the journal table"""

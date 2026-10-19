@@ -2,11 +2,10 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Optional, List
+from typing import Optional
 import datetime as _dt
 import threading
 import time
-import weakref
 import atexit
 
 from evileye.core.logger import get_module_logger

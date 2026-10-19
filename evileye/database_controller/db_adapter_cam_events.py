@@ -1,11 +1,6 @@
-import time
 from .db_adapter import DatabaseAdapterBase
 from .constants import EventType, QueryType
-import json
 from ..utils.utils import ObjectResultEncoder
-import copy
-import datetime
-from timeit import default_timer as timer
 from ..utils import threading_events
 from ..utils import utils
 from psycopg2 import sql

@@ -6,7 +6,6 @@ import os
 import sys
 from pathlib import Path
 from typing import Optional, Dict, List, Tuple
-import datetime
 
 try:
     from PyQt6.QtWidgets import QWidget, QVBoxLayout, QHBoxLayout, QTableWidget, QTableWidgetItem, QHeaderView, \

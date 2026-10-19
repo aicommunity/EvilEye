@@ -38,7 +38,6 @@ from ..core.logger import get_module_logger
 from .stream_player_components import (
     CameraSelectorWidget, VideoGridWidget, TimelineWidget, PlaybackControlsWidget
 )
-import logging
 
 
 class StreamPlayerWindow(QMainWindow):

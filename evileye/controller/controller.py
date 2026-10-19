@@ -1,11 +1,7 @@
 import threading
 import os
-import importlib
-import inspect
 import socket
 import copy
-from pathlib import Path
-from time import sleep
 
 from evileye.capture import video_capture_opencv
 from evileye.object_detector import object_detection_yolo
@@ -28,7 +24,6 @@ import datetime
 from evileye.events_detectors.system_events_detector import SystemEventsDetector
 import json
 import datetime
-import pprint
 import copy
 import math
 import gc

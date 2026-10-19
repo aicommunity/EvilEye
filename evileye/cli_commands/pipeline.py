@@ -143,16 +143,16 @@ def pipeline_start_cmd(
         )
     except AmbiguousPipelineConfigError as exc:
         console.print(f"[red]{exc}[/red]")
-        raise typer.Exit(1)
+        raise typer.Exit(1) from exc
     except DuplicatePipelineError as exc:
         console.print(f"[red]{exc}[/red]")
-        raise typer.Exit(1)
+        raise typer.Exit(1) from exc
     except FileNotFoundError as exc:
         console.print(f"[red]{exc}[/red]")
-        raise typer.Exit(1)
+        raise typer.Exit(1) from exc
     except Exception as exc:
         console.print(f"[red]Pipeline start failed: {exc}[/red]")
-        raise typer.Exit(1)
+        raise typer.Exit(1) from exc
 
     if spawn.mode == "direct-foreground":
         code = 0 if spawn.exit_code is None else int(spawn.exit_code)
@@ -208,7 +208,7 @@ def pipeline_restart_cmd(
         raise typer.Exit(1) from exc
     except Exception as exc:
         console.print(f"[red]Pipeline restart failed: {exc}[/red]")
-        raise typer.Exit(1)
+        raise typer.Exit(1) from exc
 
     if spawn.mode == "direct-foreground":
         code = 0 if spawn.exit_code is None else int(spawn.exit_code)

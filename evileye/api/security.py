@@ -3,7 +3,6 @@ import hmac
 import json
 import os
 from dataclasses import dataclass
-from pathlib import Path
 from typing import Any, Iterable, Optional
 
 from fastapi import HTTPException, Request, status

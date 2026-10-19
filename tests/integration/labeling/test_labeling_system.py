@@ -6,9 +6,8 @@ Test script to verify the labeling system functionality.
 import os
 from evileye.core.logging_config import setup_evileye_logging
 from evileye.core.logger import get_module_logger
-import json
 import datetime
-from unittest.mock import Mock, MagicMock
+from unittest.mock import Mock
 
 # Инициализация логирования для тестов
 logger = setup_evileye_logging(log_level="INFO", log_to_console=True, log_to_file=True)

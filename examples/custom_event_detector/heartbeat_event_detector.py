@@ -14,7 +14,7 @@ Import this module before Controller starts (PYTHONPATH or site package).
 from __future__ import annotations
 
 import time
-from typing import Any, List
+from typing import Any
 
 from evileye.events_detectors.event_registry import register_event_detector
 from evileye.events_detectors.events_detector import EventsDetector

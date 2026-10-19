@@ -1,4 +1,3 @@
-import time
 from datetime import datetime
 from .events_detector import EventsDetector
 from .event_system import SystemEvent

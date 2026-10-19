@@ -47,7 +47,7 @@ def _source_worker_entry(module_id, factory_module, factory_qualname, config, ou
             pass
         # The parent also checks the process exit code. Keep this signal even
         # when a saturated output queue prevents delivery of the error marker.
-        raise SystemExit(1)
+        raise SystemExit(1) from exc
     finally:
         if module is not None:
             try:

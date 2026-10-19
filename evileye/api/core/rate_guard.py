@@ -6,7 +6,7 @@ import threading
 import time
 from collections import defaultdict, deque
 from dataclasses import dataclass, field
-from typing import Any, Deque, Optional
+from typing import Any, Deque
 
 from evileye.api.core.client_ip import resolve_client_ip
 from evileye.api.core.ip_ban_store import get_ip_ban_store

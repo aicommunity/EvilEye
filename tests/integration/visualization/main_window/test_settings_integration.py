@@ -9,7 +9,6 @@ import tempfile
 import json
 import os
 import time
-from pathlib import Path
 
 try:
     from PyQt6.QtWidgets import QApplication, QMessageBox

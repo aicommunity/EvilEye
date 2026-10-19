@@ -8,7 +8,7 @@ Tests cover problematic cases from logs:
 """
 
 import unittest
-from unittest.mock import Mock, MagicMock, patch
+from unittest.mock import Mock, MagicMock
 import sys
 
 # Mock PyQt before importing

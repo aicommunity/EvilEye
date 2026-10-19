@@ -6,7 +6,6 @@ import ipaddress
 import json
 import os
 import threading
-from pathlib import Path
 from typing import Any
 
 from fastapi import APIRouter, HTTPException, Request

@@ -39,7 +39,6 @@ def test_pipeline_inheritance():
         test_logger.info("✅ Inheritance chain correct")
         
         # Check that PipelineCapture is found by the discovery mechanism
-        import inspect
         has_pipeline_base = any('Pipeline' in base.__name__ for base in PipelineCapture.__bases__)
         test_logger.info(f"Has pipeline base: {has_pipeline_base}")
         
@@ -64,7 +63,6 @@ def test_pipeline_discovery():
     try:
         import importlib
         import inspect
-        from pathlib import Path
         
         # Simulate the discovery mechanism
         pipeline_classes = {}

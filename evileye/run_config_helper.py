@@ -4,7 +4,6 @@ import signal
 import sys
 import warnings
 from pathlib import Path
-from typing import Optional
 
 try:
     from PyQt6.QtWidgets import QApplication, QMessageBox

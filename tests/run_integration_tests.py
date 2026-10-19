@@ -7,7 +7,6 @@ import sys
 import subprocess
 from pathlib import Path
 import argparse
-import os
 
 def check_environment():
     """Проверяет окружение для integration тестов."""

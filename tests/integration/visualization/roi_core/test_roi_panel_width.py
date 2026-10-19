@@ -5,7 +5,6 @@
 
 import unittest
 from unittest.mock import Mock, patch
-import time
 
 from PyQt6.QtWidgets import QApplication, QHBoxLayout
 from PyQt6.QtCore import Qt, QTimer

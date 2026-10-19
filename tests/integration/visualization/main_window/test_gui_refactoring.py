@@ -6,10 +6,7 @@
 
 import pytest
 import tempfile
-import json
 import os
-from pathlib import Path
-from unittest.mock import Mock, patch
 
 try:
     from PyQt6.QtWidgets import QApplication, QWidget

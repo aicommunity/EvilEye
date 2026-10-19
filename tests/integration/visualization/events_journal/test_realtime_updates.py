@@ -1,8 +1,6 @@
 #!/usr/bin/env python3
 
-import sys
 import os
-import time
 import threading
 
 def test_realtime_updates(journal_test_logger, qapp):
