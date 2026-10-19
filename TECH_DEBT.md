@@ -16,7 +16,9 @@ Last reviewed: plugin_support audit (stages 0-4), 2026-10-19
 | TD-PS-D3 | Legacy MP detector path is still wired in (`DetectionThreadYoloMp`, `object_detection_yolo_mp.py`, `detection_thread_factory.py`, `mp_queue_config.py`, `validate_config.py`, MP tests). `LegacyProcessorModuleAdapter` has no built-in consumer (only `legacy_processor_protocol` in `base_class.py` for third-party plugins and tests): remove it after a deprecation notice in PLUGINS.md | object_detector, core/plugin_runtime/legacy.py | plugin_support audit | After deprecation window | P2 |
 | TD-PS-D4 | Ruff: 805 `F401` left (all non-stdlib: many may register modules or Qt widgets, so they need a manual review per file), 0 `B904`; 43 known `F821` in `scripts/ruff_baseline.json` (optional Qt imports, dialogs). Stdlib `F401` and all `B904` were fixed | repo-wide | plugin_support audit | Gradual | P3 |
 | TD-PS-D5 | Merged remote branches (`autorefactor_*`, `*-hotfix`, `experiments`; 45+ on origin) are not cleaned up | git remote | plugin_support audit | Needs owner decision | P3 |
-| TD-PS-D6 | Open acceptance criteria: target FPS/p95/loss budget, old-vs-new runtime comparison, browser alarm smoke, RTSP disconnect fixture | docs/PLUGIN_MIGRATION_COMPLETION_PLAN.md | plugin_support audit | Before release | P1 |
+| TD-PS-D6 | Open acceptance criteria: target FPS/p95/loss budget (the old-vs-new comparison, browser alarm smoke and RTSP disconnect check were run on 2026-10-19, see docs/RUNTIME_VERIFICATION_2026-10-19.md) | docs/PLUGIN_MIGRATION_COMPLETION_PLAN.md | plugin_support audit | Before release | P1 |
+| TD-PS-D7 | Throughput gap vs `main`: ~10 pp fewer frames reach the tracker output on the same 2688x1520 clip and config (see docs/RUNTIME_VERIFICATION_2026-10-19.md); not explained by queue size or execution mode | core/plugin_runtime, processor_step | live comparison 2026-10-19 | Next | P1 |
+| TD-PS-D8 | Schedule-alarm events carry no frames, so the journal preview column is empty | events_detectors | live alarm check 2026-10-19 | Backlog | P3 |
 
 ## In progress
 
