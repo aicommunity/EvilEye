@@ -85,6 +85,8 @@ class Controller(ControllerProcessingMixin):
             self.credentials_loaded = False
 
     def __init__(self):
+        from evileye.core.runtime_identity import process_identity
+        process_identity()  # Freeze the revision before any later checkout changes.
         self.logger = get_module_logger("controller")
         self.main_window = None
         # self.application = application

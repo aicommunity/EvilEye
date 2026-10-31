@@ -22,7 +22,8 @@ def redact(value):
     if isinstance(value, (list, tuple)):
         return [redact(v) for v in value]
     if isinstance(value, str):
-        return _URL_AUTH.sub(r'\1[redacted]@', value)
+        value = _URL_AUTH.sub(r'\1[redacted]@', value)
+        return re.sub(r'(?i)((?:password|passwd|token|secret)=)[^\s&;]+', r'\1[redacted]', value)
     return value
 
 
@@ -39,9 +40,14 @@ def process_identity(config=None):
             revision, commit_time = result.stdout.strip().splitlines()
         except (OSError, subprocess.SubprocessError, ValueError):
             pass
+        try:
+            import psutil
+            started_at = psutil.Process().create_time()
+        except (ImportError, OSError):
+            started_at = _STARTED_AT
         _IDENTITY = dict(pid=os.getpid(), git_sha=os.getenv('EVILEYE_BUILD_SHA') or revision,
-                         build_time=os.getenv('EVILEYE_BUILD_TIME'), source_commit_time=commit_time,
-                         started_at=_STARTED_AT, package_path=str(package_path))
+                         build_time=os.getenv('EVILEYE_BUILD_TIME') or commit_time, source_commit_time=commit_time,
+                         started_at=started_at, package_path=str(package_path))
     result = dict(_IDENTITY)
     result['config_sha256'] = hashlib.sha256(json.dumps(
         config or {}, sort_keys=True, separators=(',', ':'), default=str).encode()).hexdigest()
@@ -63,8 +69,6 @@ def event_health(stats, *, now=None):
         last = component.get('last_success_at')
         if last is not None and now - last > 30:
             reasons.append(name + ':heartbeat_stale')
-        if component.get('degraded'):
-            reasons.append(name + ':degraded')
     for name, detector in (components.get('events_controller', {}).get('detectors') or {}).items():
         if detector.get('started') and not detector.get('worker_running'):
             reasons.append(name + ':worker_stopped')

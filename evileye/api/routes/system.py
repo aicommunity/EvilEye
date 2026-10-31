@@ -40,7 +40,17 @@ async def _runtime_stats(request: Request) -> dict:
     if not isinstance(stats, dict):
         raise HTTPException(status_code=503, detail="Runtime diagnostics returned an invalid payload")
     from evileye.core.runtime_identity import process_identity, redact
-    stats["api_identity"] = process_identity(getattr(request.app.state, "config", None))
+    from evileye.api.core.server_state import get_current_config_path
+    import json
+    from pathlib import Path
+    config = {}
+    path = get_current_config_path()
+    if path:
+        try:
+            config = json.loads(Path(path).read_text(encoding='utf-8'))
+        except (OSError, ValueError):
+            pass
+    stats["api_identity"] = process_identity(config)
     return redact(stats)
 
 

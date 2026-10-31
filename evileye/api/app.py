@@ -301,6 +301,8 @@ def _cors_origins(web_auth) -> list[str]:
 
 
 def create_app() -> FastAPI:
+    from evileye.core.runtime_identity import process_identity
+    process_identity()
     web_auth = load_web_auth_config()
     disable_docs = (
         os.getenv("EVILEYE_DISABLE_DOCS", "").strip().lower() in {"1", "true", "yes"}

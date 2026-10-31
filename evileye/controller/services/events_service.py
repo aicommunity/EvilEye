@@ -67,7 +67,12 @@ class EventsService:
         """Инициализировать детекторы событий через plugin registry."""
         register_builtins()
         sources = pipeline.get_sources()
-        pipeline_source_ids = tuple(range(len(sources)))
+        # Physical cameras can expose several logical sources (split streams).
+        logical_ids = []
+        for index, source in enumerate(sources):
+            source_ids = getattr(source, 'source_ids', None)
+            logical_ids.extend(source_ids if isinstance(source_ids, (list, tuple)) else [index])
+        pipeline_source_ids = tuple(dict.fromkeys(int(source_id) for source_id in logical_ids))
         detector_context = EventDetectorContext(
             sources=tuple(sources),
             objects_handler=objects_handler,

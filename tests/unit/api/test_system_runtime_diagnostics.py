@@ -31,6 +31,9 @@ def test_system_runtime_returns_stats_from_controller_ipc(monkeypatch, tmp_path)
 
     result = asyncio.run(system.system_runtime(_request()))
 
+    identity = result.pop('api_identity')
+    assert identity['pid'] > 0
+    assert len(identity['config_sha256']) == 64
     assert result == {
         "available": True,
         "degraded": False,
