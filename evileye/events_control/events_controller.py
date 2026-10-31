@@ -132,8 +132,10 @@ class EventsDetectorsController(EvilEyeBase):
             stats.get("module_id")
             or getattr(detector, "module_id", type(detector).__name__)
         )
-        detector_degraded = bool(stats.get("degraded"))
-        reason = str(stats.get("last_error") or "module reports degraded status")
+        stopped = bool(stats.get('started') and stats.get('worker_running') is False)
+        detector_degraded = bool(stats.get("degraded")) or stopped
+        reason = str(stats.get("last_error") or (
+            'required event worker stopped' if stopped else 'module reports degraded status'))
         with self._runtime_lock:
             if detector_degraded:
                 previous = self._detector_failures.get(module_id)

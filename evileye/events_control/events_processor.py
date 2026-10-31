@@ -193,7 +193,8 @@ class EventsProcessor(EvilEyeBase):
             "worker_alive": bool(thread and thread.is_alive()),
             "closing": self._closing,
             "last_error": self.last_error,
-            "degraded": self.degraded or adapter_degraded,
+            "degraded": self.degraded or adapter_degraded or bool(
+                self.run_flag and not (thread and thread.is_alive())),
         }
 
     def _adapter_call(self, event, method_name: str, target=None):
