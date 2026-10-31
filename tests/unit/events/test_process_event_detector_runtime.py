@@ -436,6 +436,41 @@ def test_redundant_host_update_notifications_are_coalesced():
     detector.stop()
 
 
+def test_dispatcher_retries_a_full_queue_without_starving_later_sources():
+    import pickle
+    import queue
+    from evileye.core.contracts import EventUpdate
+    detector = EventDetectorModuleAdapter(_register_module(), EventDetectorContext())
+    detector.set_params(execution_mode='process')
+    detector.init()
+    updates = [EventUpdate(sequence=i, kind='object_snapshot', source_id=source,
+                           timestamp=None, payload={'active': [], 'lost': []})
+               for i, source in enumerate((0, 4))]
+    detector._build_context_updates = lambda: updates
+    accepted = []
+
+    class Control:
+        attempts = 0
+
+        def put(self, data, *, block, timeout):
+            self.attempts += 1
+            assert block and timeout > 0
+            if self.attempts <= 2:
+                raise queue.Full
+            accepted.append(pickle.loads(data[1]).source_id)
+            if len(accepted) == 2:
+                detector._update_stop.set()
+
+    detector._mp_control = Control()
+    detector._update_notifications.put(True)
+    detector._dispatch_context_updates()
+    assert accepted == [0, 4]
+    assert detector._updates_submitted == 2
+    assert not detector.degraded
+    detector._mp_control = None
+    detector.release()
+
+
 def test_events_service_fails_start_when_process_detector_contract_is_invalid():
     from evileye.controller.services.events_service import EventsService
 
