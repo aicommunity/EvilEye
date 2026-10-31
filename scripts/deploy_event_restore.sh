@@ -25,7 +25,10 @@ rollback() {
     exit "$status"
 }
 trap rollback EXIT
-systemctl --user stop evileye-run-poly-cameras-gst.scope evileye.service
+if systemctl --user is-active --quiet evileye-run-poly-cameras-gst.scope; then
+    systemctl --user stop evileye-run-poly-cameras-gst.scope
+fi
+systemctl --user stop evileye.service
 if git show-ref --verify --quiet refs/heads/codex/restore-zone-events; then
     git switch codex/restore-zone-events
     git merge --ff-only "$TARGET"
