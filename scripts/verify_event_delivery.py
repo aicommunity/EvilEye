@@ -50,6 +50,8 @@ def main():
     from evileye.controller.services.events_service import EventsService
     from evileye.database_controller.database_controller_pg import DatabaseControllerPg
     from evileye.database_controller.db_adapter_zone_events import DatabaseAdapterZoneEvents
+    from evileye.database_controller.db_adapter_cam_events import DatabaseAdapterCamEvents
+    from evileye.events_detectors.event_cameras import CameraEvent
     from evileye.database_controller.json_adapter_zone_events import JsonAdapterZoneEvents
     from evileye.database_controller.migrations import apply_startup_migrations
     from evileye.events_control.events_controller import EventsDetectorsController
@@ -70,10 +72,12 @@ def main():
     pg.set_params(table_name='zone_events', event_name='ZoneEvent')
     js = JsonAdapterZoneEvents(database)
     js.set_params(image_dir=str(args.work_dir))
-    for adapter in (pg, js):
+    cam = DatabaseAdapterCamEvents(database)
+    cam.set_params(table_name='camera_events', event_name='CameraEvent')
+    for adapter in (pg, js, cam):
         adapter.init()
         adapter.start()
-    processor = EventsProcessor([pg, js], database)
+    processor = EventsProcessor([pg, js, cam], database)
     processor.init()
     service, collector = EventsService(), None
     try:
@@ -126,6 +130,13 @@ def main():
         handler.active.objects = [make_object(900000002, .99, .99)]
         handler.notify()
         assert deliver(1) == [], 'negative scenario generated an event'
+        camera = next(source for source in cfg['pipeline']['sources'] if source_id in source['source_ids'])
+        camera_event = CameraEvent(', '.join(camera['source_names']), False, base, 'Warning')
+        processor.put({'CamEventsDetector': [camera_event]})
+        deadline = time.monotonic()+10
+        while cam.processed_items == 0 and time.monotonic() < deadline:
+            time.sleep(.05)
+        assert cam.processed_items == 1 and cam.terminal_write_failures == 0, 'camera event FK write failed'
         deadline = time.monotonic()+10
         while time.monotonic() < deadline:
             rows = database.query_checked('SELECT time_entered,time_left FROM zone_events WHERE object_id=%s', (positive.object_id,))
@@ -153,7 +164,7 @@ def main():
             collector.stop()
         processor.stop()
         service.release()
-        for adapter in (pg, js):
+        for adapter in (pg, js, cam):
             adapter.stop()
         database.disconnect()
 
