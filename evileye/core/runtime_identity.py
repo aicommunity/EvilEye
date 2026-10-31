@@ -77,6 +77,11 @@ def event_health(stats, *, now=None):
         last = detector.get('last_success_at') or detector.get('started_at')
         if submitted > completed and last is not None and now - last > 30:
             reasons.append(name + ':updates_stalled')
+    for name, source in (components.get('pipeline', {}).get('module_instances') or {}).items():
+        health = source.get('capture_health') or {}
+        pending = health.get('teardown_pending_since')
+        if pending is not None and now-pending > 30:
+            reasons.append(name + ':native_teardown_stalled')
     return reasons
 
 

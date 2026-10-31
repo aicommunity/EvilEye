@@ -27,6 +27,13 @@ def test_monitor_requires_three_stale_polls_and_resets_for_new_pid():
     assert evaluate(payload, 8, state, 71)[1] == 'zones:worker_stopped'
 
 
+def test_native_capture_teardown_stall_is_reported_for_watchdog_recovery():
+    stats = {'components': {'events_controller': {}, 'events_processor': {},
+             'pipeline': {'module_instances': {'source/2': {
+                 'capture_health': {'teardown_pending_since': 10}}}}}}
+    assert event_health(stats, now=45) == ['source/2:native_teardown_stalled']
+
+
 def test_secrets_are_redacted_and_effective_config_changes_identity_hash():
     value = redact({'password': 'hidden', 'error': 'Failed rtsp://user:pass@camera/path',
                     'config': {'session_secret': 'hidden'}})

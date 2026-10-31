@@ -881,6 +881,7 @@ class VideoCaptureBase(EvilEyeBase):
             transition = copy.deepcopy(self._last_connection_transition)
             return {
                 "working": bool(self.is_working),
+                "teardown_pending_since": getattr(self, '_reconnect_release_started_at', None),
                 "disconnect_count": self._disconnect_count,
                 "reconnect_count": self._reconnect_count,
                 "backend_connection_generation": (
