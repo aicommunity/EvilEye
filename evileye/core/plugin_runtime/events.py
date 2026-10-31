@@ -178,6 +178,9 @@ class EventDetectorModuleAdapter(_HealthMixin, EvilEyeBase):
         self._sequence_lock = threading.Lock()
         self._updates_submitted = 0
         self._events_received = 0
+        self._updates_completed = 0
+        self._last_success_at = None
+        self._started_at = None
         self._failure_reported = False
         self._closing = False
         self._stopped_events: list[Any] = []
@@ -332,6 +335,7 @@ class EventDetectorModuleAdapter(_HealthMixin, EvilEyeBase):
         if self._started:
             return
         self._closing = False
+        self._started_at = time.time()
         if self.execution_mode == "process":
             from ..mp_control import MpControl
 
@@ -781,7 +785,9 @@ class EventDetectorModuleAdapter(_HealthMixin, EvilEyeBase):
                 continue
             try:
                 events.extend(pickle.loads(envelope[2]))
-                self._events_received += 1
+                self._events_received += len(pickle.loads(envelope[2]))
+                self._updates_completed += 1
+                self._last_success_at = time.time()
             except Exception as exc:
                 self._record_failure("worker output deserialization", exc)
         return events
@@ -934,7 +940,8 @@ class EventDetectorModuleAdapter(_HealthMixin, EvilEyeBase):
             worker_running = any(p.is_alive() for p in self._mp_control.processes)
         elif self.module is not None:
             module_stats = getattr(self.module, "get_runtime_stats", None)
-            worker_running = self._started
+            thread = getattr(self.module, "processing_thread", None)
+            worker_running = bool(self._started and (thread is None or thread.is_alive()))
         else:
             module_stats = None
         return {
@@ -943,6 +950,9 @@ class EventDetectorModuleAdapter(_HealthMixin, EvilEyeBase):
             "initialized": self.is_inited,
             "started": self._started,
             "worker_running": worker_running,
+            "started_at": self._started_at,
+            "last_success_at": self._last_success_at,
+            "updates_completed": self._updates_completed,
             "updates_submitted": self._updates_submitted,
             "update_notifications_dropped": self._notifications_dropped,
             "process_updates_dropped": self._process_updates_dropped,

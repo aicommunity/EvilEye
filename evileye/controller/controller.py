@@ -652,6 +652,11 @@ class Controller(ControllerProcessingMixin):
 
                 try:
                     self._maybe_publish_runtime_snapshot(now_ts=loop_now_ts)
+                    if loop_now_ts - getattr(self, '_event_heartbeat_at', 0) >= 5:
+                        from evileye.core.runtime_identity import publish_heartbeat
+                        self._event_heartbeat_at = loop_now_ts
+                        publish_heartbeat(os.getenv('EVILEYE_SITE_DIR') or os.getcwd(),
+                                          self._control_get_runtime_stats()['stats'])
                 except Exception:
                     pass
 
@@ -1249,6 +1254,7 @@ class Controller(ControllerProcessingMixin):
 
     def _control_get_runtime_stats(self) -> dict:
         """Return runtime health for the active pipeline and event delivery path."""
+        from evileye.core.runtime_identity import process_identity, redact
         components = {}
         providers = (
             ("pipeline", getattr(self, "pipeline", None)),
@@ -1295,7 +1301,8 @@ class Controller(ControllerProcessingMixin):
             "stats": {
                 "available": bool(components),
                 "degraded": degraded,
-                "components": components,
+                "components": redact(components),
+                "identity": process_identity(getattr(self, "params", None)),
             },
         }
 

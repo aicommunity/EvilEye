@@ -159,6 +159,17 @@ if pipeline_child_healthy && [[ -n "$CHILD_PID" ]] && (( LOG_AGE <= LOG_STALE_SE
     fi
 fi
 
+# A live process/log is insufficient when event workers have stopped.
+if [[ -n "$CHILD_PID" ]] && ! restart_grace_active; then
+    EVENT_HEALTH_REASON=""
+    if ! EVENT_HEALTH_REASON="$(python3 -m evileye.deploy_monitor.event_health "$DEPLOY_DIR" "$CHILD_PID")"; then
+        INCIDENT=true
+        DO_RESTART=true
+        STATUS="incident"
+        REASONS+=("${EVENT_HEALTH_REASON:-event_health_check_failed}")
+    fi
+fi
+
 # After child-healthy override: recording can stay up while detection journal freezes.
 DETECTION_STALE_REASON=""
 if DETECTION_STALE_REASON="$(check_detection_journal_stale)"; then

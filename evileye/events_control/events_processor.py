@@ -32,6 +32,8 @@ class EventsProcessor(EvilEyeBase):
         self.degraded = False
         self.queue_rejections = 0
         self.adapter_failures = 0
+        self.events_processed = 0
+        self.last_success_at = None
 
     def set_params_impl(self):
         pass
@@ -181,6 +183,8 @@ class EventsProcessor(EvilEyeBase):
         adapter_degraded = any(stats.get("degraded", False) for stats in adapters)
         thread = self.processing_thread
         return {
+            "last_success_at": self.last_success_at,
+            "events_processed": self.events_processed,
             "queue_size": queue_size,
             "queue_maxsize": self.queue_maxsize,
             "queue_rejections": self.queue_rejections,
@@ -256,9 +260,51 @@ class EventsProcessor(EvilEyeBase):
                 f"worker_alive=true, pending_batches={pending}"
             )
 
+    def _notify(self, event, is_on):
+        source_id = getattr(event, 'source_id', None)
+        bbox = (getattr(event, 'box_found', None) or getattr(event, 'box_entered', None)) if is_on else (getattr(event, 'box_finished', None) or getattr(event, 'box_left', None))
+        if self.ui_callback and source_id is not None:
+            try:
+                self.ui_callback(source_id, getattr(event, 'object_id', -1),
+                                 getattr(event, 'matched_event_name', ''), is_on, bbox)
+            except Exception:
+                self.logger.exception("Event UI callback failed")
+        if self.event_recording_callback and source_id is not None:
+            try:
+                self.event_recording_callback(event.event_id, event.get_name(), event.timestamp,
+                                              source_id, is_on, bbox)
+            except Exception:
+                self.logger.exception("Event recording callback failed")
+
+    def _process_event(self, name, event):
+        active = self.long_term_events.setdefault(name, [])
+        matched = next((item for item in active if event == item), None) if event.is_long_term() else None
+        if matched is not None:
+            event.set_id(matched.event_id)
+            if event.is_finished():
+                matched.update_on_finished(event)
+                self._notify(event, False)
+                self._adapter_call(event, 'update', matched)
+                active.remove(matched)
+                self.finished_events.setdefault(name, []).append(event)
+            else:
+                self._adapter_call(event, 'update', matched)
+            return
+        event.set_id(self.id_counter)
+        self.id_counter += 1
+        if event.is_long_term() and not event.is_finished():
+            active.append(event)
+            self._notify(event, True)
+        else:
+            self.finished_events.setdefault(name, []).append(event)
+            if not event.is_long_term():
+                self._notify(event, True)
+            self._notify(event, False)
+        self._adapter_call(event, 'insert')
+
     def process(self):
-        filtered_long_term = {key: None for key in self.long_term_events}
         while True:
+            self.last_success_at = time.time()
             try:
                 new_events = self.queue.get(timeout=0.1)
             except Empty:
@@ -267,215 +313,15 @@ class EventsProcessor(EvilEyeBase):
                 continue
             if new_events is None:
                 continue
-
-            try:
-                finished_idxs = set()
-                for events in new_events:
-                    long_term = self.long_term_events.get(events,
-                                                          None)  # Получаем список долгосрочных событий, которые сейчас активны
-                    if long_term:
-                        for event in new_events[events]:  # Проходим по всем событиям одного типа
-                            for i in range(len(long_term)):
-                                if event == long_term[i]:  # Проверяем, есть ли это событие в долгосрочных
-                                    if event.is_finished():  # Обновляем запись о долгосрочном событии, если оно закончилось
-                                        long_term[i].update_on_finished(
-                                            event)  # Обновляем информацию о событии по его завершении
-                                    self._adapter_call(event, "update", long_term[i])
-                                    # Notify UI: event OFF (независимо от наличия адаптера)
-                                    try:
-                                        if self.ui_callback:
-                                            # Emit OFF with (source_id, object_id, event_name)
-                                            self.ui_callback(event.source_id,
-                                                             getattr(event, 'object_id', -1),
-                                                             getattr(event, 'matched_event_name', ''),
-                                                             False)
-                                    except Exception:
-                                        pass
-                                    # Notify event recording: event OFF
-                                    try:
-                                        if self.event_recording_callback:
-                                            # Skip events without source_id (e.g., SystemEvent)
-                                            source_id = getattr(event, 'source_id', None)
-                                            if source_id is not None:
-                                                bbox = getattr(event, 'box_finished', None) or getattr(event, 'box_left', None)
-                                                self.event_recording_callback(
-                                                    event.event_id,
-                                                    event.get_name(),
-                                                    event.timestamp,
-                                                    source_id,
-                                                    False,  # is_on = False (event ended)
-                                                    bbox
-                                                )
-                                    except Exception as e:
-                                        try:
-                                            self.logger.debug(f"Error in event recording callback (OFF): {e}")
-                                        except Exception:
-                                            pass
-                                        if events not in self.finished_events:
-                                            self.finished_events[events] = []
-                                        self.finished_events[events].append(event)
-                                        finished_idxs.add(i)
-                                    break
-                            else:  # no break. Если событие новое, добавляем его в долгосрочные
-                                event.set_id(self.id_counter)
-                                self.id_counter += 1
-                                self.long_term_events[events].append(event)
-
-                                # Notify event recording: event ON (BEFORE saving to DB, so video path can be stored in event)
-                                try:
-                                    if self.event_recording_callback and not event.is_finished():
-                                        # Skip events without source_id (e.g., SystemEvent)
-                                        source_id = getattr(event, 'source_id', None)
-                                        if source_id is None:
-                                            pass  # Continue to save event even if no source_id
-                                        else:
-                                            bbox = getattr(event, 'box_found', None) or getattr(event, 'box_entered', None)
-                                            self.event_recording_callback(
-                                                event.event_id,
-                                                event.get_name(),
-                                                event.timestamp,
-                                                source_id,
-                                                True,  # is_on = True (event started)
-                                                bbox
-                                            )
-                                except Exception as e:
-                                    try:
-                                        self.logger.debug(f"Error in event recording callback (ON): {e}")
-                                    except Exception:
-                                        pass
-
-                                # Persist after recording callback so any video path is available.
-                                self._adapter_call(event, "insert")
-                                # UI: ON для нового долгосрочного события в уже активной группе
-                                try:
-                                    if self.ui_callback and not event.is_finished():
-                                        self.ui_callback(event.source_id,
-                                                         getattr(event, 'object_id', -1),
-                                                         getattr(event, 'matched_event_name', ''),
-                                                         True)
-                                except Exception:
-                                    pass
-                    else:  # Если нет активных долгосрочных событий, анализируем новые
-                        for event in new_events[events]:
-                            event.set_id(self.id_counter)
-                            self.id_counter += 1
-                            if event.is_long_term():  # Если событие долгосрочное и не завершено, делаем его активным
-                                if events not in self.long_term_events:
-                                    self.long_term_events[events] = []
-                                if event.is_finished():  # Если новое долгосрочное событие уже пришло завершенным (на случай поиска в истории)
-                                    if events not in self.finished_events:
-                                        self.finished_events[events] = []
-                                    self.finished_events[events].append(event)
-                                    self._adapter_call(event, "insert")
-                                    # Для long_term события, пришедшего уже завершённым, не шлём ON, только OFF
-                                    try:
-                                        if self.ui_callback:
-                                            self.ui_callback(event.source_id, getattr(event, 'object_id', -1),
-                                                             getattr(event, 'matched_event_name', ''), False)
-                                    except Exception:
-                                        pass
-                                else:
-                                    self.long_term_events[events].append(event)
-                                    # Notify UI: event ON
-                                    try:
-                                        if self.ui_callback:
-                                            self.ui_callback(event.source_id,
-                                                             getattr(event, 'object_id', -1),
-                                                             getattr(event, 'matched_event_name', ''),
-                                                             True,
-                                                             getattr(event, 'box_found', None))
-                                    except Exception:
-                                        pass
-                                    # Notify event recording: event ON
-                                    try:
-                                        if self.event_recording_callback:
-                                            # Skip events without source_id (e.g., SystemEvent)
-                                            source_id = getattr(event, 'source_id', None)
-                                            if source_id is not None:
-                                                bbox = getattr(event, 'box_found', None) or getattr(event, 'box_entered', None)
-                                                self.event_recording_callback(
-                                                    event.event_id,
-                                                    event.get_name(),
-                                                    event.timestamp,
-                                                    source_id,
-                                                    True,  # is_on = True (event started)
-                                                    bbox
-                                                )
-                                    except Exception as e:
-                                        try:
-                                            self.logger.debug(f"Error in event recording callback (ON): {e}")
-                                        except Exception:
-                                            pass
-                                    self._adapter_call(event, "insert")
-                            else:  # Иначе отправляем в завершенные (краткосрочные события)
-                                if events not in self.finished_events:
-                                    self.finished_events[events] = []
-                                self.finished_events[events].append(event)
-                                self._adapter_call(event, "insert")
-                                # Notify UI for non-long events: ON then OFF
-                                try:
-                                    if self.ui_callback and not event.is_long_term():
-                                        self.ui_callback(event.source_id,
-                                                         getattr(event, 'object_id', -1),
-                                                         getattr(event, 'matched_event_name', ''),
-                                                         True,
-                                                         getattr(event, 'box_found', None))
-                                        self.ui_callback(event.source_id,
-                                                         getattr(event, 'object_id', -1),
-                                                         getattr(event, 'matched_event_name', ''),
-                                                         False,
-                                                         None)
-                                except Exception:
-                                    pass
-                                # Notify event recording for non-long events: ON then OFF
-                                try:
-                                    if self.event_recording_callback and not event.is_long_term():
-                                        # Skip events without source_id (e.g., SystemEvent)
-                                        source_id = getattr(event, 'source_id', None)
-                                        if source_id is not None:
-                                            bbox = getattr(event, 'box_found', None) or getattr(event, 'box_entered', None)
-                                            # ON
-                                            self.event_recording_callback(
-                                                event.event_id,
-                                                event.get_name(),
-                                                event.timestamp,
-                                                source_id,
-                                                True,  # is_on = True (event started)
-                                                bbox
-                                            )
-                                            # OFF (immediately after for short-term events)
-                                            self.event_recording_callback(
-                                                event.event_id,
-                                                event.get_name(),
-                                                event.timestamp,
-                                                source_id,
-                                                False,  # is_on = False (event ended)
-                                                None
-                                            )
-                                except Exception as e:
-                                    try:
-                                        self.logger.debug(f"Error in event recording callback (short-term): {e}")
-                                    except Exception:
-                                        pass
-                    # Удаляем завершенные долгосрочные события
-                    if events in self.long_term_events:
-                        filtered_long_term[events] = [self.long_term_events[events][i] for i in
-                                                      range(len(self.long_term_events[events])) if i not in finished_idxs]
-                        self.long_term_events[events] = filtered_long_term[events]
-
-                for events in self.finished_events:
-                    start_index_for_remove = None
-                    for i in reversed(range(len(self.finished_events[events]))):
-                        if (datetime.datetime.now() - self.finished_events[events][
-                            i].get_time_finished()).total_seconds() > self.lost_store_time_secs:
-                            start_index_for_remove = i
-                            break
-                    if start_index_for_remove is not None:
-                        if start_index_for_remove == 0:
-                            self.finished_events[events] = []
-                        else:
-                            self.finished_events[events] = self.finished_events[events][start_index_for_remove:]
-                    # print(self.finished_events[events])
-            except Exception as exc:
-                self._mark_degraded(f"failed to process event batch: {exc}")
-                self.logger.error("Event batch processing traceback", exc_info=True)
+            for name, batch in new_events.items():
+                for event in batch:
+                    try:
+                        self._process_event(name, event)
+                        self.events_processed += 1
+                    except Exception as exc:
+                        self._mark_degraded(f"failed to process event: {exc}")
+                        self.logger.exception("Event processing failed")
+            now = datetime.datetime.now()
+            for name, events in self.finished_events.items():
+                self.finished_events[name] = [event for event in events if
+                    (now - event.get_time_finished()).total_seconds() <= self.lost_store_time_secs]

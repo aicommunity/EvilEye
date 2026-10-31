@@ -39,7 +39,9 @@ async def _runtime_stats(request: Request) -> dict:
     stats = response.get("stats")
     if not isinstance(stats, dict):
         raise HTTPException(status_code=503, detail="Runtime diagnostics returned an invalid payload")
-    return stats
+    from evileye.core.runtime_identity import process_identity, redact
+    stats["api_identity"] = process_identity(getattr(request.app.state, "config", None))
+    return redact(stats)
 
 
 @router.get("/metrics")

@@ -1,5 +1,7 @@
 import time
-from threading import Event
+from threading import Event, RLock
+from types import SimpleNamespace
+from datetime import datetime
 from .events_detector import EventsDetector
 from evileye.core.event_time import obj_found_datetime, obj_lost_datetime
 from .zone import Zone, ZoneForm
@@ -19,6 +21,13 @@ class ZoneEventsDetector(EventsDetector):
         self.zone_id_people = {}
         self.left_frame_id = {}  # Для отслеживания в истории айди кадров, на которых объект вышел из зоны
         self.entered_frame_id = {}  # Для отслеживания в истории айди кадров, на которых объект зашел в зону
+        self._states = {}
+        self._pending_events = []
+        self._state_lock = RLock()
+        self.last_success_at = None
+        self.updates_processed = 0
+        self.events_created = 0
+        self.last_error = None
         self.zones = None
         self.new_zones = Queue()
         self.deleted_zones = Queue()
@@ -44,219 +53,135 @@ class ZoneEventsDetector(EventsDetector):
 
     def process(self):
         while self.run_flag:
-            time.sleep(0.01)
-            self.event.wait()
+            self.event.wait(timeout=5.0)
+            self.event.clear()
             if not self.run_flag:
                 break
-            events = self._process_once()
-            if events:
-                self.queue_out.put(events)
-            self.event.clear()
+            try:
+                events = self._process_once()
+                if events:
+                    self.queue_out.put(events)
+            except Exception as exc:
+                self.last_error = f"{type(exc).__name__}: {exc}"
+                self.logger.exception("Zone processing failed")
+
+    def get_runtime_stats(self):
+        return dict(worker_running=self.processing_thread.is_alive(),
+                    last_success_at=self.last_success_at,
+                    updates_processed=self.updates_processed,
+                    events_created=self.events_created,
+                    degraded=self.last_error is not None, last_error=self.last_error)
 
     def _process_once(self, source_ids=None):
-        """Process the current active/lost snapshots without owning a thread."""
-        sources = self.sources if source_ids is None else self.sources.intersection(
-            {int(source_id) for source_id in source_ids}
-        )
-        events = []
-        objects = []
-        lost_objects = []
-        for source_id in sources:
-            objects.append((source_id, self.obj_handler.get('active', source_id)))
-            lost_objects.append((source_id, self.obj_handler.get('lost', source_id)))
+        with self._state_lock:
+            self._update_zones()
+            events = self.drain_pending_events()
+            sources = self.sources if source_ids is None else self.sources.intersection(map(int, source_ids))
+            for source_id in list(sources):
+                present = set()
+                for kind in ('active', 'lost'):
+                    for obj in list(self.obj_handler.get(kind, source_id).objects):
+                        width, height = self._resolve_frame_size([obj])
+                        for zone in list(self.sources_zones[source_id]):
+                            key = (source_id, obj.object_id, zone.get_zone_id())
+                            present.add(key)
+                            state = self._states.setdefault(key, dict(
+                                cursor=None, entered=None, left=None, active=False,
+                                lost=False, obj=None, zone=zone))
+                            if state['lost']:
+                                continue
+                            history = list(getattr(obj, 'history', None) or [])
+                            if getattr(obj, 'track', None) is not None:
+                                history.append(obj)
+                            observations = {}
+                            for hist in history:
+                                stamp = getattr(hist, 'time_stamp', None)
+                                box = getattr(getattr(hist, 'track', None), 'bounding_box', None)
+                                if stamp is not None and box is not None:
+                                    observations[(stamp, int(getattr(hist, 'frame_id', None) or 0))] = hist
+                            for cursor, hist in sorted(observations.items()):
+                                if state['cursor'] is not None and cursor <= state['cursor']:
+                                    continue
+                                state['cursor'] = cursor
+                                stamp = cursor[0]
+                                box = hist.track.bounding_box
+                                inside = self._is_obj_in_zone(((box[0]+box[2])/2, box[3]), zone, width, height)
+                                if state['active'] and state['left'] is not None and (
+                                    stamp - state['left'].time_stamp
+                                ).total_seconds() > self.zone_left_threshold:
+                                    events.append(self._finish(state, obj, state['left'].time_stamp))
+                                if inside:
+                                    state['left'] = None
+                                    if state['entered'] is None:
+                                        state['entered'] = self._observation(hist, obj)
+                                    if not state['active'] and (
+                                        stamp - state['entered'].time_stamp
+                                    ).total_seconds() >= self.event_threshold:
+                                        event_obj = self._observation(state['entered'], obj)
+                                        event = ZoneEvent(state['entered'].time_stamp, 'Alarm', event_obj, zone)
+                                        # Do not retain full live frames while an event is open.
+                                        event_obj.last_image = None
+                                        state['entered'].last_image = None
+                                        state['obj'] = event_obj
+                                        state['active'] = True
+                                        self.obj_ids_zone.setdefault((source_id, obj.object_id), {})[zone.get_zone_id()] = zone
+                                        self.zone_id_people[zone.get_zone_id()] += 1
+                                        events.append(event)
+                                elif state['active']:
+                                    if state['left'] is None:
+                                        state['left'] = self._observation(hist, obj)
+                                        state['left'].last_image = None
+                                    if (stamp-state['left'].time_stamp).total_seconds() > self.zone_left_threshold:
+                                        events.append(self._finish(state, obj, state['left'].time_stamp))
+                                else:
+                                    state['entered'] = None
+                            if kind == 'lost':
+                                if state['active']:
+                                    events.append(self._finish(state, obj, obj_lost_datetime(obj)))
+                                state.update(lost=True, entered=None, left=None, obj=None)
+                for key in list(self._states):
+                    if key[0] == source_id and key not in present and not self._states[key]['active']:
+                        del self._states[key]
+            self.last_success_at = time.time()
+            self.updates_processed += 1
+            self.events_created += len(events)
+            return events
 
-        self._update_zones()
+    @staticmethod
+    def _observation(hist, obj):
+        return SimpleNamespace(
+            source_id=obj.source_id, object_id=obj.object_id,
+            frame_id=getattr(hist, 'frame_id', None), time_stamp=hist.time_stamp,
+            track=SimpleNamespace(bounding_box=list(hist.track.bounding_box)),
+            last_image=getattr(obj, 'last_image', None), history=[],
+            _zone_event_sticky_image=getattr(obj, '_zone_event_sticky_image', None))
 
-        for source_id, source_objects in objects:  # Проходим по объектам от каждого источника в отдельности
-            if source_id not in self.sources or not source_objects.objects:
-                continue
+    def _finish(self, state, obj, stamp):
+        event_obj = self._observation(state['left'] or state['entered'], obj)
+        event_obj._zone_event_sticky_image = getattr(state['obj'], '_zone_event_sticky_image', None)
+        event = ZoneEvent(stamp, 'Alarm', event_obj, state['zone'], is_finished=True)
+        zone_id = state['zone'].get_zone_id()
+        self.zone_id_people[zone_id] = max(0, self.zone_id_people.get(zone_id, 0)-1)
+        key = (obj.source_id, obj.object_id)
+        zones = self.obj_ids_zone.get(key, {})
+        zones.pop(zone_id, None)
+        if not zones:
+            self.obj_ids_zone.pop(key, None)
+        state.update(active=False, entered=None, left=None, obj=None)
+        return event
 
-            zones = self.sources_zones[source_id]
-            img_width, img_height = self._resolve_frame_size(source_objects.objects)
-            if not img_height or not img_width:
-                continue
-            for cur_zone in zones:
-                for obj in source_objects.objects:
-                    obj_key = (source_id, obj.object_id)
-                    # Если объект ранее не появлялся в зоне
-                    if (obj_key not in self.obj_ids_zone or
-                            cur_zone.get_zone_id() not in self.obj_ids_zone[obj_key]):
-                        # Находим в истории объекта момент попадания в зону
-                        zone_id = cur_zone.get_zone_id()
-                        idx = self._check_event_in_history(obj, cur_zone, img_width, img_height)
-                        if idx == -1:
-                            continue
-                        hist_obj = obj.history[idx]
-                        # Если айди кадра нового попадания в зону меньше айди выхода из этой зоны в первый раз, пропускаем
-                        if (hist_obj.object_id in self.left_frame_id[source_id] and
-                                zone_id in self.left_frame_id[source_id][hist_obj.object_id] and
-                                hist_obj.frame_id <= self.left_frame_id[source_id][hist_obj.object_id][zone_id]):
-                            continue
-                        # Проверяем, находится ли объект в зоне дольше указанного времени
-                        if not self._is_threshold_passed(idx, obj, cur_zone, img_width, img_height):
-                            continue
-                        if obj.object_id not in self.entered_frame_id[source_id]:
-                            self.entered_frame_id[source_id][obj.object_id] = {}
-                        self.entered_frame_id[source_id][obj.object_id][zone_id] = hist_obj.frame_id
-                        self.obj_ids_zone.setdefault(obj_key, {})[zone_id] = cur_zone
-                        # Передаём текущий объект (с актуальным изображением),
-                        # а метку времени берём из истории попадания в зону
-                        event = ZoneEvent(obj_found_datetime(hist_obj), 'Alarm', obj, cur_zone)
-                        self.zone_id_people[zone_id] += 1
-                        # print(f'New event: {obj.last_image.frame_id}, Event: {event}')
-                        events.append(event)
-                    else:
-                        # Иначе проверяем, остался ли объект в зоне, завершаем события
-                        zone = self.obj_ids_zone[obj_key][cur_zone.get_zone_id()]
-                        zone_id = zone.get_zone_id()
-                        # Находим в истории момент выхода из зоны
-                        idx = self._check_finished_event_in_history(obj, zone, img_width, img_height)
-                        if idx == -1:
-                            continue
-                        hist_obj = obj.history[idx]
-                        is_returned, return_idx = self._get_zone_return_idx(idx, obj, zone, img_width, img_height)
-                        if is_returned:
-                            # Если объект вернулся, то изменяем кадр его попадания в зону на более поздний
-                            # для облегчения поиска дальнейшего выхода из зоны
-                            if return_idx != -1:
-                                self.entered_frame_id[source_id][obj.object_id][zone_id] = obj.history[
-                                    return_idx].frame_id
-                            continue
-                        # Передаём текущий объект (с актуальным изображением),
-                        # а метку времени выхода берём из истории
-                        event = ZoneEvent(
-                            obj_found_datetime(hist_obj),
-                            'Alarm',
-                            obj,
-                            zone,
-                            is_finished=True,
-                            hist_obj=hist_obj,
-                        )
-                        if obj.object_id not in self.left_frame_id[source_id]:
-                            self.left_frame_id[source_id][obj.object_id] = {}
-                        self.left_frame_id[source_id][obj.object_id][zone_id] = hist_obj.frame_id
-                        self.zone_id_people[zone_id] -= 1
-                        del self.entered_frame_id[source_id][obj.object_id][zone_id]
-                        del self.obj_ids_zone[obj_key][zone_id]
-                        if not self.obj_ids_zone[obj_key]:
-                            del self.obj_ids_zone[obj_key]
-                        # print(f'Finished event: {obj.last_image.frame_id}, Event: {event}')
-                        events.append(event)
+    def drain_pending_events(self):
+        with self._state_lock:
+            events, self._pending_events = self._pending_events, []
+            return events
 
-        for source_id, source_objects in lost_objects:  # Определяем завершившиеся события среди потерянных объектов
-            if source_id not in self.sources or not source_objects.objects:
-                continue
-            for obj in source_objects.objects:
-                obj_key = (source_id, obj.object_id)
-                if obj_key in self.obj_ids_zone:  # Если объект был в запрещенной зоне
-                    timestamp = obj_lost_datetime(obj)
-                    for zone_id in self.obj_ids_zone[obj_key]:
-                        zone = self.obj_ids_zone[obj_key][zone_id]
-                        event = ZoneEvent(timestamp, 'Alarm', obj, zone, is_finished=True)
-                        self.zone_id_people[zone.get_zone_id()] -= 1
-                        # print(f'Finished event: {obj.last_image.frame_id}, Event: {event}')
-                        events.append(event)
-                    del self.obj_ids_zone[obj_key]
-                # После того как объект был потерян
-                if obj.object_id in self.left_frame_id[source_id]:
-                    del self.left_frame_id[source_id][obj.object_id]
-                if obj.object_id in self.entered_frame_id[source_id]:
-                    del self.entered_frame_id[source_id][obj.object_id]
-        return events
-
-    def _check_event_in_history(self, obj, zone, img_width, img_height) -> int:
-        history = obj.history
-        end = len(history) - 1
-        beg = 0
-        idx = None
-        while beg <= end:
-            mid = (beg + end) // 2
-            history_obj = history[mid]
-            # print(history_obj.track.bounding_box)
-            box = history_obj.track.bounding_box  # Определяем присутствие в зоне по средней точке нижней границы рамки
-            box_bottom_mid = ((box[0] + box[2]) / 2, box[3])
-            if self._is_obj_in_zone(box_bottom_mid, zone, img_width, img_height):
-                idx = mid
-                end = mid - 1
-            else:
-                beg = mid + 1
-        if idx is None:
-            return -1
-        else:
-            return idx
-
-    def _is_threshold_passed(self, beg_idx, obj, zone, img_width, img_height) -> int:
-        history = obj.history
-        beg_obj = history[beg_idx]
-        end = len(history) - 1
-        beg = beg_idx
-        while beg <= end:
-            mid = (beg + end) // 2
-            history_obj = history[mid]
-            # print(history_obj.track.bounding_box)
-            box = history_obj.track.bounding_box  # Определяем присутствие в зоне по средней точке нижней границы рамки
-            box_bottom_mid = ((box[0] + box[2]) / 2, box[3])
-            if (history_obj.time_stamp - beg_obj.time_stamp).total_seconds() >= self.event_threshold:
-                if self._is_obj_in_zone(box_bottom_mid, zone, img_width, img_height):
-                    return True
-                else:
-                    end = mid - 1
-            else:
-                beg = mid + 1
-        return False
-
-    def _check_finished_event_in_history(self, obj, zone, img_width, img_height) -> int:
-        history = obj.history
-        end = len(history) - 1
-        beg = 0
-        idx = None
-        while beg <= end:
-            mid = (beg + end) // 2
-            history_obj = history[mid]
-            box = history_obj.track.bounding_box  # Определяем присутствие в зоне по средней точке нижней границы рамки
-            box_bottom_mid = ((box[0] + box[2]) / 2, box[3])
-            if history_obj.frame_id > self.entered_frame_id[obj.source_id][obj.object_id][zone.get_zone_id()]:
-                if not self._is_obj_in_zone(box_bottom_mid, zone, img_width, img_height):
-                    idx = mid
-                    end = mid - 1
-                else:
-                    beg = mid + 1
-            else:
-                beg = mid + 1
-        if idx is None:
-            return -1
-        else:
-            return idx
-
-    def _get_zone_return_idx(self, beg_idx, obj, zone, img_width, img_height) -> tuple[bool, int]:
-        history = obj.history
-        beg_obj = history[beg_idx]
-        end = len(history) - 1
-        beg = beg_idx
-        idx = None
-        is_returned = True
-        while beg <= end:
-            mid = (beg + end) // 2
-            history_obj = history[mid]
-            box = history_obj.track.bounding_box  # Определяем присутствие в зоне по средней точке нижней границы рамки
-            box_bottom_mid = ((box[0] + box[2]) / 2, box[3])
-            if (history_obj.time_stamp - beg_obj.time_stamp).total_seconds() <= self.zone_left_threshold:
-                if self._is_obj_in_zone(box_bottom_mid, zone, img_width, img_height):
-                    idx = mid
-                    end = mid - 1
-                else:
-                    beg = mid + 1
-            else:
-                end = mid - 1
-        if idx is None:
-            last_hist_obj = history[-1]
-            # Если не нашли индекс возвращения в зону, но порог потери еще не превышен
-            if (last_hist_obj.time_stamp - beg_obj.time_stamp).total_seconds() <= self.zone_left_threshold:
-                return is_returned, -1
-            else:
-                is_returned = False
-                return is_returned, -1
-        return is_returned, idx
+    def _remove_zone(self, zone):
+        for key, state in list(self._states.items()):
+            if key[0] == zone.get_src_id() and key[2] == zone.get_zone_id():
+                if state['active']:
+                    self._pending_events.append(self._finish(state, state['obj'], datetime.now()))
+                del self._states[key]
+        self.zone_id_people.pop(zone.get_zone_id(), None)
 
     def _is_obj_in_zone(self, box_bottom_mid, zone, img_width, img_height):
         zone_coords_norm = zone.get_coords()
@@ -325,35 +250,20 @@ class ZoneEventsDetector(EventsDetector):
             return None
 
     def replace_zones_for_source(self, source_id: int, zone_coords_list) -> None:
-        src_id = int(source_id)
-        normalized = self._normalize_zone_coords_list(zone_coords_list)
-
-        for obj_id in list(self.obj_ids_zone.keys()):
-            zone_map = self.obj_ids_zone.get(obj_id) or {}
-            stale_zone_ids = [
-                zone_id
-                for zone_id, zone in zone_map.items()
-                if zone.get_src_id() == src_id
-            ]
-            for zone_id in stale_zone_ids:
-                del zone_map[zone_id]
-            if not zone_map:
-                del self.obj_ids_zone[obj_id]
-
-        self.left_frame_id[src_id] = {}
-        self.entered_frame_id[src_id] = {}
-        self.sources_zones[src_id] = []
-        self.sources.add(src_id)
-        self.sources_list[str(src_id)] = normalized
-
-        for coords in normalized:
-            zone = Zone(src_id, coords, 'poly', is_active=True)
-            zone.set_id(self.zone_counter)
-            self.zone_id_people[self.zone_counter] = 0
-            self.zone_counter += 1
-            self.sources_zones[src_id].append(zone)
-
-        if not self.event.is_set():
+        with self._state_lock:
+            self._update_zones()
+            src_id = int(source_id)
+            normalized = self._normalize_zone_coords_list(zone_coords_list)
+            for zone in self.sources_zones.get(src_id, []):
+                self._remove_zone(zone)
+            self.left_frame_id[src_id] = {}
+            self.entered_frame_id[src_id] = {}
+            self.sources_zones[src_id] = []
+            self.sources.add(src_id)
+            self.sources_list[str(src_id)] = normalized
+            for coords in normalized:
+                self.add_zone(src_id, coords, 'poly')
+            self._update_zones()
             self.event.set()
 
     def apply_thresholds(
@@ -384,9 +294,12 @@ class ZoneEventsDetector(EventsDetector):
         while not self.deleted_zones.empty():
             zone = self.deleted_zones.get()
             src_id = zone.get_src_id()
-            idx = self.sources_zones[src_id].index(zone)
-            self.zone_id_people[self.sources_zones[src_id][idx].get_zone_id()] = 0
-            del self.sources_zones[src_id][idx]
+            zones = self.sources_zones.get(src_id, [])
+            for existing in list(zones):
+                if existing == zone:
+                    self._remove_zone(existing)
+                    zones.remove(existing)
+                    break
 
     def update(self):
         if not self.event.is_set():

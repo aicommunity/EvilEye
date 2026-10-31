@@ -27,6 +27,7 @@ class EventsDetectorsController(EvilEyeBase):
         self._controller_last_error = None
         self._detector_failures: dict[str, str] = {}
         self._runtime_lock = RLock()
+        self.last_success_at = None
 
     def set_params_impl(self):
         pass
@@ -66,6 +67,7 @@ class EventsDetectorsController(EvilEyeBase):
         while self.run_flag:
             try:
                 self._collect_once()
+                self.last_success_at = time.time()
             except Exception as exc:
                 self._record_failure("event collection", exc)
             time.sleep(0.01)
@@ -204,12 +206,23 @@ class EventsDetectorsController(EvilEyeBase):
 
     def get_runtime_stats(self) -> dict:
         self._refresh_runtime_status()
+        detectors = {}
+        for detector in self.detectors:
+            getter = getattr(detector, 'get_runtime_stats', None)
+            if callable(getter):
+                try:
+                    detectors[detector.get_name()] = getter()
+                except Exception as exc:
+                    detectors[type(detector).__name__] = {'degraded': True, 'last_error': str(exc)}
         try:
             queue_size = self.queue_out.qsize()
         except Exception:
             queue_size = None
         with self._runtime_lock:
             return {
+                "worker_alive": self.control_thread.is_alive(),
+                "last_success_at": self.last_success_at,
+                "detectors": detectors,
                 "queue_size": queue_size,
                 "queue_maxsize": self.queue_out_maxsize,
                 "queue_drops": self._queue_drops,
