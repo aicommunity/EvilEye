@@ -135,7 +135,7 @@ def main():
         assert rows and rows[-1][0] and rows[-1][1], 'PostgreSQL entry/exit is incomplete'
         files = list(args.work_dir.glob('Events/*/Metadata/zone_events_*.json'))
         assert len(files) >= 2, 'JSON entry/exit files missing'
-        assert list(args.work_dir.rglob('*.jpg')), 'event previews missing'
+        assert list(args.work_dir.rglob('*.jpeg')), 'event previews missing'
         # Exercise the same journal service used by the HTTP API, using the isolated DB.
         journal_service._db_controller_cache = database
         journal_service._db_controller_failed = False
