@@ -118,6 +118,7 @@ class ZoneEventsDetector(EventsDetector):
                                         stamp - state['entered'].time_stamp
                                     ).total_seconds() >= self.event_threshold:
                                         event_obj = self._observation(state['entered'], obj)
+                                        event_obj.last_image = getattr(obj, 'last_image', None)
                                         event = ZoneEvent(state['entered'].time_stamp, 'Alarm', event_obj, zone)
                                         # Do not retain full live frames while an event is open.
                                         event_obj.last_image = None
@@ -153,11 +154,12 @@ class ZoneEventsDetector(EventsDetector):
             source_id=obj.source_id, object_id=obj.object_id,
             frame_id=getattr(hist, 'frame_id', None), time_stamp=hist.time_stamp,
             track=SimpleNamespace(bounding_box=list(hist.track.bounding_box)),
-            last_image=getattr(obj, 'last_image', None), history=[],
+            last_image=None, history=[],
             _zone_event_sticky_image=getattr(obj, '_zone_event_sticky_image', None))
 
     def _finish(self, state, obj, stamp):
         event_obj = self._observation(state['left'] or state['entered'], obj)
+        event_obj.last_image = getattr(obj, 'last_image', None)
         event_obj._zone_event_sticky_image = getattr(state['obj'], '_zone_event_sticky_image', None)
         event = ZoneEvent(stamp, 'Alarm', event_obj, state['zone'], is_finished=True)
         zone_id = state['zone'].get_zone_id()
