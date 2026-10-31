@@ -28,7 +28,8 @@ def main():
     config_hash = hashlib.sha256(config_path.read_bytes()).hexdigest()
     while True:
         now = time.time()
-        row = dict(observed_at=now, elapsed_sec=round(now-started), phase='observing')
+        row = dict(observed_at=now, observation_started_at=started,
+                   elapsed_sec=round(now-started), phase='observing')
         if now-started >= 3600 and not hourly_written:
             row['phase'] = 'one_hour'
             hourly_written = True
