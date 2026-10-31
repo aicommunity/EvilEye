@@ -421,7 +421,7 @@ def test_process_event_detector_startup_contract_failure_is_explicit():
     detector.stop()
 
 
-def test_host_update_notification_overflow_is_reported():
+def test_redundant_host_update_notifications_are_coalesced():
     detector = EventDetectorModuleAdapter(_register_module(), EventDetectorContext())
     detector.set_params(execution_mode="process", queue_size=1)
     assert detector.init() is True
@@ -430,9 +430,9 @@ def test_host_update_notification_overflow_is_reported():
     detector.update()
 
     stats = detector.get_runtime_stats()
-    assert stats["degraded"] is True
-    assert stats["update_notifications_dropped"] == 1
-    assert "notification was rejected" in stats["last_error"]
+    assert stats["degraded"] is False
+    assert stats["update_notifications_dropped"] == 0
+    assert stats["update_notifications_coalesced"] == 1
     detector.stop()
 
 
