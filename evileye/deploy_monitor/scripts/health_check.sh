@@ -160,7 +160,7 @@ if pipeline_child_healthy && [[ -n "$CHILD_PID" ]] && (( LOG_AGE <= LOG_STALE_SE
 fi
 
 # A live process/log is insufficient when event workers have stopped.
-if [[ -n "$CHILD_PID" ]] && ! restart_grace_active; then
+if [[ -n "$CHILD_PID" ]]; then
     EVENT_HEALTH_REASON=""
     if ! EVENT_HEALTH_REASON="$(python3 -m evileye.deploy_monitor.event_health "$DEPLOY_DIR" "$CHILD_PID")"; then
         INCIDENT=true

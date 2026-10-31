@@ -3,7 +3,7 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 source "$SCRIPT_DIR/common.sh"
 CHILD_PID="$(find_child_pid)"
-if [[ -z "$CHILD_PID" ]] || restart_grace_active || manual_stop_active; then
+if [[ -z "$CHILD_PID" ]] || manual_stop_active; then
     exit 0
 fi
 # Serialize the lightweight poll with the regular health check.

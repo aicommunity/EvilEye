@@ -138,6 +138,7 @@ def main():
         assert list(args.work_dir.rglob('*.jpeg')), 'event previews missing'
         # Exercise the same journal service used by the HTTP API, using the isolated DB.
         journal_service._db_controller_cache = database
+        journal_service._runtime_params = lambda: cfg
         journal_service._db_controller_failed = False
         journal_service.configured_storage_mode = lambda: 'database'
         journal_service._use_json_journal = lambda: False
