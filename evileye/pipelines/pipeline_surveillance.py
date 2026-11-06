@@ -1,12 +1,20 @@
+import math
+import os
+from typing import Any, List, Dict
+
 from ..core.base_class import EvilEyeBase
 from ..core.processor_source import ProcessorSource
 from ..core.processor_frame import ProcessorFrame
-from ..core.processor_step import ProcessorStep
+from ..core.processor_step import DEFAULT_FANOUT_TIMEOUT_SEC, ProcessorStep
 from ..core.processor_base import ProcessorBase
 from ..core.pipeline_processors import PipelineProcessors
-from typing import Any, Tuple, List, Dict
+import evileye.capture  # Import to register builtin sources
 import evileye.preprocessing  # Import to register PreprocessingPipeline
 import evileye.attributes_detection  # Import to register RoiFeeder and AttributeClassifier
+from evileye.object_detector import register_builtin_modules as _register_builtin_object_detectors
+
+_register_builtin_object_detectors()
+import evileye.object_tracker  # Import to register the built-in trackers
 import evileye.object_multi_camera_tracker  # Import to register ObjectMultiCameraTracking
 
 
@@ -23,11 +31,49 @@ class PipelineSurveillance(PipelineProcessors):
         self.detectors = []
         self.results_selection_mode = "sticky_non_empty"
 
+    @staticmethod
+    def _normalize_detector_fanout_policy(value) -> str:
+        policy = "forward_partial" if value is None else str(value).strip().lower()
+        if policy not in {"forward_partial", "drop_frame"}:
+            raise ValueError(
+                "pipeline.detector_fanout_policy must be 'forward_partial' or 'drop_frame'"
+            )
+        return policy
+
     def init_impl(self, **kwargs):
         """Initialize surveillance pipeline with specific processor sequence"""
 
         # Get pipeline parameters
         pipeline_params = self._normalize_pipeline_params(self.params)
+        fanout_policy = self._normalize_detector_fanout_policy(
+            pipeline_params.get("detector_fanout_policy")
+        )
+        fanout_timeout_sec = pipeline_params.get("detector_fanout_timeout_sec")
+        timeout_setting = "pipeline.detector_fanout_timeout_sec"
+        if fanout_timeout_sec is None:
+            fanout_timeout_sec = os.getenv(
+                "EVILEYE_DETECTOR_FANOUT_TIMEOUT_SEC", str(DEFAULT_FANOUT_TIMEOUT_SEC)
+            )
+            timeout_setting = "EVILEYE_DETECTOR_FANOUT_TIMEOUT_SEC"
+        try:
+            fanout_timeout_sec = float(fanout_timeout_sec)
+        except (TypeError, ValueError) as exc:
+            raise ValueError(
+                f"{timeout_setting} must be a positive finite number"
+            ) from exc
+        if not math.isfinite(fanout_timeout_sec) or fanout_timeout_sec <= 0:
+            raise ValueError(
+                f"{timeout_setting} must be a positive finite number"
+            )
+        fanout_max_pending = pipeline_params.get("detector_fanout_max_pending")
+        if fanout_max_pending is not None and (
+            isinstance(fanout_max_pending, bool)
+            or not isinstance(fanout_max_pending, int)
+            or fanout_max_pending <= 0
+        ):
+            raise ValueError(
+                "pipeline.detector_fanout_max_pending must be a positive integer"
+            )
 
         # Initialize encoders first
         self._init_encoders(pipeline_params.get("trackers", []))
@@ -36,7 +82,12 @@ class PipelineSurveillance(PipelineProcessors):
         self._init_sources(pipeline_params.get("sources", []), self._credentials)
         self._init_preprocessors(pipeline_params.get("preprocessors", []))
         detectors_params = pipeline_params.get("detectors", [])
-        self._init_detectors(detectors_params)
+        self._init_detectors(
+            detectors_params,
+            fanout_policy=fanout_policy,
+            fanout_timeout_sec=fanout_timeout_sec,
+            fanout_max_pending=fanout_max_pending,
+        )
         self._init_trackers(pipeline_params.get("trackers", []))
         self._init_mc_trackers(pipeline_params.get("mc_trackers", []))
 
@@ -73,8 +124,30 @@ class PipelineSurveillance(PipelineProcessors):
         return True
 
     def _normalize_pipeline_params(self, params: Dict) -> Dict:
-        """Normalize ipc/execution modes for all processor sections."""
+        """Normalize extensions and IPC defaults without mutating input config."""
         normalized = dict(params or {})
+        normalized["modules"] = dict(normalized.get("modules") or {})
+        for section, extension in normalized["modules"].items():
+            if section not in {
+                "sources", "preprocessors", "detectors", "trackers", "mc_trackers",
+                "attributes_roi", "attributes_classifier",
+            }:
+                raise ValueError(f"Unsupported PipelineSurveillance module group: {section}")
+            if not isinstance(extension, dict):
+                raise ValueError(f"modules.{section} must be an object")
+            mode = str(extension.get("mode", "")).lower()
+            items = extension.get("items", [])
+            if mode not in {"replace", "extend"}:
+                raise ValueError(
+                    f"modules.{section}.mode must be 'replace' or 'extend'"
+                )
+            if not isinstance(items, list):
+                raise ValueError(f"modules.{section}.items must be a list")
+            current = normalized.get(section, []) or []
+            if not isinstance(current, list):
+                raise ValueError(f"pipeline.{section} must be a list")
+            normalized[section] = list(items) if mode == "replace" else [*current, *items]
+
         ipc_mode = str(normalized.get("ipc_mode", "standard") or "standard")
         normalized["ipc_mode"] = ipc_mode
         sections = (
@@ -110,9 +183,9 @@ class PipelineSurveillance(PipelineProcessors):
 
         num_sources = len(params)
         # Get class_name from config, default to VideoCaptureOpencv
-        class_name = params[0].get("type", "VideoCaptureOpencv") if params else "VideoCaptureOpencv"
-        class_names = [p.get("type", class_name) if isinstance(p, dict) else class_name for p in params]
-        if not any(param.get("type") for param in params):
+        class_name = ProcessorBase.configured_module_id(params[0], "VideoCaptureOpencv") if params else "VideoCaptureOpencv"
+        class_names = [ProcessorBase.configured_module_id(p, class_name) for p in params]
+        if not any(param.get("module_id") or param.get("type") for param in params):
             self.logger.warning(
                 f"Warning: 'type' parameter not found in sources configuration. Using default: {class_name}")
 
@@ -150,27 +223,35 @@ class PipelineSurveillance(PipelineProcessors):
 
         num_preps = len(params)
         # Get class_name from config, default to PreprocessingPipeline
-        class_name = params[0].get("type", "PreprocessingPipeline") if params else "PreprocessingPipeline"
-        if not any(param.get("type") for param in params):
+        class_name = ProcessorBase.configured_module_id(params[0], "PreprocessingPipeline") if params else "PreprocessingPipeline"
+        class_names = [ProcessorBase.configured_module_id(p, class_name) for p in params]
+        if not any(param.get("module_id") or param.get("type") for param in params):
             self.logger.warning(
                 f"Warning: 'type' parameter not found in preprocessors configuration. Using default: {class_name}")
 
         preprocessors_proc = ProcessorFrame(processor_name="preprocessors", class_name=class_name,
-                                            num_processors=num_preps, order=1)
+                                            num_processors=num_preps, order=1, class_names=class_names)
         preprocessors_proc.set_params(params)
         preprocessors_proc.init()
         self._add_processor(preprocessors_proc)
 
-    def _init_detectors(self, params: List[Dict]):
+    def _init_detectors(
+        self,
+        params: List[Dict],
+        *,
+        fanout_policy: str = "forward_partial",
+        fanout_timeout_sec: float | None = None,
+        fanout_max_pending: int | None = None,
+    ):
         """Initialize detector processors for surveillance"""
         if not params:
             return
 
         num_det = len(params)
         # Get class_name from config, default to ObjectDetectorYolo
-        class_name = params[0].get("type", "ObjectDetectorYolo") if params else "ObjectDetectorYolo"
-        class_names = [p.get("type", class_name) if isinstance(p, dict) else class_name for p in params]
-        if not any(param.get("type") for param in params):
+        class_name = ProcessorBase.configured_module_id(params[0], "ObjectDetectorYolo") if params else "ObjectDetectorYolo"
+        class_names = [ProcessorBase.configured_module_id(p, class_name) for p in params]
+        if not any(param.get("module_id") or param.get("type") for param in params):
             self.logger.warning(
                 f"Warning: 'type' parameter not found in detectors configuration. Using default: {class_name}")
 
@@ -181,15 +262,20 @@ class PipelineSurveillance(PipelineProcessors):
             order=2,
             class_names=class_names,
         )
+        detectors_proc.set_detector_fanout_policy(fanout_policy)
+        detectors_proc.set_detector_fanout_limits(
+            timeout_sec=fanout_timeout_sec,
+            max_pending=fanout_max_pending,
+        )
         detectors_proc.set_params(params)
         detectors_proc.init()
         self._add_processor(detectors_proc)
-        # Сохраняем прямые ссылки на инициализированные детекторы для внешнего доступа
-        try:
-            self.detectors = list(detectors_proc.processors)
-            self.logger.info(f"PipelineSurveillance: initialized {len(self.detectors)} detectors")
-        except Exception:
-            self.detectors = []
+        # Keep one authoritative detector list for controller and UI access.
+        self.detectors = list(detectors_proc.processors)
+        self.logger.info(
+            "PipelineSurveillance: initialized %s detectors",
+            len(self.detectors),
+        )
 
     def _init_trackers(self, params: List[Dict]):
         """Initialize tracker processors for surveillance"""
@@ -198,9 +284,9 @@ class PipelineSurveillance(PipelineProcessors):
 
         num_trackers = len(params)
         # Get class_name from config, default to ObjectTrackingBotsort
-        class_name = params[0].get("type", "ObjectTrackingBotsort") if params else "ObjectTrackingBotsort"
-        class_names = [p.get("type", class_name) if isinstance(p, dict) else class_name for p in params]
-        if not any(param.get("type") for param in params):
+        class_name = ProcessorBase.configured_module_id(params[0], "ObjectTrackingBotsort") if params else "ObjectTrackingBotsort"
+        class_names = [ProcessorBase.configured_module_id(p, class_name) for p in params]
+        if not any(param.get("module_id") or param.get("type") for param in params):
             self.logger.warning(
                 f"Warning: 'type' parameter not found in trackers configuration. Using default: {class_name}")
 
@@ -228,13 +314,14 @@ class PipelineSurveillance(PipelineProcessors):
 
         num_trackers = len(active_params)
         # Get class_name from config, default to ObjectMultiCameraTracking
-        class_name = active_params[0].get("type", "ObjectMultiCameraTracking")
-        if not any(param.get("type") for param in active_params):
+        class_name = ProcessorBase.configured_module_id(active_params[0], "ObjectMultiCameraTracking")
+        class_names = [ProcessorBase.configured_module_id(p, class_name) for p in active_params]
+        if not any(param.get("module_id") or param.get("type") for param in active_params):
             self.logger.warning(
                 f"Warning: 'type' parameter not found in mc_trackers configuration. Using default: {class_name}")
 
         mc_trackers_proc = ProcessorStep(processor_name="mc_trackers", class_name=class_name,
-                                         num_processors=num_trackers, order=4)
+                                         num_processors=num_trackers, order=4, class_names=class_names)
         mc_trackers_proc.set_params(active_params)
         mc_trackers_proc.init(encoders=self.encoders)
         self._add_processor(mc_trackers_proc)
@@ -245,12 +332,19 @@ class PipelineSurveillance(PipelineProcessors):
             return
         num = len(params)
         # Get class_name from config, default to RoiFeeder
-        class_name = params[0].get("type", "RoiFeeder") if params else "RoiFeeder"
-        if not any(param.get("type") for param in params):
+        class_name = ProcessorBase.configured_module_id(params[0], "RoiFeeder") if params else "RoiFeeder"
+        class_names = [ProcessorBase.configured_module_id(p, class_name) for p in params]
+        if not any(param.get("module_id") or param.get("type") for param in params):
             self.logger.warning(
                 f"Warning: 'type' parameter not found in attributes_roi configuration. Using default: {class_name}")
 
-        roi_proc = ProcessorStep(processor_name="attributes_roi", class_name=class_name, num_processors=num, order=4)
+        roi_proc = ProcessorStep(
+            processor_name="attributes_roi",
+            class_name=class_name,
+            num_processors=num,
+            order=4,
+            class_names=class_names,
+        )
         roi_proc.set_params(params)
         roi_proc.init()
         self._add_processor(roi_proc)
@@ -261,13 +355,14 @@ class PipelineSurveillance(PipelineProcessors):
             return
         num = len(params)
         # Get class_name from config, default to AttributeClassifier
-        class_name = params[0].get("type", "AttributeClassifier") if params else "AttributeClassifier"
-        if not any(param.get("type") for param in params):
+        class_name = ProcessorBase.configured_module_id(params[0], "AttributeClassifier") if params else "AttributeClassifier"
+        class_names = [ProcessorBase.configured_module_id(p, class_name) for p in params]
+        if not any(param.get("module_id") or param.get("type") for param in params):
             self.logger.warning(
                 f"Warning: 'type' parameter not found in attributes_classifier configuration. Using default: {class_name}")
 
         cls_proc = ProcessorStep(processor_name="attributes_classifier", class_name=class_name, num_processors=num,
-                                 order=5)
+                                 order=5, class_names=class_names)
         cls_proc.set_params(params)
         cls_proc.init()
         self._add_processor(cls_proc)
@@ -275,13 +370,21 @@ class PipelineSurveillance(PipelineProcessors):
     def _init_encoders(self, tracker_params_list: List[Dict]):
         """Initialize encoders for tracking in surveillance pipeline"""
         self.encoders = {}
-        if self._trackers_use_process_mode(tracker_params_list):
-            self.logger.info(
-                "Skipping parent-process OnnxEncoder init "
-                "(trackers use process mode; encoder loads in worker)"
-            )
-            return
+        from ..core.plugins import plugin_registry
+
         for tracker_params in tracker_params_list:
+            module_id = ProcessorBase.configured_module_id(
+                tracker_params, "ObjectTrackingBotsort"
+            )
+            registered = plugin_registry.get_module(module_id)
+            if (
+                self._tracker_execution_mode(tracker_params) == "process"
+                or (
+                    registered is not None
+                    and registered.spec.kind == "processor_item"
+                )
+            ):
+                continue
             path = tracker_params.get("tracker_onnx", "models/osnet_ain_x1_0_M.onnx")
             if path not in self.encoders:
                 # Lazy import to avoid circular imports during module load time
@@ -302,13 +405,30 @@ class PipelineSurveillance(PipelineProcessors):
                     )
 
     @staticmethod
+    def _tracker_execution_mode(tracker_params: Dict) -> str:
+        from ..core.plugins import plugin_registry
+
+        module_id = ProcessorBase.configured_module_id(
+            tracker_params, "ObjectTrackingBotsort"
+        )
+        registered = plugin_registry.get_module(module_id)
+        if registered is not None:
+            default_mode = registered.spec.default_execution_mode
+            if default_mode is None:
+                default_mode = tuple(registered.spec.execution_modes)[0]
+        else:
+            default_mode = "process"
+        return str(
+            tracker_params.get("execution_mode", default_mode)
+        ).strip().lower()
+
+    @staticmethod
     def _trackers_use_process_mode(tracker_params_list: List[Dict]) -> bool:
-        for tracker_params in tracker_params_list or []:
-            if not isinstance(tracker_params, dict):
-                continue
-            if str(tracker_params.get("execution_mode", "process")).lower() == "process":
-                return True
-        return False
+        return any(
+            PipelineSurveillance._tracker_execution_mode(params) == "process"
+            for params in tracker_params_list or []
+            if isinstance(params, dict)
+        )
 
     def generate_default_structure(self, num_sources: int):
         """Generate default structure for pipeline"""
@@ -445,29 +565,13 @@ class PipelineSurveillance(PipelineProcessors):
 
     # === ROI Editor integration helpers ===
     def get_detectors(self):
-        """Возвращает список инстансов детекторов, если они инициализированы."""
-        try:
-            if isinstance(self.detectors, list) and self.detectors:
-                return self.detectors
-            # Попробуем получить из внутренних процессоров
-            if self.processors:
-                for proc in self.processors:
-                    try:
-                        if getattr(proc, 'processor_name', '') == 'detectors' and hasattr(proc, 'processors'):
-                            return proc.processors
-                    except Exception:
-                        continue
-        except Exception:
-            pass
-        return []
+        """Return the detector instances created during pipeline initialization."""
+        return list(self.detectors)
 
     def get_detector_by_index(self, idx: int):
-        try:
-            dets = self.get_detectors()
-            if 0 <= idx < len(dets):
-                return dets[idx]
-        except Exception:
-            pass
+        detectors = self.get_detectors()
+        if 0 <= idx < len(detectors):
+            return detectors[idx]
         return None
 
     def estimate_mp_backlog_stats(self) -> dict[str, int]:

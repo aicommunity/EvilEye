@@ -184,12 +184,12 @@ def test_authorize_live_ws_4403(monkeypatch):
 
     monkeypatch.setattr(realtime_routes, "load_web_auth_config", lambda: _Auth())
     monkeypatch.setattr(
-        realtime_routes,
-        "current_user",
-        lambda _ws: {"role": "user", "permissions": []},
+        "evileye.api.security.resolve_session_principal",
+        lambda _raw: {"username": "user", "role": "user", "permissions": []},
     )
-    monkeypatch.setattr(realtime_routes, "permissions_for_role", lambda _r: set())
+    monkeypatch.setattr(realtime_routes, "permissions_for_role", lambda _role: set())
     ws = _FakeAuthWs()
+    ws.scope["session"] = {"user": {"username": "user", "role": "user"}}
 
     async def _run():
         ok = await realtime_routes._authorize_live_ws(ws)

@@ -1096,6 +1096,8 @@ Samples поставляются с `enabled: false`. Для production-like з�
 - **AttributeEventsDetector** - События изменения атрибутов объектов
 - **SystemEventsDetector** - Системные события
 
+Встроенные детекторы событий исполняются через общий process runtime. Для ZoneEventsDetector существующие поля `sources`, `event_threshold` и `zone_left_threshold` сохраняются; изменения зон из UI передаются в worker через runtime-команды, без отдельного формата конфигурации. Кадры доказательства передаются как ограниченные JPEG-вложения.
+
 Подробнее о детекторах событий см. [ARCHITECTURE.md](ARCHITECTURE.md#уровень-6-обработка-событий).
 
 ### Секция `database`

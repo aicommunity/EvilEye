@@ -92,6 +92,14 @@ class PipelineBase(EvilEyeBase):
         """Stop pipeline - override in subclasses"""
         pass
 
+    def has_pending_work(self) -> bool:
+        """Report asynchronous work that must drain before finite-source shutdown."""
+        return False
+
+    def get_pending_work_summary(self) -> list[str]:
+        """Return diagnostics for work reported by has_pending_work()."""
+        return []
+
     def process(self) -> Dict[str, Any]:
         """
         Process pipeline and return results.

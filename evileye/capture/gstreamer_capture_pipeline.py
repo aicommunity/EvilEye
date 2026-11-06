@@ -6,6 +6,7 @@ from .gstreamer_capture_common import (
     CaptureConstants,
     CaptureDeviceType,
     CaptureInitializationError,
+    Empty,
     GLib,
     Gst,
     List,
@@ -69,7 +70,17 @@ class GStreamerCapturePipelineMixin:
                     is_mp4
             )
 
-            if use_nvdec:
+            if getattr(self, "_force_decodebin", False):
+                # Last-resort path supports the file's actual codec instead of
+                # assuming every MP4 contains H.264.
+                pipeline = (
+                    f'filesrc location="{self.source_address}" '
+                    f"! decodebin name=dec ! videoconvert"
+                )
+                self.logger.info(
+                    f"Using decodebin fallback for {self.source_names}"
+                )
+            elif use_nvdec:
                 # Use NVDEC hardware decoder (RTX/GTX series)
                 # This is the fastest path for H.264/MP4 files on NVIDIA GPUs
                 pipeline = (
@@ -256,16 +267,22 @@ class GStreamerCapturePipelineMixin:
         else:
             common_tail += " ! queue max-size-buffers=10 max-size-bytes=0 max-size-time=0 ! video/x-raw,format=BGR ! appsink name=sink emit-signals=true wait-on-eos=false enable-last-sample=false sync=true max-buffers=3 drop=true"
 
-        # Candidate 1: H265 (if username/password provided, try H265 first)
+        h264_candidate = (
+            f"{base_rtsp} ! rtph264depay ! h264parse ! avdec_h264{common_tail}"
+        )
+        h265_candidate = (
+            f"{base_rtsp} ! rtph265depay ! h265parse ! avdec_h265{common_tail}"
+        )
+
+        # Starting PLAYING is asynchronous for RTSP, so the first candidate must
+        # match the common codec or the pipeline can reconnect forever before a
+        # later candidate gets a chance. Prefer H.264 when no camera credentials
+        # identify the H.265-oriented camera configuration; keep the established
+        # H.265-first order for authenticated cameras.
         if self.username and self.password:
-            candidates.append(f"{base_rtsp} ! rtph265depay ! h265parse ! avdec_h265{common_tail}")
-
-        # Candidate 2: H264 (always try H264)
-        candidates.append(f"{base_rtsp} ! rtph264depay ! h264parse ! avdec_h264{common_tail}")
-
-        # Candidate 3: H265 without auth (if no username/password, try H265)
-        if not self.username or not self.password:
-            candidates.insert(0, f"{base_rtsp} ! rtph265depay ! h265parse ! avdec_h265{common_tail}")
+            candidates.extend((h265_candidate, h264_candidate))
+        else:
+            candidates.extend((h264_candidate, h265_candidate))
 
         return candidates
 
@@ -276,11 +293,40 @@ class GStreamerCapturePipelineMixin:
         except Exception:
             return False
 
+    def _format_gst_diagnostic(self, error, debug=None) -> str:
+        """Keep RTSP failure details while removing any camera credentials."""
+        details = str(error)
+        if debug:
+            details = f"{details}; {debug}"
+        for secret in (getattr(self, "username", None), getattr(self, "password", None)):
+            if secret:
+                details = details.replace(str(secret), "****")
+        return self._mask_credentials_in_pipeline(details)
+
+    def _set_pipeline_playing(self, *, wait_for_async: bool) -> None:
+        """Start a pipeline without waiting indefinitely on a source.
+
+        Live RTSP state changes depend on network negotiation and are observed
+        asynchronously through the bus and first-frame health. Finite sources
+        may wait briefly for preroll, but initialization has a hard bound.
+        """
+        result = self.pipeline.set_state(Gst.State.PLAYING)
+        if result == Gst.StateChangeReturn.FAILURE:
+            raise RuntimeError("Failed to start GStreamer pipeline")
+        if result != Gst.StateChangeReturn.ASYNC or not wait_for_async:
+            return
+
+        result, _state, _pending = self.pipeline.get_state(10 * Gst.SECOND)
+        if result == Gst.StateChangeReturn.FAILURE:
+            raise RuntimeError("GStreamer pipeline failed during startup")
+        if result == Gst.StateChangeReturn.ASYNC:
+            raise TimeoutError("GStreamer pipeline startup exceeded 10 seconds")
+
     def _init_pipeline(self):
         """
         Initialize GStreamer pipeline.
         For IP cameras, tries multiple pipeline candidates (H265, H264) until one works.
-        Uses simple approach from api-refactoring with get_state(Gst.CLOCK_TIME_NONE).
+        Live RTSP transitions start asynchronously; finite sources use a bounded preroll wait.
         """
         pipeline_str = None
         try:
@@ -418,40 +464,13 @@ class GStreamerCapturePipelineMixin:
                             if not self.pipeline:
                                 continue
 
-                            # Set pipeline to playing state - simple approach from api-refactoring
-                            # Recording branch must be fully set up before this point
-                            ret = self.pipeline.set_state(Gst.State.PLAYING)
-                            if ret == Gst.StateChangeReturn.FAILURE:
-                                # Get error message from bus
-                                msg = self.bus.pop_filtered(Gst.MessageType.ERROR | Gst.MessageType.WARNING)
-                                if msg:
-                                    if msg.type == Gst.MessageType.ERROR:
-                                        err, debug = msg.parse_error()
-                                        self.logger.warning(
-                                            f"GStreamer pipeline ERROR (candidate {i}): {err}, debug: {debug}")
-                                    elif msg.type == Gst.MessageType.WARNING:
-                                        warn, debug = msg.parse_warning()
-                                        self.logger.warning(
-                                            f"GStreamer pipeline WARNING (candidate {i}): {warn}, debug: {debug}")
-                                last_error = f"Failed to start pipeline candidate {i}"
+                            # RTSP negotiation is asynchronous. Do not block before
+                            # the GLib bus loop is running.
+                            try:
+                                self._set_pipeline_playing(wait_for_async=False)
+                            except RuntimeError as e:
+                                last_error = f"Failed to start pipeline candidate {i}: {self._format_gst_diagnostic(e)}"
                                 continue
-                            elif ret == Gst.StateChangeReturn.ASYNC:
-                                # Wait for state change to complete - use CLOCK_TIME_NONE like api-refactoring
-                                ret = self.pipeline.get_state(Gst.CLOCK_TIME_NONE)
-                                if ret[0] == Gst.StateChangeReturn.FAILURE:
-                                    # Get error message from bus
-                                    msg = self.bus.pop_filtered(Gst.MessageType.ERROR | Gst.MessageType.WARNING)
-                                    if msg:
-                                        if msg.type == Gst.MessageType.ERROR:
-                                            err, debug = msg.parse_error()
-                                            self.logger.warning(
-                                                f"GStreamer pipeline ERROR (candidate {i} async): {err}, debug: {debug}")
-                                        elif msg.type == Gst.MessageType.WARNING:
-                                            warn, debug = msg.parse_warning()
-                                            self.logger.warning(
-                                                f"GStreamer pipeline WARNING (candidate {i} async): {warn}, debug: {debug}")
-                                    last_error = f"Failed to start pipeline candidate {i} (async)"
-                                    continue
 
                             # Success! This candidate works
                             pipeline_str = candidate_str
@@ -460,8 +479,9 @@ class GStreamerCapturePipelineMixin:
                             break
 
                         except Exception as e:
-                            self.logger.warning(f"Error with pipeline candidate {i}: {e}")
-                            last_error = str(e)
+                            details = self._format_gst_diagnostic(e)
+                            self.logger.warning(f"Error with pipeline candidate {i}: {details}")
+                            last_error = details
                             continue
 
                     if not pipeline_str:
@@ -548,7 +568,7 @@ class GStreamerCapturePipelineMixin:
                                 f"GStreamer pipeline (recording disabled): {self._mask_credentials_in_pipeline(pipeline_str)}")
                             self.pipeline = Gst.parse_launch(pipeline_str)
                             if not self.pipeline:
-                                raise RuntimeError("Failed to create GStreamer pipeline after disabling recording")
+                                raise RuntimeError("Failed to create GStreamer pipeline after disabling recording") from e
                             self.bus = self.pipeline.get_bus()
                             if self.bus is not None:
                                 try:
@@ -558,7 +578,7 @@ class GStreamerCapturePipelineMixin:
                                     pass
                             self.appsink = self.pipeline.get_by_name("sink")
                             if not self.appsink:
-                                raise RuntimeError("Failed to get appsink element after disabling recording")
+                                raise RuntimeError("Failed to get appsink element after disabling recording") from e
                             try:
                                 self._appsink_handler_id = self.appsink.connect("new-sample", self._on_new_sample)
                             except Exception:
@@ -568,16 +588,9 @@ class GStreamerCapturePipelineMixin:
                             # Don't continue - recording branch must be set up before pipeline goes to PLAYING
                             raise
 
-                    # Set pipeline to playing state - simple approach from api-refactoring
-                    # Recording branch must be fully set up before this point
-                    ret = self.pipeline.set_state(Gst.State.PLAYING)
-                    if ret == Gst.StateChangeReturn.FAILURE:
-                        raise RuntimeError("Failed to start GStreamer pipeline")
-                    elif ret == Gst.StateChangeReturn.ASYNC:
-                        # Wait for state change to complete - use CLOCK_TIME_NONE like api-refactoring
-                        ret = self.pipeline.get_state(Gst.CLOCK_TIME_NONE)
-                        if ret[0] == Gst.StateChangeReturn.FAILURE:
-                            raise RuntimeError("Failed to start GStreamer pipeline")
+                    # Finite sources can preroll synchronously, with a hard timeout.
+                    # Recording branch must be fully set up before this point.
+                    self._set_pipeline_playing(wait_for_async=True)
 
                 # Query duration for VideoFile
                 if self.source_type == CaptureDeviceType.VideoFile:
@@ -604,9 +617,42 @@ class GStreamerCapturePipelineMixin:
                 self._perf_frame_buffer_full = 0
 
         except Exception as e:
-            self.logger.error(f"Failed to initialize GStreamer pipeline: {e}")
+            is_video_file = self.source_type == CaptureDeviceType.VideoFile
+            uses_hardware_decoder = bool(
+                pipeline_str and any(
+                    decoder in pipeline_str
+                    for decoder in ("nvh264dec", "nvv4l2decoder")
+                )
+            )
+            uses_explicit_h264_decoder = bool(
+                pipeline_str and "h264parse" in pipeline_str and "avdec_h264" in pipeline_str
+            )
+            fallback_message = None
+            if is_video_file and uses_hardware_decoder and not self._force_sw_decoder:
+                self._force_sw_decoder = True
+                fallback_message = "Hardware decoder failed; retrying with software decoding"
+            elif (
+                is_video_file
+                and uses_explicit_h264_decoder
+                and not getattr(self, "_force_decodebin", False)
+            ):
+                self._force_decodebin = True
+                fallback_message = "Explicit H.264 decoder failed; retrying with decodebin"
+
+            if fallback_message:
+                self.logger.warning(
+                    "%s for %s", fallback_message, self.source_names
+                )
+                self._teardown_pipeline("decoder_fallback", join_main_loop=False)
+                self._init_pipeline()
+                return
+
+            details = self._format_gst_diagnostic(e)
+            self.logger.error(f"Failed to initialize GStreamer pipeline: {details}")
             if pipeline_str:
-                self.logger.error(f"Pipeline string was: {self._mask_credentials_in_pipeline(pipeline_str)}")
+                self.logger.error(
+                    f"Pipeline string was: {self._mask_credentials_in_pipeline(pipeline_str)}"
+                )
             raise
 
     def _mask_credentials_in_pipeline(self, pipeline_str: str) -> str:
@@ -648,6 +694,10 @@ class GStreamerCapturePipelineMixin:
                         # combinations it can trigger GStreamer segment-format criticals and lead to
                         # downstream "no frames" restarts. Enable explicitly with env EVILEYE_GST_LOOP_SEEK=1.
                         self._restart_counter += 1
+                        # A file loop starts a new media/frame generation even
+                        # though the configured source remains available.
+                        self._record_reconnect(datetime.datetime.now())
+                        self._first_pts_ns = None
                         self._log_resource_stats("before_restart_eos")
 
                         did_seek = False
@@ -1037,10 +1087,6 @@ class GStreamerCapturePipelineMixin:
 
         # Finally, try to move pipeline to NULL to release GStreamer resources.
         if pipeline is not None:
-            try:
-                pipeline.send_event(Gst.Event.new_eos())
-            except Exception:
-                pass
             try:
                 pipeline.set_state(Gst.State.NULL)
             except Exception:

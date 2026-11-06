@@ -29,8 +29,22 @@
 
 from __future__ import annotations
 
-from abc import ABC, abstractmethod
-from typing import Any, Dict, Iterable, List, Optional, Protocol, runtime_checkable
+from typing import (
+    TYPE_CHECKING,
+    Any,
+    Dict,
+    Iterable,
+    List,
+    Mapping,
+    Optional,
+    Protocol,
+    runtime_checkable,
+)
+
+from .plugins import ModuleRuntimeContext
+
+if TYPE_CHECKING:
+    from .contracts import EventUpdate
 
 
 @runtime_checkable
@@ -47,6 +61,10 @@ class IPipeline(Protocol):
     def start(self) -> None: ...
 
     def stop(self) -> None: ...
+
+    def has_pending_work(self) -> bool: ...
+
+    def get_pending_work_summary(self) -> List[str]: ...
 
     def reset(self) -> None: ...
 
@@ -68,6 +86,63 @@ class IPipeline(Protocol):
     def get_results_list(self) -> List[Dict[str, Any]]: ...
 
     def get_current_results(self) -> Dict[str, Any]: ...
+
+
+@runtime_checkable
+class IBatchProcessor(Protocol):
+    """Synchronous thread-only processor for one coordinated pipeline batch."""
+
+    def process_batch(
+        self, batch: Mapping[int, tuple[Any, Any]], state: Any
+    ) -> Optional[Iterable[Any]]: ...
+
+
+@runtime_checkable
+class IItemProcessor(Protocol):
+    """Process one pipeline item using worker-local state."""
+
+    def process_item(self, item: Any, state: Any) -> Any: ...
+
+
+@runtime_checkable
+class IStatefulItemProcessor(IItemProcessor, Protocol):
+    """Item processor that constructs state inside its runtime worker."""
+
+    def create_state(self, config: Mapping[str, Any]) -> Any: ...
+
+
+@runtime_checkable
+class IContextualStatefulItemProcessor(IItemProcessor, Protocol):
+    """Item processor whose worker-local state uses runtime context."""
+
+    def create_state(
+        self, config: Mapping[str, Any], context: ModuleRuntimeContext
+    ) -> Any: ...
+
+
+@runtime_checkable
+class ISource(Protocol):
+    """Lifecycle contract for a source plugin."""
+
+    def open(self) -> None: ...
+
+    def read(self) -> Any | None: ...
+
+    def close(self) -> None: ...
+
+
+@runtime_checkable
+class IModelClassMappingProvider(Protocol):
+    """Publish model class names and IDs from a worker-owned model."""
+
+    def get_model_class_mapping(self) -> Mapping[str, int] | None: ...
+
+
+@runtime_checkable
+class IRuntimeStatusProvider(Protocol):
+    """Runtime adapter status exposed to pipeline diagnostics."""
+
+    def get_runtime_stats(self) -> Mapping[str, Any]: ...
 
 
 @runtime_checkable
@@ -146,6 +221,13 @@ class IEventDetector(Protocol):
     def get(self) -> Iterable[Any]: ...
 
     def get_name(self) -> str: ...
+
+
+@runtime_checkable
+class IProcessEventDetector(Protocol):
+    """Spawn-worker contract for event rules consuming serializable updates."""
+
+    def process_update(self, update: Any, state: Any) -> Any: ...
 
 
 @runtime_checkable

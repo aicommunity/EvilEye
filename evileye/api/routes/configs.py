@@ -9,6 +9,9 @@ from evileye.api.core.config_run_access import get_config_run_manager
 from evileye.api.core.public_base_url import resolve_public_api_base_url
 from evileye.api.core.runtime_registry import list_runtime_records, load_runtime_record
 from evileye.api.core.safe_paths import UnsafePathError, assert_under_dir, safe_config_name
+from evileye.core.pipeline_configuration import mask_config_secrets as _mask_config_secrets
+from evileye.core.pipeline_configuration import merge_preserving_secrets as _merge_preserving_secrets
+from evileye.core.pipeline_configuration import write_config_with_backup
 
 router = APIRouter(prefix="/api/v1/configs", tags=["configs"])
 
@@ -133,30 +136,8 @@ async def delete_config_run(rid: int) -> Dict:
 
 
 def _mask_secrets(value):
-    """Recursively mask password-like fields and credentials embedded in URIs."""
-    import re
-
-    rtsp_re = re.compile(r"(?i)^(rtsp[s]?://)([^:/@]+):([^@/]+)@")
-
-    def mask_uri(text: str) -> str:
-        return rtsp_re.sub(r"\1***:***@", text)
-
-    if isinstance(value, dict):
-        out = {}
-        for key, item in value.items():
-            key_l = str(key).lower()
-            if key_l in {"password", "passwd", "secret", "admin_password"} and item:
-                out[key] = "***"
-            elif key_l in {"source", "uri", "camera", "url", "location"} and isinstance(item, str) and "://" in item:
-                out[key] = mask_uri(item)
-            else:
-                out[key] = _mask_secrets(item)
-        return out
-    if isinstance(value, list):
-        return [_mask_secrets(item) for item in value]
-    if isinstance(value, str) and value.lower().startswith("rtsp"):
-        return mask_uri(value)
-    return value
+    """Backward-compatible route helper using the shared config secret policy."""
+    return _mask_config_secrets(value)
 
 
 @router.get("/{name}")
@@ -185,38 +166,11 @@ async def create_config(payload: ConfigCreate):
     if path.exists():
         raise HTTPException(status_code=409, detail="Config already exists")
     try:
-        with open(path, "w", encoding="utf-8") as f:
-            json.dump(payload.body, f, ensure_ascii=False, indent=2)
+        content = json.dumps(payload.body, ensure_ascii=False, indent=2, allow_nan=False) + "\n"
+        write_config_with_backup(path, content, create_only=True)
         return {"name": name, "status": "created"}
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to create config: {e}") from e
-
-
-def _merge_preserving_secrets(existing: dict, incoming: dict) -> dict:
-    """Keep existing secrets when UI sends masked placeholders."""
-    result = dict(incoming)
-    for key, value in incoming.items():
-        key_l = str(key).lower()
-        if key_l in {"password", "passwd", "secret", "admin_password"}:
-            if value in (None, "", "***"):
-                if key in existing:
-                    result[key] = existing[key]
-        elif key_l in {"source", "uri", "camera", "url", "location"} and isinstance(value, str):
-            if "***:***@" in value and key in existing:
-                result[key] = existing[key]
-        elif isinstance(value, dict) and isinstance(existing.get(key), dict):
-            result[key] = _merge_preserving_secrets(existing[key], value)
-        elif isinstance(value, list) and isinstance(existing.get(key), list):
-            # shallow: merge dict items by index when both are objects
-            merged_list = []
-            for idx, item in enumerate(value):
-                prev = existing[key][idx] if idx < len(existing[key]) else None
-                if isinstance(item, dict) and isinstance(prev, dict):
-                    merged_list.append(_merge_preserving_secrets(prev, item))
-                else:
-                    merged_list.append(item)
-            result[key] = merged_list
-    return result
 
 
 @router.put("/{name}")
@@ -233,8 +187,8 @@ async def update_config(name: str, payload: ConfigUpdate):
         if not isinstance(existing, dict):
             existing = {}
         body = _merge_preserving_secrets(existing, payload.body if isinstance(payload.body, dict) else {})
-        with open(target, "w", encoding="utf-8") as f:
-            json.dump(body, f, ensure_ascii=False, indent=2)
+        content = json.dumps(body, ensure_ascii=False, indent=2, allow_nan=False) + "\n"
+        write_config_with_backup(target, content)
         return {"name": target.name, "status": "updated"}
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to update config: {e}") from e

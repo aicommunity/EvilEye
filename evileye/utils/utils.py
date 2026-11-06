@@ -6,7 +6,6 @@ import datetime
 import numpy as np
 import cv2
 import os
-import copy
 from pathlib import Path
 from ..core.logger import get_module_logger
 

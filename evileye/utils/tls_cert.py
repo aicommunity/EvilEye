@@ -5,6 +5,8 @@ import shutil
 import stat
 import subprocess
 import tempfile
+import os
+import re
 from pathlib import Path
 from typing import Sequence
 
@@ -14,13 +16,58 @@ class TlsCertError(RuntimeError):
 
 
 def openssl_bin() -> str:
+    candidates: list[str] = []
     found = shutil.which("openssl")
-    if not found:
+    if found:
+        candidates.append(found)
+
+    # Windows PATHs often contain the 2008 GnuWin32 OpenSSL before Git for
+    # Windows. That build is too old for current TLS workflows and points its
+    # default config at /usr/local/ssl/openssl.cnf. Prefer a maintained install.
+    if os.name == "nt":
+        roots = [
+            os.environ.get("ProgramFiles"),
+            os.environ.get("ProgramFiles(x86)"),
+        ]
+        for root in filter(None, roots):
+            candidates.extend(
+                [
+                    str(Path(root) / "Git" / "usr" / "bin" / "openssl.exe"),
+                    str(Path(root) / "OpenSSL-Win64" / "bin" / "openssl.exe"),
+                ]
+            )
+
+    seen: set[str] = set()
+    for candidate in candidates:
+        normalized = os.path.normcase(os.path.abspath(candidate))
+        if normalized in seen or not Path(candidate).is_file():
+            continue
+        seen.add(normalized)
+        try:
+            result = subprocess.run(
+                [candidate, "version"],
+                capture_output=True,
+                text=True,
+                timeout=3,
+                check=False,
+            )
+        except (OSError, subprocess.SubprocessError):
+            continue
+        version = re.search(r"(?:OpenSSL|LibreSSL)\s+(\d+)\.(\d+)\.(\d+)", result.stdout)
+        if result.returncode == 0 and version:
+            parsed = tuple(int(part) for part in version.groups())
+            if parsed >= (1, 1, 1):
+                return candidate
+
+    if not candidates:
         raise TlsCertError(
             "openssl not found on PATH. Install OpenSSL (Linux) or Git for Windows, "
             "then retry HTTPS setup."
         )
-    return found
+    raise TlsCertError(
+        "A supported OpenSSL (1.1.1 or newer) was not found. Install a current "
+        "OpenSSL release or Git for Windows, then retry HTTPS setup."
+    )
 
 
 def _run(cmd: list[str]) -> None:

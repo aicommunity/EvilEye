@@ -36,7 +36,6 @@ sys.path.append(str(Path(__file__).parent.parent.parent))
 
 from ..core.logger import get_module_logger
 from .video_player_window import VideoPlayerWidget
-import logging
 
 try:
     import cv2

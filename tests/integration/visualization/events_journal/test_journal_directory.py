@@ -1,6 +1,5 @@
 #!/usr/bin/env python3
 
-import sys
 import os
 def test_journal_directory_behavior(journal_test_logger):
     """Test journal behavior with different directory scenarios"""

@@ -18,7 +18,6 @@ from ..utils import utils
 from .preview_render import PreviewRenderContext, apply_preview_overlay
 from queue import Queue
 from queue import Empty
-import copy
 import time
 import cv2
 from ..events_detectors.zone import ZoneForm

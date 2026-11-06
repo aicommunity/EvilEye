@@ -9,14 +9,13 @@ import os
 from pathlib import Path
 import datetime
 import time
-from typing import Dict, Optional
+from typing import Dict
 
 # Добавить корневую директорию проекта в путь
 project_root = Path(__file__).parent.parent.parent.parent.parent
 sys.path.insert(0, str(project_root))
 
 import pytest
-from unittest.mock import Mock, patch
 
 try:
     from PyQt6.QtWidgets import QApplication
@@ -40,7 +39,7 @@ pytestmark = pytest.mark.skipif(
 def qapp():
     """Создать QApplication для тестов"""
     if not QApplication.instance():
-        app = QApplication(sys.argv)
+        app = QApplication.instance() or QApplication(sys.argv)
         yield app
     else:
         yield QApplication.instance()

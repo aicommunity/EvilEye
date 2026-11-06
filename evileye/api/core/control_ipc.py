@@ -109,11 +109,13 @@ class ControlIpcServer:
             pass
 
     def _serve(self) -> None:
-        assert self._sock is not None
+        sock = self._sock
+        if sock is None:
+            return
         while not self._stop.is_set():
             try:
-                self._sock.settimeout(0.5)
-                conn, _addr = self._sock.accept()
+                sock.settimeout(0.5)
+                conn, _addr = sock.accept()
             except socket.timeout:
                 continue
             except OSError:

@@ -1,7 +1,6 @@
 """MP YOLO detection thread: feed/drain async contract."""
-from collections import deque
 from queue import Queue
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock
 
 import pytest
 

@@ -3,10 +3,9 @@ Integration tests for video seeking synchronization
 """
 import unittest
 import datetime
-import os
 import sys
 from pathlib import Path
-from unittest.mock import Mock, patch
+from unittest.mock import Mock
 
 # Add parent directory to path
 sys.path.insert(0, str(Path(__file__).parent.parent.parent.parent.parent))
@@ -28,7 +27,7 @@ class TestStreamPlayerSeekingIntegration(unittest.TestCase):
     def setUpClass(cls):
         """Create QApplication once for all tests"""
         if not QApplication.instance():
-            cls.app = QApplication([])
+            cls.app = QApplication.instance() or QApplication([])
         else:
             cls.app = QApplication.instance()
     

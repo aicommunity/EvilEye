@@ -3,7 +3,8 @@
 from __future__ import annotations
 
 
-def ensure_gstreamer_spawn_runtime() -> None:
+def initialize_gstreamer() -> None:
+    """Initialize Gst without importing GUI or OpenCV libraries."""
     try:
         import gi
 
@@ -12,6 +13,14 @@ def ensure_gstreamer_spawn_runtime() -> None:
 
         if not Gst.is_initialized():
             Gst.init(None)
+    except ImportError:
+        pass
+
+
+def ensure_gstreamer_spawn_runtime() -> None:
+    """Initialize Gst before OpenCV in capture worker processes."""
+    initialize_gstreamer()
+    try:
         import cv2  # noqa: F401
     except ImportError:
         pass

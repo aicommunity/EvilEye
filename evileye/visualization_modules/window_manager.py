@@ -6,10 +6,9 @@ Window Manager for EvilEye GUI
 """
 
 import json
-import os
 from pathlib import Path
 from typing import Dict, List, Optional, Any, Callable
-from dataclasses import dataclass, asdict
+from dataclasses import dataclass
 from enum import Enum
 
 try:

@@ -19,7 +19,11 @@
 - **`DIContainer`** — контейнер для управления зависимостями
 - **`DependencyRegistry`** — реестр метаданных о зависимостях
 
-**Важно:** В текущей версии эти компоненты **зарезервированы для будущего использования**. Сейчас в проекте используется `EvilEyeBase._registry` как основной механизм создания компонентов.
+**Текущее состояние:** `DIContainer` и `DependencyRegistry` используются для
+сервисов приложения. Factory компонентов pipeline и event detectors
+регистрируются в `PluginRegistry`; `EvilEyeBase.register` поддерживается только
+как совместимый декоратор и не хранит отдельный registry. Подробности SPI см. в
+[Руководстве по плагинам](PLUGINS.md).
 
 ---
 
@@ -484,124 +488,39 @@ class Application:
 
 ---
 
-## Сравнение с EvilEyeBase._registry
+## PluginRegistry и DIContainer
 
-В текущей версии EvilEye используется два механизма создания объектов:
+Оба механизма используются, но для разных объектов:
 
-### EvilEyeBase._registry (текущий, активно используется)
+| Механизм | Что регистрирует | Поиск |
+|---|---|---|
+| `PluginRegistry` | source, processor, detector, tracker, event detector и pipeline factories | стабильный строковый `plugin_id/module_id` и legacy aliases |
+| `DIContainer` | сервисы приложения и их зависимости | тип сервиса или интерфейс |
 
-**Назначение:** Создание компонентов pipeline через plugin-систему
+Пример регистрации pipeline component:
 
-**Использование:**
 ```python
-@EvilEyeBase.register("MyDetector")
-class MyDetector(EvilEyeBase):
-    def init_impl(self, **kwargs):
-        return True
+from evileye.core.plugins import register_module
 
-# Создание через регистр
-detector = EvilEyeBase.create_instance("MyDetector")
+@register_module("my-detector", kind="detector", execution_modes=("thread",))
+class MyDetector: ...
 ```
 
-**Особенности:**
-- Используется для компонентов, наследующихся от `EvilEyeBase`
-- Регистрация через декоратор `@EvilEyeBase.register`
-- Создание по строковому имени класса
-- Активно используется в 11+ классах проекта
-
-### DIContainer (планируется)
-
-**Назначение:** Управление зависимостями сервисов верхнего уровня
-
-**Использование:**
-```python
-container = DIContainer()
-container.register_singleton(IDatabaseService, lambda: DatabaseService())
-service = container.get(IDatabaseService)
-```
-
-**Особенности:**
-- Используется для сервисов контроллера
-- Регистрация по типу (интерфейсу)
-- Поддержка singleton и factory
-- Управление жизненным циклом
-
-### Сравнительная таблица
-
-| Характеристика | EvilEyeBase._registry | DIContainer |
-|----------------|----------------------|-------------|
-| **Назначение** | Компоненты pipeline | Сервисы контроллера |
-| **Регистрация** | Декоратор `@register` | Методы `register_*` |
-| **Поиск** | По строковому имени | По типу (Type) |
-| **Singleton** | Нет | Да |
-| **Factory** | Нет | Да |
-| **Lifecycle** | Через EvilEyeBase | Через контейнер |
-| **Статус** | Активно используется | Зарезервировано |
-
-### Сосуществование
-
-Оба механизма могут сосуществовать:
-
-- **EvilEyeBase._registry** — для компонентов pipeline (детекторы, трекеры, процессоры)
-- **DIContainer** — для сервисов контроллера (PipelineService, DatabaseService и т.д.)
+Старый `@EvilEyeBase.register` остаётся совместимым входом в `PluginRegistry`;
+параллельного `EvilEyeBase._registry` в runtime нет. Внешние пакеты используют
+entry point group `evileye.plugins`.
 
 ---
 
-## Планируемое применение
+## Использование DI для сервисов
 
-### Текущее состояние
+`DIContainer` используется для регистрации и повторного получения сервисов
+контроллера/runtime. `DependencyRegistry` хранит определения их фабрик и
+scope. Это не механизм загрузки пользовательских pipeline components: ими
+управляет `PluginRegistry`.
 
-В текущей версии EvilEye зависимости создаются напрямую в сервисах:
-
-```python
-class Controller:
-    def __init__(self):
-        # Прямое создание зависимостей
-        self._pipeline_service = PipelineService()
-        self._database_service = DatabaseService()
-        self._events_service = EventsService()
-```
-
-### Планируемое использование DI
-
-В будущих версиях планируется использовать DIContainer:
-
-```python
-class Controller:
-    def __init__(self, container: DIContainer):
-        # Зависимости получаются из контейнера
-        self._pipeline_service = container.get(IPipelineService)
-        self._database_service = container.get(IDatabaseService)
-        self._events_service = container.get(IEventsService)
-```
-
-### Преимущества перехода на DI
-
-1. **Снижение связности** — Controller не знает о конкретных реализациях
-2. **Упрощение тестирования** — легко подменять сервисы моками
-3. **Гибкость** — можно менять реализации без изменения Controller
-4. **Централизованная конфигурация** — все зависимости в одном месте
-
-### План миграции
-
-1. **Этап 1:** Определить интерфейсы для сервисов (IPipelineService, IDatabaseService и т.д.)
-2. **Этап 2:** Создать фабрики для сервисов
-3. **Этап 3:** Зарегистрировать сервисы в DIContainer
-4. **Этап 4:** Обновить Controller для использования контейнера
-5. **Этап 5:** Обновить тесты для использования моков
-
----
-
-## Заключение
-
-DIContainer и DependencyRegistry предоставляют мощный механизм для управления зависимостями в системе EvilEye. Хотя они пока зарезервированы для будущего использования, их архитектура позволяет:
-
-- Снизить связность между компонентами
-- Упростить тестирование
-- Централизованно управлять зависимостями
-- Гибко управлять жизненным циклом объектов
-
-При переходе на DI важно помнить, что `EvilEyeBase._registry` остается основным механизмом для компонентов pipeline, а `DIContainer` будет использоваться для сервисов верхнего уровня.
+Для актуальных plugin contracts, конфигурации и примера внешнего пакета см.
+[Руководство по плагинам](PLUGINS.md).
 
 ---
 

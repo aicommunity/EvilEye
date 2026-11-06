@@ -193,7 +193,6 @@ def _names_from_config_files() -> list[dict[str, Any]]:
 
 def _names_from_setup_default(by_name: dict[str, dict[str, Any]]) -> None:
     """Ensure system.json / setup default_config and basic projection names are included."""
-    from pathlib import Path
 
     from evileye.core.paths import configs_dir, creds_path
 

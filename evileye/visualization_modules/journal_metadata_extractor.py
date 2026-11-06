@@ -2,7 +2,7 @@
 Извлечение метаданных событий для отображения в журналах
 """
 
-from typing import Optional, Tuple, List, Dict
+from typing import Optional, Tuple, List
 
 
 class EventMetadataExtractor:

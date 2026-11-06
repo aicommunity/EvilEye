@@ -5,10 +5,9 @@
 статистику, логи и производительность.
 """
 
-import copy
 import json
 from datetime import datetime, timedelta
-from typing import Dict, Any, List, Optional
+from typing import Dict, Any
 
 try:
     from PyQt6.QtWidgets import (

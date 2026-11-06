@@ -1,4 +1,8 @@
-# Custom event detector (dry-run)
+# Custom event detector (legacy in-tree example)
+
+For a distributable plugin, use the entry-point workflow in
+[`docs/PLUGINS.md`](../../docs/PLUGINS.md). The legacy decorator example below
+emits `AlarmEvent` instances through generic persistence and journal display.
 
 ## Goal
 
@@ -22,10 +26,9 @@ When `enabled` is omitted, stock detectors start (backward compatible).
 
 ## Touch matrix (full product path)
 
-| Layer | Required for dry-run | Required for journals/DB/GUI |
-|-------|----------------------|------------------------------|
-| Detector class + registry | yes | yes |
-| JSON adapter | no | yes (`database_controller/json_adapter_*.py`) |
-| DB adapter | no | yes |
-| GUI journal tab | no | yes |
-| Web journals | no | yes |
+| Layer | Used by this example |
+|-------|----------------------|
+| Detector class + legacy registry | yes |
+| Generic alarm persistence | yes |
+| Events journal | yes |
+| Web journal | yes |

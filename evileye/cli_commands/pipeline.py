@@ -10,7 +10,14 @@ from rich.table import Table
 
 from evileye.cli_commands.console import console
 
-app = typer.Typer(help="Pipeline runtime lifecycle")
+app = typer.Typer(help="Inspect, configure, and manage pipeline runs")
+
+
+@app.callback(invoke_without_command=True)
+def pipeline_root(ctx: typer.Context) -> None:
+    from evileye.cli_interactive import handle_group_root
+
+    handle_group_root(ctx, "pipeline")
 
 
 @app.command("status")
@@ -50,11 +57,27 @@ def pipeline_stop(
     from evileye.stack_control import stop_pipelines
 
     if not config and not all_runs:
-        console.print(
-            "[red]Specify --config CONFIG or --all to stop pipelines.[/red]\n"
-            "[dim]Example: evileye pipeline stop --all --hold[/dim]"
+        from evileye.cli_interactive import (
+            InteractiveInputError,
+            interactive_available,
+            prompt_pipeline_stop_target,
         )
-        raise typer.Exit(1)
+
+        if interactive_available():
+            try:
+                target = prompt_pipeline_stop_target()
+            except InteractiveInputError as exc:
+                console.print(f"[yellow]{exc}[/yellow]")
+                raise typer.Exit(2) from exc
+            if target is None:
+                raise typer.Exit(0)
+            config, all_runs = target
+        else:
+            console.print(
+                "[red]Specify --config CONFIG or --all to stop pipelines.[/red]\n"
+                "[dim]Example: evileye pipeline stop --all --hold[/dim]"
+            )
+            raise typer.Exit(1)
 
     result = stop_pipelines(
         site_dir=Path.cwd(),
@@ -91,16 +114,25 @@ def pipeline_start_cmd(
     from evileye.stack_control import (
         AmbiguousPipelineConfigError,
         pipeline_start,
-        require_pipeline_config,
         should_use_managed_launch,
+    )
+    from evileye.cli_interactive import (
+        InteractiveInputError,
+        resolve_pipeline_config_for_cli,
     )
 
     try:
-        resolved = require_pipeline_config(
-            Path.cwd(),
-            explicit=config,
-            allow_running=False,
+        resolved = resolve_pipeline_config_for_cli(
+            site_dir=Path.cwd(), explicit=config, allow_running=False
         )
+    except InteractiveInputError as exc:
+        console.print(f"[yellow]{exc}[/yellow]")
+        raise typer.Exit(2) from exc
+    except (AmbiguousPipelineConfigError, FileNotFoundError) as exc:
+        console.print(f"[red]{exc}[/red]")
+        raise typer.Exit(1) from exc
+
+    try:
         spawn = pipeline_start(
             resolved,
             site_dir=Path.cwd(),
@@ -111,16 +143,16 @@ def pipeline_start_cmd(
         )
     except AmbiguousPipelineConfigError as exc:
         console.print(f"[red]{exc}[/red]")
-        raise typer.Exit(1)
+        raise typer.Exit(1) from exc
     except DuplicatePipelineError as exc:
         console.print(f"[red]{exc}[/red]")
-        raise typer.Exit(1)
+        raise typer.Exit(1) from exc
     except FileNotFoundError as exc:
         console.print(f"[red]{exc}[/red]")
-        raise typer.Exit(1)
+        raise typer.Exit(1) from exc
     except Exception as exc:
         console.print(f"[red]Pipeline start failed: {exc}[/red]")
-        raise typer.Exit(1)
+        raise typer.Exit(1) from exc
 
     if spawn.mode == "direct-foreground":
         code = 0 if spawn.exit_code is None else int(spawn.exit_code)
@@ -155,6 +187,7 @@ def pipeline_restart_cmd(
     """Restart pipeline. CONFIG optional when one run is active or profile has production_config."""
     from evileye.cli_commands.pipeline_common import resolve_and_restart_pipeline
     from evileye.stack_control import AmbiguousPipelineConfigError
+    from evileye.cli_interactive import InteractiveInputError
 
     try:
         spawn = resolve_and_restart_pipeline(
@@ -164,15 +197,18 @@ def pipeline_restart_cmd(
             detach=detach,
             gui=gui,
         )
+    except InteractiveInputError as exc:
+        console.print(f"[yellow]{exc}[/yellow]")
+        raise typer.Exit(2) from exc
     except AmbiguousPipelineConfigError as exc:
         console.print(f"[red]{exc}[/red]")
-        raise typer.Exit(1)
+        raise typer.Exit(1) from exc
     except FileNotFoundError as exc:
         console.print(f"[red]{exc}[/red]")
-        raise typer.Exit(1)
+        raise typer.Exit(1) from exc
     except Exception as exc:
         console.print(f"[red]Pipeline restart failed: {exc}[/red]")
-        raise typer.Exit(1)
+        raise typer.Exit(1) from exc
 
     if spawn.mode == "direct-foreground":
         code = 0 if spawn.exit_code is None else int(spawn.exit_code)
@@ -183,3 +219,12 @@ def pipeline_restart_cmd(
     console.print(
         f"[green]Pipeline restarted[/green] mode={spawn.mode} pid={spawn.pid} config={spawn.config_path}"
     )
+
+
+# Keep the inspection and editing implementations separate from lifecycle
+# commands while exposing one coherent ``evileye pipeline`` command group.
+from evileye.cli_commands.pipeline_inspect import inspect_pipeline
+from evileye.cli_commands.pipeline_configure import configure_pipeline
+
+app.command("inspect")(inspect_pipeline)
+app.command("configure")(configure_pipeline)

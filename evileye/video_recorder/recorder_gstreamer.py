@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import datetime as _dt
 import threading
-from pathlib import Path
 from typing import Optional
 
 from evileye.core.logger import get_module_logger

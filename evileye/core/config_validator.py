@@ -21,8 +21,14 @@ if PYDANTIC_AVAILABLE:
 
         pipeline_class: Optional[str] = Field(default=None, description="Класс pipeline")
         sources: list = Field(default_factory=list, description="Источники видео")
+        preprocessors: list = Field(default_factory=list, description="Предобработка кадров")
         detectors: list = Field(default_factory=list, description="Детекторы объектов")
         trackers: list = Field(default_factory=list, description="Трекеры объектов")
+        mc_trackers: list = Field(default_factory=list, description="Мультикамерные трекеры")
+        attributes_roi: list = Field(default_factory=list, description="ROI процессоры атрибутов")
+        attributes_classifier: list = Field(default_factory=list, description="Классификаторы атрибутов")
+        modules: dict = Field(default_factory=dict, description="Расширения модулей пайплайна")
+        stages: list = Field(default_factory=list, description="Стадии PipelineDeclarative")
 
 
     class DatabaseConfigModel(BaseModel):
@@ -58,10 +64,15 @@ class ConfigValidator:
         Returns:
             Кортеж (успех, сообщение_об_ошибке)
         """
+        if not isinstance(config, dict):
+            return False, "Pipeline config must be a dictionary"
+
+        module_error = self._validate_pipeline_module_groups(config.get("modules"))
+        if module_error:
+            return False, module_error
+
         if not self._pydantic_available:
             # Базовая валидация без pydantic
-            if not isinstance(config, dict):
-                return False, "Pipeline config must be a dictionary"
             return True, None
 
         try:
@@ -69,6 +80,30 @@ class ConfigValidator:
             return True, None
         except ValidationError as e:
             return False, str(e)
+
+    @staticmethod
+    def _validate_pipeline_module_groups(modules: Any) -> Optional[str]:
+        """Validate the extension envelope before a pipeline is constructed."""
+        if modules is None:
+            return None
+        if not isinstance(modules, dict):
+            return "Pipeline modules must be an object"
+
+        allowed_groups = {
+            "sources", "preprocessors", "detectors", "trackers", "mc_trackers",
+            "attributes_roi", "attributes_classifier",
+        }
+        for group, extension in modules.items():
+            if group not in allowed_groups:
+                return f"Unsupported PipelineSurveillance module group: {group}"
+            if not isinstance(extension, dict):
+                return f"modules.{group} must be an object"
+            mode = str(extension.get("mode", "")).lower()
+            if mode not in {"replace", "extend"}:
+                return f"modules.{group}.mode must be 'replace' or 'extend'"
+            if not isinstance(extension.get("items", []), list):
+                return f"modules.{group}.items must be a list"
+        return None
 
     def validate_database_config(self, config: Dict[str, Any]) -> tuple[bool, Optional[str]]:
         """Валидировать конфигурацию БД.

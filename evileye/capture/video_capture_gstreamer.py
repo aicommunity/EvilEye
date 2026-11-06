@@ -1,3 +1,13 @@
+import os
+
+
+def _configure_direct_rtsp_proxy_resolver():
+    """Keep LAN RTSP sources out of the system proxy discovery path."""
+    os.environ.setdefault("GIO_USE_PROXY_RESOLVER", "dummy")
+
+
+_configure_direct_rtsp_proxy_resolver()
+
 try:
     import gi
 
@@ -15,14 +25,13 @@ except ImportError:
 import numpy as np
 import threading
 import time
-import datetime
-from typing import Optional, List, Tuple, Any
-from queue import Queue, Empty, Full
+from queue import Queue
 from .video_capture_base import VideoCaptureBase, CaptureDeviceType, EXEC_MODE_PROCESS
 from .constants import CaptureConstants
 from .exceptions import CaptureInitializationError, CaptureConnectionError
 from ..core.frame import CaptureImage, Frame
 from ..core.base_class import EvilEyeBase
+from ..core.plugins import register_module
 
 from evileye.video_recorder.recorder_base import SourceMeta
 from evileye.video_recorder.continuous_recorder_gst import GstContinuousRecorder
@@ -36,7 +45,13 @@ from .gstreamer_capture_pipeline import GStreamerCapturePipelineMixin
 from .gstreamer_capture_frames import GStreamerCaptureFramesMixin
 
 
-@EvilEyeBase.register("VideoCaptureGStreamer")
+@register_module(
+    "VideoCaptureGStreamer",
+    kind="source",
+    capabilities=("capture_source_backend", "preserves_source_metadata", "shared_frame_transport"),
+    execution_modes=("thread", "process"),
+    default_execution_mode="process",
+)
 class VideoCaptureGStreamer(
     GStreamerCaptureRecordingMixin,
     GStreamerCaptureDiagnosticsMixin,
@@ -46,8 +61,8 @@ class VideoCaptureGStreamer(
 ):
     _recording_fs_error_logged = set()
 
-    def __init__(self):
-        super().__init__()
+    def __init__(self, config=None):
+        super().__init__(plugin_config=config)
         self.pipeline = None
         self.appsink = None
         self.loop = None
@@ -64,6 +79,7 @@ class VideoCaptureGStreamer(
         self.frame_lock = threading.RLock()
         # Use RLock for pipeline_lock to allow potential nested operations
         self.pipeline_lock = threading.RLock()
+        self._release_lock = threading.Lock()
         self.gstreamer_available = GSTREAMER_AVAILABLE
 
         # Initialize GStreamer if available
@@ -71,18 +87,13 @@ class VideoCaptureGStreamer(
             if not Gst.is_initialized():
                 Gst.init(None)
         else:
-            self.logger.warning("GStreamer not available, falling back to OpenCV")
+            self.logger.warning("GStreamer backend is unavailable")
 
         self.bus = None
         self._bus_handler_id = None
         self._fps_times = []  # rolling timestamps to estimate FPS as fallback
 
         # Recording-related attributes
-        self._recording_elements = None
-        self._recording_check_thread = None
-        self._recording_check_stop = False
-        self._recording_out_dir = None
-        self._recording_checked_files = set()
         self._reconnecting = False
         self._rtsp_protocol = 'udp+tcp'  # Default: try UDP first, then TCP if UDP fails (GStreamer handles fallback)
         self._last_init_error = None
@@ -140,6 +151,7 @@ class VideoCaptureGStreamer(
         # Optional: force software decoding (disable NVDEC/Jetson HW decoders) to isolate driver-side leaks.
         # Can be set via env EVILEYE_GST_FORCE_SW_DECODER=1/true/yes/on, or params['force_sw_decoder']=true.
         self._force_sw_decoder: bool = False
+        self._force_decodebin: bool = False
         try:
             import os as _os
             self._force_sw_decoder = _os.environ.get("EVILEYE_GST_FORCE_SW_DECODER", "").strip().lower() in {
@@ -231,19 +243,21 @@ class VideoCaptureGStreamer(
         """
         Initialize the GStreamer capture.
         Returns True on success, False on failure.
-        For IP cameras, uses simple approach from api-refactoring without timeout.
+        IP camera state transitions are asynchronous; bus errors and first-frame health
+        determine whether the live source becomes operational.
         """
         if self.execution_mode == EXEC_MODE_PROCESS:
             return super().init()
 
         if not self.gstreamer_available:
-            self.logger.error("GStreamer not available, cannot initialize")
+            self.logger.error("GStreamer backend is unavailable")
             self.is_inited = False
             self.is_working = False
-            return False
+            raise CaptureInitializationError(
+                "VideoCaptureGStreamer was selected but GStreamer is unavailable"
+            )
 
-        # For IP cameras, use simple approach from api-refactoring without timeout
-        # get_state(Gst.CLOCK_TIME_NONE) will block until state change completes
+        # RTSP negotiation is asynchronous and must not block initialization.
         if self.source_type == CaptureDeviceType.IpCamera:
             try:
                 self._init_pipeline()
@@ -254,14 +268,13 @@ class VideoCaptureGStreamer(
                 self.is_working = True
                 self.logger.info("GStreamer video capture initialized successfully")
 
-                # Start recording check thread after pipeline is PLAYING
-                if self._recording_check_thread and not self._recording_check_thread.is_alive():
-                    self._recording_check_thread.start()
-
                 return True
-            except CaptureInitializationError:
-                # Re-raise initialization errors
-                raise
+            except CaptureInitializationError as e:
+                self.logger.error("Failed to initialize GStreamer capture: %s", e)
+                self.is_inited = False
+                self.is_working = False
+                self._last_init_error = e
+                return False
             except Exception as e:
                 hint = self.get_ip_camera_init_hint(e)
                 error_msg = f"Failed to initialize GStreamer capture: {e}"
@@ -272,7 +285,7 @@ class VideoCaptureGStreamer(
                 self.is_working = False
                 # Store error for protocol switching logic
                 self._last_init_error = e
-                raise CaptureInitializationError(error_msg) from e
+                return False
         else:
             # For non-IP cameras, use timeout to prevent hanging
             import threading as _thr_init
@@ -344,145 +357,19 @@ class VideoCaptureGStreamer(
         return self.is_working and self.pipeline is not None
 
     def release(self) -> None:
-        """
-        Release resources and stop pipeline.
-        """
+        """Release resources through the shared, idempotent pipeline teardown."""
+        # Serialize callers: returning early while another teardown is still
+        # stopping a native pipeline would let reconnect initialize it too soon.
+        self._release_lock.acquire()
         try:
-            # Debug stack dump disabled
-            # Detach pipeline under lock to avoid races
-            pipeline = None
-            with self.pipeline_lock:
-                pipeline = self.pipeline
-                self.pipeline = None
-                bus = self.bus
-                self.bus = None
-                # Stop appsink signals and disconnect handler
-                try:
-                    if self.appsink is not None:
-                        try:
-                            self.appsink.set_property("emit-signals", False)
-                        except Exception:
-                            pass
-                        try:
-                            if self._appsink_handler_id is not None:
-                                self.appsink.disconnect(self._appsink_handler_id)
-                        except Exception:
-                            pass
-                except Exception:
-                    pass
-                # Disconnect bus handler to avoid accumulating callbacks
-                try:
-                    if bus is not None and self._bus_handler_id is not None:
-                        bus.disconnect(self._bus_handler_id)
-                except Exception:
-                    pass
-                self._bus_handler_id = None
-                self.is_working = False
-
-            # Try graceful EOS to unblock internal threads
-            if pipeline is not None:
-                try:
-                    pipeline.send_event(Gst.Event.new_eos())
-                    bus2 = pipeline.get_bus()
-                    if bus2 is not None:
-                        # Remove any signal watch and start flushing to unblock waits
-                        try:
-                            bus2.remove_signal_watch()
-                        except Exception:
-                            pass
-                        try:
-                            bus2.set_flushing(True)
-                        except Exception:
-                            pass
-                except Exception:
-                    pass
-
-            # Clean up recording branch before stopping pipeline
-            try:
-                self._cleanup_recording_branch(pipeline=pipeline)
-            except Exception as e:
-                self.logger.debug(f"Error cleaning up recording branch in release: {e}")
-
-            # Clear frame_buffer and last_frame to free memory
-            with self.frame_lock:
-                # Clear all frames from frame_buffer
-                while not self.frame_buffer.empty():
-                    try:
-                        frame = self.frame_buffer.get_nowait()
-                        # Explicitly clear frame image to free memory
-                        if frame is not None:
-                            frame.image = None
-                        frame = None
-                    except Empty:
-                        break
-                # Clear last_frame reference
-                if self.last_frame is not None:
-                    self.last_frame.image = None
-                    self.last_frame = None
-                # Clear FPS tracking list to free memory
-                self._fps_times.clear()
-
-            # Stop GLib main loop first to avoid deadlock on set_state
-            self._stop_main_loop(join_thread=True)
-
-            # Now set pipeline to NULL outside locks, with staged states and timeout
-            if pipeline is not None:
-                try:
-                    # Try staged state changes to avoid hangs
-                    try:
-                        pipeline.set_state(Gst.State.PAUSED)
-                        pipeline.get_state(0.5 * Gst.SECOND)
-                    except Exception:
-                        pass
-                    try:
-                        pipeline.set_state(Gst.State.READY)
-                        pipeline.get_state(0.5 * Gst.SECOND)
-                    except Exception:
-                        pass
-                    # As a last resort, force elements to NULL individually
-                    try:
-                        it = pipeline.iterate_elements()
-                        elements = []
-                        while True:
-                            res, elem = it.next()
-                            if res != Gst.IteratorResult.OK:
-                                break
-                            elements.append(elem)
-                    except Exception:
-                        elements = []
-                    # Reverse to attempt sinks first
-                    for elem in reversed(elements):
-                        try:
-                            elem.set_state(Gst.State.NULL)
-                        except Exception:
-                            pass
-                    # Call NULL in background to avoid blocking
-                    import threading as _thr
-                    set_done = _thr.Event()
-
-                    def _set_null():
-                        try:
-                            pipeline.set_state(Gst.State.NULL)
-                        finally:
-                            set_done.set()
-
-                    t = _thr.Thread(target=_set_null, daemon=True)
-                    t.start()
-                    # Wait up to 1.5s
-                    set_done.wait(1.5)
-                    if t.is_alive():
-                        self.logger.warning("Timeout setting GStreamer pipeline to NULL; continuing release")
-                except Exception:
-                    pass
-
-            # Note: frame_buffer and last_frame are already cleared earlier in release()
-            # (see lines 1106-1123)
-
+            self._teardown_pipeline("release", join_main_loop=True)
+            self.is_inited = False
             self.is_working = False
             self.logger.info("GStreamer video capture released")
-
         except Exception as e:
-            self.logger.error(f"Error releasing GStreamer capture: {e}")
+            self.logger.error("Error releasing GStreamer capture: %s", e)
+        finally:
+            self._release_lock.release()
 
     def release_impl(self):
         """

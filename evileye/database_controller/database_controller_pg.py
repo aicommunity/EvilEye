@@ -1,11 +1,8 @@
 import datetime
 import json
-import time
 import cv2
 from ..utils import utils
 import psycopg2
-import pathlib
-import os
 from ..utils import utils
 from .database_controller_base import DatabaseControllerBase
 from psycopg2 import sql
@@ -14,7 +11,6 @@ import copy
 from ..utils import threading_events
 from ..core.logger import get_module_logger
 
-from timeit import default_timer as timer
 from .constants import QueryType, EventType
 from .database_error_handler import DatabaseErrorHandler
 from .image_storage_service import ImageStorageService
@@ -36,6 +32,8 @@ class DatabaseControllerPg(DatabaseControllerBase):
         self.database_name = ""
         self.host_name = ""
         self.port = 0
+        self.connect_timeout_secs = 5
+        self.statement_timeout_ms = 30000
         self.admin_user_name = ""
         self.admin_password = ""
         self.create_new_project = False
@@ -61,6 +59,12 @@ class DatabaseControllerPg(DatabaseControllerBase):
         self.database_name = self.params['database_name']
         self.host_name = self.params['host_name']
         self.port = self.params['port']
+        self.connect_timeout_secs = int(self.params.get('connect_timeout_secs', 5))
+        self.statement_timeout_ms = int(self.params.get('statement_timeout_ms', 30000))
+        if self.connect_timeout_secs < 1:
+            raise ValueError('connect_timeout_secs must be a positive integer')
+        if self.statement_timeout_ms < 1:
+            raise ValueError('statement_timeout_ms must be a positive integer')
         self.admin_user_name = self.params.get('admin_user_name', 'postgres')
         self.admin_password = self.params.get('admin_password', '')
         self.image_dir = self.params.get('image_dir', self.image_dir)
@@ -84,6 +88,8 @@ class DatabaseControllerPg(DatabaseControllerBase):
         params['database_name'] = self.database_name
         params['host_name'] = self.host_name
         params['port'] = self.port
+        params['connect_timeout_secs'] = self.connect_timeout_secs
+        params['statement_timeout_ms'] = self.statement_timeout_ms
         params['admin_user_name'] = self.admin_user_name
         params['admin_password'] = self.admin_password
         params['image_dir'] = self.image_dir
@@ -105,6 +111,8 @@ class DatabaseControllerPg(DatabaseControllerBase):
         self.params['database_name'] = "evil_eye_db"
         self.params['host_name'] = "localhost"
         self.params['port'] = 5432
+        self.params['connect_timeout_secs'] = self.connect_timeout_secs
+        self.params['statement_timeout_ms'] = self.statement_timeout_ms
         self.params['admin_user_name'] = "postgres"
         self.params['admin_password'] = ""
         self.params['image_dir'] = utils.get_project_root()
@@ -149,6 +157,12 @@ class DatabaseControllerPg(DatabaseControllerBase):
                 host=self.host_name,
                 port=self.port,
                 database=self.database_name,
+                connect_timeout=self.connect_timeout_secs,
+                options=f"-c statement_timeout={self.statement_timeout_ms}ms",
+                keepalives=1,
+                keepalives_idle=10,
+                keepalives_interval=5,
+                keepalives_count=3,
             )
 
             self.logger.info("Database connection pool created successfully")
@@ -240,39 +254,84 @@ class DatabaseControllerPg(DatabaseControllerBase):
         return self.conn_pool is not None
 
     def query_impl(self, query_string, data=None):
-        if self.conn_pool is None:
+        try:
+            return self.query_checked(query_string, data)
+        except Exception as error:
+            self.logger.warning(
+                f'Transaction ({query_string}) failed: {error}'
+            )
             return None
 
-        def execute_query():
-            connection = None
-            try:
-                connection = self.conn_pool.getconn()
-                with connection:
-                    with connection.cursor() as curs:
-                        curs.execute(query_string, data)
-                        try:
-                            result = curs.fetchall()
-                        except psycopg2.ProgrammingError:
-                            result = None
-                return result
-            finally:
-                if connection:
-                    self.conn_pool.putconn(connection)
+    def query_once(self, query_string, data=None):
+        """Execute one checked SQL attempt; the caller owns any retry policy."""
+        pool = self.conn_pool
+        if pool is None:
+            raise psycopg2.OperationalError("PostgreSQL connection pool is unavailable")
 
+        connection = pool.getconn()
+        cursor = None
+        try:
+            cursor = connection.cursor()
+            cursor.execute(query_string, data)
+            try:
+                result = cursor.fetchall()
+            except psycopg2.ProgrammingError:
+                result = None
+            connection.commit()
+        except Exception:
+            if cursor is not None:
+                try:
+                    cursor.close()
+                except Exception:
+                    pass
+                cursor = None
+
+            discard_connection = bool(connection.closed)
+            if not discard_connection:
+                try:
+                    connection.rollback()
+                except Exception:
+                    discard_connection = True
+            try:
+                pool.putconn(connection, close=discard_connection)
+            except Exception:
+                self.logger.exception(
+                    "Failed to return a PostgreSQL connection after query failure"
+                )
+            raise
+
+        if cursor is not None:
+            try:
+                cursor.close()
+            except Exception:
+                try:
+                    pool.putconn(connection, close=True)
+                except Exception:
+                    self.logger.exception(
+                        "Failed to discard a PostgreSQL connection with a bad cursor"
+                    )
+                raise
+        try:
+            pool.putconn(connection)
+        except Exception:
+            try:
+                connection.close()
+            except Exception:
+                pass
+            raise
+        return result
+
+    def query_checked(self, query_string, data=None):
+        """Execute a query and raise after bounded retries if PostgreSQL fails."""
         result, error = self.error_handler.execute_with_retry(
-            func=execute_query,
+            func=lambda: self.query_once(query_string, data),
             max_retries=3,
             initial_delay=0.1,
             max_delay=2.0,
             retryable_errors=(psycopg2.OperationalError,),
         )
-
-        if error:
-            self.logger.warning(
-                f'Transaction ({query_string}) failed after retries: {error}'
-            )
-            return None
-
+        if error is not None:
+            raise error
         return result
 
     def _insert_impl(self):
@@ -325,9 +384,19 @@ class DatabaseControllerPg(DatabaseControllerBase):
         conn = None
         try:
             # Connect to postgres database using admin credentials to create new database
-            conn = psycopg2.connect(dbname="postgres", user=self.admin_user_name,
-                                    password=self.admin_password, host=self.host_name,
-                                    port=self.port)
+            conn = psycopg2.connect(
+                dbname="postgres",
+                user=self.admin_user_name,
+                password=self.admin_password,
+                host=self.host_name,
+                port=self.port,
+                connect_timeout=self.connect_timeout_secs,
+                options=f"-c statement_timeout={self.statement_timeout_ms}ms",
+                keepalives=1,
+                keepalives_idle=10,
+                keepalives_interval=5,
+                keepalives_count=3,
+            )
             conn.autocommit = True
             with conn.cursor() as curs:
                 curs.execute(sql.SQL('SELECT 1 FROM pg_catalog.pg_database WHERE datname = %s;'), (db_name,))

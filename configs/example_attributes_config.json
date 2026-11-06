@@ -59,13 +59,17 @@
                 "attr2",
                 "attr3"
             ],
-            "class_mapping": {},
+            "class_mapping": {
+                "attr1": 0,
+                "attr2": 1,
+                "attr3": 2
+            },
             "confidence_thresholds": {
                 "attr1": 0.3,
                 "attr2": 0.3,
                 "attr3": 0.3
             },
-            "note": "Если class_mapping пустой, используется последовательный маппинг (0, 1, 2, ...)"
+            "note": "Если имена атрибутов совпадают с метками checkpoint, mapping определяется автоматически; для псевдонимов указывайте class_mapping явно."
         }
     },
     "controller": {

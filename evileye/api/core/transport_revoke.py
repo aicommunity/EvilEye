@@ -4,8 +4,7 @@ from __future__ import annotations
 
 import logging
 import threading
-from typing import Any, Callable
-from weakref import WeakSet
+from typing import Any
 
 logger = logging.getLogger("evileye.api.transport_revoke")
 

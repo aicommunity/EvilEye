@@ -3,7 +3,6 @@
 Wrapper for EvilEye API server that ensures proper path setup and stable entry point
 """
 import sys
-import os
 from pathlib import Path
 
 # Add project root to Python path

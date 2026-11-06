@@ -4,8 +4,7 @@
 """
 
 import unittest
-import time
-from unittest.mock import Mock, patch, MagicMock
+from unittest.mock import Mock, patch
 
 from PyQt6.QtWidgets import QApplication, QGraphicsScene, QGraphicsView
 from PyQt6.QtCore import Qt, QTimer, QPointF
@@ -23,7 +22,7 @@ class TestROIEditorFreezeFix(unittest.TestCase):
         """Настройка тестов"""
         self.app = QApplication.instance()
         if self.app is None:
-            self.app = QApplication([])
+            self.app = QApplication.instance() or QApplication([])
         
         # Создаем mock для логгера
         with patch('evileye.visualization_modules.roi_editor_window.get_module_logger') as mock_logger:

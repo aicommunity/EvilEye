@@ -3,6 +3,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { authApi, stateApi, usersApi, type CameraCatalogItem, type UserRecord } from '../../api';
 import { useAuth } from '../../auth/AuthContext';
 import { Button } from '../../components/ui';
+import { PageHeader } from '../../components/ui/PageHeader';
 import { useToast } from '../../components/ui/Toast';
 import { useI18n, type DateFormat } from '../../i18n';
 import { CameraAclEditor } from '../admin/CameraAclEditor';
@@ -202,10 +203,7 @@ export function SettingsPage() {
   return (
     <section className="panel active">
       <div className="card">
-        <div className="toolbar">
-          <h2 style={{ margin: 0 }}>{t('settings.title')}</h2>
-        </div>
-        <p className="hint">{t('settings.hint')}</p>
+        <PageHeader title={t('settings.title')} description={t('settings.hint')} />
 
         {canManageUsers ? (
           <div className="settings-section">

@@ -211,3 +211,86 @@ def test_gstreamer_video_loop_reconnect_multiple(
         assert sources[i].is_inited, f"is_inited должен быть True для источника {i} после реконнекта"
         assert sources[i].is_working, f"is_working должен быть True для источника {i} после реконнекта"
         assert len(frames_after_eos[i]) > 0, f"Должны быть получены кадры после реконнекта для источника {i}"
+
+
+@pytest.mark.usefixtures("require_gst")
+def test_gstreamer_video_file_writes_through_shared_continuous_recorder(
+    test_video_mp4,
+    tmp_path: Path,
+):
+    """Exercise the migrated recorder branch with a local source, no camera needed."""
+    import shutil
+    import subprocess
+
+    from evileye.capture.video_capture_gstreamer import VideoCaptureGStreamer
+
+    ffprobe = shutil.which("ffprobe")
+    if ffprobe is None:
+        pytest.skip("ffprobe is required to inspect the recorded segment")
+
+    output_dir = tmp_path / "recordings"
+    capture = VideoCaptureGStreamer()
+    capture.set_params(
+        execution_mode="thread",
+        source="VideoFile",
+        camera=str(test_video_mp4),
+        source_ids=[501],
+        source_names=["GStreamerRecorderE2E"],
+        desired_fps=15,
+        loop_play=True,
+        record={
+            "enabled": True,
+            "continuous_recording_enabled": True,
+            "container": "mp4",
+            "segment_length_sec": 300,
+            "retention_days": 1,
+            "min_free_space_pct": 0,
+            "min_file_size_kb": 0,
+            "out_dir": str(output_dir),
+            "filename_tmpl": "{source_name}_{start_time}_{seq}.{ext}",
+        },
+    )
+
+    # This fixture is MPEG-4, so exercise decodebin directly instead of the
+    # explicit H.264 candidate and its separate decoder-fallback lifecycle.
+    capture._force_decodebin = True
+    frames_received = 0
+    started_at = time.monotonic()
+    try:
+        assert capture.init(), getattr(capture, "_last_init_error", None)
+        capture.start()
+        deadline = started_at + 8.0
+        while time.monotonic() < deadline:
+            frames_received += len(capture.get())
+            if frames_received and time.monotonic() - started_at >= 3.0:
+                break
+            time.sleep(0.05)
+    finally:
+        capture.stop()
+        capture.release()
+
+    recorder = capture._gst_continuous_recorder
+    assert frames_received > 0
+    assert recorder is not None
+    assert recorder._segments_attached == 1
+    assert capture._recording_queue_elem is None
+    assert not hasattr(capture, "_recording_elements")
+
+    segments = list((output_dir / "Streams").rglob("*.mp4"))
+    assert segments, f"shared GStreamer recorder wrote no MP4 under {output_dir}"
+    probe = subprocess.run(
+        [
+            ffprobe,
+            "-v", "error",
+            "-select_streams", "v:0",
+            "-count_packets",
+            "-show_entries", "stream=nb_read_packets",
+            "-of", "default=noprint_wrappers=1:nokey=1",
+            str(segments[0]),
+        ],
+        check=True,
+        capture_output=True,
+        text=True,
+        timeout=20,
+    )
+    assert int(probe.stdout.strip()) > 0

@@ -5,7 +5,7 @@
 import os
 import json
 import datetime
-from typing import Optional, List, Dict, Tuple
+from typing import Optional
 
 try:
     from PyQt6.QtWidgets import QWidget

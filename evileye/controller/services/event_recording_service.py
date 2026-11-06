@@ -117,8 +117,8 @@ class EventRecordingService:
                         fps=buffer_fps,
                         username=source.username,
                         password=source.password,
-                        source_names=source.source_names,
-                        source_ids=source.source_ids,
+                        source_names=[source_name],
+                        source_ids=[source_id],
                     )
                     host.event_recorders[source_id] = EventRecorder(
                         source_meta, host.recording_params, host.event_buffers[source_id]

@@ -37,5 +37,8 @@ class ProcessorSource(ProcessorBase):
 
     def run_sources(self):
         for processor in self.processors:
-            if not processor.is_running():
+            # Finished streams should not be respawned on every pipeline tick.
+            # A failed/uninitialized source remains retryable until it reports
+            # completion through is_finished().
+            if not processor.is_running() and not processor.is_finished():
                 processor.start()

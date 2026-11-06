@@ -1,6 +1,4 @@
 import copy
-import json
-import os.path
 from ....core.logger import get_module_logger
 
 try:
@@ -30,7 +28,6 @@ except ImportError:
 
     pyqt_version = 5
 from evileye.utils import utils
-import sys
 from evileye.capture.video_capture_base import CaptureDeviceType
 from evileye.capture import VideoCaptureOpencv
 from evileye.visualization_modules.configurer import parameters_processing

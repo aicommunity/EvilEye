@@ -407,12 +407,12 @@ def assert_media_path_allowed(access: CameraAccess, path: str) -> None:
         resolve_authorized_media(access, path, data_root=data_dir())
     except HTTPException:
         raise
-    except Exception:
+    except Exception as exc:
         # Legacy fallback for callers without a data root on disk.
         cams = cameras_from_media_path(path)
         if access.unrestricted:
             return
         if not cams:
-            raise HTTPException(status_code=403, detail="Camera access denied")
+            raise HTTPException(status_code=403, detail="Camera access denied") from exc
         for name in cams:
             assert_name_allowed(access, name)

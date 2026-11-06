@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-from typing import Optional
 
 import typer
 from rich.table import Table
@@ -10,6 +9,13 @@ from rich.table import Table
 from evileye.cli_commands.console import console
 
 app = typer.Typer(help="Web UI build and dependency management")
+
+
+@app.callback(invoke_without_command=True)
+def web_root(ctx: typer.Context) -> None:
+    from evileye.cli_interactive import handle_group_root
+
+    handle_group_root(ctx, "web")
 
 
 def _print_web_setup_failures(report) -> None:
@@ -98,7 +104,11 @@ def web_deps(
         console.print("[red]--scope must be 'user' or 'system'[/red]")
         raise typer.Exit(1)
     if scope_norm == "system":
-        if not typer.confirm("Install missing Python packages system-wide with sudo?", default=False):
+        from evileye.cli_interactive import interactive_available
+
+        if not interactive_available() or not typer.confirm(
+            "Install missing Python packages system-wide with sudo?", default=False
+        ):
             raise typer.Exit(1)
     result = sw.ensure_web_environment(
         scope=scope_norm,
@@ -125,7 +135,7 @@ def web_build(force: bool = typer.Option(False, "--force", help="Force npm rebui
         sw.build_frontend()
     except Exception as exc:
         console.print(f"[red]Build failed: {exc}[/red]")
-        raise typer.Exit(1)
+        raise typer.Exit(1) from exc
     console.print("[green]Frontend build completed.[/green]")
 
 
@@ -140,8 +150,8 @@ def web_refresh(
         restart_web_layer(force_build=force, log=lambda msg: console.print(f"[blue]{msg}[/blue]"))
     except ContainerOperationError as exc:
         console.print(f"[yellow]{exc}[/yellow]")
-        raise typer.Exit(1)
+        raise typer.Exit(1) from exc
     except Exception as exc:
         console.print(f"[red]{exc}[/red]")
-        raise typer.Exit(1)
+        raise typer.Exit(1) from exc
     console.print("[green]Web layer refreshed.[/green]")

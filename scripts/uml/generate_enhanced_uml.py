@@ -4,10 +4,9 @@ Enhanced UML Diagram Generator for EvilEye System
 Creates detailed and beautiful UML diagrams with better analysis.
 """
 
-import os
 import inspect
 import importlib
-from typing import Dict, List, Set, Tuple, Optional
+from typing import Dict, Optional
 from pathlib import Path
 import graphviz
 

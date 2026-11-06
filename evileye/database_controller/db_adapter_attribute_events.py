@@ -1,9 +1,8 @@
-import time
+import os
 from .db_adapter import DatabaseAdapterBase
 from .constants import QueryType, EventType
 from ..utils import threading_events
 from ..utils import utils
-import copy
 from psycopg2 import sql
 from .event_image_writer import EventImageWriter
 
@@ -57,22 +56,14 @@ class DatabaseAdapterAttributeEvents(DatabaseAdapterBase):
         if query_string is None:
             return
 
-        try:
-            self.db_controller.query(query_string, data)
-        except Exception as e:
-            should_retry, last_error = self.error_handler.handle_query_error(
-                error=e,
-                query_string=str(query_string) if query_string else None,
-                retry_callback=None,
-                max_retries=1,
-            )
-            if last_error:
-                return
+        self.db_controller.query_once(query_string, data)
         try:
             if image is not None and preview_path is not None and frame_path is not None and box is not None:
                 self._save_image(preview_path, frame_path, image, box)
-        except Exception:
-            pass
+        except Exception as exc:
+            self._record_failure(
+                'save attribute event images', exc, category='terminal_write'
+            )
         if query_type == QueryType.INSERT:
             threading_events.notify(EventType.NEW_EVENT)
         elif query_type == QueryType.UPDATE:

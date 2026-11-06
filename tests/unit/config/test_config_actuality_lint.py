@@ -24,6 +24,8 @@ PARTIAL = {
     "source_only_test.json",
     "minimal_test.json",
     "test_capture_memory.json",
+    # User-specific runtime configuration; not a repository example.
+    "system.json",
 }
 
 

@@ -3,8 +3,7 @@ import hmac
 import json
 import os
 from dataclasses import dataclass
-from pathlib import Path
-from typing import Any, Optional
+from typing import Any, Iterable, Optional
 
 from fastapi import HTTPException, Request, status
 
@@ -269,6 +268,48 @@ def require_authenticated(request: Request) -> dict[str, Any]:
     return user
 
 
+SAFE_HTTP_METHODS = frozenset({"GET", "HEAD", "OPTIONS"})
+
+
+def csrf_origin_violation(request: Request, allowed_origins: Iterable[str] = ()) -> Optional[str]:
+    """Return a reason when a state-changing request comes from a foreign web origin.
+
+    Browsers always attach ``Origin`` (or at least ``Referer``) to cross-site POST/PUT/PATCH/
+    DELETE requests, so a mismatch with the served host means the request was triggered by
+    another site using the admin's session cookie. Requests without either header come from
+    non-browser clients and are not browser-CSRF vectors.
+    """
+    from urllib.parse import urlsplit
+
+    if request.method in SAFE_HTTP_METHODS:
+        return None
+    raw = request.headers.get("origin") or request.headers.get("referer") or ""
+    if not raw:
+        return None
+    if raw.strip().lower() == "null":
+        return "opaque request origin"
+    try:
+        parts = urlsplit(raw)
+    except ValueError:
+        return "malformed request origin"
+    if not parts.scheme or not parts.netloc:
+        return "malformed request origin"
+    origin = f"{parts.scheme}://{parts.netloc}".lower()
+    hosts = {
+        value.strip().lower()
+        for value in (
+            request.headers.get("host", ""),
+            request.headers.get("x-forwarded-host", ""),
+        )
+        if value and value.strip()
+    }
+    if parts.netloc.lower() in hosts:
+        return None
+    if origin in {str(item).rstrip("/").lower() for item in allowed_origins}:
+        return None
+    return f"cross-origin request from {origin}"
+
+
 def require_role(request: Request, roles: set[str]) -> dict[str, Any]:
     user = require_authenticated(request)
     role = normalize_role(str(user.get("role") or "user"))
@@ -294,6 +335,8 @@ def required_permissions_for_request(path: str, method: str) -> set[str]:
         return set()
     if path.startswith("/api/v1/internal/"):
         return set()
+    if path.startswith("/api/v1/admin/extensions"):
+        return {"system:admin"}
     if path.startswith("/api/v1/playback"):
         return {"journal:view"}
     if path.startswith("/api/v1/journals/config-history"):
@@ -316,6 +359,8 @@ def required_permissions_for_request(path: str, method: str) -> set[str]:
         return {"runtime:view"} if method == "GET" else {"runtime:control"}
     if path.startswith("/api/v1/system/restart"):
         return {"runtime:control"}
+    if path in {"/api/v1/system/runtime", "/api/v1/system/metrics"}:
+        return {"runtime:view"}
     if path.startswith("/api/v1/system"):
         return {"system:admin"} if method not in {"GET"} else {"live:view"}
     if path.startswith("/api/v1/configs"):

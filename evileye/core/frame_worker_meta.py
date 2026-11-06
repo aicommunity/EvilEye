@@ -12,6 +12,7 @@ def frame_to_worker_meta(frame: Frame) -> dict[str, Any]:
     return {
         "source_id": frame.source_id,
         "frame_id": frame.frame_id,
+        "connection_generation": getattr(frame, "connection_generation", 0),
         "time_stamp": frame.time_stamp,
         "pts_ns": getattr(frame, "pts_ns", None),
         "media_pts_sec": getattr(frame, "media_pts_sec", None),

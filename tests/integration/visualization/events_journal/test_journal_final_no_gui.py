@@ -1,6 +1,5 @@
 #!/usr/bin/env python3
 
-import sys
 import os
 def test_journal_final_no_gui(journal_test_logger):
     """Test journal functionality without GUI"""

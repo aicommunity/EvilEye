@@ -2,15 +2,18 @@
 
 from __future__ import annotations
 
-from unittest.mock import patch
+import pytest
 
 from evileye.core.base_class import EvilEyeBase
 from evileye.core.processor_step import ProcessorStep
 from evileye.events_detectors.event_registry import (
+    EventDetectorContext,
+    create_event_detector,
     list_event_detectors,
     register_builtins,
     register_event_detector,
 )
+from evileye.core.plugins import plugin_registry
 
 
 @EvilEyeBase.register("_AuditDummyA")
@@ -73,13 +76,44 @@ def test_processor_step_per_item_types():
     assert isinstance(step.processors[1], _AuditDummyB)
 
 
+
+def test_legacy_decorator_registers_in_plugin_registry_only():
+    assert not hasattr(EvilEyeBase, "_registry")
+    registered = plugin_registry.get_module("_AuditDummyA")
+    assert registered is not None
+    assert registered.spec.factory is _AuditDummyA
+    assert isinstance(EvilEyeBase.create_instance("_AuditDummyA"), _AuditDummyA)
+
+    with pytest.raises(ValueError, match="not found in plugin registry"):
+        EvilEyeBase.create_instance("missing.audit/module")
+
 def test_event_registry_builtins_and_custom():
     register_builtins()
     assert "ZoneEventsDetector" in list_event_detectors()
 
+    from evileye.events_detectors.system_events_detector import SystemEventsDetector
+
     @register_event_detector("_AuditHeartbeat")
-    class _AuditHeartbeat:
-        def __init__(self, *args, **kwargs):
-            pass
+    class _AuditHeartbeat(SystemEventsDetector):
+        def __init__(self, context):
+            super().__init__()
+            self.context = context
 
     assert "_AuditHeartbeat" in list_event_detectors()
+    context = EventDetectorContext(pipeline_source_ids=(0, 2))
+    detector = create_event_detector("_AuditHeartbeat", context)
+    assert detector.context is context
+
+
+def test_builtin_event_detectors_register_when_custom_detector_was_loaded_first():
+    class _LoadedFirst:
+        pass
+
+    plugin_registry.register_builtin_module(
+        "_LoadedFirst", _LoadedFirst, kind="event_detector", execution_modes=("thread",)
+    )
+
+    register_builtins()
+
+    assert "_LoadedFirst" in list_event_detectors()
+    assert "ZoneEventsDetector" in list_event_detectors()

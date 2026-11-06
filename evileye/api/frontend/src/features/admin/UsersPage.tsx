@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { usersApi, type CameraCatalogItem, type UserRecord } from '../../api';
 import { Button } from '../../components/ui';
+import { PageHeader } from '../../components/ui/PageHeader';
 import { useToast } from '../../components/ui/Toast';
 import { useI18n } from '../../i18n';
 import { CameraAclEditor } from './CameraAclEditor';
@@ -153,12 +154,11 @@ export function UsersPage() {
   return (
     <section className="panel active">
       <div className="card">
-        <div className="toolbar">
-          <h2 style={{ margin: 0 }}>{t('users.title')}</h2>
+        <PageHeader title={t('users.title')} actions={
           <Button variant="outline" onClick={() => void load()}>
             {t('users.refresh')}
           </Button>
-        </div>
+        } />
 
         <div className="users-create">
           <h3 className="users-create-title">{t('users.createSection')}</h3>

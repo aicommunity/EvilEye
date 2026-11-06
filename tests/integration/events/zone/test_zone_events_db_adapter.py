@@ -52,7 +52,7 @@ class DummyDbController:
     def get_job_id(self):
         return 1
 
-    def query(self, query, data):
+    def query_once(self, query, data):
         # Record query and return dummy RETURNING row
         self._queries.append((query, data))
         # Emulate RETURNING box and zone coords.

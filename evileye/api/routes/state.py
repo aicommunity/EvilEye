@@ -64,12 +64,12 @@ async def _to_thread_with_timeout_or_cached(
         remaining = max(0.0, deadline - loop.time())
         try:
             await asyncio.wait_for(slot_sem.acquire(), timeout=remaining)
-        except asyncio.TimeoutError:
+        except asyncio.TimeoutError as exc:
             cached = cached_fn()
             if cached is not None:
                 return cached
             _state_thread_503s += 1
-            raise HTTPException(status_code=503, detail=err_detail)
+            raise HTTPException(status_code=503, detail=err_detail) from exc
     fut = loop.run_in_executor(None, value_fn)
     _state_thread_inflight.add(fut)
     released = False
@@ -85,13 +85,13 @@ async def _to_thread_with_timeout_or_cached(
     remaining = max(0.001, deadline - loop.time())
     try:
         return await asyncio.wait_for(asyncio.shield(fut), timeout=remaining)
-    except asyncio.TimeoutError:
+    except asyncio.TimeoutError as exc:
         _state_thread_timeouts += 1
         cached = cached_fn()
         if cached is not None:
             return cached
         _state_thread_503s += 1
-        raise HTTPException(status_code=503, detail=err_detail)
+        raise HTTPException(status_code=503, detail=err_detail) from exc
 
 
 def _filter_run_summary(item: dict | None, access) -> dict | None:

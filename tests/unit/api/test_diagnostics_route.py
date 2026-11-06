@@ -44,6 +44,13 @@ def test_diagnostics_post_requires_live_view_not_admin():
 def _diag_client(tmp_path: Path, monkeypatch) -> TestClient:
     monkeypatch.setattr(diagnostics_mod, "append_client_diag_events", lambda **kw: append_client_diag_events(**{**kw, "logs_dir": tmp_path}))
     diagnostics_mod._rate_by_user.clear()
+    from evileye.api.core import camera_access
+
+    monkeypatch.setattr(
+        camera_access,
+        "lookup_user_record",
+        lambda username: {"username": username, "role": "admin"} if username == "admin" else None,
+    )
 
     app = FastAPI()
     app.add_middleware(
@@ -65,6 +72,14 @@ def _diag_client(tmp_path: Path, monkeypatch) -> TestClient:
 def _diag_client_with_auth_guard(tmp_path: Path, monkeypatch) -> TestClient:
     monkeypatch.setattr(diagnostics_mod, "append_client_diag_events", lambda **kw: append_client_diag_events(**{**kw, "logs_dir": tmp_path}))
     diagnostics_mod._rate_by_user.clear()
+    from evileye.api.core import camera_access
+
+    roles = {"playback-test@example.com": "user", "admin": "admin"}
+    monkeypatch.setattr(
+        camera_access,
+        "lookup_user_record",
+        lambda username: {"username": username, "role": roles[username]} if username in roles else None,
+    )
 
     app = FastAPI()
     app.add_middleware(AuthGuardMiddleware)

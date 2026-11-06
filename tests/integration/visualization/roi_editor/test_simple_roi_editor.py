@@ -23,7 +23,7 @@ def test_roi_editor_creation():
         # Создаем приложение
         app = QApplication.instance()
         if app is None:
-            app = QApplication([])
+            app = QApplication.instance() or QApplication([])
         
         # Создаем ROI редактор
         params = {}

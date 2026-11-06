@@ -49,13 +49,17 @@ class JsonAdapterScheduleAlarmEvents(DatabaseAdapterBase):
         )
 
     def start(self):
-        self.run_flag = True
+        with self._lifecycle_lock:
+            self._closing = False
+            self.run_flag = True
 
     def _process_queue_item(self, item):
         return
 
     def stop(self):
-        self.run_flag = False
+        with self._lifecycle_lock:
+            self._closing = True
+            self.run_flag = False
 
     def _execute_query(self):
         pass
@@ -93,7 +97,8 @@ class JsonAdapterScheduleAlarmEvents(DatabaseAdapterBase):
         ts_str = ts.strftime("%Y-%m-%d_%H-%M-%S-%f") if is_update else ts.strftime("%Y-%m-%d_%H-%M-%S.%f")
         previews_dir, frames_dir = ensure_event_image_dirs(day_dir, is_lost=is_update)
 
-        image = event.img_lost if is_update else event.img_detected
+        # ScheduleAlarmEvent carries no frames of its own; images are optional extras.
+        image = getattr(event, "img_lost" if is_update else "img_detected", None)
         if image is None or not hasattr(image, "image"):
             return "", ""
 

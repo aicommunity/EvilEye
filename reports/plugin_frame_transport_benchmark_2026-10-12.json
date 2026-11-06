@@ -1,0 +1,76 @@
+{
+  "video": "tests/data/videos/!del_139932-video_trim.mp4",
+  "frame_shape": [
+    2160,
+    3840,
+    3
+  ],
+  "frames": 60,
+  "device": "0",
+  "model": "models/yolov8n.pt",
+  "detector": {
+    "imgsz": 640,
+    "conf": 0.4,
+    "classes": [
+      0,
+      1,
+      24,
+      25,
+      63,
+      66,
+      67
+    ]
+  },
+  "detector_inference_sec_excluded_from_tracker_measurement": 2.833750383928418,
+  "detections_total": 51,
+  "results": [
+    {
+      "execution_mode": "thread",
+      "frames": 60,
+      "detections": 51,
+      "track_rows": 46,
+      "unique_track_ids": 1,
+      "track_signature_sha256": "48682f7ce90e18e52e92cae837250053ab9eaf930f569ec38fb7d435c8053d69",
+      "steady_fps": 802.6607620086851,
+      "latency_p50_ms": 1.1876525823026896,
+      "latency_p95_ms": 1.2646110961213706,
+      "mean_latency_ms": 1.2313211957613628,
+      "returned_original_frame": true,
+      "runtime_stats": {
+        "module_id": "ObjectTrackingBotsort",
+        "execution_mode": "thread",
+        "worker_running": true,
+        "input_queue_size": 0,
+        "output_queue_size": 0,
+        "input_queue_dropped": 0,
+        "input_queue_rejected": 0,
+        "in_flight": 0,
+        "degraded": false
+      }
+    },
+    {
+      "execution_mode": "process",
+      "frames": 60,
+      "detections": 51,
+      "track_rows": 46,
+      "unique_track_ids": 1,
+      "track_signature_sha256": "48682f7ce90e18e52e92cae837250053ab9eaf930f569ec38fb7d435c8053d69",
+      "steady_fps": 27.12992295570528,
+      "latency_p50_ms": 37.695287028327584,
+      "latency_p95_ms": 40.043766982853406,
+      "mean_latency_ms": 36.64023041880379,
+      "returned_original_frame": true,
+      "runtime_stats": {
+        "module_id": "ObjectTrackingBotsort",
+        "execution_mode": "process",
+        "worker_running": true,
+        "input_queue_size": null,
+        "output_queue_size": null,
+        "input_queue_dropped": 0,
+        "input_queue_rejected": 0,
+        "in_flight": 0,
+        "degraded": false
+      }
+    }
+  ]
+}

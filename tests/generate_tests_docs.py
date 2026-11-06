@@ -4,11 +4,9 @@
 Сканирует все тесты и создает markdown документацию.
 """
 
-import os
 import ast
-import re
 from pathlib import Path
-from typing import Dict, List, Optional
+from typing import Dict
 from collections import defaultdict
 
 def extract_test_info(file_path: Path) -> Dict:

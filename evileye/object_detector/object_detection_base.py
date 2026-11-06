@@ -182,7 +182,11 @@ class ObjectDetectorBase(EvilEyeBase, ABC):
 
         # Use ClassManager if available, otherwise fallback to old logic
         if self.class_manager:
-            self.classes = self.class_manager.convert_classes_to_ids(self.classes)
+            # The model filters by its own ids, so names resolve through the model mapping
+            # first; the global (remapped) ids of the ClassManager are only a fallback.
+            own = self.model_class_mapping or {}
+            resolved = [own[cls] if isinstance(cls, str) and cls in own else cls for cls in self.classes]
+            self.classes = self.class_manager.convert_classes_to_ids(resolved)
             if original_classes != self.classes:
                 self.logger.debug(f"Classes updated from {original_classes} to {self.classes} using ClassManager")
         else:

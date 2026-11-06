@@ -17,8 +17,9 @@ app = typer.Typer(help="Development workflows")
 @app.callback(invoke_without_command=True)
 def dev_root(ctx: typer.Context) -> None:
     if ctx.invoked_subcommand is None:
-        console.print("Usage: evileye dev server")
-        raise typer.Exit(2)
+        from evileye.cli_interactive import handle_group_root
+
+        handle_group_root(ctx, "dev", fallback="Usage: evileye dev server")
 
 
 @app.command("server")
@@ -37,7 +38,7 @@ def dev_server(
             ensure_web_singleton(site, policy="fail", port=port)
     except DuplicateWebError as exc:
         console.print(f"[red]{exc}[/red]")
-        raise typer.Exit(1)
+        raise typer.Exit(1) from exc
 
     cmd = [sys.executable, str(Path(__file__).resolve().parents[1] / "server.py")]
     cmd.extend(["--host", host, "--port", str(port), "--log-level", log_level, "--no-reload"])
@@ -48,8 +49,8 @@ def dev_server(
     env["EVILEYE_SITE_DIR"] = str(site)
     try:
         subprocess.run(cmd, check=True, cwd=os.getcwd(), env=env)
-    except KeyboardInterrupt:
-        raise typer.Exit(0)
+    except KeyboardInterrupt as exc:
+        raise typer.Exit(0) from exc
     except subprocess.CalledProcessError as exc:
         console.print(f"[red]Server failed: {exc}[/red]")
-        raise typer.Exit(1)
+        raise typer.Exit(1) from exc

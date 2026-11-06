@@ -14,7 +14,7 @@ from pathlib import Path
 from typing import Any, Optional
 
 from evileye.core.paths import logs_dir, monitor_dir, site_root
-from evileye.core.process_control import find_pids_by_cmdline_regex, pid_exists, terminate_tree
+from evileye.core.process_control import find_pids_by_cmdline_regex, pid_exists, terminate_tree_gracefully
 
 LOG_STALE_SEC = int(os.environ.get("EVILEYE_WATCHDOG_LOG_STALE_SEC", "600"))
 RESTART_GRACE_SEC = int(os.environ.get("EVILEYE_WATCHDOG_GRACE_SEC", "900"))
@@ -329,7 +329,7 @@ def restart_evileye(*, config: str, root: Optional[Path] = None, reason: str = "
     cli_pid, child_pid = find_cli_and_child(config)
     for pid in (child_pid, cli_pid):
         if pid and pid_exists(pid):
-            terminate_tree(pid, grace_sec=5.0)
+            terminate_tree_gracefully(pid, grace_sec=5.0)
 
     config_arg = config
     if not Path(config_arg).is_absolute():

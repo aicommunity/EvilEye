@@ -6,6 +6,7 @@ import threading
 from contextlib import contextmanager
 from pathlib import Path
 from typing import Dict, Iterable, Optional
+import psutil
 
 from evileye.core.logger import get_module_logger
 
@@ -102,8 +103,10 @@ def _is_pid_alive(pid: Optional[int]) -> bool:
     if not pid or pid <= 0:
         return False
     try:
-        os.kill(int(pid), 0)
-    except OSError:
+        process = psutil.Process(int(pid))
+        if not process.is_running() or process.status() == psutil.STATUS_ZOMBIE:
+            return False
+    except (psutil.Error, ValueError, TypeError):
         return False
     return _parse_process_cmdline(int(pid)) is not None
 
@@ -135,34 +138,39 @@ def allocate_pipeline_id(extra_ids: Optional[Iterable[int]] = None) -> int:
 
 
 def _parse_process_cmdline(pid: int) -> Optional[dict]:
-    proc_dir = Path("/proc") / str(pid)
     try:
-        raw_cmdline = (proc_dir / "cmdline").read_bytes()
-        parts = [p.decode("utf-8", errors="ignore") for p in raw_cmdline.split(b"\0") if p]
-    except Exception:
+        process = psutil.Process(pid)
+        parts = process.cmdline()
+    except (psutil.Error, ValueError, TypeError):
         return None
     if not parts:
         return None
-    joined = " ".join(parts)
-    if "evileye/process.py" not in joined:
+    normalized = [part.replace("\\", "/").lower() for part in parts]
+    if not any(part.endswith("/evileye/process.py") or part == "evileye/process.py" or
+               (part == "evileye.process" and index > 0 and parts[index - 1] == "-m")
+               for index, part in enumerate(normalized)):
         return None
     config_path = None
-    for idx, part in enumerate(parts[:-1]):
-        if part == "--config":
+    for idx, part in enumerate(parts):
+        if part == "--config" and idx + 1 < len(parts):
             config_path = parts[idx + 1]
             break
-    if not config_path:
+        if part.startswith("--config="):
+            config_path = part.split("=", 1)[1]
+            break
+    if not config_path and not any(part == "--video" or part.startswith("--video=") for part in parts):
         return None
     env: dict[str, str] = {}
     try:
-        raw_env = (proc_dir / "environ").read_bytes().split(b"\0")
-        for item in raw_env:
-            if b"=" not in item:
-                continue
-            key, value = item.split(b"=", 1)
-            env[key.decode("utf-8", errors="ignore")] = value.decode("utf-8", errors="ignore")
-    except Exception:
+        env = process.environ()
+    except psutil.Error:
         pass
+    if config_path and not Path(config_path).is_absolute():
+        try:
+            config_path = str(Path(process.cwd()) / config_path)
+        except psutil.Error:
+            # A known runtime record already contains its resolved path.
+            config_path = None
     return {
         "pid": pid,
         "config_path": config_path,
@@ -185,12 +193,16 @@ def discover_process_runtimes() -> None:
         record = load_runtime_record(rid, refresh_state=False)
         if record and record.get("pid"):
             known_by_pid[int(record["pid"])] = rid
-    for proc_dir in Path("/proc").iterdir():
-        if not proc_dir.name.isdigit():
-            continue
-        pid = int(proc_dir.name)
+    for process in psutil.process_iter(["pid"]):
+        pid = int(process.info["pid"])
         info = _parse_process_cmdline(pid)
         if not info:
+            continue
+        config_path = info.get("config_path")
+        if not config_path and pid in known_by_pid:
+            record = load_runtime_record(known_by_pid[pid], refresh_state=False) or {}
+            config_path = record.get("config_path")
+        if not config_path:
             continue
         rid_raw = info.get("pipeline_id")
         if rid_raw:
@@ -199,7 +211,7 @@ def discover_process_runtimes() -> None:
             rid = known_by_pid[pid]
         else:
             rid = allocate_pipeline_id()
-        config_path = str(Path(info["config_path"]).resolve())
+        config_path = str(Path(config_path).resolve())
         frame_dir = info.get("frame_dir")
         if not frame_dir:
             candidate = Path(tempfile.gettempdir()) / "evileye_frames" / str(rid)

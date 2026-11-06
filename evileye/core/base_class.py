@@ -6,24 +6,68 @@ import logging
 
 class EvilEyeBase(ABC):
     _id_counter = 0
-    _registry = dict()
 
     ResultType = None
 
     @classmethod
-    def register(cls, class_name):
+    def register(
+        cls,
+        class_name,
+        *,
+        kind="component",
+        execution_modes=("thread", "process"),
+        capabilities=(),
+    ):
         def inner_wrapper(wrapped_class):
-            cls._registry[class_name] = wrapped_class
+            # Compatibility decorator for older extensions. Built-ins use
+            # register_module directly; both paths publish to PluginRegistry.
+            from .plugins import register_module
 
-            return wrapped_class
+            return register_module(
+                class_name,
+                kind=kind,
+                execution_modes=execution_modes,
+                capabilities=capabilities,
+            )(wrapped_class)
 
         return inner_wrapper
 
     @classmethod
     def create_instance(cls, class_name, *args, **kwargs):
-        if class_name not in cls._registry:
-            raise ValueError(f"Class not found: {class_name}")
-        return cls._registry[class_name](*args, **kwargs)
+        from .plugins import plugin_manager, plugin_registry
+
+        plugin_manager.load()
+        registered = plugin_registry.get_module(class_name)
+        if registered is not None:
+            if registered.spec.kind == "processor_item":
+                capabilities = set(registered.spec.capabilities or ())
+                if "parallel_items" in capabilities:
+                    from .plugin_runtime import ParallelItemModuleAdapter
+
+                    return ParallelItemModuleAdapter(registered)
+                from .plugin_runtime import ItemModuleAdapter
+
+                return ItemModuleAdapter(registered)
+            if registered.spec.kind == "batch_processor":
+                from .plugin_runtime import BatchProcessorModuleAdapter
+
+                return BatchProcessorModuleAdapter(registered)
+            if "legacy_processor_protocol" in registered.spec.capabilities:
+                from .plugin_runtime import LegacyProcessorModuleAdapter
+
+                return LegacyProcessorModuleAdapter(registered)
+            if registered.spec.kind == "event_detector":
+                from .plugin_runtime import EventDetectorModuleAdapter
+
+                return EventDetectorModuleAdapter(registered, *args, **kwargs)
+            if registered.spec.kind == "source":
+                from .plugin_runtime import SourceModuleAdapter
+
+                return SourceModuleAdapter(registered)
+            return registered.spec.factory(*args, **kwargs)
+        raise ValueError(
+            f"Module not found in plugin registry: {class_name}{plugin_manager.failure_hint()}"
+        )
 
     def __init__(self):
         self.is_inited = False
@@ -60,6 +104,31 @@ class EvilEyeBase(ABC):
             self.logger = logging.getLogger("evileye")
 
     def set_params(self, **params):
+        params = dict(params)
+        module_id = params.get("module_id") or params.get("type")
+        if module_id:
+            from .plugins import PluginError, plugin_registry, MODULE_RUNTIME_FIELDS
+
+            registered = getattr(self, "registered_module", None)
+            if registered is None:
+                registered = plugin_registry.get_module(str(module_id))
+            if registered is not None:
+                requested_mode = params.get("execution_mode")
+                if requested_mode is not None:
+                    requested_mode = str(requested_mode).strip().lower()
+                    if requested_mode not in registered.spec.execution_modes:
+                        raise PluginError(
+                            f"Module '{registered.qualified_id}' does not support "
+                            f"execution_mode='{requested_mode}'; supported modes: "
+                            f"{', '.join(registered.spec.execution_modes)}"
+                        )
+            if registered is not None and registered.spec.config_schema is not None:
+                config = params.get("config")
+                if config is None:
+                    config = {key: value for key, value in params.items() if key not in MODULE_RUNTIME_FIELDS}
+                params["config"] = plugin_registry.validate_module_config(
+                    str(module_id), config
+                )
         self.params = params
         # Опционально переименовать логгер, если задано имя
         if 'logger_name' in params and params['logger_name']:

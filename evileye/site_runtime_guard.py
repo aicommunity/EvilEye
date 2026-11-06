@@ -260,8 +260,11 @@ def find_alive_pipelines_for_config(
     from evileye.watchdog_native import find_cli_and_child
 
     cli_pid, child_pid = find_cli_and_child(config, root=root)
+    current_pid = os.getpid()
     for pid in (child_pid, cli_pid):
-        if not pid or not pid_exists(pid) or not pid_belongs_to_site(pid, root):
+        # A direct `evileye run CONFIG` performs this check in its own CLI
+        # process. Do not mistake that caller for a separately running pipeline.
+        if not pid or pid == current_pid or not pid_exists(pid) or not pid_belongs_to_site(pid, root):
             continue
         if any(int(item.get("pid") or 0) == pid for item in matches):
             continue

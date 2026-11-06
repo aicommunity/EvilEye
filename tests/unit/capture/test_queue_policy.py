@@ -1,7 +1,6 @@
 """Capture queue_policy and DropOldestQueue alignment (MEM-5 partial)."""
 
 import queue
-import threading
 
 from evileye.capture.queue_policy import put_drop_oldest, put_drop_oldest_deque
 from evileye.capture.queue_utils import DropOldestQueue

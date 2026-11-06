@@ -33,6 +33,44 @@ def write_json(path: str, data: dict[str, Any]) -> None:
         json.dump(data, f, indent=2)
 
 
+def write_sample_event_metadata(base_dir: str | Path) -> str:
+    """Create a small event tree in the JSON journal's current storage layout."""
+    today = datetime.date.today().strftime("%Y-%m-%d")
+    metadata_dir = Path(base_dir) / "Events" / today / "Metadata"
+    metadata_dir.mkdir(parents=True, exist_ok=True)
+    timestamp = datetime.datetime.now().isoformat()
+    events_by_file = {
+        "attribute_events_found.json": [{
+            "ts": timestamp,
+            "source_id": 0,
+            "source_name": "Camera1",
+            "object_id": 1,
+            "class_name": "person",
+            "event_name": "test_attr",
+        }],
+        "zone_events_entered.json": [{
+            "ts": timestamp,
+            "source_id": 1,
+            "source_name": "Camera2",
+            "object_id": 2,
+            "zone_id": "zone1",
+        }],
+        "camera_events.json": [{
+            "ts": timestamp,
+            "camera_full_address": "rtsp://test-camera",
+            "connection_status": "connected",
+        }],
+        "system_events.json": [{
+            "ts": timestamp,
+            "event_type": "SystemStart",
+        }],
+    }
+    for filename, events in events_by_file.items():
+        with (metadata_dir / filename).open("w", encoding="utf-8") as event_file:
+            json.dump(events, event_file, indent=2)
+    return str(base_dir)
+
+
 def load_db_config() -> dict[str, Any]:
     """Load database configuration from project tree."""
     current = Path(__file__).resolve()

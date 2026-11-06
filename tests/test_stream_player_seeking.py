@@ -2,7 +2,7 @@
 Unit tests for video seeking functionality in stream player
 """
 import unittest
-from unittest.mock import Mock, MagicMock, patch, call
+from unittest.mock import Mock
 import datetime
 from pathlib import Path
 import sys

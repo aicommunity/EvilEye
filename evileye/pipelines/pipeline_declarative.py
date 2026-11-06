@@ -5,26 +5,33 @@ Example config fragment::
     {
       "pipeline_class": "PipelineDeclarative",
       "stages": [
-        {"name": "sources", "kind": "source", "items": [{"type": "VideoCaptureOpencv", ...}]},
-        {"name": "detectors", "kind": "step", "items": [{"type": "ObjectDetectorYolo", ...}]},
-        {"name": "trackers", "kind": "step", "items": [{"type": "ObjectTrackingBotsort", ...}]}
+        {"name": "sources", "kind": "source", "items": [{"module_id": "evileye/VideoCaptureOpencv", ...}]},
+        {"name": "detectors", "kind": "step", "items": [{"module_id": "evileye/ObjectDetectorYolo", ...}]},
+        {"name": "trackers", "kind": "step", "items": [{"module_id": "evileye/ObjectTrackingBotsort", ...}]}
       ],
       "final_results": "trackers"
     }
 
-Authors of custom stages register processors with ``@EvilEyeBase.register`` and
-list them in ``items[].type`` — no fork of PipelineSurveillance required.
+Authors register processors through ``register_module`` or an
+``evileye.plugins`` entry point and select them with ``items[].module_id``.
+Legacy ``items[].type`` remains supported.
 """
 
 from __future__ import annotations
 
 from typing import Any, Dict, List
 
+import evileye.capture  # noqa: F401 — register source plugins
 import evileye.attributes_detection  # noqa: F401 — register plugins
+from evileye.object_detector import register_builtin_modules as _register_builtin_object_detectors
+import evileye.object_tracker  # noqa: F401 — register tracker plugins
 import evileye.object_multi_camera_tracker  # noqa: F401
 import evileye.preprocessing  # noqa: F401
 
+_register_builtin_object_detectors()
+
 from evileye.core.pipeline_processors import PipelineProcessors
+from evileye.core.processor_base import ProcessorBase
 from evileye.core.processor_frame import ProcessorFrame
 from evileye.core.processor_source import ProcessorSource
 from evileye.core.processor_step import ProcessorStep
@@ -53,9 +60,9 @@ class PipelineDeclarative(PipelineProcessors):
                 "frame": "PreprocessingPipeline",
                 "step": "ObjectDetectorYolo",
             }.get(kind, "ObjectDetectorYolo")
-            class_name = items[0].get("type", default_type) if isinstance(items[0], dict) else default_type
+            class_name = ProcessorBase.configured_module_id(items[0], default_type)
             class_names = [
-                (it.get("type", class_name) if isinstance(it, dict) else class_name)
+                ProcessorBase.configured_module_id(it, class_name)
                 for it in items
             ]
             if kind == "source":

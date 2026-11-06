@@ -1,5 +1,4 @@
 from datetime import datetime, timedelta
-from pathlib import Path
 
 import evileye.api.core.log_service as log_service
 import evileye.api.core.runtime_registry as rr

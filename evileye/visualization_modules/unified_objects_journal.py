@@ -5,7 +5,6 @@
 import os
 import sys
 from pathlib import Path
-from typing import Optional
 
 try:
     from PyQt6.QtWidgets import QWidget, QVBoxLayout, QHBoxLayout, QTableWidget, QTableWidgetItem, QHeaderView, \

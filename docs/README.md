@@ -9,12 +9,15 @@
 - **[Руководство по настройке базы данных](DATABASE_SETUP_GUIDE.md)** - Подробное руководство по настройке PostgreSQL базы данных для EvilEye
 - **[Команда deploy](CLI_DEPLOY_COMMAND.md)** - Использование команды `evileye deploy` для развертывания системы
 - **[Управление стеком (status, web, service, pipeline, reload, prod)](CLI_STACK_COMMANDS.md)** — основной гайд CLI
+- **[Просмотр и настройка pipeline](CLI_PIPELINE_COMMANDS.md)** — топология, runtime-состояние, экспорт DOT/JSON и SSH-мастер конфигурации
+- **[Проверка выполнения плана CLI pipeline](CLI_PIPELINE_IMPLEMENTATION_AUDIT.md)** — покрытие пунктов плана и результаты проверки
 - **[Команда service](CLI_SERVICE_COMMANDS.md)** - OS-сервис Web UI и HTTPS
 - **[Команда web](CLI_SETUP_WEB.md)** - Сборка и зависимости Web UI
 - **[Docker-деплой (GPU + CPU)](DOCKER_DEPLOYMENT.md)** - Hub-образы, empty-folder bootstrap, host-CLI, версионные теги
 - **[Windows: native pip](WINDOWS_NATIVE.md)** - Установка и watchdog без Docker
 - **[Windows: Docker Desktop](WINDOWS_DOCKER_DEPLOYMENT.md)** - Compose + PowerShell + Docker watchdog
 - **[Web UI](WEB_UI_GUIDE.md)** - React SPA, first-run, API
+- **[Конструктор пайплайнов и плагинов Web UI](WEB_UI_EXTENSION_BUILDER.md)** — отдельный admin-only режим, формы, localhost-политика и установка плагинов
 - **[Web UI за Traefik / без proxy](WEB_UI_REVERSE_PROXY.md)** - HTTP/HTTPS на uvicorn vs TLS на Traefik, trust_proxy, типичные ошибки
 - **[Руководство по конфигурациям](CONFIGURATION_GUIDE.md)** - Полное описание структуры конфигурационных файлов, всех параметров и примеры конфигураций
 

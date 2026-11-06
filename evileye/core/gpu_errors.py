@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import re
+import sys
 from typing import Any
 
 # Dedicated process exit code: MpControl must not auto-restart on this code.
@@ -54,7 +55,13 @@ def format_cuda_oom_message(
 def cuda_memory_snapshot() -> str:
     """Best-effort CUDA memory stats for diagnostic logs."""
     try:
-        import torch
+        # This helper runs on fatal paths too. Importing torch here can take
+        # several seconds, initialize CUDA in a process that did not use it,
+        # or fail while the worker is already handling an OOM. A worker that
+        # uses torch has it loaded before the failing operation.
+        torch = sys.modules.get("torch")
+        if torch is None:
+            return "torch_not_loaded"
 
         if not torch.cuda.is_available():
             return "cuda_unavailable"

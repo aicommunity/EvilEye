@@ -2,7 +2,7 @@ import os
 import json
 import hashlib
 import time
-from typing import List, Dict, Tuple, Callable, Optional
+from typing import Any, List, Dict, Tuple, Callable, Optional
 from evileye.database_controller.json_adapter_schedule_alarm_events import (
     JSON_FOUND_FILENAMES,
     JSON_LOST_FILENAMES,
@@ -75,6 +75,14 @@ class JsonLabelJournalDataSource(EventJournalDataSource):
         except Exception as e:
             self.logger.warning(f"Failed to load source mappings: {e}")
 
+    def _source_name_for_id(self, source_id: Any) -> Optional[str]:
+        if source_id is None:
+            return None
+        for source_name, (configured_id, _address) in self._source_name_id_address.items():
+            if str(configured_id) == str(source_id):
+                return source_name
+        return None
+
     def force_refresh(self) -> None:
         """Force refresh of cache by clearing timestamps"""
         self._last_file_timestamps.clear()
@@ -123,6 +131,7 @@ class JsonLabelJournalDataSource(EventJournalDataSource):
             (os.path.join(events_metadata, 'zone_events_left.json'), 'zone_left', date_folder),
             (os.path.join(events_metadata, 'camera_events.json'), 'cam', date_folder),
             (os.path.join(events_metadata, 'system_events.json'), 'sys', date_folder),
+            (os.path.join(events_metadata, 'alarm_events.json'), 'alarm', date_folder),
         ]
         for found_name in JSON_FOUND_FILENAMES:
             files.append((os.path.join(events_metadata, found_name), 'schedule_alarm_found', date_folder))
@@ -286,6 +295,7 @@ class JsonLabelJournalDataSource(EventJournalDataSource):
                     'event_type': event_type,
                     'ts': timestamp,
                     'source_id': item.get('source_id'),
+                    'source_name': item.get('source_name') or self._source_name_for_id(item.get('source_id')),
                     'object_id': item.get('object_id'),
                     'class_id': item.get('class_id'),
                     'class_name': item.get('class_name'),
@@ -305,6 +315,8 @@ class JsonLabelJournalDataSource(EventJournalDataSource):
                     'event_type': normalized_type,
                     'ts': timestamp,
                     'source_id': item.get('source_id'),
+                    # Alarm records carry only the numeric id; the camera name drives labels and ACL.
+                    'source_name': item.get('source_name') or self._source_name_for_id(item.get('source_id')),
                     'object_id': item.get('object_id'),
                     'class_id': item.get('class_id'),
                     'image_filename': item.get('preview_path'),
@@ -317,11 +329,8 @@ class JsonLabelJournalDataSource(EventJournalDataSource):
                 source_id = item.get('source_id')
                 source_name = item.get('source_name')
                 # If source_name is missing, try to get it from _source_name_id_address
-                if not source_name and source_id is not None:
-                    for src_name, (src_id, address) in self._source_name_id_address.items():
-                        if src_id == source_id:
-                            source_name = src_name
-                            break
+                if not source_name:
+                    source_name = self._source_name_for_id(source_id)
                 return {
                     'event_id': event_id_str,
                     'event_id_numeric': event_id_numeric,
@@ -383,6 +392,22 @@ class JsonLabelJournalDataSource(EventJournalDataSource):
                     'source_name': None,
                     'video_path': None,  # System events don't have video
                     'video_path_lost': None,
+                    'date_folder': date_folder,
+                }
+            elif event_type == 'alarm':
+                source_id = item.get('source_id')
+                source_name = item.get('source_name') or self._source_name_for_id(source_id)
+                return {
+                    'event_id': event_id_str,
+                    'event_id_numeric': event_id_numeric,
+                    'event_type': 'alarm',
+                    'ts': timestamp,
+                    'alarm_id': item.get('alarm_id'),
+                    'alarm_type': item.get('alarm_type', 'Alarm'),
+                    'severity': item.get('severity', 'warning'),
+                    'details': item.get('details') or {},
+                    'source_id': source_id,
+                    'source_name': source_name,
                     'date_folder': date_folder,
                 }
         except Exception as e:

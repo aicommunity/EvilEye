@@ -9,8 +9,11 @@ import {
   formatApiError,
   isAbortError,
   ApiError,
+  runtimeDiagnostics,
+  type RuntimeDiagnostics,
 } from '../../api';
 import { Badge, Button, Modal } from '../../components/ui';
+import { PageHeader } from '../../components/ui/PageHeader';
 import { useToast } from '../../components/ui/Toast';
 import { useAuth } from '../../auth/AuthContext';
 import { useI18n } from '../../i18n';
@@ -89,6 +92,11 @@ export function RunsPage() {
   const canViewConfig = hasPermission('config:view');
   const canViewLogs = hasPermission('logs:view');
   const canViewHistory = hasPermission('history:view');
+  const canViewRuntime = hasPermission('runtime:view');
+
+  const [runtimeStats, setRuntimeStats] = useState<RuntimeDiagnostics | null>(null);
+  const [runtimeError, setRuntimeError] = useState<string | null>(null);
+  const [runtimeLoading, setRuntimeLoading] = useState(false);
 
   const [dbItems, setDbItems] = useState<Record<string, unknown>[]>([]);
   const [dbAvailable, setDbAvailable] = useState<boolean | null>(null);
@@ -130,6 +138,31 @@ export function RunsPage() {
     [showError, t],
   );
 
+  const loadRuntime = useCallback(
+    async (signal?: AbortSignal) => {
+      if (!canViewRuntime) return;
+      setRuntimeLoading(true);
+      setRuntimeError(null);
+      try {
+        const result = await runtimeDiagnostics({ signal });
+        if (signal?.aborted) return;
+        setRuntimeStats(result);
+      } catch (e) {
+        if (isAbortError(e) || signal?.aborted) return;
+        const detail = e instanceof ApiError ? String(e.message || '').toLowerCase() : '';
+        setRuntimeError(
+          e instanceof ApiError && e.status === 503 && detail.includes('runtime')
+            ? t('runs.runtimeUnavailable')
+            : formatApiError(e, t),
+        );
+        setRuntimeStats(null);
+      } finally {
+        if (!signal?.aborted) setRuntimeLoading(false);
+      }
+    },
+    [canViewRuntime, t],
+  );
+
   const loadDbHistory = useCallback(
     async (signal?: AbortSignal) => {
       if (!canViewHistory) return;
@@ -157,6 +190,13 @@ export function RunsPage() {
     void load(ac.signal);
     return () => ac.abort();
   }, [load]);
+
+  useEffect(() => {
+    if (!canViewRuntime) return;
+    const ac = new AbortController();
+    void loadRuntime(ac.signal);
+    return () => ac.abort();
+  }, [canViewRuntime, loadRuntime]);
 
   useEffect(() => {
     if (!canViewHistory) return;
@@ -308,19 +348,18 @@ export function RunsPage() {
   return (
     <section className="panel active">
       <div className="card runs-card">
-        <div className="toolbar">
-          <h2 style={{ margin: 0 }}>{t('runs.title')}</h2>
+        <PageHeader title={t('runs.title')} description={t('runs.hint')} actions={
           <Button
             variant="outline"
             onClick={() => {
               void load();
               void loadDbHistory();
+              void loadRuntime();
             }}
           >
             {t('runs.refresh')}
           </Button>
-        </div>
-        <p className="hint">{t('runs.hint')}</p>
+        } />
 
         {configFilter ? (
           <div className="setup-banner" style={{ marginBottom: '0.75rem' }}>
@@ -328,6 +367,42 @@ export function RunsPage() {
             <Button size="sm" variant="outline" onClick={clearConfigFilter}>
               {t('runs.clearFilter')}
             </Button>
+          </div>
+        ) : null}
+
+        {canViewRuntime ? (
+          <div className="runs-section">
+            <h3 className="runs-section-title">{t('runs.runtimeTitle')}</h3>
+            {runtimeLoading && !runtimeStats ? (
+              <p className="empty">{t('common.searching')}</p>
+            ) : runtimeError ? (
+              <p className="hint">{runtimeError}</p>
+            ) : !runtimeStats?.available ? (
+              <p className="hint">{t('runs.runtimeUnavailable')}</p>
+            ) : (
+              <>
+                <div className="runs-status-cell">
+                  <Badge state={runtimeStats.degraded ? 'error' : 'running'}>
+                    {runtimeStats.degraded ? t('runs.runtimeDegraded') : t('runs.runtimeHealthy')}
+                  </Badge>
+                  <span>{t('runs.runtimeComponents', { count: Object.keys(runtimeStats.components).length })}</span>
+                </div>
+                <details style={{ marginTop: '0.5rem' }}>
+                  <summary>{t('runs.runtimeDetails')}</summary>
+                  <pre
+                    style={{
+                      maxHeight: '24rem',
+                      overflow: 'auto',
+                      whiteSpace: 'pre-wrap',
+                      overflowWrap: 'anywhere',
+                      fontSize: '0.8rem',
+                    }}
+                  >
+                    {JSON.stringify(runtimeStats.components, null, 2)}
+                  </pre>
+                </details>
+              </>
+            )}
           </div>
         ) : null}
 

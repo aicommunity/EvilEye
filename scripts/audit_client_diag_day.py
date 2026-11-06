@@ -9,7 +9,6 @@ from __future__ import annotations
 import argparse
 import collections
 import json
-import re
 from pathlib import Path
 
 DEPLOY_LOGS = Path("/home/user/EvilEyeDeploy/logs")

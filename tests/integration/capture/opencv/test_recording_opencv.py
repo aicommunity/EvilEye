@@ -1,4 +1,3 @@
-import os
 import time
 from pathlib import Path
 
@@ -53,6 +52,7 @@ def test_opencv_recording_basic(tmp_path: Path, ensure_test_videos):
         source_ids=[0],
         source_names=["CamTest"],
         desired_fps=15,
+        execution_mode="thread",
         record={
             "enabled": True,
             "continuous_recording_enabled": True,

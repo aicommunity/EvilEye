@@ -28,6 +28,7 @@ from evileye.api.routes.realtime import router as realtime_router
 from evileye.api.routes.playback import router as playback_router
 from evileye.api.routes.internal import router as internal_router
 from evileye.api.routes.setup import router as setup_router
+from evileye.api.routes.extensions import router as extensions_router
 from evileye.api.routes.system import router as system_router
 from evileye.api.core.config_run_access import get_config_run_manager
 from evileye.api.core.web_auth_bootstrap import ensure_default_admin_credentials
@@ -36,6 +37,7 @@ from evileye.api.core.rate_guard import get_rate_guard, load_protection_config
 from evileye.api.middleware.ip_protection import ProtectionMiddleware
 from evileye.api.middleware.adaptive_session import AdaptiveSessionMiddleware
 from evileye.api.security import (
+    csrf_origin_violation,
     current_user,
     is_api_request_protected,
     load_web_auth_config,
@@ -84,6 +86,11 @@ class AuthGuardMiddleware(BaseHTTPMiddleware):
         granted = set(user.get("permissions") or permissions_for_role(str(user.get("role") or "user")))
         if needed and not needed.issubset(granted):
             return Response('{"detail":"Insufficient permissions"}', status_code=403, media_type="application/json")
+        if path.startswith("/api/v1/admin/"):
+            violation = csrf_origin_violation(request, getattr(request.app.state, "allowed_origins", ()))
+            if violation:
+                logger.warning("Blocked admin request %s %s: %s", request.method, path, violation)
+                return Response('{"detail":"Cross-origin admin request rejected"}', status_code=403, media_type="application/json")
         return await call_next(request)
 
 
@@ -114,9 +121,37 @@ class SecurityHeadersMiddleware(BaseHTTPMiddleware):
         return response
 
 
+def _shutdown_runtime_components() -> None:
+    """Stop producers before closing the Unix relay they publish to."""
+    try:
+        get_config_run_manager().shutdown()
+    except Exception as exc:
+        logger.error("Error during ConfigRunManager shutdown: %s", exc)
+
+    try:
+        from evileye.core.runtime_services import get_pipeline_manager
+
+        get_pipeline_manager().shutdown()
+    except Exception as exc:
+        logger.error("Error during PipelineManager shutdown: %s", exc)
+
+    try:
+        from evileye.api.core.internal_unix import stop_internal_unix_server
+
+        stop_internal_unix_server()
+    except Exception as exc:
+        logger.error("Error during internal Unix server shutdown: %s", exc)
+
+
 @asynccontextmanager
 async def lifespan(_app: FastAPI):
     logger.info("FastAPI lifespan startup")
+    try:
+        from evileye.core.extension_builder import reconcile_plugin_operations
+
+        reconcile_plugin_operations()
+    except Exception as exc:
+        logger.warning("Plugin operation reconciliation failed: %s", exc)
     ensure_default_admin_credentials()
     web_auth = load_web_auth_config()
     _app.state.web_auth = web_auth
@@ -241,17 +276,8 @@ async def lifespan(_app: FastAPI):
             await get_live_preview_hub().stop()
         except Exception:
             pass
-        try:
-            from evileye.api.core.internal_unix import stop_internal_unix_server
-
-            stop_internal_unix_server()
-        except Exception:
-            pass
         logger.info("FastAPI lifespan shutdown")
-        try:
-            get_config_run_manager().shutdown()
-        except Exception as e:
-            logger.error(f"Error during ConfigRunManager shutdown: {e}")
+        _shutdown_runtime_components()
 
 def _cors_origins(web_auth) -> list[str]:
     raw = os.getenv("EVILEYE_CORS_ALLOW_ORIGINS", "*")
@@ -275,6 +301,8 @@ def _cors_origins(web_auth) -> list[str]:
 
 
 def create_app() -> FastAPI:
+    from evileye.core.runtime_identity import process_identity
+    process_identity()
     web_auth = load_web_auth_config()
     disable_docs = (
         os.getenv("EVILEYE_DISABLE_DOCS", "").strip().lower() in {"1", "true", "yes"}
@@ -303,6 +331,7 @@ def create_app() -> FastAPI:
         pass
 
     allow_origins = _cors_origins(web_auth)
+    app.state.allowed_origins = list(allow_origins or [])
 
     protection_cfg = load_protection_config({})
     try:
@@ -478,13 +507,14 @@ def create_app() -> FastAPI:
     app.include_router(config_editors_router)
     app.include_router(configs_router)
     app.include_router(setup_router)
+    app.include_router(extensions_router)
     app.include_router(system_router)
     app.include_router(streaming_router)
     app.include_router(realtime_router)
     app.include_router(playback_router)
     app.include_router(internal_router)
     logger.info(
-        "Routers registered: auth, state, journals, logs, diagnostics, users, bans, config_editors, configs, setup, system, streaming, realtime, playback, internal"
+        "Routers registered: auth, state, journals, logs, diagnostics, users, bans, config_editors, configs, setup, extensions, system, streaming, realtime, playback, internal"
     )
 
     static_dir = Path(__file__).parent / "static"

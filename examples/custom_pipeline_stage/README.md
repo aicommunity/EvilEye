@@ -1,4 +1,9 @@
-# Custom pipeline stage (5 minutes)
+# Custom pipeline stage (legacy in-tree example)
+
+For newly distributed modules, prefer the package and entry-point workflow in
+[`docs/PLUGINS.md`](../../docs/PLUGINS.md). The decorator example below remains
+supported for modules imported in-process, but requires the module to be
+imported before pipeline construction.
 
 ## Goal
 

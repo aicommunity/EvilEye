@@ -1,11 +1,8 @@
-from abc import ABC, abstractmethod
-from datetime import datetime
 from typing import TYPE_CHECKING
 
 from .video_thread import VideoThread
 from ..core.base_class import EvilEyeBase
 from ..core.interfaces import IVisualizer
-import copy
 from ..capture.video_capture_base import CaptureImage
 from timeit import default_timer as timer
 from pympler import asizeof

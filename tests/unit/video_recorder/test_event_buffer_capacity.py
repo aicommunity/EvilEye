@@ -1,6 +1,5 @@
 """Tests for EventBuffer capacity bounding."""
 
-import os
 
 import numpy as np
 import pytest

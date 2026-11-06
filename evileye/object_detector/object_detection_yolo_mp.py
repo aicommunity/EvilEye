@@ -1,23 +1,12 @@
-from .object_detection_base import ModelBasedDetectorBase
-from ..core.base_class import EvilEyeBase
+"""Compatibility class for the former separate YOLO multiprocessing module."""
+
+from .object_detection_yolo import ObjectDetectorYolo
 
 
-@EvilEyeBase.register("ObjectDetectorYoloMp")
-class ObjectDetectorYoloMp(ModelBasedDetectorBase):
-    """Legacy YOLO detector that always uses MP detection threads.
+class ObjectDetectorYoloMp(ObjectDetectorYolo):
+    """Import-compatible name for ``ObjectDetectorYolo``.
 
-    .. deprecated::
-        Prefer :class:`ObjectDetectorYolo` with ``"execution_mode": "process"``
-        in config. That path uses ``DetectionThreadYoloMp`` with restart policy
-        and the same feed/drain contract without a separate registered type.
+    Plugin configurations using ``type: ObjectDetectorYoloMp`` resolve through
+    the registry alias to the canonical YOLO module. The configured
+    ``execution_mode`` selects the thread or process runtime.
     """
-
-    def __init__(self):
-        super().__init__()
-        self.model_name = "models/yolo11n.pt"
-
-    def _get_detection_thread_type(self) -> str:
-        return "yolo_mp"
-
-    def _get_default_model_name(self) -> str:
-        return "models/yolo11n.pt"

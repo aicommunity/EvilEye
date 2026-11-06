@@ -3,7 +3,7 @@ Interfaces for GUI components to interact with the core system.
 """
 
 from abc import ABC, abstractmethod
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List
 
 
 class IVisualizationProvider(ABC):

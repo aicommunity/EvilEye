@@ -2,6 +2,7 @@ import numpy as np
 
 from evileye.attributes_detection.roi_feeder import RoiFeeder
 from evileye.attributes_detection.mp_worker_attributes import MpWorkerAttributeClassifier
+from evileye.core.mp_context import get_spawn_context
 
 
 class _Track:
@@ -35,7 +36,11 @@ def test_roi_feeder_stores_bbox_instead_of_image():
 
 
 def test_attribute_worker_crops_from_bbox():
-    worker = MpWorkerAttributeClassifier(input_queue=None, output_queue=None)
+    worker = MpWorkerAttributeClassifier(
+        input_queue=None,
+        output_queue=None,
+        stop_event=get_spawn_context().Event(),
+    )
     frame = _Frame()
     roi = worker._crop_roi(frame.image, [1, 1, 6, 6])
     assert roi is not None

@@ -1,4 +1,3 @@
-import json
 import os
 
 from evileye.database_controller.json_event_io import append_json_record, load_json_records

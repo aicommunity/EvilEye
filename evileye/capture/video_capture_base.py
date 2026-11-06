@@ -1,14 +1,13 @@
 import copy
 import datetime
 import time
-from abc import ABC, abstractmethod
+from abc import abstractmethod
 import threading
-from queue import Queue, Empty
+from queue import Empty
 from enum import Enum
 from urllib.parse import urlparse, ParseResult
-from threading import Lock, RLock
+from threading import RLock
 from collections import deque
-from typing import Optional, Any
 
 try:
     import numpy as np
@@ -21,6 +20,7 @@ from ..core.frame import CaptureImage, Frame
 from ..core.frame_transport import FrameHandle, SharedFrameTransport
 from .constants import CaptureConstants, CaptureConfig
 from .queue_utils import DropOldestQueue
+from .exceptions import CaptureConnectionError
 
 from ..core.processor_base import (
     DEFAULT_EXECUTION_MODE,
@@ -38,8 +38,12 @@ class CaptureDeviceType(Enum):
 
 
 class VideoCaptureBase(EvilEyeBase):
-    def __init__(self):
+    def __init__(self, plugin_config: dict | None = None):
         super().__init__()
+        self._plugin_source_config = dict(plugin_config or {})
+        self._plugin_source_opened = False
+        self._plugin_pending_frames = deque()
+        self._plugin_last_frame_ids = {}
         # Raw parameters passed from configuration / controller
         # Initialized here to avoid hasattr checks in methods
         self.params: dict | None = None
@@ -77,6 +81,9 @@ class VideoCaptureBase(EvilEyeBase):
         self.conn_mutex = RLock()
         self.disconnects = []
         self.reconnects = []
+        self._disconnect_count = 0
+        self._reconnect_count = 0
+        self._last_connection_transition = None
         self.subscribers = []
         self._first_pts_ns: int | None = None
 
@@ -96,6 +103,130 @@ class VideoCaptureBase(EvilEyeBase):
         # Process mode: parent tracks frame flow from child worker (is_working lives in worker).
         self._mp_last_frame_mono: float = 0.0
         self._mp_worker_started_mono: float = 0.0
+        self._mp_backend_connection_generation = 0
+        self._mp_frame_decode_errors = 0
+
+    def open(self, config: dict | None = None) -> bool:
+        """Configure and initialize a capture source for the source SPI."""
+        source_config = dict(self._plugin_source_config)
+        if config is not None:
+            source_config.update(dict(config))
+        if not source_config:
+            raise ValueError("Capture source requires a configuration")
+        if self._plugin_source_opened:
+            return True
+        self._plugin_pending_frames.clear()
+        self._plugin_last_frame_ids.clear()
+
+        source_config.setdefault("execution_mode", "thread")
+        self.set_params(**source_config)
+        try:
+            initialized = self.init()
+        except CaptureConnectionError as exc:
+            if self.source_type != CaptureDeviceType.IpCamera:
+                raise
+            self.logger.warning("Initial camera connection failed; source will retry: %s", exc)
+            initialized = False
+        if not initialized and self.source_type != CaptureDeviceType.IpCamera:
+            raise CaptureConnectionError(
+                f"Could not initialize source {self.source_names}"
+            )
+        self._plugin_source_opened = True
+        return True
+
+    def _accept_plugin_frame(self, frame) -> bool:
+        """Validate the surveillance frame identity and reject repeated snapshots."""
+        if not isinstance(frame, Frame):
+            raise TypeError(
+                f"Capture source returned {type(frame).__name__}; expected Frame"
+            )
+        if frame.source_id is None or frame.frame_id is None:
+            raise ValueError("Capture source Frame must define source_id and frame_id")
+        try:
+            frame_id = int(frame.frame_id)
+            source_id = int(frame.source_id)
+            generation = int(frame.connection_generation)
+        except (TypeError, ValueError) as exc:
+            raise ValueError(
+                "Capture source Frame IDs and connection_generation must be integers"
+            ) from exc
+        key = (source_id, generation)
+        previous = self._plugin_last_frame_ids.get(key)
+        if previous is not None and frame_id <= previous:
+            return False
+        self._plugin_last_frame_ids[key] = frame_id
+        return True
+
+    def read(self):
+        """Block until one new frame is available or a finite source reaches EOF."""
+        if not self._plugin_source_opened:
+            raise RuntimeError("Capture source must be opened before reading")
+        while not self.stop_event.is_set():
+            if self._plugin_pending_frames:
+                frame = self._plugin_pending_frames.popleft()
+                if self._accept_plugin_frame(frame):
+                    return frame
+                if self.is_finished() and not self._plugin_pending_frames:
+                    return None
+                if self.stop_event.wait(0.01):
+                    return None
+                continue
+            if not self.get_init_flag():
+                try:
+                    initialized = self.init()
+                except CaptureConnectionError as exc:
+                    if self.source_type != CaptureDeviceType.IpCamera:
+                        raise
+                    self.logger.warning("Camera connection retry failed: %s", exc)
+                    if self.stop_event.wait(1.0):
+                        return None
+                    continue
+                if not initialized:
+                    if self.source_type != CaptureDeviceType.IpCamera:
+                        raise CaptureConnectionError(
+                            f"Could not initialize source {self.source_names}"
+                        )
+                    if self.stop_event.wait(1.0):
+                        return None
+                    continue
+
+            if not self.run_flag:
+                self.start()
+            frames = self.get()
+            if frames:
+                self._plugin_pending_frames.extend(frames)
+                continue
+            if self.is_finished():
+                return None
+            if self.stop_event.wait(0.01):
+                return None
+        return None
+
+    def close(self) -> None:
+        """Stop capture workers and release the source resources."""
+        self.stop()
+        self.release()
+        self.is_inited = False
+        self._plugin_pending_frames.clear()
+        self._plugin_source_opened = False
+
+    def _record_mp_frame_decode_error(self, detail: str) -> None:
+        self._mp_frame_decode_errors += 1
+        if self._mp_frame_decode_errors == 1:
+            self.logger.error("Could not decode process capture frame: %s", detail)
+
+    def _send_capture_worker_command(self, command) -> bool:
+        """Send control/ack commands without silently leaking shared frames."""
+        control = self._mp_control
+        while self.run_flag and control is not None:
+            try:
+                if not control.is_alive():
+                    return False
+                control.input_queue.put(command, timeout=0.1)
+                return True
+            except Exception:
+                continue
+        return False
 
     def is_opened(self) -> bool:
         return False
@@ -117,6 +248,8 @@ class VideoCaptureBase(EvilEyeBase):
             and not self._running_inside_mp_worker()
         ):
             self.is_inited = self._init_process_mode()
+            if self.is_inited:
+                self.sync_process_mode_health()
             return self.is_inited
         return super().init(**kwargs)
 
@@ -131,6 +264,7 @@ class VideoCaptureBase(EvilEyeBase):
             return False
 
     def get(self) -> list[CaptureImage]:
+        self.sync_process_mode_health()
         captured_images: list[CaptureImage] = []
         if self.get_init_flag():
             if self.execution_mode == EXEC_MODE_PROCESS:
@@ -372,6 +506,7 @@ class VideoCaptureBase(EvilEyeBase):
         self._mp_control.start()
         self._mp_worker_started_mono = time.monotonic()
         self._mp_last_frame_mono = 0.0
+        self._mp_backend_connection_generation = 0
         self.logger.info("Capture initialised in PROCESS mode")
         return True
 
@@ -385,10 +520,10 @@ class VideoCaptureBase(EvilEyeBase):
             return
         try:
             if not self._mp_control.is_alive():
-                self.is_working = False
+                self._set_process_mode_working(False)
                 return
         except Exception:
-            self.is_working = False
+            self._set_process_mode_working(False)
             return
 
         timeout_sec = float(
@@ -399,9 +534,9 @@ class VideoCaptureBase(EvilEyeBase):
 
         if self._mp_last_frame_mono > 0.0:
             if (now_mono - self._mp_last_frame_mono) <= timeout_sec:
-                self.is_working = True
+                self._set_process_mode_working(True)
             elif self.source_type == CaptureDeviceType.IpCamera:
-                self.is_working = False
+                self._set_process_mode_working(False)
             return
 
         # Worker alive, no frames yet: optimistic during init grace, then down for IP cameras.
@@ -411,28 +546,83 @@ class VideoCaptureBase(EvilEyeBase):
         )
         started_mono = self._mp_worker_started_mono or now_mono
         if (now_mono - started_mono) <= grace_sec:
-            self.is_working = True
+            self._set_process_mode_working(True)
         elif self.source_type == CaptureDeviceType.IpCamera:
-            self.is_working = False
+            self._set_process_mode_working(False)
 
-    def _touch_process_mode_frame_activity(self) -> None:
-        """Mark capture healthy when a frame arrives from the MP worker."""
+    def _set_process_mode_working(self, working: bool) -> None:
+        """Update parent health and publish observed process-mode transitions."""
+        transition = None
+        with self.conn_mutex:
+            was_working = self.is_working
+            self.is_working = working
+            # The init grace period is optimistic, so only count transitions
+            # after the worker has produced at least one frame.
+            has_received_frame = self._mp_last_frame_mono > 0.0
+            if not was_working and working and has_received_frame:
+                transition = "reconnect"
+            elif was_working and not working and has_received_frame:
+                transition = "disconnect"
+        if transition == "reconnect":
+            self._record_reconnect()
+        elif transition == "disconnect":
+            self._record_disconnect()
+
+    def _touch_process_mode_frame_activity(self, frame=None) -> None:
+        """Mark capture healthy and sync child reconnect metadata from a frame."""
         if self.execution_mode != EXEC_MODE_PROCESS:
             return
+        had_received_frame = self._mp_last_frame_mono > 0.0
         self._mp_last_frame_mono = time.monotonic()
-        self.is_working = True
+        connection_generation = getattr(frame, "connection_generation", None)
+        should_record_reconnect = False
+        with self.conn_mutex:
+            was_working = self.is_working
+            self.is_working = True
+            if isinstance(connection_generation, int) and connection_generation >= 0:
+                self._mp_backend_connection_generation = max(
+                    self._mp_backend_connection_generation, connection_generation
+                )
+            should_record_reconnect = had_received_frame and not was_working
+        if should_record_reconnect:
+            self._record_reconnect()
         self.is_inited = True
         self.last_frame_time = datetime.datetime.now()
 
     def _capture_dispatch_loop(self) -> None:
         """Read CaptureImage objects from child process and put them into frames_queue."""
+        from .mp_worker_capture import (
+            CAPTURE_DONE_MESSAGE,
+            CAPTURE_DRAIN_ACK_MESSAGE,
+            CAPTURE_FRAME_ACK_MESSAGE,
+        )
+
         while self.run_flag:
             try:
                 payload = self._mp_control.get(timeout=0.5)
             except Exception:
                 self._mark_finished_if_worker_stopped()
                 continue
+            if (
+                isinstance(payload, tuple)
+                and payload
+                and payload[0] == CAPTURE_DONE_MESSAGE
+            ):
+                if not self._send_capture_worker_command((CAPTURE_DRAIN_ACK_MESSAGE,)) and self.run_flag:
+                    self.logger.error(
+                        "Could not acknowledge capture frame drain for %s", self.source_names
+                    )
+                self.finished = True
+                self.is_working = False
+                continue
             frame = self._unpack_capture_payload(payload)
+            if isinstance(payload, dict) and payload.get("frame_handle") is not None:
+                if not self._send_capture_worker_command(
+                    (CAPTURE_FRAME_ACK_MESSAGE, payload["frame_handle"])
+                ) and self.run_flag:
+                    self.logger.warning(
+                        "Could not acknowledge process frame for %s", self.source_names
+                    )
             if frame is None:
                 # full_frame payloads return None after stashing; only probe worker exit
                 # when the queue item was not a usable processing frame.
@@ -440,7 +630,7 @@ class VideoCaptureBase(EvilEyeBase):
                     continue
                 self._mark_finished_if_worker_stopped()
                 continue
-            self._touch_process_mode_frame_activity()
+            self._touch_process_mode_frame_activity(frame)
             try:
                 self.frames_queue.put(frame)
             except Exception:
@@ -457,10 +647,16 @@ class VideoCaptureBase(EvilEyeBase):
             try:
                 handle = payload.get("frame_handle")
                 if not isinstance(handle, FrameHandle):
+                    self._record_mp_frame_decode_error(
+                        f"invalid frame handle ({type(handle).__name__})"
+                    )
                     return None
                 meta = payload.get("frame_meta", {}) or {}
                 image = self._frame_transport.consume_frame(handle)
                 if image is None or getattr(image, "size", 0) == 0:
+                    self._record_mp_frame_decode_error(
+                        f"shared frame segment unavailable (name={handle.shm_name!r})"
+                    )
                     return None
                 if meta.get("kind") == "full_frame":
                     self._latest_full_frame = image
@@ -472,6 +668,7 @@ class VideoCaptureBase(EvilEyeBase):
                 frame = Frame()
                 frame.source_id = meta.get("source_id")
                 frame.frame_id = meta.get("frame_id")
+                frame.connection_generation = meta.get("connection_generation", 0)
                 frame.current_video_frame = meta.get("current_video_frame")
                 frame.current_video_position = meta.get("current_video_position")
                 frame.source_video_duration = meta.get("source_video_duration")
@@ -480,7 +677,8 @@ class VideoCaptureBase(EvilEyeBase):
                 frame.media_pts_sec = meta.get("media_pts_sec")
                 frame.image = image
                 return frame
-            except Exception:
+            except Exception as exc:
+                self._record_mp_frame_decode_error(f"{type(exc).__name__}: {exc}")
                 return None
         return payload
 
@@ -610,7 +808,11 @@ class VideoCaptureBase(EvilEyeBase):
             parsed = urlparse(self.source_address)
             self.username = parsed.username
             self.password = parsed.password
-            replaced_url = parsed._replace(netloc=f"{parsed.hostname}")
+            # Remove only the authority's userinfo. Keep the explicit port and
+            # IPv6 brackets: local RTSP servers and non-default camera ports
+            # otherwise silently fall back to port 554.
+            authority = parsed.netloc.rsplit("@", 1)[-1]
+            replaced_url = parsed._replace(netloc=authority)
             self.pure_url = replaced_url.geturl()
             self.username = self.params.get('username', self.username)
             self.password = self.params.get('password', self.password)
@@ -645,7 +847,7 @@ class VideoCaptureBase(EvilEyeBase):
         if self.params and 'type' in self.params:
             params['type'] = self.params['type']
         else:
-            # Use class name - this is the registered name in EvilEyeBase._registry
+            # Use module id - factories are resolved through PluginRegistry
             params['type'] = self.__class__.__name__
         record_cfg = self._recording_config_dict()
         if record_cfg is not None:
@@ -653,14 +855,16 @@ class VideoCaptureBase(EvilEyeBase):
         return params
 
     def get_disconnects_info(self) -> list[tuple[str, datetime.datetime, bool]]:
-        disconnects = copy.deepcopy(self.disconnects)
-        self.disconnects = []
-        return disconnects
+        with self.conn_mutex:
+            disconnects = copy.deepcopy(self.disconnects)
+            self.disconnects.clear()
+            return disconnects
 
     def get_reconnects_info(self) -> list[tuple[str, datetime.datetime, bool]]:
-        reconnects = copy.deepcopy(self.reconnects)
-        self.reconnects = []
-        return reconnects
+        with self.conn_mutex:
+            reconnects = copy.deepcopy(self.reconnects)
+            self.reconnects.clear()
+            return reconnects
 
     def _camera_event_identity(self) -> str:
         """Stream name(s) for CameraEvent; never embed RTSP credentials."""
@@ -671,13 +875,47 @@ class VideoCaptureBase(EvilEyeBase):
             address=getattr(self, "source_address", None) or (self.params or {}).get("camera"),
         )
 
+    def get_capture_health(self) -> dict:
+        """Return persistent connection counters without consuming event queues."""
+        with self.conn_mutex:
+            transition = copy.deepcopy(self._last_connection_transition)
+            return {
+                "working": bool(self.is_working),
+                "teardown_pending_since": getattr(self, '_reconnect_release_started_at', None),
+                "disconnect_count": self._disconnect_count,
+                "reconnect_count": self._reconnect_count,
+                "backend_connection_generation": (
+                    self._mp_backend_connection_generation
+                    if self.execution_mode == EXEC_MODE_PROCESS
+                    else self._reconnect_count
+                ),
+                "last_transition": transition,
+                "dropped_frames": int(self.dropped_frames),
+            }
+
     def _record_disconnect(self, timestamp: datetime.datetime | None = None) -> None:
         ts = timestamp or datetime.datetime.now()
-        self.disconnects.append((self._camera_event_identity(), ts, self.is_working))
+        identity = self._camera_event_identity()
+        with self.conn_mutex:
+            self.disconnects.append((identity, ts, self.is_working))
+            self._disconnect_count += 1
+            self._last_connection_transition = {
+                "kind": "disconnect",
+                "timestamp": ts.isoformat(),
+            }
+        self._notify_subscribers()
 
     def _record_reconnect(self, timestamp: datetime.datetime | None = None) -> None:
         ts = timestamp or datetime.datetime.now()
-        self.reconnects.append((self._camera_event_identity(), ts, self.is_working))
+        identity = self._camera_event_identity()
+        with self.conn_mutex:
+            self.reconnects.append((identity, ts, self.is_working))
+            self._reconnect_count += 1
+            self._last_connection_transition = {
+                "kind": "reconnect",
+                "timestamp": ts.isoformat(),
+            }
+        self._notify_subscribers()
 
     @staticmethod
     def reconstruct_url(url_parsed_info: ParseResult, username: str | None, password: str | None) -> str:
@@ -686,12 +924,15 @@ class VideoCaptureBase(EvilEyeBase):
         if not processed_password and not processed_username:
             return url_parsed_info.geturl()
 
-        if not processed_password:
-            reconstructed_url = url_parsed_info._replace(netloc=f"{processed_username}@{url_parsed_info.hostname}")
-            return reconstructed_url.geturl()
-
+        # Keep the original host authority intact. Rebuilding it from .hostname
+        # drops both non-default ports and IPv6 brackets.
+        authority = url_parsed_info.netloc.rsplit("@", 1)[-1]
+        userinfo = processed_username or ""
+        if processed_password is not None:
+            userinfo = f"{userinfo}:{processed_password}"
         reconstructed_url = url_parsed_info._replace(
-            netloc=f"{processed_username}:{processed_password}@{url_parsed_info.hostname}")
+            netloc=f"{userinfo}@{authority}"
+        )
         return reconstructed_url.geturl()
 
     def get_ip_camera_init_hint(self, last_error: Exception | str | None = None) -> str:
@@ -757,10 +998,16 @@ class VideoCaptureBase(EvilEyeBase):
         try:
             path = (parsed.path or "") if parsed is not None else ""
             if path in {"", "/"}:
-                hints.append(
-                    "RTSP URL looks incomplete (missing stream path). "
-                    "Use a full stream URL like `rtsp://user:pass@host:554/stream_path`."
-                )
+                if last_error is not None and "250" in err_text:
+                    hints.append(
+                        "The RTSP server returned status 250 during pipeline startup. "
+                        "Check the camera-specific stream URI, supported transport, and codec."
+                    )
+                else:
+                    hints.append(
+                        "RTSP URL points to the server root. Some cameras require a "
+                        "device-specific stream path; verify the URI and playback support."
+                    )
         except Exception:
             pass
 
@@ -815,6 +1062,7 @@ class VideoCaptureBase(EvilEyeBase):
         capture_image = CaptureImage()
         capture_image.image = image
         capture_image.frame_id = frame_id
+        capture_image.connection_generation = self._reconnect_count
         capture_image.time_stamp = timestamp
         capture_image.source_id = source_id
         capture_image.current_video_frame = current_video_frame if current_video_frame is not None else self.video_current_frame

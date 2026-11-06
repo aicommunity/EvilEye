@@ -5,10 +5,16 @@ from evileye.controller.controller import Controller
 
 class _FakeDetector:
     def __init__(self):
-        self.sources_list = {}
+        self.config = {"sources": {}}
+        self.commands = []
 
-    def replace_zones_for_source(self, source_id, zones):
-        self.sources_list[str(source_id)] = zones
+    def get_params(self):
+        return self.config
+
+    def submit_command(self, command, *, config_patch=None, **kwargs):
+        self.commands.append((command, kwargs))
+        if config_patch:
+            self.config.update(config_patch)
 
 
 def test_apply_zones_refreshes_preview_zones_cache():
@@ -31,6 +37,8 @@ def test_apply_zones_refreshes_preview_zones_cache():
 
     assert result == {"ok": True, "source_id": 2, "zone_count": 1}
     assert ctrl._preview_zones_by_source == refreshed
+    assert ctrl.zone_events_detector.commands[0][0] == "replace_zones_for_source"
+    assert ctrl.params["events_detectors"]["ZoneEventsDetector"]["sources"]["2"] == zones
 
 
 def test_apply_zones_unknown_command():
@@ -43,14 +51,17 @@ def test_apply_zone_detector_params_updates_runtime():
     ctrl.params = {"events_detectors": {"ZoneEventsDetector": {}}}
 
     class _FakeDetector:
-        event_threshold = 1
-        zone_left_threshold = 2
+        def __init__(self):
+            self.config = {"event_threshold": 1, "zone_left_threshold": 2}
+            self.commands = []
 
-        def apply_thresholds(self, *, event_threshold=None, zone_left_threshold=None):
-            if event_threshold is not None:
-                self.event_threshold = event_threshold
-            if zone_left_threshold is not None:
-                self.zone_left_threshold = zone_left_threshold
+        def get_params(self):
+            return self.config
+
+        def submit_command(self, command, *, config_patch=None, **kwargs):
+            self.commands.append((command, kwargs))
+            if config_patch:
+                self.config.update(config_patch)
 
     ctrl.zone_events_detector = _FakeDetector()
     ctrl._publish_runtime_snapshot = lambda **kwargs: None

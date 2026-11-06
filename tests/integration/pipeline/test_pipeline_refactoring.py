@@ -6,7 +6,6 @@ Test script to verify pipeline refactoring.
 import os
 from evileye.core.logging_config import setup_evileye_logging
 from evileye.core.logger import get_module_logger
-import json
 import tempfile
 from unittest.mock import Mock, patch
 

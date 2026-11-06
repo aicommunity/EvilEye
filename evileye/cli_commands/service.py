@@ -13,6 +13,13 @@ from evileye.cli_commands.web import ensure_web_environment_for_server as _ensur
 app = typer.Typer(help="OS web service install and lifecycle")
 
 
+@app.callback(invoke_without_command=True)
+def service_root(ctx: typer.Context) -> None:
+    from evileye.cli_interactive import handle_group_root
+
+    handle_group_root(ctx, "service")
+
+
 @app.command("install")
 def service_install(
     config: Optional[Path] = typer.Argument(
@@ -40,6 +47,7 @@ def service_install(
     from evileye.site_profile import save_profile
     from evileye.utils.tls_cert import TlsCertError
     from evileye.utils.tls_deploy_wizard import print_https_hints, run_tls_deploy_step
+    from evileye.cli_interactive import interactive_available
 
     site_dir = Path.cwd()
     cfg = str(config) if config is not None else None
@@ -49,14 +57,16 @@ def service_install(
         console.print("[red]Cannot combine --user and --system[/red]")
         raise typer.Exit(1)
 
-    _ensure_web_environment_for_server()
+    # A dry-run must not install packages or build frontend assets.
+    if not dry_run:
+        _ensure_web_environment_for_server()
     ensure_system_config(site_dir)
     try:
         tls_result = run_tls_deploy_step(
             site_dir=site_dir,
             console=console,
             no_tls=no_tls,
-            non_interactive=non_interactive,
+            non_interactive=non_interactive or not interactive_available(),
             tls_self_signed=tls_self_signed,
             tls_ips=tls_ip or [],
             tls_dns=tls_dns or [],
@@ -66,7 +76,7 @@ def service_install(
         )
     except (TlsCertError, SslConfigError) as exc:
         console.print(f"[red]HTTPS setup failed: {exc}[/red]")
-        raise typer.Exit(1)
+        raise typer.Exit(1) from exc
     print_https_hints(console, tls_result)
 
     try:
@@ -83,7 +93,7 @@ def service_install(
         )
     except Exception as e:
         console.print(f"[red]service install failed: {e}[/red]")
-        raise typer.Exit(1)
+        raise typer.Exit(1) from e
 
     if dry_run and result.unit_text:
         console.print("[blue]Dry-run unit file:[/blue]")
@@ -123,7 +133,7 @@ def service_uninstall(
         result = uninstall_service(site_dir=Path.cwd(), dry_run=dry_run)
     except Exception as e:
         console.print(f"[red]service uninstall failed: {e}[/red]")
-        raise typer.Exit(1)
+        raise typer.Exit(1) from e
     console.print(f"[green]{result.message}[/green]")
 
 

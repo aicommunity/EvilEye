@@ -8,7 +8,6 @@ from evileye.core.logging_config import setup_evileye_logging
 from evileye.core.logger import get_module_logger
 import sys
 import os
-from pathlib import Path
 
 # Add the project root to Python path
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))

@@ -1270,6 +1270,22 @@ class MainWindow(QMainWindow):
 
     def closeEvent(self, event):
         if self.controller.enable_close_from_gui:
+            # Stop journal initialization before the window and its signal
+            # receivers can be destroyed. The worker registry owns any thread
+            # that needs longer than this short, bounded wait to finish.
+            journal_thread = getattr(self, "_journal_init_thread", None)
+            if journal_thread is not None and journal_thread.isRunning():
+                journal_thread.requestInterruption()
+                for signal_name, slot in (
+                    ("initialization_complete", self._on_journal_init_complete_slot),
+                    ("initialization_failed", self._on_journal_init_failed_slot),
+                ):
+                    try:
+                        getattr(journal_thread, signal_name).disconnect(slot)
+                    except (RuntimeError, TypeError):
+                        pass
+                if not journal_thread.wait(100):
+                    self.logger.info("Journal initialization is finishing in background")
             # IMPORTANT: Do not block the Qt GUI thread here.
             # Closing the window during capture restarts can deadlock if we synchronously
             # stop GStreamer/threads from within closeEvent. We trigger a Qt quit and let

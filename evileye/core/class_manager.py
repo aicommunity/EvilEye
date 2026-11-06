@@ -80,6 +80,47 @@ class ClassManager:
 
         return not has_conflicts
 
+    def register_detector_mapping(self, mapping: Dict[str, int], source: str) -> Dict[int, int]:
+        """Register a detector's class names and return its local -> global id remap.
+
+        Classes are identified by name. A name that is already known keeps its global id;
+        a new name keeps its own id when that id is still free and otherwise receives the
+        next free id, so two models that both use id 0 for different classes (for example
+        ``person`` and ``helmet``) never collide in the global class space.
+        """
+        remap: Dict[int, int] = {}
+        if not mapping:
+            return remap
+        for class_name, local_id in sorted(mapping.items(), key=lambda item: (item[1], item[0])):
+            if local_id in remap:
+                msg = (
+                    f"Class id {local_id} of {source} is used by several class names "
+                    f"({class_name!r} ignored for id remapping)"
+                )
+                self.conflicts.append(msg)
+                logger.warning(msg)
+                global_id = remap[local_id]
+            elif class_name in self.class_mapping:
+                global_id = self.class_mapping[class_name]
+            else:
+                global_id = local_id
+                if global_id in self.reverse_mapping:
+                    global_id = max(self.reverse_mapping) + 1
+                    logger.info(
+                        "Class %r of %s uses id %s which is taken in the global class space; "
+                        "remapped to %s", class_name, source, local_id, global_id,
+                    )
+                self.class_mapping[class_name] = global_id
+                self.reverse_mapping[global_id] = class_name
+            remap.setdefault(local_id, global_id)
+        self.sources.append({
+            'source': source,
+            'mapping': dict(mapping),
+            'remap': dict(remap),
+            'timestamp': self._get_timestamp(),
+        })
+        return remap
+
     def get_class_id(self, class_name: str) -> Optional[int]:
         """Get class ID from class name"""
         return self.class_mapping.get(class_name)

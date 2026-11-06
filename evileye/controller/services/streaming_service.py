@@ -1,11 +1,13 @@
 from __future__ import annotations
 
+import atexit
 import http.client
 import json
 import os
 import socket
 import threading
 import time
+import weakref
 from dataclasses import dataclass
 from typing import Any, Optional
 from urllib.parse import urlparse
@@ -285,6 +287,9 @@ def _downscale_image(image: Any, max_edge: int) -> Any:
 class StreamingService:
     """Asynchronous preview publisher with latest-frame semantics."""
 
+    _instances: weakref.WeakSet[StreamingService] = weakref.WeakSet()
+    _instances_lock = threading.Lock()
+
     def __init__(self):
         self.logger = get_module_logger("streaming_service")
         self._lock = threading.Lock()
@@ -312,6 +317,19 @@ class StreamingService:
             "publish_errors": 0,
             "last_encode_ms": 0.0,
         }
+        with self._instances_lock:
+            self._instances.add(self)
+
+    @classmethod
+    def shutdown_all(cls) -> None:
+        """Stop every live stream publisher during test or process shutdown."""
+        with cls._instances_lock:
+            instances = list(cls._instances)
+        for service in instances:
+            try:
+                service.stop()
+            except Exception as exc:
+                service.logger.error("Failed to stop stream publisher: %s", exc, exc_info=True)
 
     @staticmethod
     def _job_key(job: StreamFrameJob) -> str:
@@ -522,12 +540,16 @@ class StreamingService:
         self._stop_event.set()
         with self._condition:
             self._condition.notify_all()
-        for worker in self._workers:
+        workers = list(self._workers)
+        for worker in workers:
             if worker.is_alive():
                 worker.join(timeout=2.0)
-        self._workers.clear()
+        alive = [worker for worker in workers if worker.is_alive()]
         with self._condition:
+            self._workers = alive
             self._pending_jobs.clear()
+        for worker in alive:
+            self.logger.error("Stream publisher worker did not stop: %s", worker.name)
 
     def _ensure_workers_locked(self) -> None:
         if self._workers:
@@ -785,3 +807,6 @@ class StreamingService:
                 source_id=job.source_id,
                 metadata=metadata,
             )
+
+
+atexit.register(StreamingService.shutdown_all)

@@ -12,8 +12,9 @@ runner = CliRunner()
 
 def test_service_install_dry_run_no_tls(tmp_path: Path, monkeypatch):
     monkeypatch.chdir(tmp_path)
-    monkeypatch.setattr("evileye.cli_commands.web.ensure_web_environment_for_server", lambda: None)
-    result = runner.invoke(app, ["service", "install", "--dry-run", "--user", "--no-tls"])
+    with patch("evileye.cli_commands.service._ensure_web_environment_for_server") as ensure_web:
+        result = runner.invoke(app, ["service", "install", "--dry-run", "--user", "--no-tls"])
+    ensure_web.assert_not_called()
     assert result.exit_code == 0, result.output
     assert (tmp_path / "configs" / "system.json").exists()
     assert "[Unit]" in result.output or "Service installed" in result.output

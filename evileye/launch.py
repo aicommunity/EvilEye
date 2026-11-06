@@ -7,9 +7,8 @@ Provides a graphical interface for the EvilEye surveillance system.
 
 import sys
 import json
-import logging
 from pathlib import Path
-from typing import Optional, Dict, Any
+from typing import Optional
 from evileye.core.logging_config import setup_evileye_logging
 from evileye.core.logger import get_module_logger
 
@@ -84,7 +83,7 @@ class ConfigLauncher:
             return True
         except Exception as e:
             self.logger.error(f"Error launching process: {e}")
-            raise RuntimeError(f"Failed to launch process: {e}")
+            raise RuntimeError(f"Failed to launch process: {e}") from e
 
     def stop(self):
         """Stop the launched process"""

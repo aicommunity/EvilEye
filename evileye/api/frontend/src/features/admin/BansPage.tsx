@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from 'react';
 import { bansApi, type BanRecord } from '../../api';
 import { Button } from '../../components/ui';
+import { PageHeader } from '../../components/ui/PageHeader';
 import { useToast } from '../../components/ui/Toast';
 import { useI18n } from '../../i18n';
 
@@ -100,31 +101,27 @@ export function BansPage() {
 
   return (
     <div className="page bans-page">
-      <header className="page-header">
-        <div>
-          <h2>{t('bans.title')}</h2>
-          <p className="hint">{t('bans.hint')}</p>
-        </div>
-        <div className="page-actions">
+      <PageHeader title={t('bans.title')} description={t('bans.hint')} actions={
+        <>
           <Button variant="outline" onClick={() => void load()} disabled={busy}>
             {t('common.refresh')}
           </Button>
           <Button variant="outline" onClick={() => void onPrune()} disabled={busy}>
             {t('bans.prune')}
           </Button>
-        </div>
-      </header>
+        </>
+      } />
 
       <section className="users-create bans-create">
         <h3>{t('bans.add')}</h3>
         <div className="users-create-grid">
           <label className="users-create-field">
             <span>{t('bans.ip')}</span>
-            <input value={ip} onChange={(e) => setIp(e.target.value)} placeholder="203.0.113.10 or 203.0.113.0/24" />
+            <input className="search-input" value={ip} onChange={(e) => setIp(e.target.value)} placeholder="203.0.113.10 or 203.0.113.0/24" />
           </label>
           <label className="users-create-field">
             <span>{t('bans.durationLabel')}</span>
-            <select value={durationKey} onChange={(e) => setDurationKey(e.target.value)}>
+            <select className="search-input" value={durationKey} onChange={(e) => setDurationKey(e.target.value)}>
               {DURATION_PRESETS.map((p) => (
                 <option key={p.key} value={p.key}>
                   {t(`bans.duration.${p.key}`)}
@@ -134,7 +131,7 @@ export function BansPage() {
           </label>
           <label className="users-create-field">
             <span>{t('bans.notes')}</span>
-            <input value={notes} onChange={(e) => setNotes(e.target.value)} />
+            <input className="search-input" value={notes} onChange={(e) => setNotes(e.target.value)} />
           </label>
         </div>
         <Button onClick={() => void onCreate()} disabled={busy || !ip.trim()}>
@@ -143,7 +140,7 @@ export function BansPage() {
       </section>
 
       <div className="table-wrap">
-        <table className="data-table">
+        <table className="journal-table data-table">
           <thead>
             <tr>
               <th>{t('bans.ip')}</th>

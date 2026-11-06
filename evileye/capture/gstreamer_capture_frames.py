@@ -6,6 +6,7 @@ from .gstreamer_capture_common import (
     CaptureConstants,
     CaptureDeviceType,
     CaptureImage,
+    Any,
     Empty,
     Frame,
     Full,
@@ -280,6 +281,21 @@ class GStreamerCaptureFramesMixin:
                                         # Убрано отладочное сообщение для уменьшения флуда
                                         self.is_working = False
                             # Если _init_time нет, это может быть старая инициализация - не трогаем is_working
+                    elif (
+                        self.source_type == CaptureDeviceType.IpCamera
+                        and ret == Gst.StateChangeReturn.ASYNC
+                        and pending == Gst.State.PLAYING
+                    ):
+                        # RTSP negotiation is asynchronous. Keep the source in
+                        # its initializing state until the configured startup
+                        # grace period expires; otherwise the monitor tears down
+                        # rtspsrc while it is still negotiating SETUP/PLAY.
+                        if (
+                            not self._init_time
+                            or time.time() - self._init_time
+                            > CaptureConstants.INIT_GRACE_PERIOD_SECONDS
+                        ):
+                            self.is_working = False
                     else:
                         # Pipeline not in PLAYING state или ret != SUCCESS и state != PLAYING
                         if self.is_working:
@@ -842,27 +858,41 @@ class GStreamerCaptureFramesMixin:
                         total_str = ("∞" if max_attempts == 0 else str(max_attempts))
                         self.logger.info(
                             f"Reconnecting to source {self.source_names} (attempt {attempt}/{total_str}), backoff={wait_time:.1f}s")
-                        # Release old pipeline (with timeout to prevent blocking)
+                        # Reconnect must not reuse a pipeline while its native teardown is active.
                         try:
                             import threading as _thr_rel
-                            release_done = _thr_rel.Event()
+                            release_done = getattr(self, '_reconnect_release_done', None)
+                            if release_done is None or release_done.is_set():
+                                release_done = _thr_rel.Event()
+                                self._reconnect_release_done = release_done
+                                self._reconnect_release_started_at = time.time()
 
-                            def _release_worker():
-                                try:
-                                    self.release()
-                                except Exception as e:
-                                    self.logger.debug(f"Error in release during reconnect: {e}")
-                                finally:
-                                    release_done.set()
+                                def _release_worker(done=release_done):
+                                    try:
+                                        self.release()
+                                    except Exception as e:
+                                        self.logger.debug(f"Error in release during reconnect: {e}")
+                                    finally:
+                                        self._reconnect_release_started_at = None
+                                        done.set()
 
-                            release_thread = _thr_rel.Thread(target=_release_worker, daemon=True)
-                            release_thread.start()
-                            # Wait up to 2 seconds for release
+                                release_thread = _thr_rel.Thread(target=_release_worker, daemon=True)
+                                release_thread.start()
                             if not release_done.wait(2.0):
-                                self.logger.warning(
-                                    f"Release timeout after 2s for {self.source_names}; continuing anyway")
+                                self.logger.error(
+                                    "GStreamer teardown is still running for %s; reconnect is waiting",
+                                    self.source_names,
+                                )
+                                while not release_done.wait(0.25):
+                                    if not self.run_flag or self.stop_event.is_set():
+                                        break
+                            if not release_done.is_set():
+                                break
                         except Exception as e:
-                            self.logger.debug(f"Error starting release thread: {e}")
+                            self.logger.error("Cannot release GStreamer source before reconnect: %s", e)
+                            break
+                        if not self.run_flag or self.stop_event.is_set():
+                            break
                         # Wait a bit before retry
                         if self.stop_event.wait(2.0):
                             break
@@ -1063,6 +1093,9 @@ class GStreamerCaptureFramesMixin:
             source_id = None
             current_video_frame = None
             current_video_position = None
+            connection_generation = None
+            pts_ns = None
+            media_pts_sec = None
             image_copy = None
 
             try:
@@ -1091,6 +1124,9 @@ class GStreamerCaptureFramesMixin:
                         source_id = last_frame_ref.source_id
                         current_video_frame = last_frame_ref.current_video_frame
                         current_video_position = last_frame_ref.current_video_position
+                        connection_generation = last_frame_ref.connection_generation
+                        pts_ns = last_frame_ref.pts_ns
+                        media_pts_sec = last_frame_ref.media_pts_sec
                         # Get reference to image (don't copy yet - do it outside lock)
                         image_ref = last_frame_ref.image
                     else:
@@ -1122,8 +1158,12 @@ class GStreamerCaptureFramesMixin:
                         timestamp=timestamp,
                         source_id=source_id,
                         current_video_frame=current_video_frame,
-                        current_video_position=current_video_position
+                        current_video_position=current_video_position,
+                        pts_ns=pts_ns,
+                        media_pts_sec=media_pts_sec,
                     )
+                    if connection_generation is not None:
+                        copied_frame.connection_generation = connection_generation
                     frames.append(copied_frame)
             except Exception as e:
                 # Log error but don't break the flow - return empty list if copy fails
