@@ -77,6 +77,8 @@ Last reviewed: plugin_support audit (stages 0-4), 2026-10-19
 
 ## Task notes
 
+2026-10-31 recheck: TD-PS-D7 remains open. Three identical runs: main median tracker output 92.5%, final event-restore candidate 83.0% (all runs exit 0). See the dated addendum in `docs/RUNTIME_VERIFICATION_2026-10-19.md`.
+
 ### TD-PS-D7: frame loss on `plugin_support` compared with `main`
 
 **Symptom.** On identical load the branch delivers fewer frames to the tracker output. Load: one camera,

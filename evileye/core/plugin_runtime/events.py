@@ -173,11 +173,15 @@ class EventDetectorModuleAdapter(_HealthMixin, EvilEyeBase):
         self._update_notifications: queue.Queue = queue.Queue(maxsize=self._queue_size)
         self._pending_process_updates: queue.Queue = queue.Queue(maxsize=self._queue_size)
         self._notifications_dropped = 0
+        self._notifications_coalesced = 0
         self._process_updates_dropped = 0
         self._sequence = 0
         self._sequence_lock = threading.Lock()
         self._updates_submitted = 0
         self._events_received = 0
+        self._updates_completed = 0
+        self._last_success_at = None
+        self._started_at = None
         self._failure_reported = False
         self._closing = False
         self._stopped_events: list[Any] = []
@@ -282,7 +286,7 @@ class EventDetectorModuleAdapter(_HealthMixin, EvilEyeBase):
                 )
                 self._queue_size = 4
         if requested_mode == "process":
-            self._update_notifications = queue.Queue(maxsize=self._queue_size)
+            self._update_notifications = queue.Queue(maxsize=1)
             self._pending_process_updates = queue.Queue(maxsize=self._queue_size)
         if spec.config_schema is not None:
             self._config = plugin_registry.validate_module_config(
@@ -332,6 +336,7 @@ class EventDetectorModuleAdapter(_HealthMixin, EvilEyeBase):
         if self._started:
             return
         self._closing = False
+        self._started_at = time.time()
         if self.execution_mode == "process":
             from ..mp_control import MpControl
 
@@ -577,7 +582,12 @@ class EventDetectorModuleAdapter(_HealthMixin, EvilEyeBase):
                     "to build event_updates"
                 )
             include_frames = "event_frames" in capabilities
-            for source_id in self.context.pipeline_source_ids:
+            source_ids = self.context.pipeline_source_ids
+            if self.registered_module.spec.module_id in {'ZoneEventsDetector', 'AttributeEventsDetector'}:
+                configured = self._config.get('sources') or {}
+                source_ids = tuple(source_id for source_id in source_ids
+                                   if configured.get(str(source_id)) or configured.get(source_id))
+            for source_id in source_ids:
                 active = handler.get("active", source_id)
                 lost = handler.get("lost", source_id)
                 active_objects = getattr(active, "objects", ()) if active is not None else ()
@@ -650,7 +660,17 @@ class EventDetectorModuleAdapter(_HealthMixin, EvilEyeBase):
                 break
             try:
                 for update in self._build_context_updates():
-                    self.put(update)
+                    payload = _serialize_process_value(update, self.module_id, 'EventUpdate input')
+                    # Snapshot consumers may be slower than object notifications. Wait
+                    # for each logical source fairly rather than dropping the tail of
+                    # every batch when a bounded process queue is temporarily full.
+                    while not self._update_stop.is_set():
+                        try:
+                            self._mp_control.put((_EVENT_UPDATE_INPUT, payload), block=True, timeout=0.1)
+                            self._updates_submitted += 1
+                            break
+                        except queue.Full:
+                            continue
             except Exception as exc:
                 self._record_failure("event update dispatch", exc)
 
@@ -781,7 +801,9 @@ class EventDetectorModuleAdapter(_HealthMixin, EvilEyeBase):
                 continue
             try:
                 events.extend(pickle.loads(envelope[2]))
-                self._events_received += 1
+                self._events_received += len(pickle.loads(envelope[2]))
+                self._updates_completed += 1
+                self._last_success_at = time.time()
             except Exception as exc:
                 self._record_failure("worker output deserialization", exc)
         return events
@@ -884,13 +906,9 @@ class EventDetectorModuleAdapter(_HealthMixin, EvilEyeBase):
             try:
                 self._update_notifications.put_nowait(True)
             except queue.Full:
-                self._notifications_dropped += 1
-                self._record_failure(
-                    "event update notification",
-                    RuntimeError(
-                        "host update queue is full; notification was rejected"
-                    ),
-                )
+                # Notifications request a fresh snapshot; a queued wakeup already
+                # covers the latest handler state and all accumulated transitions.
+                self._notifications_coalesced += 1
         elif self.module is not None and callable(getattr(self.module, "update", None)):
             return self._call_module("update")
         return None
@@ -934,7 +952,8 @@ class EventDetectorModuleAdapter(_HealthMixin, EvilEyeBase):
             worker_running = any(p.is_alive() for p in self._mp_control.processes)
         elif self.module is not None:
             module_stats = getattr(self.module, "get_runtime_stats", None)
-            worker_running = self._started
+            thread = getattr(self.module, "processing_thread", None)
+            worker_running = bool(self._started and (thread is None or thread.is_alive()))
         else:
             module_stats = None
         return {
@@ -943,8 +962,12 @@ class EventDetectorModuleAdapter(_HealthMixin, EvilEyeBase):
             "initialized": self.is_inited,
             "started": self._started,
             "worker_running": worker_running,
+            "started_at": self._started_at,
+            "last_success_at": self._last_success_at,
+            "updates_completed": self._updates_completed,
             "updates_submitted": self._updates_submitted,
             "update_notifications_dropped": self._notifications_dropped,
+            "update_notifications_coalesced": self._notifications_coalesced,
             "process_updates_dropped": self._process_updates_dropped,
             "events_received": self._events_received,
             "degraded": self.degraded,
@@ -985,13 +1008,7 @@ class EventDetectorModuleAdapter(_HealthMixin, EvilEyeBase):
                 except queue.Empty:
                     break
             if dropped_notifications:
-                self._notifications_dropped += dropped_notifications
-                self._record_failure(
-                    "shutdown",
-                    RuntimeError(
-                        f"{dropped_notifications} queued host updates were discarded"
-                    ),
-                )
+                self._notifications_coalesced += dropped_notifications
             dropped_process_updates = 0
             while True:
                 try:

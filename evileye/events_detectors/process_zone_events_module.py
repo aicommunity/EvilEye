@@ -85,7 +85,9 @@ class ProcessZoneEventsModule:
             "apply_thresholds",
         }:
             raise ValueError(f"Unsupported zone event command: {command}")
-        return method(**kwargs)
+        method(**kwargs)
+        self.detector._update_zones()
+        return self.detector.drain_pending_events()
 
     def process_update(self, update: EventUpdate, state):
         if self.detector is None:

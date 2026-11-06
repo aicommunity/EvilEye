@@ -192,3 +192,28 @@ echo "CONFIG_NAME=$CONFIG_NAME"
 echo "DISPLAY=$DISPLAY KillMode=process"
 echo "Manual run: systemctl --user start evileye-watchdog.service"
 echo "Logs: $MONITOR_DIR/watchdog.log"
+
+# Poll event liveness independently of the heavier five-minute host audit.
+cat >"$SYSTEMD_USER_DIR/evileye-event-health.service" <<EOF
+[Unit]
+Description=EvilEye event worker health
+[Service]
+Type=oneshot
+WorkingDirectory=$DEPLOY_DIR
+Environment=DEPLOY_DIR=$DEPLOY_DIR
+Environment=MONITOR_DIR=$MONITOR_DIR
+Environment=CONFIG_NAME=$CONFIG_NAME
+ExecStart=/bin/bash $MONITOR_DIR/scripts/event_health.sh
+KillMode=process
+EOF
+cat >"$SYSTEMD_USER_DIR/evileye-event-health.timer" <<EOF
+[Unit]
+Description=Check EvilEye events every ten seconds
+[Timer]
+OnBootSec=90
+OnUnitActiveSec=10
+[Install]
+WantedBy=timers.target
+EOF
+systemctl --user daemon-reload
+systemctl --user enable --now evileye-event-health.timer

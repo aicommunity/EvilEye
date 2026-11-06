@@ -8,12 +8,14 @@ from evileye.visualization_modules.journal_adapters.jadapter_zone_events import 
 
 
 def _adapter_params(runtime_params: dict[str, Any]) -> dict[str, Any]:
+    legacy = runtime_params.get('database_adapters', {}) if isinstance(runtime_params, dict) else {}
+    legacy = legacy if isinstance(legacy, dict) else {}
     database = runtime_params.get("database") if isinstance(runtime_params, dict) else None
     if isinstance(database, dict):
         params = database.get("adapters")
         if isinstance(params, dict):
-            return params
-    return {}
+            return {**legacy, **params}
+    return legacy
 
 
 def create_event_journal_adapters(db_controller, runtime_params: dict[str, Any]) -> list:
@@ -22,7 +24,7 @@ def create_event_journal_adapters(db_controller, runtime_params: dict[str, Any])
     adapters = []
 
     cam = JournalAdapterCamEvents()
-    cam.set_params(**adapter_params.get("DatabaseAdapterCamEvents", {}))
+    cam.set_params(**adapter_params.get("DatabaseAdapterCamEvents", {"table_name": "camera_events"}))
     cam.init()
     adapters.append(cam)
 
@@ -30,14 +32,14 @@ def create_event_journal_adapters(db_controller, runtime_params: dict[str, Any])
     fov_params = (
         adapter_params.get("DatabaseAdapterScheduleAlarmEvents")
         or adapter_params.get("DatabaseAdapterFieldOfViewEvents")
-        or {}
+        or {"table_name": "schedule_alarm_events"}
     )
     fov.set_params(**fov_params)
     fov.init()
     adapters.append(fov)
 
     zone = JournalAdapterZoneEvents()
-    zone.set_params(**adapter_params.get("DatabaseAdapterZoneEvents", {}))
+    zone.set_params(**adapter_params.get("DatabaseAdapterZoneEvents", {"table_name": "zone_events"}))
     zone.init()
     adapters.append(zone)
 

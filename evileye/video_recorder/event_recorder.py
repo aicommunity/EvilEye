@@ -600,7 +600,9 @@ class EventRecorder:
 
                 deleted = check_and_delete_small_files(
                     output_path,
-                    self.params.min_file_size_kb,
+                    # Unlike continuous segments, genuine event clips can be very
+                    # short. Keep decodable clips regardless of compressed size.
+                    0,
                     min_age_seconds=0,
                     validate_integrity=validate_integrity,
                     validation_timeout=validation_timeout

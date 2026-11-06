@@ -42,6 +42,7 @@ class GstContinuousRecorder(VideoRecorderBase):
 
     def __init__(self) -> None:
         super().__init__()
+        self.invalid_pts_dropped = 0
         self.logger = get_module_logger("gst_continuous_recorder")
         self._refs: Optional[GstBranchRefs] = None
         self._check_thread: Optional[threading.Thread] = None
@@ -198,6 +199,7 @@ class GstContinuousRecorder(VideoRecorderBase):
                 if not queue_before_mux.link(splitmuxsink):
                     raise RuntimeError("Failed to link mux queue to splitmuxsink")
 
+                self._attach_timestamp_guard(Gst, queue_before_mux)
                 self._attach_first_mux_probe(
                     Gst,
                     recording_queue_elem=recording_queue_elem,
@@ -303,6 +305,23 @@ class GstContinuousRecorder(VideoRecorderBase):
             if self._session_stem is not None:
                 return f"{self._session_stem}_{int(fragment_id):05d}.{self.params.container}"
             return f"recording_{int(fragment_id):05d}.{self.params.container}"
+
+    def _attach_timestamp_guard(self, Gst, queue_before_mux):
+        # qtmux terminates the entire capture pipeline on a buffer without PTS.
+        # Discard only malformed encoded buffers; do not invent media timestamps.
+        def guard(pad, info):
+            buffer = info.get_buffer()
+            pts = getattr(buffer, 'pts', None)
+            if buffer is not None and (pts is None or pts < 0 or pts == Gst.CLOCK_TIME_NONE):
+                self.invalid_pts_dropped += 1
+                if self.invalid_pts_dropped == 1 or self.invalid_pts_dropped % 100 == 0:
+                    self.logger.warning('Recording dropped encoded buffer without PTS (total=%d)',
+                                        self.invalid_pts_dropped)
+                return Gst.PadProbeReturn.DROP
+            return Gst.PadProbeReturn.OK
+        pad = queue_before_mux.get_static_pad('src')
+        if pad is not None:
+            pad.add_probe(Gst.PadProbeType.BUFFER, guard)
 
     def _attach_first_mux_probe(self, Gst, *, recording_queue_elem, queue_before_mux, location: str) -> None:
         sidecar = sidecar_path_from_splitmux_location(location)

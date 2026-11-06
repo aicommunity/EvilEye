@@ -861,18 +861,23 @@ class GStreamerCaptureFramesMixin:
                         # Reconnect must not reuse a pipeline while its native teardown is active.
                         try:
                             import threading as _thr_rel
-                            release_done = _thr_rel.Event()
+                            release_done = getattr(self, '_reconnect_release_done', None)
+                            if release_done is None or release_done.is_set():
+                                release_done = _thr_rel.Event()
+                                self._reconnect_release_done = release_done
+                                self._reconnect_release_started_at = time.time()
 
-                            def _release_worker():
-                                try:
-                                    self.release()
-                                except Exception as e:
-                                    self.logger.debug(f"Error in release during reconnect: {e}")
-                                finally:
-                                    release_done.set()
+                                def _release_worker(done=release_done):
+                                    try:
+                                        self.release()
+                                    except Exception as e:
+                                        self.logger.debug(f"Error in release during reconnect: {e}")
+                                    finally:
+                                        self._reconnect_release_started_at = None
+                                        done.set()
 
-                            release_thread = _thr_rel.Thread(target=_release_worker, daemon=True)
-                            release_thread.start()
+                                release_thread = _thr_rel.Thread(target=_release_worker, daemon=True)
+                                release_thread.start()
                             if not release_done.wait(2.0):
                                 self.logger.error(
                                     "GStreamer teardown is still running for %s; reconnect is waiting",
