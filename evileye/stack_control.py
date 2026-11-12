@@ -581,13 +581,34 @@ def spawn_managed_pipeline(
                 sd_argv.append(f"--setenv={key}={val}")
         sd_argv.extend(["bash", "-c", bash_cmd])
         proc = subprocess.run(sd_argv, check=False, capture_output=True, text=True)
-        if proc.returncode != 0:
+        combined = f"{proc.stdout or ''}{proc.stderr or ''}"
+        # systemd-run --scope --no-block prints "Running scope as unit: ..." on success;
+        # some environments still return a non-zero status with that banner.
+        started = "Running scope as unit:" in combined
+        if proc.returncode != 0 and not started:
             raise RuntimeError((proc.stderr or proc.stdout or "systemd-run managed spawn failed").strip())
         pid = _poll_cli_or_child_pid(str(config_path), root=root, timeout=8.0)
         return SpawnResult(pid=int(pid or 0), mode="managed", config_path=str(config_path))
 
-    proc = subprocess.Popen(cmd, cwd=str(root), env=env, start_new_session=True)
-    return SpawnResult(pid=proc.pid, mode="managed", config_path=str(config_path))
+    # Fallback when systemd-run is unavailable: fully detach so the CLI does not
+    # keep spawn.lock / wait forever on the long-lived process.py child.
+    proc = subprocess.Popen(
+        cmd,
+        cwd=str(root),
+        env=env,
+        stdin=subprocess.DEVNULL,
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+        start_new_session=True,
+        close_fds=True,
+    )
+    pid = int(proc.pid)
+    try:
+        # Drop the Popen wait handle; the pipeline outlives this CLI invocation.
+        proc.returncode = 0
+    except Exception:
+        pass
+    return SpawnResult(pid=pid, mode="managed", config_path=str(config_path))
 
 
 def _pipeline_scope_memory_props() -> list[str]:
@@ -762,8 +783,8 @@ def pipeline_start(
     else:
         policy = "fail"
 
-    # Hold spawn.lock only for singleton arbitration and the spawn kickoff.
-    # A foreground wait must not keep the site lock: watchdog restarts need it.
+    # Hold spawn.lock only for singleton arbitration. Spawning (and any wait) must
+    # happen after unlock so a live pipeline / stuck CLI cannot block watchdog restarts.
     with spawn_lock(root):
         guard = ensure_pipeline_singleton(config, root, policy=policy)
         if guard.skipped:
@@ -773,10 +794,11 @@ def pipeline_start(
                 mode=mode,
                 config_path=guard.config_path or config,
             )
-        if should_use_managed_launch(root):
-            return spawn_managed_pipeline(config, site_dir=root, api_base_url=api_base_url)
-        if detach:
-            return spawn_direct_pipeline(config, site_dir=root, gui=gui, detach=True)
+        use_managed = should_use_managed_launch(root)
+    if use_managed:
+        return spawn_managed_pipeline(config, site_dir=root, api_base_url=api_base_url)
+    if detach:
+        return spawn_direct_pipeline(config, site_dir=root, gui=gui, detach=True)
     return spawn_direct_pipeline(config, site_dir=root, gui=gui, detach=False)
 
 
