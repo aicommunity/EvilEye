@@ -473,7 +473,7 @@ class GstContinuousRecorder(VideoRecorderBase):
         if not refs:
             return
 
-        def _set_null_bounded(elem, *, timeout_sec: float = 3.0) -> None:
+        def _set_null_bounded(elem, *, timeout_sec: float = 1.0) -> None:
             if elem is None:
                 return
             done = threading.Event()
@@ -587,7 +587,7 @@ class GstContinuousRecorder(VideoRecorderBase):
             refs.splitmuxsink,
             refs.recording_queue,
         ]:
-            _set_null_bounded(elem, timeout_sec=3.0)
+            _set_null_bounded(elem, timeout_sec=1.0)
             try:
                 if pipeline and elem is not None and elem.get_parent() == pipeline:
                     pipeline.remove(elem)

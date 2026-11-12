@@ -262,7 +262,30 @@ class VideoCaptureGStreamer(
             )
 
         # Serialize with release()/teardown so reconnect cannot race a stuck NULL.
-        self._release_lock.acquire()
+        # Timed acquire: a hung release must not block reconnect forever.
+        lock_wait = float(CaptureConstants.RECONNECT_RELEASE_WAIT_SEC) + float(
+            CaptureConstants.TEARDOWN_NULL_TIMEOUT_SEC
+        )
+        acquired = self._release_lock.acquire(timeout=lock_wait)
+        if not acquired:
+            self.logger.error(
+                "GStreamer init could not acquire lifecycle lock for %s after %.1fs; abandoning stalled release",
+                self.source_names,
+                lock_wait,
+            )
+            try:
+                self._abandon_stalled_teardown()
+            except Exception:
+                pass
+            acquired = self._release_lock.acquire(timeout=1.0)
+            if not acquired:
+                self.logger.error(
+                    "GStreamer init still blocked on lifecycle lock for %s; init failed",
+                    self.source_names,
+                )
+                self.is_inited = False
+                self.is_working = False
+                return False
         try:
             return self._init_locked()
         finally:
@@ -279,8 +302,10 @@ class VideoCaptureGStreamer(
                 self._init_pipeline()
                 self._start_main_loop()
                 self.is_inited = True
-                # Live sources become working only after the first decoded frame.
-                self.is_working = False
+                # RTSP starts ASYNC; keep working=True through the init grace so
+                # _grab_frames does not tear the pipeline down mid-negotiation.
+                # First-frame handlers still confirm liveness and clear abandon flags.
+                self.is_working = True
                 self.logger.info("GStreamer video capture initialized successfully")
 
                 return True

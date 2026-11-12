@@ -354,6 +354,19 @@ class GStreamerCaptureFramesMixin:
                         except Exception as e:
                             pipeline_state_str = f"error getting state: {e}"
 
+                        # Do not tear down an RTSP pipeline that is still negotiating PLAYING
+                        # or waiting for the first decoded frame inside the init grace window.
+                        if (
+                            should_reconnect
+                            and self.is_inited
+                            and self.pipeline is not None
+                            and self._init_time
+                            and (now - float(self._init_time))
+                            < CaptureConstants.INIT_GRACE_PERIOD_SECONDS
+                        ):
+                            should_reconnect = False
+                            last_frame_info = f"{last_frame_info}; waiting_for_startup"
+
                         # Реконнектим только если действительно нужно
                         if should_reconnect:
                             try:
