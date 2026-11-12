@@ -79,7 +79,11 @@ class VideoCaptureGStreamer(
         self.frame_lock = threading.RLock()
         # Use RLock for pipeline_lock to allow potential nested operations
         self.pipeline_lock = threading.RLock()
+        # Serializes init()/release() so reconnect cannot build a second pipeline
+        # over a teardown that is still holding native GStreamer objects.
         self._release_lock = threading.Lock()
+        self._pipeline_generation = 0
+        self._pipeline_null_abandoned = False
         self.gstreamer_available = GSTREAMER_AVAILABLE
 
         # Initialize GStreamer if available
@@ -257,15 +261,26 @@ class VideoCaptureGStreamer(
                 "VideoCaptureGStreamer was selected but GStreamer is unavailable"
             )
 
+        # Serialize with release()/teardown so reconnect cannot race a stuck NULL.
+        self._release_lock.acquire()
+        try:
+            return self._init_locked()
+        finally:
+            self._release_lock.release()
+
+    def _init_locked(self) -> bool:
+        """Initialize while holding `_release_lock`."""
+        self._pipeline_generation = int(getattr(self, "_pipeline_generation", 0)) + 1
+        self._pipeline_null_abandoned = False
+
         # RTSP negotiation is asynchronous and must not block initialization.
         if self.source_type == CaptureDeviceType.IpCamera:
             try:
                 self._init_pipeline()
                 self._start_main_loop()
                 self.is_inited = True
-                # Set is_working = True initially to allow frames to be processed
-                # We'll verify it's actually working by checking for frames in _grab_frames
-                self.is_working = True
+                # Live sources become working only after the first decoded frame.
+                self.is_working = False
                 self.logger.info("GStreamer video capture initialized successfully")
 
                 return True
@@ -316,7 +331,11 @@ class VideoCaptureGStreamer(
                     with self.pipeline_lock:
                         if self.pipeline is not None:
                             try:
-                                self.pipeline.set_state(Gst.State.NULL)
+                                self._set_gst_state_null_bounded(
+                                    self.pipeline,
+                                    timeout_sec=CaptureConstants.TEARDOWN_NULL_TIMEOUT_SEC,
+                                    label=f"init-timeout:{self.source_names}",
+                                )
                             except Exception:
                                 pass
                             self.pipeline = None

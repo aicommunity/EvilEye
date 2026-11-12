@@ -762,6 +762,8 @@ def pipeline_start(
     else:
         policy = "fail"
 
+    # Hold spawn.lock only for singleton arbitration and the spawn kickoff.
+    # A foreground wait must not keep the site lock: watchdog restarts need it.
     with spawn_lock(root):
         guard = ensure_pipeline_singleton(config, root, policy=policy)
         if guard.skipped:
@@ -773,7 +775,9 @@ def pipeline_start(
             )
         if should_use_managed_launch(root):
             return spawn_managed_pipeline(config, site_dir=root, api_base_url=api_base_url)
-        return spawn_direct_pipeline(config, site_dir=root, gui=gui, detach=detach)
+        if detach:
+            return spawn_direct_pipeline(config, site_dir=root, gui=gui, detach=True)
+    return spawn_direct_pipeline(config, site_dir=root, gui=gui, detach=False)
 
 
 def pipeline_restart(

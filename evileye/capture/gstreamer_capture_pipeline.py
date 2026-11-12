@@ -217,7 +217,8 @@ class GStreamerCapturePipelineMixin:
             # IMPORTANT: recording branch must be bounded.
             # If encoder/muxer/disk is slower than realtime, an unbounded queue will
             # accumulate raw frames and inflate RSS indefinitely.
-            pipeline += " t. ! queue name=recording_queue max-size-buffers=5 max-size-bytes=0 max-size-time=500000000 leaky=no"
+            # leaky=downstream: a stalled muxer must not block RTSP teardown / set_state(NULL).
+            pipeline += " t. ! queue name=recording_queue max-size-buffers=5 max-size-bytes=0 max-size-time=500000000 leaky=downstream"
         else:
             # No recording - direct to appsink
             # For VideoFile, no queue needed (no tee)
@@ -263,7 +264,8 @@ class GStreamerCapturePipelineMixin:
             common_tail += " ! tee name=t"
             common_tail += " t. ! queue max-size-buffers=10 max-size-bytes=0 max-size-time=0 ! video/x-raw,format=BGR ! appsink name=sink emit-signals=true wait-on-eos=false enable-last-sample=false sync=true max-buffers=3 drop=true"
             # IMPORTANT: recording branch must be bounded to avoid runaway RSS.
-            common_tail += " t. ! queue name=recording_queue max-size-buffers=5 max-size-bytes=0 max-size-time=500000000 leaky=no"
+            # leaky=downstream: a stalled muxer must not block RTSP teardown / set_state(NULL).
+            common_tail += " t. ! queue name=recording_queue max-size-buffers=5 max-size-bytes=0 max-size-time=500000000 leaky=downstream"
         else:
             common_tail += " ! queue max-size-buffers=10 max-size-bytes=0 max-size-time=0 ! video/x-raw,format=BGR ! appsink name=sink emit-signals=true wait-on-eos=false enable-last-sample=false sync=true max-buffers=3 drop=true"
 
@@ -395,10 +397,7 @@ class GStreamerCapturePipelineMixin:
                                     break
 
                                 # Connect callback
-                                try:
-                                    self._appsink_handler_id = self.appsink.connect("new-sample", self._on_new_sample)
-                                except Exception:
-                                    self._appsink_handler_id = None
+                                self._connect_appsink_callback()
 
                                 # Setup recording branch if continuous recording enabled
                                 # `enabled` is a master switch. Continuous recording must be explicitly enabled.
@@ -512,10 +511,7 @@ class GStreamerCapturePipelineMixin:
                         raise RuntimeError("Failed to get appsink element")
 
                     # Connect callback
-                    try:
-                        self._appsink_handler_id = self.appsink.connect("new-sample", self._on_new_sample)
-                    except Exception:
-                        self._appsink_handler_id = None
+                    self._connect_appsink_callback()
 
                     # `enabled` is a master switch. Continuous recording must be explicitly enabled.
                     continuous_enabled = bool(
@@ -579,10 +575,7 @@ class GStreamerCapturePipelineMixin:
                             self.appsink = self.pipeline.get_by_name("sink")
                             if not self.appsink:
                                 raise RuntimeError("Failed to get appsink element after disabling recording") from e
-                            try:
-                                self._appsink_handler_id = self.appsink.connect("new-sample", self._on_new_sample)
-                            except Exception:
-                                self._appsink_handler_id = None
+                            self._connect_appsink_callback()
                         except Exception as e:
                             self.logger.error(f"Failed to setup recording branch: {e}", exc_info=True)
                             # Don't continue - recording branch must be set up before pipeline goes to PLAYING
@@ -967,11 +960,92 @@ class GStreamerCapturePipelineMixin:
                 pass
             self.main_loop_thread.join(timeout=2.0)
 
+    def _connect_appsink_callback(self) -> None:
+        """Connect new-sample and stamp the active pipeline generation."""
+        try:
+            self._appsink_handler_id = self.appsink.connect("new-sample", self._on_new_sample)
+            self._appsink_generation = getattr(self, "_pipeline_generation", 0)
+        except Exception:
+            self._appsink_handler_id = None
+
+    def _flush_recording_queue(self, pipeline) -> None:
+        """Best-effort unblock of the recording branch before set_state(NULL)."""
+        if pipeline is None or Gst is None:
+            return
+        try:
+            queue = pipeline.get_by_name("recording_queue")
+        except Exception:
+            queue = None
+        if queue is None:
+            return
+        try:
+            queue.set_property("leaky", 2)  # downstream
+        except Exception:
+            pass
+        for pad_name in ("sink", "src"):
+            try:
+                pad = queue.get_static_pad(pad_name)
+                if pad is None:
+                    continue
+                pad.send_event(Gst.Event.new_flush_start())
+                pad.send_event(Gst.Event.new_flush_stop(True))
+            except Exception:
+                pass
+        self._set_gst_state_null_bounded(
+            queue,
+            timeout_sec=min(2.0, CaptureConstants.TEARDOWN_NULL_TIMEOUT_SEC),
+            label=f"recording_queue:{self.source_names}",
+        )
+
+    def _set_gst_state_null_bounded(self, element, *, timeout_sec: float, label: str) -> bool:
+        """Move an element to NULL without hanging Python when a streaming thread is stuck."""
+        if element is None or Gst is None:
+            return True
+        done = threading.Event()
+        error: list[BaseException] = []
+
+        def _worker():
+            try:
+                element.set_state(Gst.State.NULL)
+                try:
+                    # Prefer a bounded wait when the state change is asynchronous.
+                    element.get_state(max(1, int(timeout_sec * Gst.SECOND)))
+                except Exception:
+                    pass
+            except BaseException as exc:  # noqa: BLE001 - must always unblock waiter
+                error.append(exc)
+            finally:
+                done.set()
+
+        worker = threading.Thread(target=_worker, name=f"gst-null-{label}"[:40], daemon=True)
+        worker.start()
+        if done.wait(timeout_sec + 0.5):
+            if error:
+                try:
+                    self.logger.debug("GStreamer set_state(NULL) error for %s: %s", label, error[0])
+                except Exception:
+                    pass
+            return True
+        try:
+            self.logger.error(
+                "GStreamer set_state(NULL) timed out after %.1fs for %s; abandoning native element",
+                timeout_sec,
+                label,
+            )
+        except Exception:
+            pass
+        try:
+            self._pipeline_null_abandoned = True
+        except Exception:
+            pass
+        return False
+
     def _teardown_pipeline(self, reason: str, *, join_main_loop: bool) -> None:
         """
         Tear down pipeline resources safely.
 
         Designed to be callable from GStreamer/GLib callback threads (join_main_loop=False).
+        Native set_state(NULL) is bounded so a stuck RTSP/recording thread cannot freeze reconnect.
         """
         if not self.gstreamer_available:
             return
@@ -979,6 +1053,7 @@ class GStreamerCapturePipelineMixin:
         pipeline = None
         bus = None
         appsink = None
+        teardown_generation = None
 
         # Detach references first (under lock) to prevent concurrent use.
         with self.pipeline_lock:
@@ -991,6 +1066,7 @@ class GStreamerCapturePipelineMixin:
             self.is_inited = False
             self.is_working = False
             self._last_sample_wall_ts = 0.0
+            teardown_generation = getattr(self, "_pipeline_generation", 0)
 
         # Log teardown summary early (helps correlate RSS growth with resource release).
         try:
@@ -1035,6 +1111,12 @@ class GStreamerCapturePipelineMixin:
                     bus.set_flushing(True)
                 except Exception:
                     pass
+        except Exception:
+            pass
+
+        # Unblock a non-leaky / stalled recording branch before native NULL.
+        try:
+            self._flush_recording_queue(pipeline)
         except Exception:
             pass
 
@@ -1087,15 +1169,25 @@ class GStreamerCapturePipelineMixin:
 
         # Finally, try to move pipeline to NULL to release GStreamer resources.
         if pipeline is not None:
-            try:
-                pipeline.set_state(Gst.State.NULL)
-            except Exception:
-                pass
-            # Drop local refs ASAP to help GC / gi unref.
-            try:
-                pipeline = None
-            except Exception:
-                pass
+            null_ok = self._set_gst_state_null_bounded(
+                pipeline,
+                timeout_sec=CaptureConstants.TEARDOWN_NULL_TIMEOUT_SEC,
+                label=f"pipeline:{self.source_names}:gen={teardown_generation}",
+            )
+            if not null_ok:
+                try:
+                    self.logger.error(
+                        "Abandoned GStreamer pipeline for %s after NULL timeout (reason=%s, generation=%s)",
+                        self.source_names,
+                        reason,
+                        teardown_generation,
+                    )
+                except Exception:
+                    pass
+            # Drop local refs ASAP to help GC / gi unref. Do not wait on the abandoned native object again.
+            pipeline = None
+            bus = None
+            appsink = None
         # Optional: best-effort trimming (async + rate-limited) to reduce RSS plateaus.
         try:
             self._maybe_schedule_malloc_trim(reason=reason)

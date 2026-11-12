@@ -473,6 +473,50 @@ class GstContinuousRecorder(VideoRecorderBase):
         if not refs:
             return
 
+        def _set_null_bounded(elem, *, timeout_sec: float = 3.0) -> None:
+            if elem is None:
+                return
+            done = threading.Event()
+
+            def _worker():
+                try:
+                    elem.set_state(Gst.State.NULL)
+                    try:
+                        elem.get_state(max(1, int(timeout_sec * Gst.SECOND)))
+                    except Exception:
+                        pass
+                except Exception:
+                    pass
+                finally:
+                    done.set()
+
+            threading.Thread(target=_worker, daemon=True).start()
+            if not done.wait(timeout_sec + 0.5):
+                self.logger.warning(
+                    "Recording element set_state(NULL) timed out for %s",
+                    self.source.source_name if self.source else "source",
+                )
+
+        # Unblock a full recording queue so muxer teardown cannot hang forever.
+        try:
+            recording_queue = refs.recording_queue
+            if recording_queue is not None:
+                try:
+                    recording_queue.set_property("leaky", 2)  # downstream
+                except Exception:
+                    pass
+                for pad_name in ("sink", "src"):
+                    try:
+                        pad = recording_queue.get_static_pad(pad_name)
+                        if pad is None:
+                            continue
+                        pad.send_event(Gst.Event.new_flush_start())
+                        pad.send_event(Gst.Event.new_flush_stop(True))
+                    except Exception:
+                        pass
+        except Exception:
+            pass
+
         # An attached but never-started branch may be blocked in preroll. No
         # segment exists to finalize until the first muxed buffer has arrived.
         eos_sent = False
@@ -484,7 +528,7 @@ class GstContinuousRecorder(VideoRecorderBase):
                 self.logger.warning("Could not send EOS to recording branch: %s", exc)
 
         if eos_sent:
-            deadline = time.monotonic() + 10.0
+            deadline = time.monotonic() + 5.0
             last_signature = None
             stable_since = None
             while time.monotonic() < deadline:
@@ -541,13 +585,11 @@ class GstContinuousRecorder(VideoRecorderBase):
             refs.h264parse,
             refs.queue_before_mux,
             refs.splitmuxsink,
+            refs.recording_queue,
         ]:
+            _set_null_bounded(elem, timeout_sec=3.0)
             try:
-                elem.set_state(Gst.State.NULL)
-            except Exception:
-                pass
-            try:
-                if pipeline and elem.get_parent() == pipeline:
+                if pipeline and elem is not None and elem.get_parent() == pipeline:
                     pipeline.remove(elem)
             except Exception:
                 pass

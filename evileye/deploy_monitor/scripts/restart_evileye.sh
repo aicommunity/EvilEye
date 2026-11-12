@@ -23,27 +23,40 @@ if [[ -f "$RESTART_LOCK" ]]; then
 fi
 
 touch "$RESTART_LOCK"
-trap 'rm -f "$RESTART_LOCK"' EXIT
-
-mark_watchdog_restarting
-log_msg "Starting EvilEye restart (reason=$REASON)"
 
 SPAWN_LOCK="$MONITOR_DIR/.spawn.lock"
+_SPAWN_LOCKED=0
 _spawn_lock() {
     exec 200>"$SPAWN_LOCK"
     if ! flock -w 30 200; then
         log_msg "Restart skipped: could not acquire spawn lock"
         exit 0
     fi
+    _SPAWN_LOCKED=1
 }
 
 _spawn_unlock() {
-    flock -u 200 2>/dev/null || true
+    if ((_SPAWN_LOCKED)); then
+        flock -u 200 2>/dev/null || true
+        _SPAWN_LOCKED=0
+    fi
 }
+
+_cleanup_restart() {
+    _spawn_unlock
+    rm -f "$RESTART_LOCK"
+}
+trap '_cleanup_restart' EXIT
+
+mark_watchdog_restarting
+log_msg "Starting EvilEye restart (reason=$REASON)"
 
 _spawn_lock
 
 # Stop existing processes gracefully, then force-kill leftovers.
+# Keep this phase bounded so a D-state child cannot hold .spawn.lock forever.
+STOP_BUDGET_SEC="${STOP_BUDGET_SEC:-45}"
+stop_deadline=$(($(date +%s) + STOP_BUDGET_SEC))
 for pid in $(pgrep -f "$CHILD_PATTERN" 2>/dev/null || true); do
     kill -TERM "$pid" 2>/dev/null || true
 done
@@ -60,10 +73,20 @@ done
 
 cleanup_orphan_mp_workers
 
-if [[ -n "$(find_child_pid)" ]]; then
-    log_msg "Child already running after stop (another agent); skip restart"
-    _spawn_unlock
-    exit 0
+surviving_child="$(find_child_pid)"
+if [[ -n "$surviving_child" ]]; then
+    if (( $(date +%s) >= stop_deadline )); then
+        log_msg "ERROR: child pid=$surviving_child survived SIGKILL within ${STOP_BUDGET_SEC}s; aborting restart"
+        exit 1
+    fi
+    # One more hard kill attempt, then fail loudly (do not pretend another agent owns it).
+    kill -KILL "$surviving_child" 2>/dev/null || true
+    sleep 1
+    surviving_child="$(find_child_pid)"
+    if [[ -n "$surviving_child" ]]; then
+        log_msg "ERROR: child pid=$surviving_child survived SIGKILL; aborting restart"
+        exit 1
+    fi
 fi
 
 # Cleanup stale MP workers if EvilEye package is importable.
@@ -130,8 +153,9 @@ launch_evileye() {
         fi
         (
             cd "$DEPLOY_DIR"
+            # --detach: never hold Python spawn.lock across a foreground run wait.
             # pipeline start has its own spawn flock; do not hold bash flock across this call
-            evileye pipeline start "$CONFIG_NAME" --release "${gui_args[@]}"
+            evileye pipeline start "$CONFIG_NAME" --release --detach "${gui_args[@]}"
         ) >>"$MONITOR_DIR/watchdog_stdout.log" 2>&1 &
         echo $!
         return

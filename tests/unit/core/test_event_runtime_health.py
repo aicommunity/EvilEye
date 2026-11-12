@@ -34,6 +34,13 @@ def test_native_capture_teardown_stall_is_reported_for_watchdog_recovery():
     assert event_health(stats, now=45) == ['source/2:native_teardown_stalled']
 
 
+def test_brief_teardown_pending_during_reconnect_is_not_stalled():
+    stats = {'components': {'events_controller': {}, 'events_processor': {},
+             'pipeline': {'module_instances': {'source/2': {
+                 'capture_health': {'teardown_pending_since': 100}}}}}}
+    assert event_health(stats, now=120) == []
+
+
 def test_secrets_are_redacted_and_effective_config_changes_identity_hash():
     value = redact({'password': 'hidden', 'error': 'Failed rtsp://user:pass@camera/path',
                     'config': {'session_secret': 'hidden'}})
