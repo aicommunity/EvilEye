@@ -54,6 +54,10 @@ class CaptureConstants:
     RECONNECT_RELEASE_WAIT_SEC: float = 15.0
     # Bound native GStreamer set_state(NULL); stuck streaming threads must not hang Python forever.
     TEARDOWN_NULL_TIMEOUT_SEC: float = 5.0
+    # Whole native teardown (disconnect, flush, NULL), not only set_state.
+    TEARDOWN_BUDGET_SEC: float = 15.0
+    # Source stays down this long before the watchdog may restart the pipeline.
+    SOURCE_DOWN_SEC: float = 120.0
 
     # Default FPS fallback
     DEFAULT_FPS_FALLBACK: float = 15.0

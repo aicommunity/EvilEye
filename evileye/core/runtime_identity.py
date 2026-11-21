@@ -82,6 +82,13 @@ def event_health(stats, *, now=None):
         pending = health.get('teardown_pending_since')
         if pending is not None and now-pending > 30:
             reasons.append(name + ':native_teardown_stalled')
+        down_since = health.get('capture_down_since')
+        if (
+            health.get('working') is False
+            and isinstance(down_since, (int, float))
+            and now - down_since > 120
+        ):
+            reasons.append(name + ':source_down')
     return reasons
 
 

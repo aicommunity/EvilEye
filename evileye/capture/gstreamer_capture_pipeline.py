@@ -331,20 +331,12 @@ class GStreamerCapturePipelineMixin:
         Live RTSP transitions start asynchronously; finite sources use a bounded preroll wait.
         """
         pipeline_str = None
+        # Tear down outside pipeline_lock. Holding that lock across disconnect/NULL
+        # blocks grab's get_state for as long as the native call is stuck.
+        if self.pipeline is not None or self.bus is not None or self.appsink is not None:
+            self._teardown_pipeline("reinit_before_init", join_main_loop=True)
         try:
             with self.pipeline_lock:
-                if self.pipeline:
-                    # Use full teardown to avoid accumulating signal watches/callbacks on re-init
-                    # (may happen during reconnects or repeated init attempts).
-                    try:
-                        self._teardown_pipeline("reinit_before_init", join_main_loop=True)
-                    except Exception:
-                        try:
-                            self.pipeline.set_state(Gst.State.NULL)
-                        except Exception:
-                            pass
-                        self.pipeline = None
-
                 # For IP cameras, try multiple pipeline candidates
                 if self.source_type == CaptureDeviceType.IpCamera:
                     candidates = self._build_pipeline_candidates()
@@ -968,7 +960,7 @@ class GStreamerCapturePipelineMixin:
         except Exception:
             self._appsink_handler_id = None
 
-    def _flush_recording_queue(self, pipeline) -> None:
+    def _flush_recording_queue(self, pipeline, generation: int | None = None) -> None:
         """Best-effort unblock of the recording branch before set_state(NULL)."""
         if pipeline is None or Gst is None:
             return
@@ -995,9 +987,10 @@ class GStreamerCapturePipelineMixin:
             queue,
             timeout_sec=min(2.0, CaptureConstants.TEARDOWN_NULL_TIMEOUT_SEC),
             label=f"recording_queue:{self.source_names}",
+            generation=generation,
         )
 
-    def _set_gst_state_null_bounded(self, element, *, timeout_sec: float, label: str) -> bool:
+    def _set_gst_state_null_bounded(self, element, *, timeout_sec: float, label: str, generation: int | None = None) -> bool:
         """Move an element to NULL without hanging Python when a streaming thread is stuck."""
         if element is None or Gst is None:
             return True
@@ -1035,74 +1028,90 @@ class GStreamerCapturePipelineMixin:
         except Exception:
             pass
         try:
-            self._pipeline_null_abandoned = True
+            if generation is None or int(getattr(self, "_pipeline_generation", 0)) == int(generation):
+                self._pipeline_null_abandoned = True
         except Exception:
             pass
         return False
 
-    def _teardown_pipeline(self, reason: str, *, join_main_loop: bool) -> None:
-        """
-        Tear down pipeline resources safely.
+    def _generation_is_current(self, generation: int) -> bool:
+        return int(getattr(self, "_pipeline_generation", 0)) == int(generation)
 
-        Designed to be callable from GStreamer/GLib callback threads (join_main_loop=False).
-        Native set_state(NULL) is bounded so a stuck RTSP/recording thread cannot freeze reconnect.
-        """
-        if not self.gstreamer_available:
-            return
-
-        pipeline = None
-        bus = None
-        appsink = None
-        teardown_generation = None
-
-        # Detach references first (under lock) to prevent concurrent use.
+    def _detach_pipeline_state(self, reason: str) -> dict:
+        """Drop Python references. Must stay free of GStreamer calls."""
         with self.pipeline_lock:
-            pipeline = self.pipeline
+            state = {
+                "reason": reason,
+                "generation": int(getattr(self, "_pipeline_generation", 0)),
+                "pipeline": self.pipeline,
+                "bus": self.bus,
+                "appsink": self.appsink,
+                "bus_handler_id": self._bus_handler_id,
+                "appsink_handler_id": self._appsink_handler_id,
+                "loop": getattr(self, "loop", None),
+                "main_loop_thread": getattr(self, "main_loop_thread", None),
+                "recorder": getattr(self, "_gst_continuous_recorder", None),
+            }
             self.pipeline = None
-            bus = self.bus
             self.bus = None
-            appsink = self.appsink
             self.appsink = None
+            self._bus_handler_id = None
+            self._appsink_handler_id = None
+            self.loop = None
+            self.main_loop_thread = None
+            self._gst_continuous_recorder = None
             self.is_inited = False
             self.is_working = False
             self._last_sample_wall_ts = 0.0
-            teardown_generation = getattr(self, "_pipeline_generation", 0)
+        return state
 
-        # Log teardown summary early (helps correlate RSS growth with resource release).
+    def _native_teardown_body(self, state: dict, *, join_main_loop: bool) -> None:
+        """GStreamer cleanup of an already-detached pipeline. Does not hold lifecycle locks."""
+        pipeline = state.get("pipeline")
+        bus = state.get("bus")
+        appsink = state.get("appsink")
+        generation = state.get("generation", 0)
+        reason = state.get("reason") or ""
+
         try:
             self.logger.info(
-                f"GStreamer teardown for {self.source_names}: reason={reason}, join_main_loop={join_main_loop}, "
-                f"had_pipeline={pipeline is not None}, had_bus={bus is not None}, had_sink={appsink is not None}, "
-                f"bus_handler_id={self._bus_handler_id}, appsink_handler_id={self._appsink_handler_id}"
+                "GStreamer teardown for %s: reason=%s, join_main_loop=%s, "
+                "had_pipeline=%s, had_bus=%s, had_sink=%s, bus_handler_id=%s, appsink_handler_id=%s",
+                self.source_names,
+                reason,
+                join_main_loop,
+                pipeline is not None,
+                bus is not None,
+                appsink is not None,
+                state.get("bus_handler_id"),
+                state.get("appsink_handler_id"),
             )
         except Exception:
             pass
 
-        # Stop appsink signals and disconnect handler.
         try:
             if appsink is not None:
                 try:
                     appsink.set_property("emit-signals", False)
                 except Exception:
                     pass
-                try:
-                    if self._appsink_handler_id is not None:
-                        appsink.disconnect(self._appsink_handler_id)
-                except Exception:
-                    pass
-        finally:
-            self._appsink_handler_id = None
+                handler_id = state.get("appsink_handler_id")
+                if handler_id is not None:
+                    try:
+                        appsink.disconnect(handler_id)
+                    except Exception:
+                        pass
+        except Exception:
+            pass
 
-        # Remove bus watches / callbacks to avoid accumulating GLib sources.
         try:
             if bus is not None:
-                try:
-                    if self._bus_handler_id is not None:
-                        bus.disconnect(self._bus_handler_id)
-                except Exception:
-                    pass
-                finally:
-                    self._bus_handler_id = None
+                handler_id = state.get("bus_handler_id")
+                if handler_id is not None:
+                    try:
+                        bus.disconnect(handler_id)
+                    except Exception:
+                        pass
                 try:
                     bus.remove_signal_watch()
                 except Exception:
@@ -1114,65 +1123,66 @@ class GStreamerCapturePipelineMixin:
         except Exception:
             pass
 
-        # Unblock a non-leaky / stalled recording branch before native NULL.
         try:
-            self._flush_recording_queue(pipeline)
+            self._flush_recording_queue(pipeline, generation)
         except Exception:
             pass
 
-        # Stop recording helpers and detach recording elements from the old pipeline.
         try:
-            # If decoupled recorder is used, stop it first.
+            recorder = state.get("recorder")
+            if recorder is not None and pipeline is not None:
+                try:
+                    recorder.stop_with_pipeline(pipeline=pipeline, Gst=Gst)
+                except Exception:
+                    pass
+            if self._generation_is_current(generation):
+                self._cleanup_recording_branch(pipeline=pipeline)
+        except Exception:
+            pass
+
+        if self._generation_is_current(generation):
             try:
-                if self._gst_continuous_recorder is not None:
-                    self._gst_continuous_recorder.stop_with_pipeline(pipeline=pipeline, Gst=Gst)
+                with self.frame_lock:
+                    while not self.frame_buffer.empty():
+                        try:
+                            frame = self.frame_buffer.get_nowait()
+                            if frame is not None:
+                                frame.image = None
+                        except Empty:
+                            break
+                    if self.last_frame is not None:
+                        try:
+                            self.last_frame.image = None
+                        except Exception:
+                            pass
+                        self.last_frame = None
+                    self._fps_times.clear()
             except Exception:
                 pass
-            self._cleanup_recording_branch(pipeline=pipeline)
-        except Exception:
-            pass
 
-        # Clear frame buffers to drop Python-side references quickly.
         try:
-            with self.frame_lock:
-                while not self.frame_buffer.empty():
-                    try:
-                        frame = self.frame_buffer.get_nowait()
-                        if frame is not None:
-                            frame.image = None
-                    except Empty:
-                        break
-                if self.last_frame is not None:
-                    try:
-                        self.last_frame.image = None
-                    except Exception:
-                        pass
-                    self.last_frame = None
-                self._fps_times.clear()
+            loop = state.get("loop")
+            thread = state.get("main_loop_thread")
+            if loop is not None and loop.is_running():
+                loop.quit()
+            if join_main_loop and thread is not None and thread.is_alive():
+                if threading.current_thread() is not thread:
+                    thread.join(timeout=2.0)
         except Exception:
             pass
 
-        # Stop GLib main loop (optionally join thread).
-        try:
-            if join_main_loop:
-                self._stop_main_loop(join_thread=True)
-            else:
-                self._stop_main_loop(join_thread=False)
-        except Exception:
-            pass
+        if self._generation_is_current(generation):
+            try:
+                self._stop_notify_worker()
+            except Exception:
+                pass
 
-        # Stop notify worker and drop queued frames
-        try:
-            self._stop_notify_worker()
-        except Exception:
-            pass
-
-        # Finally, try to move pipeline to NULL to release GStreamer resources.
         if pipeline is not None:
             null_ok = self._set_gst_state_null_bounded(
                 pipeline,
                 timeout_sec=CaptureConstants.TEARDOWN_NULL_TIMEOUT_SEC,
-                label=f"pipeline:{self.source_names}:gen={teardown_generation}",
+                label=f"pipeline:{self.source_names}:gen={generation}",
+                generation=generation,
             )
             if not null_ok:
                 try:
@@ -1180,21 +1190,64 @@ class GStreamerCapturePipelineMixin:
                         "Abandoned GStreamer pipeline for %s after NULL timeout (reason=%s, generation=%s)",
                         self.source_names,
                         reason,
-                        teardown_generation,
+                        generation,
                     )
                 except Exception:
                     pass
-            # Drop local refs ASAP to help GC / gi unref. Do not wait on the abandoned native object again.
-            pipeline = None
-            bus = None
-            appsink = None
-        # Optional: best-effort trimming (async + rate-limited) to reduce RSS plateaus.
         try:
-            self._maybe_schedule_malloc_trim(reason=reason)
+            if self._generation_is_current(generation):
+                self._maybe_schedule_malloc_trim(reason=reason)
         except Exception:
             pass
         try:
-            if reason:
-                self.logger.debug(f"Teardown completed for {self.source_names}: reason={reason}")
+            if reason and self._generation_is_current(generation):
+                self.logger.debug("Teardown completed for %s: reason=%s", self.source_names, reason)
         except Exception:
             pass
+
+    def _teardown_pipeline(self, reason: str, *, join_main_loop: bool) -> None:
+        """
+        Detach the pipeline, then run native cleanup with a hard budget.
+
+        The caller must not hold `_release_lock` or `pipeline_lock`. A stuck
+        GStreamer call cannot keep those locks, and a late native thread does
+        not write fields that belong to a newer generation.
+        """
+        if not self.gstreamer_available:
+            return
+        state = self._detach_pipeline_state(reason)
+        if (
+            state.get("pipeline") is None
+            and state.get("bus") is None
+            and state.get("appsink") is None
+        ):
+            return
+        done = threading.Event()
+
+        def _worker():
+            try:
+                self._native_teardown_body(state, join_main_loop=join_main_loop)
+            finally:
+                done.set()
+
+        worker = threading.Thread(
+            target=_worker,
+            name=f"gst-teardown-{reason}"[:40],
+            daemon=True,
+        )
+        worker.start()
+        budget = float(getattr(CaptureConstants, "TEARDOWN_BUDGET_SEC", 15.0))
+        if done.wait(budget):
+            return
+        try:
+            self.logger.error(
+                "GStreamer teardown budget %.1fs exceeded for %s (reason=%s, generation=%s)",
+                budget,
+                self.source_names,
+                reason,
+                state.get("generation"),
+            )
+        except Exception:
+            pass
+        if self._generation_is_current(state.get("generation", 0)):
+            self._pipeline_null_abandoned = True
