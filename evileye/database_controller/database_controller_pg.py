@@ -17,6 +17,18 @@ from .image_storage_service import ImageStorageService
 from .database_validator import DatabaseValidator
 
 
+# Fixed predicates. Not taken from configuration, so sql.SQL is safe here.
+RETENTION_PREDICATES = {
+    "objects": "COALESCE(time_lost, time_stamp)",
+    "zone_events": "time_entered",
+    "attribute_events": "COALESCE(time_finished, time_stamp)",
+    "camera_events": "time_stamp",
+    "schedule_alarm_events": "COALESCE(time_lost, time_stamp)",
+    "system_events": "time_stamp",
+    "alarm_events": "time_stamp",
+}
+
+
 # see https://ru.hexlet.io/blog/posts/python-postgresql
 
 
@@ -622,17 +634,14 @@ class DatabaseControllerPg(DatabaseControllerBase):
         days = int(days)
         if days <= 0 or self.conn_pool is None:
             return {}
-        tables = [
-            name for name in ("objects", "zone_events", "attribute_events",
-                              "cam_events", "schedule_alarm_events", "alarm_events",
-                              "system_events")
-            if name in (self.tables or {})
-        ]
+        known = set(self.tables or {})
         deleted: dict[str, int] = {}
-        for table in tables:
-            query = sql.SQL("DELETE FROM {table} WHERE {column} < NOW() - %s::interval").format(
+        for table, predicate in RETENTION_PREDICATES.items():
+            if known and table not in known and table != "alarm_events":
+                continue
+            query = sql.SQL("DELETE FROM {table} WHERE {predicate} < NOW() - %s::interval").format(
                 table=sql.Identifier(table),
-                column=sql.Identifier("time_stamp"),
+                predicate=sql.SQL(predicate),
             )
             connection = None
             try:
@@ -642,7 +651,11 @@ class DatabaseControllerPg(DatabaseControllerBase):
                         curs.execute(query, (f"{days} days",))
                         deleted[table] = int(curs.rowcount or 0)
             except Exception as exc:
-                self.logger.warning("purge_old_records: %s failed: %s", table, exc)
+                undefined = type(exc).__name__ == "UndefinedTable" or getattr(exc, "pgcode", None) == "42P01"
+                if undefined:
+                    self.logger.info("purge_old_records: %s is absent: %s", table, exc)
+                else:
+                    self.logger.error("purge_old_records: %s failed: %s", table, exc)
             finally:
                 if connection is not None:
                     try:
@@ -664,10 +677,10 @@ class DatabaseControllerPg(DatabaseControllerBase):
         its counter instead of restarting from 0 (PK conflicts).
         """
         if self.conn_pool is None:
-            return 0
+            return None
         table_names = [t for t in (table_names or []) if t]
         if not table_names:
-            return 0
+            return None
 
         max_id = 0
         queried = 0

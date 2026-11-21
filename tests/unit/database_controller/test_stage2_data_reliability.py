@@ -255,3 +255,19 @@ class TestGetNextEventIdFallback:
         after = int(time_module.time())
         assert before <= fallback <= after
         assert processor.degraded is True
+
+    def test_missing_pool_does_not_return_zero(self):
+        from evileye.database_controller.database_controller_pg import DatabaseControllerPg
+
+        controller = DatabaseControllerPg.__new__(DatabaseControllerPg)
+        controller.conn_pool = None
+        assert controller.get_next_event_id(["zone_events"]) is None
+
+    def test_retention_predicates_match_real_columns(self):
+        from evileye.database_controller.database_controller_pg import RETENTION_PREDICATES
+
+        assert "time_entered" in RETENTION_PREDICATES["zone_events"]
+        assert "time_stamp" not in RETENTION_PREDICATES["zone_events"]
+        assert "camera_events" in RETENTION_PREDICATES
+        assert "cam_events" not in RETENTION_PREDICATES
+        assert "alarm_events" in RETENTION_PREDICATES

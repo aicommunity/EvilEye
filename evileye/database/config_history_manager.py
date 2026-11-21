@@ -34,6 +34,13 @@ class ConfigHistoryManager:
         self.logger = get_module_logger("config_history_manager")
         self.db_controller = db_controller
 
+    def _query_rows(self, query, params=None):
+        records = self.db_controller.query(query, params)
+        if records is None:
+            self.logger.error("Config history query failed")
+            raise RuntimeError("database query failed")
+        return records
+
         # Проверяем подключение к базе данных
         if not self.db_controller.is_connected():
             self.logger.warning("DatabaseController is not connected. Attempting to connect.")
@@ -101,7 +108,7 @@ class ConfigHistoryManager:
 
             query = " ".join(query_parts)
 
-            records = self.db_controller.query(query, params)
+            records = self._query_rows(query, params)
 
             result = []
             for record in records:
@@ -163,7 +170,7 @@ class ConfigHistoryManager:
                 LIMIT %s
             """
 
-            records = self.db_controller.query(query, (limit,))
+            records = self._query_rows(query, (limit,))
 
             result = []
             for record in records:
@@ -217,7 +224,7 @@ class ConfigHistoryManager:
                 WHERE j.job_id = %s AND j.configuration_info IS NOT NULL
             """
 
-            records = self.db_controller.query(query, (job_id,))
+            records = self._query_rows(query, (job_id,))
 
             if not records:
                 self.logger.warning(f"No configuration found for job_id: {job_id}")
@@ -501,7 +508,7 @@ class ConfigHistoryManager:
                 ORDER BY project_id
             """
 
-            result = self.db_controller.query(query)
+            result = self._query_rows(query)
 
             projects = []
             for row in result:
@@ -546,7 +553,7 @@ class ConfigHistoryManager:
 
             # Генерируем новый project_id
             query = "SELECT COALESCE(MAX(project_id), 0) + 1 FROM jobs"
-            result = self.db_controller.query(query)
+            result = self._query_rows(query)
             new_project_id = result[0][0] if result else 1
 
             # Если есть отдельная таблица projects, создаем запись там
@@ -584,7 +591,7 @@ class ConfigHistoryManager:
 
             # Проверяем существование проекта
             query = "SELECT COUNT(*) FROM jobs WHERE project_id = %s"
-            result = self.db_controller.query(query, (project_id,))
+            result = self._query_rows(query, (project_id,))
             project_exists = result[0][0] > 0 if result else False
 
             if not project_exists:
@@ -626,7 +633,7 @@ class ConfigHistoryManager:
 
             # Проверяем существование проекта
             query = "SELECT COUNT(*) FROM jobs WHERE project_id = %s"
-            result = self.db_controller.query(query, (project_id,))
+            result = self._query_rows(query, (project_id,))
             job_count = result[0][0] if result else 0
 
             if job_count == 0:
@@ -637,7 +644,7 @@ class ConfigHistoryManager:
 
             # Обновляем все задачи проекта, устанавливая project_id = NULL
             update_query = "UPDATE jobs SET project_id = NULL WHERE project_id = %s"
-            self.db_controller.query(update_query, (project_id,))
+            self._query_rows(update_query, (project_id,))
 
             self.logger.info(f"Deleted project {project_id}, updated {job_count} jobs")
 
@@ -679,7 +686,7 @@ class ConfigHistoryManager:
                 GROUP BY project_id
             """
 
-            result = self.db_controller.query(query, (project_id,))
+            result = self._query_rows(query, (project_id,))
 
             if not result:
                 return None
@@ -732,7 +739,7 @@ class ConfigHistoryManager:
                 WHERE project_id = %s
             """
 
-            result = self.db_controller.query(base_query, (project_id,))
+            result = self._query_rows(base_query, (project_id,))
 
             if not result:
                 return None
@@ -766,7 +773,7 @@ class ConfigHistoryManager:
                     WHERE project_id = %s AND last_record > first_record
                 """
 
-                detailed_result = self.db_controller.query(detailed_query, (project_id,))
+                detailed_result = self._query_rows(detailed_query, (project_id,))
 
                 if detailed_result and detailed_result[0][0] is not None:
                     detailed_row = detailed_result[0]
@@ -909,7 +916,7 @@ class ConfigHistoryManager:
                 GROUP BY configuration_id
             """
 
-            result = self.db_controller.query(query, (config_id,))
+            result = self._query_rows(query, (config_id,))
 
             if not result:
                 return None

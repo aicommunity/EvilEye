@@ -13,6 +13,25 @@ from queue import Queue, Empty
 from abc import abstractmethod, ABC
 
 
+def _render_sql(query: Any) -> Optional[str]:
+    """Render a psycopg2 SQL composable without a live connection."""
+    name = type(query).__name__
+    if name == "SQL":
+        return str(getattr(query, "string", ""))
+    if name == "Identifier":
+        parts = getattr(query, "strings", None) or (getattr(query, "string", ""),)
+        return ".".join('"' + str(part).replace('"', '""') + '"' for part in parts)
+    if name == "Placeholder":
+        return "%s"
+    sequence = getattr(query, "seq", None)
+    if sequence is None:
+        return None
+    rendered = [_render_sql(part) for part in sequence]
+    if any(part is None for part in rendered):
+        return None
+    return "".join(rendered)
+
+
 def _spool_value_supported(value: Any) -> bool:
     if isinstance(value, (str, int, float, bool)) or value is None:
         return True
@@ -505,18 +524,18 @@ class DatabaseAdapterBase(EvilEyeBase, ABC):
         if isinstance(query, str):
             return query
         pool = getattr(self.db_controller, "conn_pool", None)
-        if pool is None or not hasattr(query, "as_string"):
-            return None
-        connection = pool.getconn()
-        try:
-            return query.as_string(connection)
-        except Exception:
-            return None
-        finally:
+        if pool is not None and hasattr(query, "as_string"):
+            connection = pool.getconn()
             try:
-                pool.putconn(connection)
+                return query.as_string(connection)
             except Exception:
                 pass
+            finally:
+                try:
+                    pool.putconn(connection)
+                except Exception:
+                    pass
+        return _render_sql(query)
 
     def _queue_item_spool_record(self, item: Any) -> Optional[dict[str, Any]]:
         if not isinstance(item, tuple):

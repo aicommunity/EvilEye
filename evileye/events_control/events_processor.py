@@ -2,7 +2,6 @@ import time
 from queue import Empty, Full, Queue
 from threading import Lock, Thread, current_thread
 from ..core.base_class import EvilEyeBase
-from psycopg2 import sql
 import datetime
 
 
@@ -124,24 +123,6 @@ class EventsProcessor(EvilEyeBase):
             f"from epoch floor {fallback}"
         )
         return fallback
-
-        # Fallback: legacy behavior (keep for safety)
-        subqueries = []
-        for i in range(len(table_names) - 1):
-            subquery = sql.SQL('SELECT MAX(event_id) as event_id FROM {table} UNION').format(
-                table=sql.Identifier(table_names[i]))
-            subqueries.append(subquery)
-        subquery = sql.SQL('SELECT MAX(event_id) as event_id FROM {table}').format(
-            table=sql.Identifier(table_names[-1]))
-        subqueries.append(subquery)
-
-        query = sql.SQL('SELECT MAX(event_id) FROM ({subqueries}) AS temp').format(
-            subqueries=sql.SQL(' ').join(subqueries))
-        record = self.db_controller.query(query)
-
-        if record is None or len(record) == 0 or len(record[0]) == 0 or record[0][0] is None:
-            return 0
-        return record[0][0] + 1
 
     def default(self):
         pass
