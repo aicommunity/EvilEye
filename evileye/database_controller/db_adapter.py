@@ -351,16 +351,28 @@ class DatabaseAdapterBase(EvilEyeBase, ABC):
             )
             if error is not None:
                 self._record_failure('queued write', error, category='terminal_write')
-                self._consecutive_write_failures += 1
-                record = self._queue_item_spool_record(item)
-                spool = self._ensure_spool()
-                if record is not None and spool is not None and spool.append(record):
-                    self._spooled_items += 1
-                elif spool is not None and spool.last_reject == "io":
-                    try:
-                        self.queue_in.put_nowait(item)
-                    except Exception:
-                        pass
+                # Spool only connection-class failures: the write may not have
+                # committed. Post-commit failures (e.g. image save after a
+                # committed INSERT) must never replay - the replay would
+                # execute the INSERT a second time.
+                if type(error).__name__ in ("OperationalError", "InterfaceError", "ConnectionError"):
+                    self._consecutive_write_failures += 1
+                    record = self._queue_item_spool_record(item)
+                    spool = self._ensure_spool()
+                    if record is not None and spool is not None and spool.append(record):
+                        self._spooled_items += 1
+                    elif spool is not None and spool.last_reject == "io":
+                        try:
+                            self.queue_in.put_nowait(item)
+                        except Exception:
+                            pass
+                else:
+                    self.logger.error(
+                        "Database adapter '%s' dropped an item after a non-connection "
+                        "failure (not replayable): %s",
+                        self.event_name,
+                        error,
+                    )
             else:
                 self.processed_items += 1
                 if self._consecutive_write_failures or self._spool_has_pending():

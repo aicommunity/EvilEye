@@ -79,6 +79,9 @@ findings closed (TD-AUD-S0-*..TD-AUD-S5-*); remaining open items below.
 | TD-AUD-S5-5 | audit fix stage 5 (refactor/audit-s5) | sys.path.append repo-root hacks removed from 9 visualization modules (+pruned unused sys/Path imports) |
 | TD-AUD-S5-6 | audit fix stage 5 (refactor/audit-s5) | Legacy MP detector deprecation notice added to docs/PLUGINS.md (TD-PS-D3 window opened) |
 | TD-AUD-HF1 | hotfix_reconnect integration (2026-11) | Audit finding B5 closed upstream: stuck GStreamer teardown can no longer hold the capture lifecycle lock (teardown moved outside pipeline_lock via _detach_pipeline_state/_native_teardown_body, TEARDOWN_BUDGET_SEC=15s, reconnect no longer piles waits on an abandoned release, previous init() joined before a new attempt, _note_capture_down/up records one disconnect per outage for the watchdog via SOURCE_DOWN_SEC). Merged into develop as 3804eb4a; no conflicts with the stage-1 frame_id/novelty fixes (verified coexisting) |
+| TD-AUD-C1 | fix/audit-corrections follow-up | SSRF resolver allows loopback again: `::1` carries is_reserved=True in Python ipaddress, so `localhost` was refused, contradicting the documented loopback policy (is_reserved now ignores is_loopback) |
+| TD-AUD-C2 | fix/audit-corrections follow-up | Spool replays only connection-class failures (OperationalError/InterfaceError/ConnectionError): a post-commit image-save failure no longer re-executes the committed INSERT (was: duplicate row / attempts==2) |
+| TD-AUD-C3 | fix/audit-corrections follow-up | checked-writes tests use per-test tmp image_dir - spool records no longer leak between runs through the shared /tmp path |
 | TD-002 | phase 0 | Removed duplicate `DetectionThreadFactory` in `detection_thread_factory.py` |
 | TD-005 | phase 0 | Doc/CLI gaps D1–D6, D8–D10 addressed in README, Makefile, MULTIPROCESSING, launch/process |
 | TD-006 | phase 0 | `tool.coverage.run.source` uses `evileye` package prefix |

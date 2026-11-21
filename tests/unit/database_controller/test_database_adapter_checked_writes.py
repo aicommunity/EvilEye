@@ -14,9 +14,12 @@ from evileye.database_controller.db_adapter_zone_events import DatabaseAdapterZo
 
 
 class _Database:
-    def __init__(self):
+    def __init__(self, image_dir: str = "/tmp/evileye_checked_writes"):
+        # Tests pass a tmp_path-derived dir: terminal-write failures land in
+        # <image_dir>/pg_spool, and a fixed shared path leaks spool records
+        # between runs (a later test's adapter replayed them for attempts==2).
         self.params = {
-            "image_dir": "/tmp/evileye_checked_writes",
+            "image_dir": image_dir,
             "preview_width": 300,
             "preview_height": 150,
         }
@@ -65,9 +68,9 @@ class _Database:
     ],
 )
 def test_queued_adapters_retry_checked_write_and_report_terminal_failure(
-    adapter_type, config, item
+    adapter_type, config, item, tmp_path
 ):
-    database = _Database()
+    database = _Database(image_dir=str(tmp_path))
     adapter = adapter_type(database)
     adapter.set_params(table_name="events", **config)
     adapter.queue_in.put_nowait(item)
@@ -90,8 +93,8 @@ def test_zone_adapter_uses_the_shared_database_worker():
 
 
 class _SuccessfulDatabase(_Database):
-    def __init__(self, result):
-        super().__init__()
+    def __init__(self, result, image_dir: str = "/tmp/evileye_checked_writes"):
+        super().__init__(image_dir=image_dir)
         self.result = result
 
     def query_once(self, query, values):
@@ -99,10 +102,10 @@ class _SuccessfulDatabase(_Database):
         return self.result
 
 
-def test_post_commit_object_image_failure_is_reported_without_replaying_insert():
+def test_post_commit_object_image_failure_is_reported_without_replaying_insert(tmp_path):
     from types import SimpleNamespace
 
-    database = _SuccessfulDatabase([(1, [10, 20, 30, 40])])
+    database = _SuccessfulDatabase([(1, [10, 20, 30, 40])], image_dir=str(tmp_path))
     adapter = DatabaseAdapterObjects(database)
     adapter.set_params(table_name="objects")
     def fail_image_save(*args, **kwargs):
@@ -129,11 +132,11 @@ def test_post_commit_object_image_failure_is_reported_without_replaying_insert()
     assert "disk full" in stats["last_error"]
 
 
-def test_zone_event_without_image_still_notifies_persisted_event(monkeypatch):
+def test_zone_event_without_image_still_notifies_persisted_event(monkeypatch, tmp_path):
     from evileye.database_controller import db_adapter_zone_events as zone_module
     from evileye.database_controller.constants import EventType
 
-    database = _SuccessfulDatabase([([10, 20, 30, 40], [[0, 0], [1, 0], [1, 1]])])
+    database = _SuccessfulDatabase([([10, 20, 30, 40], [[0, 0], [1, 0], [1, 1]])], image_dir=str(tmp_path))
     adapter = DatabaseAdapterZoneEvents(database)
     adapter.set_params(table_name="zone_events", event_name="ZoneEvent")
     notifications = []
@@ -156,11 +159,11 @@ def test_zone_event_without_image_still_notifies_persisted_event(monkeypatch):
     assert adapter.get_runtime_stats()["processed_items"] == 1
 
 
-def test_object_event_invalid_returning_row_is_reported_and_notified(monkeypatch):
+def test_object_event_invalid_returning_row_is_reported_and_notified(monkeypatch, tmp_path):
     from evileye.database_controller import db_adapter_objects as objects_module
     from evileye.database_controller.constants import EventType
 
-    database = _SuccessfulDatabase([(1,)])
+    database = _SuccessfulDatabase([(1,)], image_dir=str(tmp_path))
     adapter = DatabaseAdapterObjects(database)
     adapter.set_params(table_name="objects")
     notifications = []
@@ -178,11 +181,11 @@ def test_object_event_invalid_returning_row_is_reported_and_notified(monkeypatch
     assert notifications == [EventType.HANDLER_NEW_OBJECT]
 
 
-def test_zone_event_invalid_returning_row_is_reported_and_notified(monkeypatch):
+def test_zone_event_invalid_returning_row_is_reported_and_notified(monkeypatch, tmp_path):
     from evileye.database_controller import db_adapter_zone_events as zone_module
     from evileye.database_controller.constants import EventType
 
-    database = _SuccessfulDatabase([(None, None)])
+    database = _SuccessfulDatabase([(None, None)], image_dir=str(tmp_path))
     adapter = DatabaseAdapterZoneEvents(database)
     adapter.set_params(table_name="zone_events", event_name="ZoneEvent")
     notifications = []

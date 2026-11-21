@@ -368,7 +368,10 @@ def _resolve_db_host(host: str, port: int) -> str:
             addr = addr.ipv4_mapped
         blocked = (
             addr.is_link_local
-            or addr.is_reserved
+            # ::1 carries is_reserved=True in ipaddress while being plain
+            # loopback; loopback must stay allowed (the database usually runs
+            # beside the web service).
+            or (addr.is_reserved and not addr.is_loopback)
             or addr.is_multicast
             or addr.is_unspecified
             or (isinstance(addr, ipaddress.IPv6Address) and addr in ula)
