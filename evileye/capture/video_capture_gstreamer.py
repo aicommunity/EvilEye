@@ -129,7 +129,7 @@ class VideoCaptureGStreamer(
         # Диагностические счетчики (явная инициализация вместо hasattr)
         self._get_call_count = 0
         self._get_call_last_log = now
-        self._last_returned_frame_id = -1
+        self._last_returned_frame_id = None
         self._same_frame_count = 0
 
         # Reconnect backoff for video file branch in _grab_frames (same scheme as OpenCV)

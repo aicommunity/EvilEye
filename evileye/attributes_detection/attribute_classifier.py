@@ -110,8 +110,65 @@ class AttributeClassifier:
             )
         return image
 
+    # -- Crops-only IPC (TD-PS-D7) ----------------------------------------
+    # process mode ships only small ROI crops over the process boundary
+    # instead of a full-frame shared-memory segment per frame (the packing
+    # crops in the parent; the worker classifies crops directly).
+
+    _PACKED_MARKER = "__evileye_attr_crops__"
+
+    @classmethod
+    def pack_process_item(cls, item):
+        """Build the process-mode payload with ROI crops instead of the frame."""
+        if not isinstance(item, (list, tuple)) or len(item) < 2:
+            return None
+        tracking_data, frame = item[0], item[1]
+        tracking_data = ensure_tracking_result_list(tracking_data)
+        crops: list[dict] = []
+        roi_data = getattr(tracking_data, "roi_data", None) or []
+        image = getattr(frame, "image", None)
+        for roi_info in roi_data:
+            track_id = roi_info.get("track_id")
+            roi_bbox = roi_info.get("roi_bbox")
+            if track_id is None or roi_bbox is None or image is None:
+                continue
+            roi_image = cls._crop_roi(image, roi_bbox)
+            if roi_image is None:
+                continue
+            crops.append({
+                "track_id": track_id,
+                # Contiguous copy: the crop must not alias the parent frame.
+                "crop": np.ascontiguousarray(roi_image),
+            })
+        return {
+            "marker": cls._PACKED_MARKER,
+            "tracking_data": tracking_data,
+            "crops": crops,
+        }
+
+    @classmethod
+    def restore_process_result(cls, result, original_item):
+        """Re-attach the locally kept frame to the worker's tracking result."""
+        frame = original_item[1] if isinstance(original_item, (list, tuple)) else None
+        if isinstance(result, (list, tuple)) and len(result) >= 2:
+            # Worker already returned a pair; keep its tracking data, prefer
+            # the local frame (no pixel copy crossed the boundary).
+            tracking_data = result[0]
+            if isinstance(original_item, tuple):
+                return (tracking_data, frame if frame is not None else result[1])
+            return [tracking_data, frame if frame is not None else result[1]]
+        if isinstance(original_item, tuple):
+            return (result, frame)
+        return [result, frame]
+
     def process_item(self, item, state):
-        """Attach ROI attributes to one ``(TrackingResultList, Frame)`` pair."""
+        """Attach ROI attributes to one ``(TrackingResultList, Frame)`` pair.
+
+        In process mode ``item`` may instead be the crops-only payload built by
+        :meth:`pack_process_item` (small ROI crops, no frame pixels).
+        """
+        if isinstance(item, dict) and item.get("marker") == self._PACKED_MARKER:
+            return self._process_packed_crops(item, state)
         if not isinstance(item, (list, tuple)) or len(item) < 2:
             raise TypeError("AttributeClassifier expects (tracking_data, frame)")
         tracking_data, frame = item[0], item[1]
@@ -138,6 +195,20 @@ class AttributeClassifier:
                 tracking_data.attr_results[track_id] = attr_results
 
         return (tracking_data, frame) if isinstance(item, tuple) else [tracking_data, frame]
+
+    def _process_packed_crops(self, packed, state):
+        """Classify pre-cropped ROIs shipped from the parent (no full frame)."""
+        tracking_data = packed["tracking_data"]
+        for entry in packed.get("crops") or []:
+            track_id = entry.get("track_id")
+            crop = entry.get("crop")
+            if track_id is None or crop is None:
+                continue
+            attr_results = state._classify_roi_with_detector(crop)
+            if not hasattr(tracking_data, "attr_results"):
+                tracking_data.attr_results = {}
+            tracking_data.attr_results[track_id] = attr_results
+        return tracking_data
 
     def close(self):
         self._yolo_runtime.release()

@@ -217,6 +217,7 @@ class PipelineProcessors(PipelineBase):
             if p not in detector_processors
         ]
         stop_order = [*detector_processors, *non_detector_others, *source_processors]
+        failures: list[tuple[str, Exception]] = []
         for processor in stop_order:
             if processor is not None:
                 stop_done = threading.Event()
@@ -239,7 +240,23 @@ class PipelineProcessors(PipelineBase):
                     )
                     continue
                 if stop_error:
-                    raise stop_error[0]
+                    # Keep stopping the remaining processors (including capture,
+                    # which holds RTSP connections): one failing stage must not
+                    # leave the pipeline half-stopped (audit 2026-11, B3).
+                    failures.append(
+                        (processor.__class__.__name__, stop_error[0])
+                    )
+                    self.logger.error(
+                        "Processor %s failed to stop: %s",
+                        processor.__class__.__name__,
+                        stop_error[0],
+                        exc_info=stop_error[0],
+                    )
+        if failures:
+            raise RuntimeError(
+                "Pipeline stop failed for processors: "
+                + ", ".join(f"{name}: {exc}" for name, exc in failures)
+            ) from failures[0][1]
 
     def check_all_sources_finished(self):
         if self.sources_proc is None:

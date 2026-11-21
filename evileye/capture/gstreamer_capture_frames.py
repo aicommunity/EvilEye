@@ -1133,7 +1133,10 @@ class GStreamerCaptureFramesMixin:
                 # Free old frame memory (safe now because get_frames_impl creates copies)
                 if old_last_frame is not None:
                     old_last_frame.image = None
-            self.frame_id_counter += 1
+            # frame_id_counter is incremented once in _on_new_sample, where the
+            # frame_id for this frame is allocated. The second increment here
+            # made frame_ids skip values (0,2,4...) and distorted per-frame
+            # metrics and tracker frame_rewound detection.
 
     def get_frames_impl(self) -> List[CaptureImage]:
         """
@@ -1184,20 +1187,29 @@ class GStreamerCaptureFramesMixin:
                 # Get reference to last_frame with minimal lock time
                 with self.frame_lock:
                     if self.last_frame:
-                        # Track if we're returning the same frame multiple times (indicates pipeline is faster than GStreamer)
+                        # Freshness check (audit 2026-11, B3): never hand the same
+                        # physical frame to the pipeline twice; a duplicate
+                        # frame_id double-updates tracker state and inflates
+                        # update counters. Keyed with connection_generation so
+                        # a reconnect that resets the counter cannot suppress
+                        # fresh frames.
                         current_frame_id = self.last_frame.frame_id
-                        if current_frame_id == self._last_returned_frame_id:
-                            # Same frame returned again - pipeline is calling get() faster than GStreamer produces frames
+                        current_generation = self.last_frame.connection_generation
+                        novelty_key = (current_generation, current_frame_id)
+                        if novelty_key == self._last_returned_frame_id:
+                            # Same frame again - pipeline is calling get() faster
+                            # than GStreamer produces frames; skip it.
                             self._same_frame_count += 1
+                            last_frame_ref = None
+                            image_ref = None
                         else:
-                            self._last_returned_frame_id = current_frame_id
+                            self._last_returned_frame_id = novelty_key
                             if self._same_frame_count > 0:
-                                # Log if we had repeated frames
                                 source_label = ",".join(
                                     str(name) for name in self.source_names) if self.source_names else str(
                                     self.source_address)
                                 self.logger.debug(
-                                    f"Capture get() [{source_label}]: returned same frame {self._same_frame_count} times before new frame")
+                                    f"Capture get() [{source_label}]: skipped duplicate frame {self._same_frame_count} times before new frame")
                                 self._same_frame_count = 0
                         # Only copy reference and metadata while holding lock (very fast)
                         last_frame_ref = self.last_frame
