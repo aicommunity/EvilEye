@@ -66,6 +66,8 @@ class UnifiedEventsJournal(UnifiedJournalBase):
         # Real-time update timer (will be started in showEvent)
         self.update_timer = QTimer()
         self.update_timer.timeout.connect(self._check_for_updates)
+        # Background fetch thread holder (TD-AUD-011)
+        self._fetch_thread = None
         # Don't start timer here - will start when widget is shown
 
         # Image window reference
@@ -198,17 +200,28 @@ class UnifiedEventsJournal(UnifiedJournalBase):
             if not self.is_visible or not self._data_loaded:
                 return
 
-            # Force refresh
-            try:
-                self.data_source.force_refresh()
-            except AttributeError:
-                # Data source doesn't have force_refresh method
-                pass
-
             # Инкрементальное обновление: получаем свежие данные первой страницы
+            # в фоновом потоке (TD-AUD-011): fetch ходит в PostgreSQL синхронно
+            # и в слоте QTimer замораживал UI на время запроса.
+            if self._fetch_thread is not None and self._fetch_thread.isRunning():
+                return
+            from .unified_journal_base import JournalFetchThread
+
             filters = {k: v for k, v in self.filters.items() if v}
-            rows = self.data_source.fetch(0, self.page_size, filters, [])
-            if not rows:
+            self._fetch_thread = JournalFetchThread(
+                self.data_source, 0, self.page_size, filters, force_refresh=True
+            )
+            self._fetch_thread.fetched.connect(self._on_incremental_rows)
+            self._fetch_thread.start()
+
+        except Exception as e:
+            self.logger.error(f"Update check error: {e}")
+
+    @pyqtSlot(object)
+    def _on_incremental_rows(self, rows):
+        """Apply the background fetch result (runs on the UI thread via signal)."""
+        try:
+            if self._is_closing or not rows:
                 return
 
             new_table_rows = self._build_table_rows(rows)
@@ -236,7 +249,7 @@ class UnifiedEventsJournal(UnifiedJournalBase):
 
             self._prepend_rows(prepend_rows)
         except Exception as e:
-            self.logger.error(f"Update check error: {e}")
+            self.logger.error(f"Apply incremental rows error: {e}")
 
     def _reload_table(self):
         """Reload table data from data source - initial load or full reload.
