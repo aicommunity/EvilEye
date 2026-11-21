@@ -49,6 +49,12 @@ from evileye.core.paths import creds_path
 
 logger = get_module_logger("api.app")
 
+# Password self-service lives under /api/v1/auth/*, which is never passed to
+# AuthGuardMiddleware (is_api_request_protected excludes it), so a
+# must-change-password user can always reach change-password/me/logout.
+# Methods that do not mutate state and are not browser-CSRF vectors.
+_CSRF_SAFE_METHODS = frozenset({"GET", "HEAD", "OPTIONS"})
+
 
 class AuthGuardMiddleware(BaseHTTPMiddleware):
     async def dispatch(self, request, call_next):
@@ -82,15 +88,27 @@ class AuthGuardMiddleware(BaseHTTPMiddleware):
         user = current_user(request)
         if user is None:
             return Response('{"detail":"Authentication required"}', status_code=401, media_type="application/json")
+        # Gate users flagged must_change_password at the API level (not only in
+        # the SPA): everything except password self-service (under /api/v1/auth/*,
+        # not routed through this middleware) is rejected until the password is
+        # changed.
+        from evileye.api.core.web_auth_bootstrap import resolve_must_change_password
+
+        if resolve_must_change_password(str(user.get("username") or "")):
+            return Response(
+                '{"detail":"Password change required","must_change_password":true}',
+                status_code=403,
+                media_type="application/json",
+            )
         needed = required_permissions_for_request(path, request.method)
         granted = set(user.get("permissions") or permissions_for_role(str(user.get("role") or "user")))
         if needed and not needed.issubset(granted):
             return Response('{"detail":"Insufficient permissions"}', status_code=403, media_type="application/json")
-        if path.startswith("/api/v1/admin/"):
+        if request.method not in _CSRF_SAFE_METHODS:
             violation = csrf_origin_violation(request, getattr(request.app.state, "allowed_origins", ()))
             if violation:
-                logger.warning("Blocked admin request %s %s: %s", request.method, path, violation)
-                return Response('{"detail":"Cross-origin admin request rejected"}', status_code=403, media_type="application/json")
+                logger.warning("Blocked cross-origin request %s %s: %s", request.method, path, violation)
+                return Response('{"detail":"Cross-origin request rejected"}', status_code=403, media_type="application/json")
         return await call_next(request)
 
 
@@ -376,6 +394,12 @@ def create_app() -> FastAPI:
 
     @app.get("/ready")
     async def ready():
+        # Public/unauthenticated: expose only the liveness verdict. Internal
+        # details (socket paths, cache stats, reject counters) moved to
+        # /api/v1/system/readiness behind runtime:view.
+        return {"status": "ok"}
+
+    async def _build_readiness_detail() -> dict:
         payload: dict = {"status": "ok"}
         try:
             from evileye.api.core.internal_unix import internal_socket_path
@@ -492,6 +516,12 @@ def create_app() -> FastAPI:
         except Exception:
             pass
         return payload
+
+    @app.get("/api/v1/system/readiness")
+    async def system_readiness():
+        # Detailed readiness/internal diagnostics; protected by AuthGuardMiddleware
+        # under the runtime:view permission (see required_permissions_for_request).
+        return await _build_readiness_detail()
 
     @app.get("/api/v1/version")
     async def version():

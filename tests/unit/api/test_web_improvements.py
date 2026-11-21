@@ -314,6 +314,16 @@ def test_journal_json_mode_from_on_disk_config(tmp_path, monkeypatch):
     assert payload["total"] >= 1
 
 
+
+def _change_admin_password(client, current="admin", new="admin-secret-123"):
+    """Complete the mandatory first-login password change (bootstrap admin)."""
+    resp = client.post(
+        "/api/v1/auth/change-password",
+        json={"current_password": current, "new_password": new},
+    )
+    assert resp.status_code == 200, resp.text
+
+
 def test_auth_register_and_users_flow(tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
     monkeypatch.setenv("EVILEYE_BOOTSTRAP_ADMIN_PASSWORD", "admin")
@@ -332,6 +342,7 @@ def test_auth_register_and_users_flow(tmp_path, monkeypatch):
 
     admin_login = client.post("/api/v1/auth/login", json={"username": "admin", "password": "admin"})
     assert admin_login.status_code == 200
+    _change_admin_password(client)
 
     approve = client.post("/api/v1/users/test@example.com/approve")
     assert approve.status_code == 200
@@ -360,6 +371,7 @@ def test_admin_create_user_approved_and_login(tmp_path, monkeypatch):
     }).status_code in {401, 403}
 
     assert client.post("/api/v1/auth/login", json={"username": "admin", "password": "admin"}).status_code == 200
+    _change_admin_password(client)
 
     created = client.post(
         "/api/v1/users",
@@ -391,6 +403,7 @@ def test_admin_create_user_with_allowed_cameras(tmp_path, monkeypatch):
     app = create_app()
     client = TestClient(app)
     assert client.post("/api/v1/auth/login", json={"username": "admin", "password": "admin"}).status_code == 200
+    _change_admin_password(client)
 
     created = client.post(
         "/api/v1/users",

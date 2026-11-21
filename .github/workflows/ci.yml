@@ -30,6 +30,18 @@ jobs:
       # scripts/ruff_baseline.json and are removed from it as they get fixed.
       - run: python scripts/check_undefined_names.py
 
+  secrets:
+    name: Secret scanning (gitleaks)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Scan full history for leaked secrets
+        uses: gitleaks/gitleaks-action@v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
   unit:
     name: Unit tests (py${{ matrix.python-version }})
     runs-on: ubuntu-latest

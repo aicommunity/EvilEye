@@ -45,19 +45,9 @@ class PrefsPayload(BaseModel):
 
 
 def _must_change_for_username(username: str) -> bool:
-    from evileye.api.core.credentials_users import get_credentials_user, list_credentials_users
-    from evileye.api.core.user_store import get_user_store
+    from evileye.api.core.web_auth_bootstrap import resolve_must_change_password
 
-    cred = get_credentials_user(username)
-    if cred is None:
-        for item in list_credentials_users():
-            if str(item.get("username") or "").lower() == username.lower():
-                cred = item
-                break
-    if cred is not None:
-        return user_must_change_password(cred)
-    record = get_user_store().get_user_record(username)
-    return user_must_change_password(record)
+    return resolve_must_change_password(username)
 
 
 def _me_camera_fields(request: Request, username: str, role: str) -> dict[str, Any]:
@@ -294,4 +284,9 @@ async def auth_change_password(payload: ChangePasswordPayload, request: Request)
             raise HTTPException(status_code=400, detail=str(exc)) from exc
 
     request.app.state.web_auth = load_web_auth_config()
+    # The one-time bootstrap password note is no longer needed once the
+    # password has actually been changed.
+    from evileye.api.core.web_auth_bootstrap import clear_bootstrap_password_file
+
+    clear_bootstrap_password_file()
     return {"ok": True, "must_change_password": False}

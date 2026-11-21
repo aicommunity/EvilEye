@@ -340,9 +340,11 @@ class ItemModuleAdapter(_HealthMixin, EvilEyeBase):
                 try:
                     dropped, dropped_payload = self._mp_control.put_drop_oldest(payload)
                 except queue.Full as exc:
+                    # Queue stayed full even after eviction (feeder lag): both the
+                    # evicted item and the new frame are lost. Count the drop once —
+                    # double counting inflated the loss metrics used to chase
+                    # TD-PS-D7.
                     evicted_payload = getattr(exc, "dropped_item", None)
-                    if evicted_payload is not None:
-                        self._record_input_drop()
                     self._record_input_drop()
                     return _IncomingFrameDropped(evicted_payload)
                 if dropped:
