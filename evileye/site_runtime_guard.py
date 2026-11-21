@@ -63,6 +63,17 @@ def _resolve_site(site_dir: Path | None) -> Path:
 
 
 def _read_proc_env(pid: int, key: str) -> Optional[str]:
+    if os.name == "nt":
+        # Audit 2026-11 (T7): /proc is Linux-only; use psutil so the singleton
+        # guard also works on Windows deployments.
+        try:
+            import psutil
+
+            env = psutil.Process(pid).environ()
+        except Exception:
+            return None
+        value = env.get(key)
+        return str(value) if value else None
     try:
         raw = open(f"/proc/{pid}/environ", "rb").read()
     except OSError:
@@ -80,6 +91,13 @@ def process_site_dir(pid: int) -> Optional[Path]:
     env_site = _read_proc_env(pid, _SITE_ENV)
     if env_site:
         return Path(env_site).expanduser().resolve()
+    if os.name == "nt":
+        try:
+            import psutil
+
+            return Path(psutil.Process(pid).cwd()).resolve()
+        except Exception:
+            return None
     try:
         cwd = os.readlink(f"/proc/{pid}/cwd")
         if cwd:
