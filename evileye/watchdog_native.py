@@ -14,7 +14,12 @@ from pathlib import Path
 from typing import Any, Optional
 
 from evileye.core.paths import logs_dir, monitor_dir, site_root
-from evileye.core.process_control import find_pids_by_cmdline_regex, pid_exists, terminate_tree_gracefully
+from evileye.core.process_control import pid_exists, terminate_tree_gracefully
+
+try:
+    import psutil
+except ImportError:  # pragma: no cover
+    psutil = None  # type: ignore
 
 LOG_STALE_SEC = int(os.environ.get("EVILEYE_WATCHDOG_LOG_STALE_SEC", "600"))
 RESTART_GRACE_SEC = int(os.environ.get("EVILEYE_WATCHDOG_GRACE_SEC", "900"))
@@ -240,17 +245,57 @@ def stop_evileye_run_scope(
     _systemctl_stop_reset_scope("evileye-run.scope")
 
 
+def _arg_matches_config(arg: str, config: str) -> bool:
+    """True when an argv element is this config file, not a longer similar name."""
+    candidate = Path(str(arg))
+    expected = Path(config)
+    return candidate.stem == _config_stem(config) or candidate.name == expected.name
+
+
+def cmdline_matches_target(cmdline: list[str], config: str, *, kind: str) -> bool:
+    args = [str(part) for part in cmdline if str(part)]
+    if kind == "cli":
+        if "run" not in args:
+            return False
+        if not any("evileye" in part.lower() or "cli_wrapper" in part.lower() for part in args):
+            return False
+        later = args[args.index("run") + 1 :]
+        return any(_arg_matches_config(arg, config) for arg in later)
+    if not any("process.py" in part or "process_wrapper" in part for part in args):
+        return False
+    return any(_arg_matches_config(arg, config) for arg in args)
+
+
 def find_cli_and_child(config: str, root: Optional[Path] = None) -> tuple[Optional[int], Optional[int]]:
-    stem = re.escape(_config_stem(config))
-    # Audit 2026-11 (T8): the config stem must appear as a whole argv token,
-    # not as a substring of a longer token - a short config name must not
-    # match unrelated commands with a similar word in their cmdline.
-    token = rf"(?<!\w){stem}(?!\w)"
-    cli_pids = find_pids_by_cmdline_regex([rf"evileye(\.exe)?\s+run.*{token}", rf"cli_wrapper.*run.*{token}"])
-    child_pids = find_pids_by_cmdline_regex([rf"process\.py.*{token}", rf"process_wrapper.*{token}"])
+    """Match the config as its own argv element.
+
+    More than one match is ambiguous: return no PID rather than killing an
+    arbitrary process. ``find_cli_and_child.last_ambiguous`` records that case.
+    """
+    find_cli_and_child.last_ambiguous = False
+    if psutil is None:
+        return None, None
+    cli_pids: list[int] = []
+    child_pids: list[int] = []
+    for proc in psutil.process_iter(["pid", "cmdline"]):
+        try:
+            cmdline = [str(part) for part in (proc.info.get("cmdline") or [])]
+            pid = int(proc.info["pid"])
+        except (psutil.Error, TypeError, ValueError):
+            continue
+        if cmdline_matches_target(cmdline, config, kind="cli"):
+            cli_pids.append(pid)
+        if cmdline_matches_target(cmdline, config, kind="child"):
+            child_pids.append(pid)
+    if len(cli_pids) > 1 or len(child_pids) > 1:
+        find_cli_and_child.last_ambiguous = True
+        return None, None
     cli = cli_pids[0] if cli_pids else None
     child = child_pids[0] if child_pids else None
     return cli, child
+
+
+find_cli_and_child.last_ambiguous = False
 
 
 def health_check(*, config: str, root: Optional[Path] = None, do_restart: bool = True) -> dict[str, Any]:
@@ -258,21 +303,27 @@ def health_check(*, config: str, root: Optional[Path] = None, do_restart: bool =
     mdir = _ensure_monitor(site)
     reasons: list[str] = []
     cli_pid, child_pid = find_cli_and_child(config)
+    ambiguous = bool(getattr(find_cli_and_child, "last_ambiguous", False))
     main_log = _latest_main_log(site)
     log_age = None
     if main_log is not None:
         log_age = int(time.time() - main_log.stat().st_mtime)
 
     grace = _grace_active(mdir)
-    if cli_pid is None:
+    if ambiguous:
+        reasons.append("ambiguous_cmdline")
+    if cli_pid is None and not ambiguous:
         reasons.append("cli_missing_during_restart_grace" if grace else "cli_process_missing")
-    if child_pid is None:
+    if child_pid is None and not ambiguous:
         reasons.append("child_missing_during_restart_grace" if grace else "child_process_missing")
     if cli_pid and child_pid and log_age is not None and log_age > LOG_STALE_SEC and not grace:
         reasons.append(f"log_stale_{log_age}s")
 
     # Filter grace-only reasons as non-restart
-    restart_reasons = [r for r in reasons if "during_restart_grace" not in r]
+    restart_reasons = [
+        reason for reason in reasons
+        if "during_restart_grace" not in reason and reason != "ambiguous_cmdline"
+    ]
     status = "ok" if not reasons else ("incident" if restart_reasons else reasons[0])
     if not reasons:
         reasons = ["healthy"]
@@ -331,6 +382,9 @@ def restart_evileye(*, config: str, root: Optional[Path] = None, reason: str = "
     (mdir / ".watchdog_restarting").write_text(_now_iso(), encoding="utf-8")
 
     cli_pid, child_pid = find_cli_and_child(config)
+    if getattr(find_cli_and_child, "last_ambiguous", False):
+        _log_watchdog(mdir, "restart skipped: ambiguous_cmdline")
+        return False
     for pid in (child_pid, cli_pid):
         if pid and pid_exists(pid):
             terminate_tree_gracefully(pid, grace_sec=5.0)

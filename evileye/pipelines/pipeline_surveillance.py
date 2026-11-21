@@ -191,7 +191,7 @@ class PipelineSurveillance(PipelineProcessors):
         if not params:
             return None
         class_name = ProcessorBase.configured_module_id(params[0], default_class)
-        class_names = [ProcessorBase.configured_module_id(p, default_class) for p in params]
+        class_names = [ProcessorBase.configured_module_id(p, class_name) for p in params]
         if not any(param.get("module_id") or param.get("type") for param in params):
             self.logger.warning(
                 f"Warning: 'type' parameter not found in {stage_name} configuration. Using default: {class_name}")

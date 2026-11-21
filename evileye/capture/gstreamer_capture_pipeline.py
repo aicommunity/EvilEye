@@ -357,13 +357,22 @@ class GStreamerCapturePipelineMixin:
                             # and retry the SAME codec candidate without recording branch, without failing the whole init.
                             attempted_without_recording = False
                             while True:
-                                # Clean up previous pipeline if any
-                                if self.pipeline:
+                                # Drop the previous candidate outside the lifecycle lock.
+                                # set_state(NULL) can block forever and must not pin pipeline_lock.
+                                stale_pipeline = self.pipeline if self.pipeline else None
+                                if stale_pipeline is not None:
+                                    self.pipeline = None
+                                    self.pipeline_lock.release()
                                     try:
-                                        self.pipeline.set_state(Gst.State.NULL)
+                                        self._set_gst_state_null_bounded(
+                                            stale_pipeline,
+                                            timeout_sec=CaptureConstants.TEARDOWN_NULL_TIMEOUT_SEC,
+                                            label=f"candidate:{self.source_names}",
+                                        )
                                     except Exception:
                                         pass
-                                    self.pipeline = None
+                                    finally:
+                                        self.pipeline_lock.acquire()
 
                                 # Parse and create pipeline
                                 self.pipeline = Gst.parse_launch(candidate_str)
@@ -544,12 +553,21 @@ class GStreamerCapturePipelineMixin:
                                     f"Video capture will continue without recording."
                                 )
 
-                            # Recreate pipeline without recording
-                            try:
-                                self.pipeline.set_state(Gst.State.NULL)
-                            except Exception:
-                                pass
+                            # Recreate pipeline without recording. NULL stays outside the lock.
+                            stale_pipeline = self.pipeline
                             self.pipeline = None
+                            if stale_pipeline is not None:
+                                self.pipeline_lock.release()
+                                try:
+                                    self._set_gst_state_null_bounded(
+                                        stale_pipeline,
+                                        timeout_sec=CaptureConstants.TEARDOWN_NULL_TIMEOUT_SEC,
+                                        label=f"recording-rebuild:{self.source_names}",
+                                    )
+                                except Exception:
+                                    pass
+                                finally:
+                                    self.pipeline_lock.acquire()
 
                             pipeline_str = self._build_pipeline()
                             self.logger.info(
@@ -793,8 +811,7 @@ class GStreamerCapturePipelineMixin:
                     # For IP cameras, EOS means disconnect - mark not working; monitor thread handles reconnect
                     self.logger.warning("GStreamer EOS for IP camera")
                     self.is_working = False
-                    timestamp = datetime.datetime.now()
-                    self._record_disconnect(timestamp)
+                    self._note_capture_down()
                     for sub in self.subscribers:
                         sub.update()
                     # Trigger reconnect loop if not already running
@@ -855,8 +872,7 @@ class GStreamerCapturePipelineMixin:
                         self._last_udp_error_time = None
 
                         if self.source_type == CaptureDeviceType.IpCamera and self.run_flag:
-                            timestamp = datetime.datetime.now()
-                            self._record_disconnect(timestamp)
+                            self._note_capture_down()
                             for sub in self.subscribers:
                                 sub.update()
                             # Store error for protocol switching logic
@@ -878,8 +894,7 @@ class GStreamerCapturePipelineMixin:
 
                     # For IP cameras, just mark not working; monitor thread handles reconnect
                     if self.source_type == CaptureDeviceType.IpCamera and self.run_flag:
-                        timestamp = datetime.datetime.now()
-                        self._record_disconnect(timestamp)
+                        self._note_capture_down()
                         for sub in self.subscribers:
                             sub.update()
                         # Store error for protocol switching logic
@@ -1037,9 +1052,19 @@ class GStreamerCapturePipelineMixin:
     def _generation_is_current(self, generation: int) -> bool:
         return int(getattr(self, "_pipeline_generation", 0)) == int(generation)
 
-    def _detach_pipeline_state(self, reason: str) -> dict:
+    def _detach_pipeline_state(self, reason: str, expected_generation: int | None = None) -> dict:
         """Drop Python references. Must stay free of GStreamer calls."""
         with self.pipeline_lock:
+            current = int(getattr(self, "_pipeline_generation", 0))
+            if expected_generation is not None and current != int(expected_generation):
+                return {
+                    "reason": reason,
+                    "generation": current,
+                    "pipeline": None,
+                    "bus": None,
+                    "appsink": None,
+                    "skipped": True,
+                }
             state = {
                 "reason": reason,
                 "generation": int(getattr(self, "_pipeline_generation", 0)),
@@ -1205,7 +1230,13 @@ class GStreamerCapturePipelineMixin:
         except Exception:
             pass
 
-    def _teardown_pipeline(self, reason: str, *, join_main_loop: bool) -> None:
+    def _teardown_pipeline(
+        self,
+        reason: str,
+        *,
+        join_main_loop: bool,
+        expected_generation: int | None = None,
+    ) -> None:
         """
         Detach the pipeline, then run native cleanup with a hard budget.
 
@@ -1215,7 +1246,9 @@ class GStreamerCapturePipelineMixin:
         """
         if not self.gstreamer_available:
             return
-        state = self._detach_pipeline_state(reason)
+        state = self._detach_pipeline_state(reason, expected_generation=expected_generation)
+        if state.get("skipped"):
+            return
         if (
             state.get("pipeline") is None
             and state.get("bus") is None

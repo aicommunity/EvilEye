@@ -389,18 +389,27 @@ class VideoCaptureGStreamer(
         return self.is_working and self.pipeline is not None
 
     def release(self) -> None:
-        """Release resources. The lifecycle lock covers only the detach, not native GStreamer teardown."""
+        """Release resources. The lifecycle lock covers only the generation snapshot, not native teardown."""
         if not self._release_lock.acquire(timeout=2.0):
             self.logger.error(
                 "GStreamer release could not acquire lifecycle lock for %s after 2.0s",
                 self.source_names,
             )
             return
-        self._release_lock.release()
         try:
-            self._teardown_pipeline("release", join_main_loop=True)
-            self.is_inited = False
-            self.is_working = False
+            generation = int(getattr(self, "_pipeline_generation", 0))
+        finally:
+            self._release_lock.release()
+        try:
+            self._teardown_pipeline(
+                "release",
+                join_main_loop=True,
+                expected_generation=generation,
+            )
+            still_current = getattr(self, "_generation_is_current", None)
+            if still_current is None or still_current(generation):
+                self.is_inited = False
+                self.is_working = False
             self.logger.info("GStreamer video capture released")
         except Exception as e:
             self.logger.error("Error releasing GStreamer capture: %s", e)

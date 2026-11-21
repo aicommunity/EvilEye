@@ -113,6 +113,7 @@ async def start_config_run(rid: int, request: Request) -> Dict:
     except KeyError as exc:
         raise HTTPException(status_code=404, detail="Config run not found") from exc
     except Exception as e:
+        logger.exception("Config route failed")
         raise HTTPException(status_code=500, detail="Operation failed (see server logs)") from e
 
 
@@ -125,6 +126,7 @@ async def stop_config_run(rid: int) -> Dict:
     except RuntimeError as e:
         raise HTTPException(status_code=409, detail=str(e)) from e
     except Exception as e:
+        logger.exception("Config route failed")
         raise HTTPException(status_code=500, detail="Operation failed (see server logs)") from e
 
 
@@ -156,6 +158,7 @@ async def get_config(name: str) -> dict:
             payload = json.load(f)
         return _mask_secrets(payload)
     except Exception as e:
+        logger.exception("Config route failed")
         raise HTTPException(status_code=500, detail="Failed to read config: failed (see server logs)") from e
 
 
@@ -173,6 +176,7 @@ async def create_config(payload: ConfigCreate):
         write_config_with_backup(path, content, create_only=True)
         return {"name": name, "status": "created"}
     except Exception as e:
+        logger.exception("Config route failed")
         raise HTTPException(status_code=500, detail="Failed to create config: failed (see server logs)") from e
 
 
@@ -194,6 +198,7 @@ async def update_config(name: str, payload: ConfigUpdate):
         write_config_with_backup(target, content)
         return {"name": target.name, "status": "updated"}
     except Exception as e:
+        logger.exception("Config route failed")
         raise HTTPException(status_code=500, detail="Failed to update config: failed (see server logs)") from e
 
 
@@ -209,4 +214,5 @@ async def delete_config(name: str):
         target.unlink()
         return {"name": target.name, "status": "deleted"}
     except Exception as e:
+        logger.exception("Config route failed")
         raise HTTPException(status_code=500, detail="Failed to delete config: failed (see server logs)") from e

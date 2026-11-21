@@ -3,7 +3,10 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 from typing import Optional
+
+logger = logging.getLogger("evileye.api.system")
 
 from fastapi import APIRouter, HTTPException, Request, Response
 from pydantic import BaseModel, Field
@@ -109,4 +112,5 @@ async def system_restart(payload: SystemRestartPayload | None = None) -> dict:
     except RuntimeError as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
     except Exception as exc:
-        raise HTTPException(status_code=500, detail=str(exc)) from exc
+        logger.exception("System route failed")
+        raise HTTPException(status_code=500, detail="Operation failed (see server logs)") from exc

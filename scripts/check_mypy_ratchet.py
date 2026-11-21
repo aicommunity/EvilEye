@@ -50,11 +50,16 @@ def run_mypy() -> dict[str, int]:
         match = ERROR_RE.match(line.strip())
         if match:
             counts[match.group("file").replace("\\", "/")] += 1
-    return dict(counts)
+    if proc.returncode not in (0, 1) or (proc.returncode != 0 and not (proc.stdout or "").strip()):
+        return {}, 2
+    return dict(counts), proc.returncode
 
 
 def main() -> int:
-    current = run_mypy()
+    current, returncode = run_mypy()
+    if returncode not in (0, 1):
+        print("mypy ratchet FAILED: mypy did not produce a usable report")
+        return 1
     if "--update" in sys.argv:
         BASELINE_PATH.write_text(
             json.dumps(dict(sorted(current.items())), indent=2) + "\n", encoding="utf-8"

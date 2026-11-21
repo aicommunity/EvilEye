@@ -10,9 +10,10 @@ from evileye.api.core.user_prefs import (
     normalize_allowed_cameras,
     prefs_from_record,
 )
-from evileye.api.core.web_auth_bootstrap import user_must_change_password
+from evileye.api.core.web_auth_bootstrap import resolve_must_change_password, user_must_change_password
 from evileye.api.security import (
     authenticate_user,
+    csrf_origin_violation,
     load_web_auth_config,
     normalize_role,
     permissions_for_role,
@@ -22,6 +23,20 @@ from evileye.api.security import (
 )
 
 router = APIRouter(prefix="/api/v1/auth", tags=["auth"])
+
+
+def _guard_authenticated_mutation(request: Request, *, allow_password_change: bool) -> None:
+    """CSRF and must-change gate for auth routes that sit outside AuthGuardMiddleware."""
+    violation = csrf_origin_violation(request, getattr(request.app.state, "allowed_origins", ()))
+    if violation:
+        raise HTTPException(status_code=403, detail="Cross-origin request rejected")
+    user = require_authenticated(request)
+    username = str(user.get("username") or "")
+    if resolve_must_change_password(username) and not allow_password_change:
+        raise HTTPException(
+            status_code=403,
+            detail="Password change required",
+        )
 
 
 class LoginPayload(BaseModel):
@@ -135,6 +150,7 @@ async def auth_me(request: Request, response: Response) -> dict:
 
 @router.put("/prefs")
 async def auth_put_prefs(payload: PrefsPayload, request: Request) -> dict:
+    _guard_authenticated_mutation(request, allow_password_change=False)
     from evileye.api.core.credentials_users import (
         get_credentials_user,
         list_credentials_users,
@@ -237,12 +253,14 @@ async def auth_login(payload: LoginPayload, request: Request, response: Response
 
 @router.post("/logout")
 async def auth_logout(request: Request) -> dict:
+    _guard_authenticated_mutation(request, allow_password_change=True)
     request.session.clear()
     return {"ok": True}
 
 
 @router.post("/change-password")
 async def auth_change_password(payload: ChangePasswordPayload, request: Request) -> dict:
+    _guard_authenticated_mutation(request, allow_password_change=True)
     from evileye.api.core.credentials_users import (
         get_credentials_user,
         list_credentials_users,

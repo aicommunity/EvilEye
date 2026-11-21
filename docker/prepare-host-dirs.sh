@@ -11,7 +11,10 @@ mkdir -p EvilEyeData/images videos models configs logs postgres_data
 
 PROTO="$ROOT/evileye/credentials_proto.json"
 CREDS="$ROOT/credentials.json"
-POSTGRES_PASSWORD="${POSTGRES_PASSWORD:-postgres}"
+if [[ -z "${POSTGRES_PASSWORD:-}" ]]; then
+  echo "error: set POSTGRES_PASSWORD before preparing host directories" >&2
+  exit 1
+fi
 
 if [[ ! -f "$CREDS" ]]; then
   if [[ ! -f "$PROTO" ]]; then
@@ -27,7 +30,7 @@ import json
 import os
 from pathlib import Path
 
-password = os.environ.get("POSTGRES_PASSWORD") or "postgres"
+password = os.environ["POSTGRES_PASSWORD"]
 p = Path("credentials.json")
 data = json.loads(p.read_text(encoding="utf-8"))
 db = data.setdefault("database", {})

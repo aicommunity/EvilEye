@@ -56,17 +56,15 @@ def clear_bootstrap_password_file(path: Path | None = None) -> bool:
 def _write_bootstrap_password_note(note: Path, password: str) -> None:
     """Store the generated password in a 0600 file instead of the log."""
     note.parent.mkdir(parents=True, exist_ok=True)
-    note.write_text(
+    payload = (
         f"EvilEye bootstrap admin password\nUsername: {DEFAULT_ADMIN_USER}\n"
-        f"Password: {password}\n\nDelete this file or change the password immediately.\n",
-        encoding="utf-8",
-    )
+        f"Password: {password}\n\nDelete this file or change the password immediately.\n"
+    ).encode("utf-8")
+    fd = os.open(note, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
     try:
-        note.chmod(0o600)
-    except OSError:
-        # Windows filesystems may not fully honour POSIX modes; the file still
-        # lives next to credentials.json which holds the hashes anyway.
-        pass
+        os.write(fd, payload)
+    finally:
+        os.close(fd)
 
 
 def resolve_must_change_password(username: str) -> bool:

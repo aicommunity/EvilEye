@@ -27,6 +27,11 @@ findings closed (TD-AUD-S0-*..TD-AUD-S5-*); remaining open items below.
 
 
 | TD-AUD-011 | GUI journals fetch data with synchronous psycopg2 in a QTimer slot (UI freezes); regression vs legacy QThread loader | visualization_modules/unified_events_journal.py | audit 2026-11 | Stage 5 (audit fix plan) | P2 |
+| TD-AUD-D1 | event_id is still MAX+1 without a sequence or IntegrityError retry. A dead pool now returns None so ids do not restart at 0 | database_controller_pg.py | audit correction | Backlog | P2 |
+| TD-AUD-D7 | query() still returns None on error. ConfigHistoryManager now re-raises that failure instead of an empty list; other callers of query() are unchanged | database_controller_pg.py | audit correction | Backlog | P3 |
+| TD-AUD-T8 | Watchdog matches a config argv element. A PID file was not added | watchdog_native.py | audit correction | Backlog | P2 |
+| TD-AUD-JOBS | jobs.finish_time is not written, so completed/error job counters stay wrong | config_history_manager.py | audit correction | Backlog | P3 |
+| TD-AUD-SQL-ID | JSON adapter table_name is still interpolated as an identifier; whitelist not added | jadapter_base.py | audit correction | Backlog | P3 |
 
 ## In progress
 
@@ -49,31 +54,34 @@ findings closed (TD-AUD-S0-*..TD-AUD-S5-*); remaining open items below.
 | TD-AUD-S1-3 | audit fix stage 1 (perf/audit-s1) | SHM segment pool in SharedFrameTransport (opt-in; plugin runtime enables it, EVILEYE_SHM_POOL=0 to disable, EVILEYE_SHM_POOL_MAX_FREE): no per-frame create/unlink |
 | TD-AUD-S1-4 | audit fix stage 1 (perf/audit-s1) | Continuous output-drainer thread for process-mode plugin modules: worker results decoded as they arrive instead of once per tick; bounded drop-oldest hand-off |
 | TD-AUD-S1-5 | audit fix stage 1 (perf/audit-s1) | Default module queue_size 8→16 (EVILEYE_MODULE_QUEUE_SIZE); MpControl queue-swap race fixed with _queues_lock + snapshots (TD-AUD-001) |
-| TD-AUD-S1-6 | audit fix stage 1 (perf/audit-s1) | GStreamer: single frame_id increment; get_frames_impl no longer returns the same physical frame twice (freshness key includes connection_generation) (TD-AUD-003) |
+| TD-AUD-S1-6 | audit fix stage 1, corrected on fix/audit-corrections | GStreamer get_frames_impl returns an empty list when the freshness key repeats, so the same physical frame is not copied again |
 | TD-AUD-S1-7 | audit fix stage 1 (perf/audit-s1) | Processor stop loops aggregate errors and keep stopping remaining processors instead of aborting on the first failure (TD-AUD-002) |
 | TD-AUD-S2-1 | audit fix stage 2 (fix/audit-s2) | ConfigHistoryManager: execute_query -> query (9 call sites); job statistics rewritten against the real jobs columns (status/frames_processed never existed) (TD-AUD-004) |
-| TD-AUD-S2-2 | audit fix stage 2 (fix/audit-s2) | pg_spool: adapter writes that exhaust the retry budget (and events accepted while PG is disconnected) are spooled under <image_dir>/pg_spool and replayed on recovery (200 MB budget, oldest dropped first) (TD-AUD-005) |
+| TD-AUD-S2-2 | audit fix stage 2, corrected on fix/audit-corrections | pg_spool writes JSON per adapter under image_dir/pg_spool/<event>. Legacy pickle files are quarantined and not loaded. Oversized records are refused |
 | TD-AUD-S2-3 | audit fix stage 2 (fix/audit-s2) | get_next_event_id queries tables individually (one broken table no longer resets ids to 0); get_last_id falls back to an epoch floor instead of 0 (no PK collisions); events_tables filters adapters by storage_backend (TD-AUD-006) |
 | TD-AUD-S2-4 | audit fix stage 2 (fix/audit-s2) | Objects writer thread: retries OperationalError via execute_with_retry and logs losses at error level (was: silent drop at info) |
-| TD-AUD-S2-5 | audit fix stage 2 (fix/audit-s2) | TD-PS-D8 closed: ScheduleAlarmEvent carries detected/lost frame snapshots; PG and JSON adapters persist previews/frames |
+| TD-AUD-S2-5 | audit fix stage 2, corrected on fix/audit-corrections | ScheduleAlarmEvent carries detected and lost frames, and DatabaseAdapterBase.update() calls _update_impl again so the lost frame is persisted |
 | TD-AUD-S2-6 | audit fix stage 2 (fix/audit-s2) | DB retention: purge_old_records + daily DatabaseService loop behind database.retention_days (default off); EvilEyeData file retention already existed via storage_monitor |
 | TD-AUD-S3-1 | audit fix stage 3 (sec/audit-s3) | journal_data_source_db fully parameterized: dates, source names, source/object ids and LIMIT/OFFSET travel as %s params (was f-string SQL with manual escaping) (TD-AUD-007 / W1) |
-| TD-AUD-S3-2 | audit fix stage 3 (sec/audit-s3) | /setup/test-database refuses link-local/reserved hosts (cloud-metadata SSRF pivots; loopback/LAN allowed, EVILEYE_SETUP_DB_EXTRA_HOSTS extends); /check-data-dir confined to the site root unless EVILEYE_SETUP_TRUST_DATA_DIR=1 (W3) |
+| TD-AUD-S3-2 | audit fix stage 3, corrected on fix/audit-corrections | /setup/test-database resolves every address and connects only to an allowed IP. Resolution failure and link-local/ULA targets are refused. /check-data-dir stays under the site root unless EVILEYE_SETUP_TRUST_DATA_DIR=1 |
 | TD-AUD-S3-3 | audit fix stage 3 (sec/audit-s3) | /auth/me re-resolves the session against the live user store - deleted/disabled users get 401 (W6) |
-| TD-AUD-S3-4 | audit fix stage 3 (sec/audit-s3) | uvicorn forwarded_allow_ips synced with web_auth.protection.trusted_proxy_ips; CORS uses explicit methods/headers instead of "*" with credentials (W9) |
+| TD-AUD-S3-4 | audit fix stage 3, corrected on fix/audit-corrections | proxy_headers is off when trust_proxy is false. When it is on, forwarded_allow_ips follows trusted_proxy_ips. CORS methods and headers stay explicit |
 | TD-AUD-S3-5 | audit fix stage 3 (sec/audit-s3) | 500 responses no longer leak exception text (configs/extensions); failures logged server-side via logger.exception (W8) |
 | TD-AUD-S4-1 | audit fix stage 4 (ci/audit-s4) | CI: mypy ratchet job (scripts/check_mypy_ratchet.py + mypy_baseline.json, 6 seeded modules), integration job with postgres service (continue-on-error until consistently green), pytest-xdist + coverage --cov-fail-under=25 in the 3.12 unit job, develop branch added to push triggers (TD-AUD-008) |
-| TD-AUD-S4-2 | audit fix stage 4 (ci/audit-s4) | pre-commit pytest hook reduced to the fast unit subset (tests/unit -x -q); `make test` = unit (matches CI), new test-integration target; lint targets use the ratchet scripts (TD-AUD-013) |
-| TD-AUD-S4-3 | audit fix stage 4 (ci/audit-s4) | Docker: HEALTHCHECK hits /ready over HTTP instead of import-checking; postgres published on 127.0.0.1 only and POSTGRES_PASSWORD is required (:? syntax, no default) (TD-AUD-014; non-root USER deliberately deferred - host-mounted data dirs assume root today) |
+| TD-AUD-S4-2 | audit fix stage 4 (ci/audit-s4) | pre-commit pytest hook runs the unit suite (tests/unit -x -q), not a smaller subset. `make test` runs that unit suite with xdist; CI also applies the coverage gate. test-integration is separate |
+| TD-AUD-S4-3 | audit fix stage 4, corrected on fix/audit-corrections | Image HEALTHCHECK hits /ready. The pipeline service disables that check. POSTGRES_PASSWORD is required in the main compose file and the site compose files. Non-root USER is still deferred |
 | TD-AUD-S4-4 | audit fix stage 4 (ci/audit-s4) | SQLAlchemy removed from pyproject/requirements (declared, never imported); scripts/setup/fix_entry_points.py removed along with its Makefile/install.py/README call sites - pip console-scripts are the single mechanism (TD-AUD-015) |
-| TD-AUD-S4-5 | audit fix stage 4 (ci/audit-s4) | site_runtime_guard works on Windows (psutil environ/cwd with /proc fallback); watchdog matches the config stem as a whole word (?<!\w)/(?!\w) - short config names no longer match unrelated cmdlines |
+| TD-AUD-S4-5 | audit fix stage 4, corrected on fix/audit-corrections | site_runtime_guard reads Windows process info via psutil. Watchdog matches the config as its own argv element. A PID file is still open (TD-AUD-T8) |
 | TD-AUD-S5-1 | audit fix stage 5 (refactor/audit-s5) | Dead GUI journal generation removed: events_journal.py, handler_journal_view.py, objects_journal_json.py, both data loaders, table_data_thread.py, table_updater_view.py (~2700 lines) + their 22 integration tests (TD-AUD-009) |
-| TD-AUD-S5-2 | audit fix stage 5 (refactor/audit-s5) | VideoThread label index comes from the stable source_index_map instead of the never-resetting class counter - frames no longer silently dropped after visualizer re-init (TD-AUD-010) |
+| TD-AUD-S5-2 | audit fix stage 5, corrected on fix/audit-corrections | VideoThread keeps the source index passed by the visualizer. The class counter no longer overwrites it |
 | TD-AUD-S5-3 | audit fix stage 5 (refactor/audit-s5) | Hardcoded 80-entry COCO dict moved from Controller.__init__ to ClassManager.DEFAULT_COCO_CLASS_MAPPING (TD-AUD-012, partial: full ControllerBootstrap decomposition still open) |
 | TD-AUD-S5-4 | audit fix stage 5 (refactor/audit-s5) | PipelineSurveillance: five ProcessorStep _init_* copy-pastes replaced by _init_step_processors (detectors/trackers/mc_trackers/attributes_roi/classifier) |
 | TD-AUD-S5-5 | audit fix stage 5 (refactor/audit-s5) | sys.path.append repo-root hacks removed from 9 visualization modules (+pruned unused sys/Path imports) |
 | TD-AUD-S5-6 | audit fix stage 5 (refactor/audit-s5) | Legacy MP detector deprecation notice added to docs/PLUGINS.md (TD-PS-D3 window opened) |
 | TD-AUD-HF1 | hotfix_reconnect integration (2026-11) | Audit finding B5 closed upstream: stuck GStreamer teardown can no longer hold the capture lifecycle lock (teardown moved outside pipeline_lock via _detach_pipeline_state/_native_teardown_body, TEARDOWN_BUDGET_SEC=15s, reconnect no longer piles waits on an abandoned release, previous init() joined before a new attempt, _note_capture_down/up records one disconnect per outage for the watchdog via SOURCE_DOWN_SEC). Merged into develop as 3804eb4a; no conflicts with the stage-1 frame_id/novelty fixes (verified coexisting) |
+| TD-AUD-C1 | fix/audit-corrections follow-up | SSRF resolver allows loopback again: `::1` carries is_reserved=True in Python ipaddress, so `localhost` was refused, contradicting the documented loopback policy (is_reserved now ignores is_loopback) |
+| TD-AUD-C2 | fix/audit-corrections follow-up | Spool replays only connection-class failures (OperationalError/InterfaceError/ConnectionError): a post-commit image-save failure no longer re-executes the committed INSERT (was: duplicate row / attempts==2) |
+| TD-AUD-C3 | fix/audit-corrections follow-up | checked-writes tests use per-test tmp image_dir - spool records no longer leak between runs through the shared /tmp path |
 | TD-002 | phase 0 | Removed duplicate `DetectionThreadFactory` in `detection_thread_factory.py` |
 | TD-005 | phase 0 | Doc/CLI gaps D1–D6, D8–D10 addressed in README, Makefile, MULTIPROCESSING, launch/process |
 | TD-006 | phase 0 | `tool.coverage.run.source` uses `evileye` package prefix |

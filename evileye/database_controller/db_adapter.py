@@ -1,13 +1,67 @@
 from __future__ import annotations
 
+import datetime
+import os
 from typing import Any, Optional, Dict
 from ..core.base_class import EvilEyeBase
 from ..core.interfaces import IDatabaseAdapter
 from .database_controller_pg import DatabaseControllerPg
 from .database_error_handler import DatabaseErrorHandler
+import time
 from threading import Lock, Thread, current_thread
 from queue import Queue, Empty
 from abc import abstractmethod, ABC
+
+
+def _render_sql(query: Any) -> Optional[str]:
+    """Render a psycopg2 SQL composable without a live connection."""
+    name = type(query).__name__
+    if name == "SQL":
+        return str(getattr(query, "string", ""))
+    if name == "Identifier":
+        parts = getattr(query, "strings", None) or (getattr(query, "string", ""),)
+        return ".".join('"' + str(part).replace('"', '""') + '"' for part in parts)
+    if name == "Placeholder":
+        return "%s"
+    sequence = getattr(query, "seq", None)
+    if sequence is None:
+        return None
+    rendered = [_render_sql(part) for part in sequence]
+    if any(part is None for part in rendered):
+        return None
+    return "".join(rendered)
+
+
+def _spool_value_supported(value: Any) -> bool:
+    if isinstance(value, (str, int, float, bool)) or value is None:
+        return True
+    if isinstance(value, (datetime.datetime, datetime.date)):
+        return True
+    if isinstance(value, dict):
+        return all(_spool_value_supported(item) for item in value.values())
+    if isinstance(value, (list, tuple)):
+        return all(_spool_value_supported(item) for item in value)
+    return False
+
+
+def _spool_event_class(event_type: str):
+    if not event_type or event_type == "dict":
+        return None
+    from evileye.events_detectors.alarm_event import AlarmEvent
+    from evileye.events_detectors.event_attribute import AttributeEvent
+    from evileye.events_detectors.event_cameras import CameraEvent
+    from evileye.events_detectors.event_schedule_alarm import ScheduleAlarmEvent
+    from evileye.events_detectors.event_system import SystemEvent
+    from evileye.events_detectors.event_zone import ZoneEvent
+
+    return {
+        "ZoneEvent": ZoneEvent,
+        "ScheduleAlarmEvent": ScheduleAlarmEvent,
+        "AttributeEvent": AttributeEvent,
+        "CameraEvent": CameraEvent,
+        "SystemEvent": SystemEvent,
+        "AlarmEvent": AlarmEvent,
+    }.get(event_type)
 
 
 class DatabaseAdapterBase(EvilEyeBase, ABC):
@@ -61,7 +115,8 @@ class DatabaseAdapterBase(EvilEyeBase, ABC):
             image_dir = str(self.db_params.get("image_dir") or image_dir)
         except Exception:
             pass
-        self._spool = PgSpool(image_dir, logger=self.logger)
+        namespace = self.event_name or self.__class__.__name__
+        self._spool = PgSpool(image_dir, namespace=namespace, logger=self.logger)
         return self._spool
 
     def set_params_impl(self) -> None:
@@ -158,48 +213,61 @@ class DatabaseAdapterBase(EvilEyeBase, ABC):
     def release_impl(self) -> None:
         pass
 
+    def _postgres_disconnected(self) -> bool:
+        """True only for PostgreSQL adapters whose controller reports no connection.
+
+        JSON journals must keep writing while PostgreSQL is down. They do not
+        consult ``is_connected`` and they do not spill into ``pg_spool``.
+        """
+        if self.storage_backend != "postgres":
+            return False
+        controller = self.db_controller
+        if controller is None or not hasattr(controller, "is_connected"):
+            return False
+        return not controller.is_connected()
+
+    def _reject_if_closing(self, operation: str) -> None:
+        if self._closing:
+            exc = RuntimeError(
+                "Database adapter worker is not running because the adapter is stopping"
+            )
+            self._record_failure(operation, exc, category="enqueue")
+            raise exc
+
     def insert(self, data: Any) -> None:
-        # Проверяем, что БД подключена перед выполнением операций (только для БД адаптеров)
-        # JSON адаптеры не имеют db_controller с методом is_connected(), поэтому проверяем наличие метода
-        if self.db_controller and hasattr(self.db_controller, 'is_connected'):
-            if not self.db_controller.is_connected():
-                # Audit A5: defer to the local spool instead of losing the
-                # event (previously: ConnectionError after 3 retries).
-                if self._spool_deferred("insert", data):
-                    return
-                exc = ConnectionError(f"Database adapter '{self.event_name}' is disconnected")
-                self._record_failure('insert', exc, category='enqueue')
-                raise exc
+        if self._postgres_disconnected():
+            # Audit A5: defer to the local spool instead of losing the
+            # event (previously: ConnectionError after 3 retries).
+            if self._spool_deferred("insert", data):
+                return
+            exc = ConnectionError(f"Database adapter '{self.event_name}' is disconnected")
+            self._record_failure('insert', exc, category='enqueue')
+            raise exc
         # Serialize acceptance with stop(): work accepted before shutdown is drained,
         # and work arriving after shutdown is explicitly rejected.
         with self._lifecycle_lock:
-            if self._closing:
-                exc = RuntimeError(
-                    "Database adapter worker is not running because the adapter is stopping"
-                )
-                self._record_failure('insert', exc, category='enqueue')
-                raise exc
+            self._reject_if_closing("insert")
             self._insert_impl(data)
 
     def update(self, data: Any) -> None:
-        # Проверяем, что БД подключена перед выполнением операций (только для БД адаптеров)
-        # JSON адаптеры не имеют db_controller с методом is_connected(), поэтому проверяем наличие метода
-        if self.db_controller and hasattr(self.db_controller, 'is_connected'):
-            if not self.db_controller.is_connected():
-                # Audit A5: defer to the local spool instead of losing the
-                # event update.
-                if self._spool_deferred("update", data):
-                    return
-                exc = ConnectionError(f"Database adapter '{self.event_name}' is disconnected")
-                self._record_failure('update', exc, category='enqueue')
-                raise exc
+        if self._postgres_disconnected():
+            # Audit A5: defer to the local spool instead of losing the event update.
+            if self._spool_deferred("update", data):
+                return
+            exc = ConnectionError(f"Database adapter '{self.event_name}' is disconnected")
+            self._record_failure('update', exc, category='enqueue')
+            raise exc
+        with self._lifecycle_lock:
+            self._reject_if_closing("update")
+            self._update_impl(data)
 
     def _spool_deferred(self, operation: str, event: Any) -> bool:
         """Spool an event accepted while the database is disconnected."""
         spool = self._ensure_spool()
         if spool is None:
             return False
-        if spool.append(("deferred", operation, event)):
+        record = self._deferred_spool_record(operation, event)
+        if record is not None and spool.append(record):
             self._spooled_items += 1
             self.degraded = True
             self.last_error = (
@@ -213,15 +281,6 @@ class DatabaseAdapterBase(EvilEyeBase, ABC):
             )
             return True
         return False
-        # Keep updates under the same acceptance boundary as inserts.
-        with self._lifecycle_lock:
-            if self._closing:
-                exc = RuntimeError(
-                    "Database adapter worker is not running because the adapter is stopping"
-                )
-                self._record_failure('update', exc, category='enqueue')
-                raise exc
-            self._update_impl(data)
 
     def get_db_params(self) -> Dict[str, Any]:
         return self.db_params
@@ -281,8 +340,7 @@ class DatabaseAdapterBase(EvilEyeBase, ABC):
             try:
                 item = self.queue_in.get(timeout=0.1)
             except Empty:
-                if self.run_flag and self._consecutive_write_failures:
-                    # Idle while degraded: opportunistically drain the spool.
+                if self.run_flag and self._spool_has_pending():
                     self._try_replay_spool()
                 continue
             _, error = self.error_handler.execute_with_retry(
@@ -293,17 +351,34 @@ class DatabaseAdapterBase(EvilEyeBase, ABC):
             )
             if error is not None:
                 self._record_failure('queued write', error, category='terminal_write')
-                self._consecutive_write_failures += 1
-                spool = self._ensure_spool()
-                if spool is not None and spool.append(item):
-                    self._spooled_items += 1
+                # Spool only connection-class failures: the write may not have
+                # committed. Post-commit failures (e.g. image save after a
+                # committed INSERT) must never replay - the replay would
+                # execute the INSERT a second time.
+                if type(error).__name__ in ("OperationalError", "InterfaceError", "ConnectionError"):
+                    self._consecutive_write_failures += 1
+                    record = self._queue_item_spool_record(item)
+                    spool = self._ensure_spool()
+                    if record is not None and spool is not None and spool.append(record):
+                        self._spooled_items += 1
+                    elif spool is not None and spool.last_reject == "io":
+                        try:
+                            self.queue_in.put_nowait(item)
+                        except Exception:
+                            pass
+                else:
+                    self.logger.error(
+                        "Database adapter '%s' dropped an item after a non-connection "
+                        "failure (not replayable): %s",
+                        self.event_name,
+                        error,
+                    )
             else:
                 self.processed_items += 1
-                if self._consecutive_write_failures:
-                    # Connection recovered: push spooled items back through the
-                    # normal write path before handling new ones.
-                    self._consecutive_write_failures = 0
+                if self._consecutive_write_failures or self._spool_has_pending():
                     self._try_replay_spool()
+                    if not self._spool_has_pending():
+                        self._consecutive_write_failures = 0
 
     def _try_replay_spool(self) -> None:
         spool = self._ensure_spool()
@@ -326,19 +401,256 @@ class DatabaseAdapterBase(EvilEyeBase, ABC):
                 spool.pending_count(),
             )
 
+    def _spool_has_pending(self) -> bool:
+        spool = self._ensure_spool()
+        if spool is None:
+            return False
+        try:
+            return spool.pending_count() > 0
+        except Exception:
+            return False
+
     def _replay_spool_item(self, item: Any) -> None:
-        if (
-            isinstance(item, tuple)
-            and len(item) == 3
-            and item[0] == "deferred"
-        ):
-            operation, event = item[1], item[2]
-            if operation == "insert":
+        if isinstance(item, dict) and item.get("kind") == "deferred":
+            event = self._event_from_spool_record(item)
+            if item.get("op") == "insert":
                 self._insert_impl(event)
             else:
                 self._update_impl(event)
             return
-        self._process_queue_item(item)
+        if isinstance(item, dict) and item.get("kind") == "sql":
+            self._process_queue_item(self._queue_item_from_spool_record(item))
+            return
+        raise ValueError("unsupported spool record")
+
+    def _deferred_spool_record(self, operation: str, event: Any) -> Optional[dict[str, Any]]:
+        fields, images = self._spool_event_payload(event)
+        return {
+            "v": 1,
+            "kind": "deferred",
+            "adapter": self.event_name,
+            "op": operation,
+            "event_type": "dict" if isinstance(event, dict) else type(event).__name__,
+            "fields": fields,
+            "images": images,
+        }
+
+    def _spool_event_payload(self, event: Any) -> tuple[dict[str, Any], dict[str, str]]:
+        if isinstance(event, dict):
+            return self._json_ready(event), {}
+        fields: dict[str, Any] = {}
+        images: dict[str, str] = {}
+        for name, value in vars(event).items():
+            image = self._ndarray_of(value)
+            if image is not None:
+                stored = self._write_spool_jpeg(name, image)
+                if stored:
+                    images[name] = stored
+                continue
+            encoded = self._encode_spool_object(value)
+            if encoded is not None:
+                fields[name] = encoded
+                continue
+            if not _spool_value_supported(value):
+                continue
+            fields[name] = self._json_ready(value)
+        return fields, images
+
+    def _ndarray_of(self, value: Any):
+        image = getattr(value, "image", None)
+        if image is not None and hasattr(image, "shape"):
+            return image
+        if hasattr(value, "shape") and hasattr(value, "dtype"):
+            return value
+        return None
+
+    def _write_spool_jpeg(self, name: str, image: Any) -> Optional[str]:
+        spool = self._ensure_spool()
+        if spool is None:
+            return None
+        try:
+            import cv2
+        except Exception:
+            return None
+        ok, encoded = cv2.imencode(".jpg", image)
+        if not ok:
+            return None
+        blob_dir = spool.root / "blobs"
+        blob_dir.mkdir(parents=True, exist_ok=True)
+        filename = f"{time.time_ns()}-{name}.jpg"
+        path = blob_dir / filename
+        path.write_bytes(encoded.tobytes())
+        return f"blobs/{filename}"
+
+    def _encode_spool_object(self, value: Any) -> Optional[dict[str, Any]]:
+        from evileye.events_detectors.zone import Zone
+        from evileye.events_detectors.zone import ZoneForm
+
+        if not isinstance(value, Zone):
+            return None
+        form = value.zone_form.value if isinstance(value.zone_form, ZoneForm) else None
+        return {
+            "__zone": {
+                "source_id": value.source_id,
+                "coords": self._json_ready(value.get_coords()),
+                "zone_form": form,
+                "is_active": bool(value.is_active),
+                "id": value.id,
+            }
+        }
+
+    def _json_ready(self, value: Any) -> Any:
+        if isinstance(value, (str, int, float, bool)) or value is None:
+            return value
+        if isinstance(value, datetime.datetime):
+            return {"__dt": value.isoformat()}
+        if isinstance(value, datetime.date):
+            return {"__date": value.isoformat()}
+        adapted = getattr(value, "adapted", None)
+        if adapted is not None and adapted is not value:
+            return self._json_ready(adapted)
+        if isinstance(value, dict):
+            return {str(key): self._json_ready(item) for key, item in value.items()}
+        if isinstance(value, (list, tuple)):
+            return [self._json_ready(item) for item in value]
+        return None
+
+    def _restore_json(self, value: Any) -> Any:
+        if isinstance(value, dict) and set(value) == {"__zone"}:
+            from evileye.events_detectors.zone import Zone
+
+            spec = value["__zone"]
+            coords = self._restore_json(spec.get("coords"))
+            zone = Zone(
+                spec.get("source_id"),
+                coords,
+                spec.get("zone_form"),
+                bool(spec.get("is_active")),
+            )
+            if spec.get("id") is not None:
+                zone.id = spec.get("id")
+            return zone
+        if isinstance(value, dict) and set(value) == {"__dt"}:
+            return datetime.datetime.fromisoformat(value["__dt"])
+        if isinstance(value, dict) and set(value) == {"__date"}:
+            return datetime.date.fromisoformat(value["__date"])
+        if isinstance(value, dict):
+            return {key: self._restore_json(item) for key, item in value.items()}
+        if isinstance(value, list):
+            return [self._restore_json(item) for item in value]
+        return value
+
+    def _event_from_spool_record(self, record: dict[str, Any]) -> Any:
+        fields = self._restore_json(record.get("fields") or {})
+        if record.get("event_type") == "dict":
+            return fields
+        event_type = str(record.get("event_type") or "")
+        cls = _spool_event_class(event_type)
+        if cls is None:
+            raise ValueError(f"unknown spooled event type {event_type}")
+        event = object.__new__(cls)
+        for name, value in fields.items():
+            setattr(event, name, value)
+        for name, relative in (record.get("images") or {}).items():
+            setattr(event, name, self._load_spool_image(str(relative)))
+        return event
+
+    def _load_spool_image(self, relative: str):
+        spool = self._ensure_spool()
+        if spool is None:
+            return None
+        path = spool.root / relative
+        try:
+            import cv2
+        except Exception:
+            return None
+        image = cv2.imread(str(path), cv2.IMREAD_COLOR)
+        return type("SpoolFrame", (), {"image": image})()
+
+    def _sql_text(self, query: Any) -> Optional[str]:
+        if isinstance(query, str):
+            return query
+        pool = getattr(self.db_controller, "conn_pool", None)
+        if pool is not None and hasattr(query, "as_string"):
+            connection = pool.getconn()
+            try:
+                return query.as_string(connection)
+            except Exception:
+                pass
+            finally:
+                try:
+                    pool.putconn(connection)
+                except Exception:
+                    pass
+        return _render_sql(query)
+
+    def _queue_item_spool_record(self, item: Any) -> Optional[dict[str, Any]]:
+        if not isinstance(item, tuple):
+            return None
+        if len(item) == 6:
+            query_type, query, data, preview_path, frame_path, image = item
+            sql_text = self._sql_text(query)
+            if not sql_text:
+                return None
+            image_file = None
+            pixels = self._ndarray_of(image)
+            if pixels is not None:
+                image_file = self._write_spool_jpeg("frame", pixels)
+            return {
+                "v": 1,
+                "kind": "sql",
+                "adapter": self.event_name,
+                "shape": "event",
+                "query_type": str(query_type),
+                "sql": sql_text,
+                "params": self._redact_params(self._json_ready(list(data))),
+                "preview_path": preview_path,
+                "frame_path": frame_path,
+                "image_file": image_file,
+            }
+        if len(item) == 2:
+            query, data = item
+            sql_text = self._sql_text(query)
+            if not sql_text:
+                return None
+            return {
+                "v": 1,
+                "kind": "sql",
+                "adapter": self.event_name,
+                "shape": "simple",
+                "sql": sql_text,
+                "params": self._redact_params(self._json_ready(list(data))),
+            }
+        return None
+
+    def _redact_params(self, params: Any) -> Any:
+        if not isinstance(params, list):
+            return params
+        from evileye.utils.camera_event_label import media_url_without_credentials
+
+        redacted = []
+        for value in params:
+            if isinstance(value, str) and "://" in value and "@" in value:
+                redacted.append(media_url_without_credentials(value))
+            else:
+                redacted.append(value)
+        return redacted
+
+    def _queue_item_from_spool_record(self, record: dict[str, Any]):
+        params = self._restore_json(record.get("params") or [])
+        if record.get("shape") == "simple":
+            return (record.get("sql"), params)
+        image = None
+        if record.get("image_file"):
+            image = self._load_spool_image(str(record["image_file"]))
+        return (
+            record.get("query_type"),
+            record.get("sql"),
+            params,
+            record.get("preview_path"),
+            record.get("frame_path"),
+            image,
+        )
 
     @abstractmethod
     def _process_queue_item(self, item: Any) -> None:

@@ -68,7 +68,6 @@ class VideoThread(QThread):
         self.run_flag = False
         self.show_debug_info = show_debug_info
         self.fps = fps
-        self.thread_num = VideoThread.thread_counter  # Номер потока для определения, какой label обновлять
         self.det_params = None
         self.text_config = text_config or {}  # Text configuration for rendering
         self.visualizer_ref = None
