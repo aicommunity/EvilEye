@@ -48,7 +48,8 @@ class _Database:
         (
             DatabaseAdapterFieldOfViewEvents,
             {},
-            (QueryType.INSERT, sql.SQL("INSERT"), [], None),
+            # Stage 2 (TD-PS-D8): fov/schedule-alarm queue items carry frame paths.
+            (QueryType.INSERT, sql.SQL("INSERT"), [], None, None, None),
         ),
         (
             DatabaseAdapterObjects,

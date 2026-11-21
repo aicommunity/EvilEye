@@ -14,6 +14,8 @@ _WRITE_LOCK = threading.RLock()
 
 
 class JsonAdapterAlarmEvents(DatabaseAdapterBase):
+    storage_backend = "json"  # journal adapter, never spills to pg_spool
+
     def __init__(self, db_controller=None):
         self.image_dir = "EvilEyeData"
         self.base_dir = None

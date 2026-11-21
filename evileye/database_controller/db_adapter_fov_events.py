@@ -28,17 +28,22 @@ class DatabaseAdapterFieldOfViewEvents(DatabaseAdapterBase):
         self.event_name = self.params.get('event_name', 'ScheduleAlarmEvent')
 
     def _insert_impl(self, event):
-        fields, data, preview_path = self._prepare_for_saving(event)
+        fields, data, preview_path, frame_path = self._prepare_for_saving(event)
         query_type = QueryType.INSERT
         insert_query = sql.SQL("INSERT INTO {} ({}) VALUES ({})").format(
             sql.Identifier(self.table_name),
             sql.SQL(",").join(map(sql.Identifier, fields)),
             sql.SQL(', ').join(sql.Placeholder() * len(fields))
         )
-        self.queue_in.put((query_type, insert_query, data, preview_path))
+        self.queue_in.put(
+            (query_type, insert_query, data, preview_path, frame_path, event.img_detected)
+        )
+        # Drop the event-owned frame copy after queueing; the queue holds the
+        # reference for IO (same policy as the zone adapter).
+        event.img_detected = None
 
     def _update_impl(self, event):
-        fields, data, preview_path = self._prepare_for_updating(event)
+        fields, data, preview_path, frame_path = self._prepare_for_updating(event)
 
         query_type = QueryType.UPDATE
         data.append(event.event_id)
@@ -49,15 +54,28 @@ class DatabaseAdapterFieldOfViewEvents(DatabaseAdapterBase):
                 sql.Composed([sql.Identifier(field), sql.SQL(" = "), sql.Placeholder()]) for field in fields),
             selected=sql.Placeholder(),
             fields=sql.SQL(",").join(map(sql.Identifier, fields)))
-        self.queue_in.put((query_type, update_query, data, preview_path))
+        self.queue_in.put(
+            (query_type, update_query, data, preview_path, frame_path, event.img_lost)
+        )
+        event.img_lost = None
 
     def _process_queue_item(self, item):
-        query_type, query_string, data, preview_path = item
+        query_type, query_string, data, preview_path, frame_path, image = item
 
         if query_string is None:
             return
 
         self.db_controller.query_once(query_string, data)
+
+        # TD-PS-D8: persist the event frame/preview when the event carried one.
+        if image is not None and getattr(image, "image", None) is not None:
+            try:
+                self._save_image(preview_path, frame_path, image, None)
+            except Exception as exc:
+                self._record_failure(
+                    'save schedule alarm images', exc, category='terminal_write'
+                )
+
         if query_type == QueryType.INSERT:
             threading_events.notify(EventType.NEW_EVENT)
         elif query_type == QueryType.UPDATE:
@@ -82,7 +100,8 @@ class DatabaseAdapterFieldOfViewEvents(DatabaseAdapterBase):
                                                                       time_lost=event.time_lost)
 
         return (list(fields_for_updating.keys()), list(fields_for_updating.values()),
-                fields_for_updating['lost_preview_path'])
+                fields_for_updating['lost_preview_path'],
+                self._get_img_path('frame', 'lost', src_name, time_lost=event.time_lost))
 
     def _prepare_for_saving(self, event) -> tuple[list, list, str]:
         fields_for_saving = {'event_id': event.event_id,
@@ -108,7 +127,9 @@ class DatabaseAdapterFieldOfViewEvents(DatabaseAdapterBase):
             fields_for_saving['lost_preview_path'] = self._get_img_path('preview', 'lost', src_name,
                                                                         time_lost=event.time_lost)
         return (list(fields_for_saving.keys()), list(fields_for_saving.values()),
-                fields_for_saving['preview_path'])
+                fields_for_saving['preview_path'],
+                self._get_img_path('frame', 'detected', src_name,
+                                   time_stamp=event.time_obj_detected))
 
     def _get_img_path(self, image_type, obj_event_type, src_name, time_stamp=None, time_lost=None):
         save_dir = self.db_params['image_dir']
