@@ -58,6 +58,18 @@ def run_config(config_path: str, gui: bool = True, autoclose: bool = False) -> i
     """
     ensure_spawn_start_method()
     logger = get_module_logger("run_config")
+    # TD-AUD-T8: this process is the long-lived pipeline child - record its
+    # pid for the watchdog and clear the record on exit (best effort).
+    try:
+        import atexit
+        import os as _os
+
+        from evileye.watchdog_native import clear_pid_record, write_pid_record
+
+        write_pid_record(config_path, child_pid=_os.getpid())
+        atexit.register(clear_pid_record, config_path)
+    except Exception:
+        pass
 
     # Configs outside the site's configs/ directory cause a cwd change below.
     # Pin the launch directory first so credentials and data paths stay stable.

@@ -266,12 +266,73 @@ def cmdline_matches_target(cmdline: list[str], config: str, *, kind: str) -> boo
     return any(_arg_matches_config(arg, config) for arg in args)
 
 
+def pid_record_path(root: Optional[Path], config: str) -> Path:
+    """TD-AUD-T8: PID record for one pipeline config, under <site>/monitor/pids."""
+    from evileye.site_runtime_guard import config_basename
+
+    return _ensure_monitor(site_root(root)) / "pids" / f"{config_basename(config)}.json"
+
+
+def write_pid_record(config: str, *, cli_pid: int = 0, child_pid: int = 0,
+                     root: Optional[Path] = None) -> None:
+    """Persist the PIDs of a spawned pipeline (best effort, never raises)."""
+    try:
+        import json
+        import time as _time
+
+        path = pid_record_path(root, config)
+        record = {"config": config, "cli": int(cli_pid or 0), "child": int(child_pid or 0),
+                  "updated": _time.time()}
+        try:
+            existing = json.loads(path.read_text(encoding="utf-8"))
+            if isinstance(existing, dict):
+                record["cli"] = record["cli"] or int(existing.get("cli") or 0)
+                record["child"] = record["child"] or int(existing.get("child") or 0)
+        except Exception:
+            pass
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(json.dumps(record), encoding="utf-8")
+    except Exception:
+        pass
+
+
+def read_pid_record(config: str, root: Optional[Path] = None) -> dict[str, int]:
+    """Return a live PID record {cli, child} or empty dict when unusable."""
+    import json
+
+    try:
+        record = json.loads(pid_record_path(root, config).read_text(encoding="utf-8"))
+    except Exception:
+        return {}
+    if not isinstance(record, dict):
+        return {}
+    result: dict[str, int] = {}
+    for key in ("cli", "child"):
+        pid = int(record.get(key) or 0)
+        if pid > 0 and pid_exists(pid):
+            result[key] = pid
+    return result if result else {}
+
+
+def clear_pid_record(config: str, root: Optional[Path] = None) -> None:
+    try:
+        pid_record_path(root, config).unlink(missing_ok=True)
+    except Exception:
+        pass
+
+
 def find_cli_and_child(config: str, root: Optional[Path] = None) -> tuple[Optional[int], Optional[int]]:
     """Match the config as its own argv element.
 
     More than one match is ambiguous: return no PID rather than killing an
     arbitrary process. ``find_cli_and_child.last_ambiguous`` records that case.
     """
+    # TD-AUD-T8: prefer the PID record written at spawn time - exact PIDs,
+    # no argv ambiguity. The argv scan below remains the fallback.
+    record = read_pid_record(config, root=root)
+    if record:
+        find_cli_and_child.last_ambiguous = False
+        return record.get("cli"), record.get("child")
     find_cli_and_child.last_ambiguous = False
     if psutil is None:
         return None, None
