@@ -2411,6 +2411,24 @@ class Controller(ControllerProcessingMixin):
 
         detectors = self._get_pipeline_detectors()
 
+        # TD-PS-D1: with several detectors (fanout) every detector must expose
+        # its model class mapping. Without it the raw class ids cannot be
+        # remapped into the global class space and events/journals would
+        # silently mix class ids from different models.
+        if len(detectors) > 1:
+            unmapped = [
+                str(getattr(d, "module_id", None) or d.__class__.__name__)
+                for d in detectors
+                if not self._get_detector_class_mapping(d)
+            ]
+            if unmapped:
+                raise RuntimeError(
+                    "Multi-detector configuration rejected: detector(s) "
+                    f"{', '.join(unmapped)} do not provide a model class mapping "
+                    "(model_class_mapping capability / get_model_class_mapping()); "
+                    "their class ids cannot be remapped to the global class space"
+                )
+
         # Collect class mappings from all detectors using ClassManager
         for detector in detectors:
             mapping = self._get_detector_class_mapping(detector)
