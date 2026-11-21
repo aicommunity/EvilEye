@@ -9,6 +9,8 @@ from .image_storage_service import ImageStorageService
 
 
 class JsonAdapterAttributeEvents(DatabaseAdapterBase):
+    storage_backend = "json"  # journal adapter, never spills to pg_spool
+
     """Adapter that persists attribute events to JSON files for JSON journal."""
 
     def __init__(self, db_controller=None):

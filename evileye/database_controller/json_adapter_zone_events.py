@@ -8,6 +8,8 @@ from .image_storage_service import ImageStorageService
 
 
 class JsonAdapterZoneEvents(DatabaseAdapterBase):
+    storage_backend = "json"  # journal adapter, never spills to pg_spool
+
     """Persist Zone events to JSON files and save images (original frames)."""
 
     def __init__(self, db_controller=None):

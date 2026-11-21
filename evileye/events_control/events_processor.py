@@ -58,12 +58,16 @@ class EventsProcessor(EvilEyeBase):
             if canonical in self.events_adapters and legacy not in self.events_adapters:
                 self.events_adapters[legacy] = self.events_adapters[canonical]
 
-        # For table names, use first adapter's table name (DB adapters only)
+        # For table names, use first adapter's table name (DB adapters only).
+        # Filter by storage_backend: hasattr(get_table_name) also matched JSON
+        # adapters, so *_json names leaked into events_tables and could break
+        # the MAX(event_id) UNION (audit 2026-11, D2).
         self.events_tables = {}
         for adapter in self.db_adapters:
+            if getattr(adapter, 'storage_backend', 'postgres') != 'postgres':
+                continue
             event_name = adapter.get_event_name()
             if event_name not in self.events_tables:
-                # Only store table name if adapter has it (DB adapters)
                 if hasattr(adapter, 'get_table_name'):
                     try:
                         table_name = adapter.get_table_name()
@@ -103,11 +107,23 @@ class EventsProcessor(EvilEyeBase):
             return 0
 
         # Delegate DB-specific aggregation to the DB layer (preferred).
+        next_id = None
         try:
             if hasattr(self.db_controller, "get_next_event_id"):
-                return self.db_controller.get_next_event_id(table_names)
-        except Exception:
-            pass
+                next_id = self.db_controller.get_next_event_id(table_names)
+        except Exception as exc:
+            self.logger.error("get_last_id failed: %s", exc)
+        if next_id is not None:
+            return next_id
+        # The DB layer could not read ANY table (outage / missing tables).
+        # Restarting from 0 would collide with existing event_id PKs (audit
+        # D1); fall back to a monotonic, collision-free floor instead.
+        fallback = int(time.time())
+        self._mark_degraded(
+            f"get_last_id could not read event tables; event ids continue "
+            f"from epoch floor {fallback}"
+        )
+        return fallback
 
         # Fallback: legacy behavior (keep for safety)
         subqueries = []

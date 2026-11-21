@@ -18,13 +18,10 @@ Last reviewed: full project audit 2026-11 (see audit/AUDIT_2026-11.md), fix stag
 | TD-PS-D5 | Merged remote branches (`autorefactor_*`, `*-hotfix`, `experiments`; 45+ on origin) are not cleaned up | git remote | plugin_support audit | Needs owner decision | P3 |
 | TD-PS-D6 | Open acceptance criteria: target FPS/p95/loss budget (the old-vs-new comparison, browser alarm smoke and RTSP disconnect check were run on 2026-10-19, see docs/RUNTIME_VERIFICATION_2026-10-19.md) | docs/PLUGIN_MIGRATION_COMPLETION_PLAN.md | plugin_support audit | Before release | P1 |
 | TD-PS-D7 | Frame loss vs `main` (82.9% vs 92.5%): all four root causes fixed in stage 1 (crops-only IPC, MpPendingReporter + backlog stats, SHM segment pool, continuous output drainer + queue_size 16 default); A/B re-measurement on the 2688x1520 clip still pending (acceptance criterion: tracker >= 92%, ties into TD-PS-D6) | core/plugin_runtime, core/processor_step | live comparison 2026-10-19 | Verification pending | P1 |
-| TD-PS-D8 | Schedule-alarm events carry no frames, so the journal preview column is empty | events_detectors | live alarm check 2026-10-19 | Stage 2 (audit fix plan) | P3 |
+| TD-PS-D8 | ~~Schedule-alarm events carry no frames~~ Fixed in stage 2 (TD-AUD-S2-5) | events_detectors | live alarm check 2026-10-19 | Done | P3 |
 
 
 
-| TD-AUD-004 | `ConfigHistoryManager` calls non-existent `db_controller.execute_query` (7 methods) and queries non-existent `jobs` columns | database/config_history_manager.py | audit 2026-11 | Stage 2 (audit fix plan) | P1 |
-| TD-AUD-005 | Events are lost permanently when PG is unavailable (no spool/replay; full batch dropped on queue.Full) | database_controller, events_control | audit 2026-11 | Stage 2 (audit fix plan) | P1 |
-| TD-AUD-006 | `event_id = MAX+1` allocation races across instances; `get_next_event_id` silently returns 0 on error → PK conflicts | database_controller_pg.py, events_processor.py | audit 2026-11 | Stage 2 (audit fix plan) | P2 |
 | TD-AUD-007 | f-string SQL in `journal_data_source_db.py` (source_id interpolated unescaped) | visualization_modules/journal_data_source_db.py | audit 2026-11 | Stage 3 (audit fix plan) | P2 |
 | TD-AUD-008 | mypy strict declared in pyproject but not enforced anywhere; integration/e2e tests never run in CI | .github/workflows/ci.yml | audit 2026-11 | Stage 4 (audit fix plan) | P1 |
 | TD-AUD-009 | ~2670 lines of dead GUI journal code (events_journal.py, handler_journal_view.py, objects_journal_json.py + loaders) | visualization_modules | audit 2026-11 | Stage 5 (audit fix plan) | P2 |
@@ -58,6 +55,12 @@ Last reviewed: full project audit 2026-11 (see audit/AUDIT_2026-11.md), fix stag
 | TD-AUD-S1-5 | audit fix stage 1 (perf/audit-s1) | Default module queue_size 8→16 (EVILEYE_MODULE_QUEUE_SIZE); MpControl queue-swap race fixed with _queues_lock + snapshots (TD-AUD-001) |
 | TD-AUD-S1-6 | audit fix stage 1 (perf/audit-s1) | GStreamer: single frame_id increment; get_frames_impl no longer returns the same physical frame twice (freshness key includes connection_generation) (TD-AUD-003) |
 | TD-AUD-S1-7 | audit fix stage 1 (perf/audit-s1) | Processor stop loops aggregate errors and keep stopping remaining processors instead of aborting on the first failure (TD-AUD-002) |
+| TD-AUD-S2-1 | audit fix stage 2 (fix/audit-s2) | ConfigHistoryManager: execute_query -> query (9 call sites); job statistics rewritten against the real jobs columns (status/frames_processed never existed) (TD-AUD-004) |
+| TD-AUD-S2-2 | audit fix stage 2 (fix/audit-s2) | pg_spool: adapter writes that exhaust the retry budget (and events accepted while PG is disconnected) are spooled under <image_dir>/pg_spool and replayed on recovery (200 MB budget, oldest dropped first) (TD-AUD-005) |
+| TD-AUD-S2-3 | audit fix stage 2 (fix/audit-s2) | get_next_event_id queries tables individually (one broken table no longer resets ids to 0); get_last_id falls back to an epoch floor instead of 0 (no PK collisions); events_tables filters adapters by storage_backend (TD-AUD-006) |
+| TD-AUD-S2-4 | audit fix stage 2 (fix/audit-s2) | Objects writer thread: retries OperationalError via execute_with_retry and logs losses at error level (was: silent drop at info) |
+| TD-AUD-S2-5 | audit fix stage 2 (fix/audit-s2) | TD-PS-D8 closed: ScheduleAlarmEvent carries detected/lost frame snapshots; PG and JSON adapters persist previews/frames |
+| TD-AUD-S2-6 | audit fix stage 2 (fix/audit-s2) | DB retention: purge_old_records + daily DatabaseService loop behind database.retention_days (default off); EvilEyeData file retention already existed via storage_monitor |
 | TD-002 | phase 0 | Removed duplicate `DetectionThreadFactory` in `detection_thread_factory.py` |
 | TD-005 | phase 0 | Doc/CLI gaps D1–D6, D8–D10 addressed in README, Makefile, MULTIPROCESSING, launch/process |
 | TD-006 | phase 0 | `tool.coverage.run.source` uses `evileye` package prefix |
@@ -174,3 +177,7 @@ before this can be called finished).
 | TD-GUI-SPLIT | Full `main_window.py` decomposition — needs dedicated GUI regression suite |
 | TD-YOLO-SINGLETON | Shared YOLO model cache — forbidden (thread/process safety) |
 | TD-018 | `capture/` materialize_frame in gstreamer path — low ROI; SHM owned by capture callbacks |
+
+## Remaining known items (post stage-2)
+
+- JSON event journal rewrites the whole daily file per event (O(n^2) on heavy days) - switch to NDJSON append with readers support (deferred; needs a coordinated reader update).

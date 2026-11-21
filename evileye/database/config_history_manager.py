@@ -501,7 +501,7 @@ class ConfigHistoryManager:
                 ORDER BY project_id
             """
 
-            result = self.db_controller.execute_query(query)
+            result = self.db_controller.query(query)
 
             projects = []
             for row in result:
@@ -546,7 +546,7 @@ class ConfigHistoryManager:
 
             # Генерируем новый project_id
             query = "SELECT COALESCE(MAX(project_id), 0) + 1 FROM jobs"
-            result = self.db_controller.execute_query(query)
+            result = self.db_controller.query(query)
             new_project_id = result[0][0] if result else 1
 
             # Если есть отдельная таблица projects, создаем запись там
@@ -584,7 +584,7 @@ class ConfigHistoryManager:
 
             # Проверяем существование проекта
             query = "SELECT COUNT(*) FROM jobs WHERE project_id = %s"
-            result = self.db_controller.execute_query(query, (project_id,))
+            result = self.db_controller.query(query, (project_id,))
             project_exists = result[0][0] > 0 if result else False
 
             if not project_exists:
@@ -626,7 +626,7 @@ class ConfigHistoryManager:
 
             # Проверяем существование проекта
             query = "SELECT COUNT(*) FROM jobs WHERE project_id = %s"
-            result = self.db_controller.execute_query(query, (project_id,))
+            result = self.db_controller.query(query, (project_id,))
             job_count = result[0][0] if result else 0
 
             if job_count == 0:
@@ -637,7 +637,7 @@ class ConfigHistoryManager:
 
             # Обновляем все задачи проекта, устанавливая project_id = NULL
             update_query = "UPDATE jobs SET project_id = NULL WHERE project_id = %s"
-            self.db_controller.execute_query(update_query, (project_id,))
+            self.db_controller.query(update_query, (project_id,))
 
             self.logger.info(f"Deleted project {project_id}, updated {job_count} jobs")
 
@@ -679,7 +679,7 @@ class ConfigHistoryManager:
                 GROUP BY project_id
             """
 
-            result = self.db_controller.execute_query(query, (project_id,))
+            result = self.db_controller.query(query, (project_id,))
 
             if not result:
                 return None
@@ -714,12 +714,14 @@ class ConfigHistoryManager:
             self._ensure_connected()
 
             # Базовая статистика
+            # jobs has no status column (audit A4): derive job state from
+            # finish_time / is_terminated.
             base_query = """
                 SELECT 
                     COUNT(*) as total_jobs,
-                    COUNT(CASE WHEN status = 'Running' THEN 1 END) as running_jobs,
-                    COUNT(CASE WHEN status = 'Stopped' THEN 1 END) as completed_jobs,
-                    COUNT(CASE WHEN status = 'Error' THEN 1 END) as error_jobs,
+                    COUNT(CASE WHEN finish_time IS NULL AND NOT is_terminated THEN 1 END) as running_jobs,
+                    COUNT(CASE WHEN finish_time IS NOT NULL AND NOT is_terminated THEN 1 END) as completed_jobs,
+                    COUNT(CASE WHEN is_terminated THEN 1 END) as error_jobs,
                     SUM(EXTRACT(EPOCH FROM (finish_time - creation_time))/3600) as total_duration,
                     AVG(EXTRACT(EPOCH FROM (finish_time - creation_time))/3600) as avg_duration,
                     MIN(EXTRACT(EPOCH FROM (finish_time - creation_time))/3600) as min_duration,
@@ -730,7 +732,7 @@ class ConfigHistoryManager:
                 WHERE project_id = %s
             """
 
-            result = self.db_controller.execute_query(base_query, (project_id,))
+            result = self.db_controller.query(base_query, (project_id,))
 
             if not result:
                 return None
@@ -751,17 +753,20 @@ class ConfigHistoryManager:
 
             # Детальная статистика
             if detailed:
+                # jobs carries no per-run counters (frames_processed and
+                # friends never existed); last_record - first_record is the
+                # closest available volume metric (rows written to objects).
                 detailed_query = """
                     SELECT 
-                        SUM(frames_processed) as total_frames,
-                        SUM(objects_detected) as total_objects,
-                        SUM(events_detected) as total_events,
-                        AVG(frames_processed::float / NULLIF(EXTRACT(EPOCH FROM (finish_time - creation_time)), 0)) as avg_fps
+                        SUM(GREATEST(last_record - first_record, 0)) as total_frames,
+                        NULL as total_objects,
+                        NULL as total_events,
+                        AVG(GREATEST(last_record - first_record, 0)::float / NULLIF(EXTRACT(EPOCH FROM (finish_time - creation_time)), 0)) as avg_fps
                     FROM jobs 
-                    WHERE project_id = %s AND frames_processed IS NOT NULL
+                    WHERE project_id = %s AND last_record > first_record
                 """
 
-                detailed_result = self.db_controller.execute_query(detailed_query, (project_id,))
+                detailed_result = self.db_controller.query(detailed_query, (project_id,))
 
                 if detailed_result and detailed_result[0][0] is not None:
                     detailed_row = detailed_result[0]
@@ -896,15 +901,15 @@ class ConfigHistoryManager:
                     MIN(creation_time) as first_used,
                     MAX(creation_time) as last_used,
                     AVG(EXTRACT(EPOCH FROM (finish_time - creation_time))/3600) as avg_duration,
-                    SUM(frames_processed) as total_frames,
-                    SUM(objects_detected) as total_objects,
-                    SUM(events_detected) as total_events
+                    SUM(GREATEST(last_record - first_record, 0)) as total_frames,
+                    NULL as total_objects,
+                    NULL as total_events
                 FROM jobs 
                 WHERE configuration_id = %s
                 GROUP BY configuration_id
             """
 
-            result = self.db_controller.execute_query(query, (config_id,))
+            result = self.db_controller.query(query, (config_id,))
 
             if not result:
                 return None

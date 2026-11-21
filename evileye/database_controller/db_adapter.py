@@ -11,6 +11,10 @@ from abc import abstractmethod, ABC
 
 
 class DatabaseAdapterBase(EvilEyeBase, ABC):
+    # Distinguishes PostgreSQL adapters from JSON journal adapters in shared
+    # code paths (table-name collection, spooling). Audit 2026-11 (D2).
+    storage_backend: str = "postgres"
+
     def __init__(self, db_controller: DatabaseControllerPg):
         super().__init__()
         self.db_controller: DatabaseControllerPg = db_controller
@@ -37,6 +41,28 @@ class DatabaseAdapterBase(EvilEyeBase, ABC):
         self.batch_timeout: float = 0.1  # Максимальное время ожидания для формирования батча
         # Обработчик ошибок
         self.error_handler: DatabaseErrorHandler = DatabaseErrorHandler(logger=self.logger)
+        # Local spool for items that exhaust the retry budget (audit A5).
+        # Only PostgreSQL adapters spill to disk; the JSON journal is already
+        # file-based.
+        self._spool = None
+        self._spooled_items = 0
+        self._replayed_items = 0
+        self._consecutive_write_failures = 0
+
+    def _ensure_spool(self):
+        if self._spool is not None:
+            return self._spool
+        if self.storage_backend != "postgres":
+            return None
+        from .pg_spool import PgSpool
+
+        image_dir = "EvilEyeData"
+        try:
+            image_dir = str(self.db_params.get("image_dir") or image_dir)
+        except Exception:
+            pass
+        self._spool = PgSpool(image_dir, logger=self.logger)
+        return self._spool
 
     def set_params_impl(self) -> None:
         self.table_name = self.params['table_name']
@@ -137,6 +163,10 @@ class DatabaseAdapterBase(EvilEyeBase, ABC):
         # JSON адаптеры не имеют db_controller с методом is_connected(), поэтому проверяем наличие метода
         if self.db_controller and hasattr(self.db_controller, 'is_connected'):
             if not self.db_controller.is_connected():
+                # Audit A5: defer to the local spool instead of losing the
+                # event (previously: ConnectionError after 3 retries).
+                if self._spool_deferred("insert", data):
+                    return
                 exc = ConnectionError(f"Database adapter '{self.event_name}' is disconnected")
                 self._record_failure('insert', exc, category='enqueue')
                 raise exc
@@ -156,9 +186,33 @@ class DatabaseAdapterBase(EvilEyeBase, ABC):
         # JSON адаптеры не имеют db_controller с методом is_connected(), поэтому проверяем наличие метода
         if self.db_controller and hasattr(self.db_controller, 'is_connected'):
             if not self.db_controller.is_connected():
+                # Audit A5: defer to the local spool instead of losing the
+                # event update.
+                if self._spool_deferred("update", data):
+                    return
                 exc = ConnectionError(f"Database adapter '{self.event_name}' is disconnected")
                 self._record_failure('update', exc, category='enqueue')
                 raise exc
+
+    def _spool_deferred(self, operation: str, event: Any) -> bool:
+        """Spool an event accepted while the database is disconnected."""
+        spool = self._ensure_spool()
+        if spool is None:
+            return False
+        if spool.append(("deferred", operation, event)):
+            self._spooled_items += 1
+            self.degraded = True
+            self.last_error = (
+                f"{operation} deferred to pg_spool (database disconnected); "
+                f"spooled={self._spooled_items}"
+            )
+            self.logger.warning(
+                "Database adapter '%s' %s deferred to spool (database disconnected)",
+                self.event_name,
+                operation,
+            )
+            return True
+        return False
         # Keep updates under the same acceptance boundary as inserts.
         with self._lifecycle_lock:
             if self._closing:
@@ -217,14 +271,19 @@ class DatabaseAdapterBase(EvilEyeBase, ABC):
             "shutdown_timeouts": self.shutdown_timeouts,
             "degraded": self.degraded,
             "last_error": self.last_error,
+            "spooled_items": self._spooled_items,
+            "replayed_items": self._replayed_items,
         }
 
     def _execute_query(self) -> None:
-        """Retry transient writes and report every item that cannot be saved."""
+        """Retry transient writes; spool items that cannot be saved (audit A5)."""
         while self.run_flag or not self.queue_in.empty():
             try:
                 item = self.queue_in.get(timeout=0.1)
             except Empty:
+                if self.run_flag and self._consecutive_write_failures:
+                    # Idle while degraded: opportunistically drain the spool.
+                    self._try_replay_spool()
                 continue
             _, error = self.error_handler.execute_with_retry(
                 lambda: self._process_queue_item(item),
@@ -234,8 +293,52 @@ class DatabaseAdapterBase(EvilEyeBase, ABC):
             )
             if error is not None:
                 self._record_failure('queued write', error, category='terminal_write')
+                self._consecutive_write_failures += 1
+                spool = self._ensure_spool()
+                if spool is not None and spool.append(item):
+                    self._spooled_items += 1
             else:
                 self.processed_items += 1
+                if self._consecutive_write_failures:
+                    # Connection recovered: push spooled items back through the
+                    # normal write path before handling new ones.
+                    self._consecutive_write_failures = 0
+                    self._try_replay_spool()
+
+    def _try_replay_spool(self) -> None:
+        spool = self._ensure_spool()
+        if spool is None:
+            return
+        try:
+            pending = spool.pending_count()
+        except Exception:
+            return
+        if not pending:
+            return
+        replayed = spool.replay(self._replay_spool_item)
+        if replayed:
+            self._replayed_items += replayed
+            self.processed_items += replayed
+            self.logger.info(
+                "Database adapter '%s' replayed %d spooled items (%d pending)",
+                self.event_name,
+                replayed,
+                spool.pending_count(),
+            )
+
+    def _replay_spool_item(self, item: Any) -> None:
+        if (
+            isinstance(item, tuple)
+            and len(item) == 3
+            and item[0] == "deferred"
+        ):
+            operation, event = item[1], item[2]
+            if operation == "insert":
+                self._insert_impl(event)
+            else:
+                self._update_impl(event)
+            return
+        self._process_queue_item(item)
 
     @abstractmethod
     def _process_queue_item(self, item: Any) -> None:

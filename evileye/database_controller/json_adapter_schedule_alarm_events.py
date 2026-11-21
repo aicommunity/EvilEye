@@ -17,6 +17,8 @@ from .json_event_io import append_json_record
 
 
 class JsonAdapterScheduleAlarmEvents(DatabaseAdapterBase):
+    storage_backend = "json"  # journal adapter, never spills to pg_spool
+
     """Persist schedule alarm events to JSON files and save images."""
 
     def __init__(self, db_controller=None):
