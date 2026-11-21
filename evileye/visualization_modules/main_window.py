@@ -1316,10 +1316,16 @@ class MainWindow(QMainWindow):
 
     def resizeEvent(self, event: QtGui.QResizeEvent) -> None:
         super().resizeEvent(event)
+        if self.controller is None:
+            # The window can be shown/resized before set_controller() connects
+            # the pipeline (standalone preview, tests).
+            return
         self.controller.set_current_main_widget_size(self.geometry().width() - self.toolbar_width,
                                                      self.geometry().height() - self.menu_height)
 
     def check_controller_status(self):
+        if self.controller is None:
+            return
         if not self.controller.is_running():
             self.close()
 

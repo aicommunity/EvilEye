@@ -10,6 +10,7 @@ from typing import Any, Dict, Optional, Type
 
 from .gpu_errors import (
     CudaOutOfMemoryError,
+    MP_EXIT_CRASH,
     MP_EXIT_CUDA_OOM,
     cuda_memory_snapshot,
     format_cuda_oom_message,
@@ -153,7 +154,9 @@ class MpWorker(ABC):
                 self._handle_fatal_worker_error(e, phase="init")
             if self.logger:
                 self.logger.error(f"Worker init failed: {e}", exc_info=True)
-            return
+            # Exit with a crash code so the parent can tell a failed init from
+            # a clean shutdown (exit 0 used to mask worker crashes).
+            sys.exit(MP_EXIT_CRASH)
 
         if self.logger:
             self.logger.info(f"Process {mp.current_process().name} ready")
@@ -215,7 +218,9 @@ class MpWorker(ABC):
                         f"Error in process {mp.current_process().name}: {e}",
                         exc_info=True,
                     )
-                break
+                # Crash (not a clean stop): propagate a non-zero exit code so the
+                # health monitor and restart accounting see a failure.
+                sys.exit(MP_EXIT_CRASH)
 
         try:
             self.cleanup()

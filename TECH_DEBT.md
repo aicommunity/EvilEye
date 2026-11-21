@@ -1,6 +1,6 @@
 # Technical debt ledger
 
-Last reviewed: plugin_support audit (stages 0-4), 2026-10-19
+Last reviewed: full project audit 2026-11 (see audit/AUDIT_2026-11.md), fix stages 0-5
 
 ## Open
 
@@ -12,13 +12,28 @@ Last reviewed: plugin_support audit (stages 0-4), 2026-10-19
 | TD-DOC-001b | RoiFeeder adopts DualModeProcessor (reference) | attributes_detection/roi_feeder.py | audit 2026-09-26 | Done | P3 |
 | TD-DOC-002 | `validate_config` JSON `stage_kind` (S6) | scripts/validate_config.py | doc audit | Backlog | P3 |
 | TD-PS-D1 | Detector in a multi-detector fanout without `model_class_mapping` is not remapped and does not fail start (B5 follow-up) | pipeline / controller | plugin_support audit | Backlog | P2 |
-| TD-PS-D2 | Shared-memory descriptor is re-allocated per `process` stage (~7-8 ms per 1080p stage); needs a change marker on `Frame.image` before it can be reused (C5) | core/plugin_runtime | plugin_support audit | Backlog | P2 |
+| TD-PS-D2 | Shared-memory descriptor is re-allocated per `process` stage (~7-8 ms per 1080p stage); needs a change marker on `Frame.image` before it can be reused (C5) | core/plugin_runtime | plugin_support audit | Stage 1 (audit fix plan) | P2 |
 | TD-PS-D3 | Legacy MP detector path is still wired in (`DetectionThreadYoloMp`, `object_detection_yolo_mp.py`, `detection_thread_factory.py`, `mp_queue_config.py`, `validate_config.py`, MP tests). `LegacyProcessorModuleAdapter` has no built-in consumer (only `legacy_processor_protocol` in `base_class.py` for third-party plugins and tests): remove it after a deprecation notice in PLUGINS.md | object_detector, core/plugin_runtime/legacy.py | plugin_support audit | After deprecation window | P2 |
 | TD-PS-D4 | Ruff: 805 `F401` left (all non-stdlib: many may register modules or Qt widgets, so they need a manual review per file), 0 `B904`; 43 known `F821` in `scripts/ruff_baseline.json` (optional Qt imports, dialogs). Stdlib `F401` and all `B904` were fixed | repo-wide | plugin_support audit | Gradual | P3 |
 | TD-PS-D5 | Merged remote branches (`autorefactor_*`, `*-hotfix`, `experiments`; 45+ on origin) are not cleaned up | git remote | plugin_support audit | Needs owner decision | P3 |
 | TD-PS-D6 | Open acceptance criteria: target FPS/p95/loss budget (the old-vs-new comparison, browser alarm smoke and RTSP disconnect check were run on 2026-10-19, see docs/RUNTIME_VERIFICATION_2026-10-19.md) | docs/PLUGIN_MIGRATION_COMPLETION_PLAN.md | plugin_support audit | Before release | P1 |
-| TD-PS-D7 | Frame loss vs `main`: on the same 2688x1520 clip and config about 10 pp fewer frames reach the tracker output (82.9% vs 92.5%); cause not established. Details: see "TD-PS-D7" below | core/plugin_runtime, core/processor_step | live comparison 2026-10-19 | Next | P1 |
-| TD-PS-D8 | Schedule-alarm events carry no frames, so the journal preview column is empty | events_detectors | live alarm check 2026-10-19 | Backlog | P3 |
+| TD-PS-D7 | Frame loss vs `main`: on the same 2688x1520 clip and config about 10 pp fewer frames reach the tracker output (82.9% vs 92.5%). Root causes identified in audit 2026-11 (audit/AUDIT_2026-11.md §2.1 A2): full-frame SHM copy per stage (TD-PS-D2), crops-only IPC regression in the attribute classifier, blind backpressure (MpPendingReporter not implemented in plugin adapters), tick-bound drain with queue_size=8 | core/plugin_runtime, core/processor_step | live comparison 2026-10-19 | Stage 1 (audit fix plan) | P1 |
+| TD-PS-D8 | Schedule-alarm events carry no frames, so the journal preview column is empty | events_detectors | live alarm check 2026-10-19 | Stage 2 (audit fix plan) | P3 |
+| TD-AUD-001 | MpControl race: `_swap_pool_processes_and_queues` swaps queues/processes without a lock while put/get/is_operational run in other threads | core/mp_control.py | audit 2026-11 | Stage 1 (audit fix plan) | P1 |
+| TD-AUD-002 | `stop()` of one processor aborts the stop loop for the remaining processors (raise inside the loop) → half-stopped pipelines holding RTSP | core/pipeline_processors.py, core/processor_base.py | audit 2026-11 | Stage 1 (audit fix plan) | P2 |
+| TD-AUD-003 | GStreamer capture returns duplicate frame_ids (no freshness check in `get_frames_impl`) and increments `frame_id_counter` twice per frame | capture/gstreamer_capture_frames.py | audit 2026-11 | Stage 1 (audit fix plan) | P2 |
+| TD-AUD-004 | `ConfigHistoryManager` calls non-existent `db_controller.execute_query` (7 methods) and queries non-existent `jobs` columns | database/config_history_manager.py | audit 2026-11 | Stage 2 (audit fix plan) | P1 |
+| TD-AUD-005 | Events are lost permanently when PG is unavailable (no spool/replay; full batch dropped on queue.Full) | database_controller, events_control | audit 2026-11 | Stage 2 (audit fix plan) | P1 |
+| TD-AUD-006 | `event_id = MAX+1` allocation races across instances; `get_next_event_id` silently returns 0 on error → PK conflicts | database_controller_pg.py, events_processor.py | audit 2026-11 | Stage 2 (audit fix plan) | P2 |
+| TD-AUD-007 | f-string SQL in `journal_data_source_db.py` (source_id interpolated unescaped) | visualization_modules/journal_data_source_db.py | audit 2026-11 | Stage 3 (audit fix plan) | P2 |
+| TD-AUD-008 | mypy strict declared in pyproject but not enforced anywhere; integration/e2e tests never run in CI | .github/workflows/ci.yml | audit 2026-11 | Stage 4 (audit fix plan) | P1 |
+| TD-AUD-009 | ~2670 lines of dead GUI journal code (events_journal.py, handler_journal_view.py, objects_journal_json.py + loaders) | visualization_modules | audit 2026-11 | Stage 5 (audit fix plan) | P2 |
+| TD-AUD-010 | `VideoThread.thread_counter` class counter breaks frame routing after visualizer re-init | visualization_modules/video_thread.py | audit 2026-11 | Stage 5 (audit fix plan) | P2 |
+| TD-AUD-011 | GUI journals fetch data with synchronous psycopg2 in a QTimer slot (UI freezes); regression vs legacy QThread loader | visualization_modules/unified_events_journal.py | audit 2026-11 | Stage 5 (audit fix plan) | P2 |
+| TD-AUD-012 | Controller is a 2731-line god object (~60 fields in `__init__`, hardcoded COCO list) | controller/controller.py | audit 2026-11 | Stage 5 (audit fix plan) | P2 |
+| TD-AUD-013 | Pre-commit runs the full test suite; `make test` diverges from CI; no pytest-xdist/coverage gate | .pre-commit-config.yaml, Makefile | audit 2026-11 | Stage 4 (audit fix plan) | P2 |
+| TD-AUD-014 | Docker: root containers, import-based HEALTHCHECK, postgres port published externally with default password | docker/ | audit 2026-11 | Stage 4 (audit fix plan) | P2 |
+| TD-AUD-015 | Triple dependency management (pyproject + requirements.txt mirror + docker/install_pypi_deps.py) and shadow entry-point fixer | packaging | audit 2026-11 | Stage 4 (audit fix plan) | P2 |
 
 ## In progress
 
@@ -29,6 +44,13 @@ Last reviewed: plugin_support audit (stages 0-4), 2026-10-19
 
 | ID | Closed in phase | Notes |
 |----|-----------------|-------|
+| TD-AUD-S0-1 | audit fix stage 0 (fix/audit-s0) | Bootstrap admin password no longer logged; stored once in a 0600 note next to credentials.json, removed after first password change; `must_change_password` enforced by AuthGuardMiddleware at the API level |
+| TD-AUD-S0-2 | audit fix stage 0 (fix/audit-s0) | CSRF origin check covers all non-GET `/api/v1/*` (was admin-only); internal token compared with `hmac.compare_digest` in ProtectionMiddleware; `/ready` reduced to `{"status":"ok"}`, details moved to protected `/api/v1/system/readiness` (runtime:view) |
+| TD-AUD-S0-3 | audit fix stage 0 (fix/audit-s0) | Double `_record_input_drop()` removed (frame-drop counters were inflated ~2x during TD-PS-D7 measurements) |
+| TD-AUD-S0-4 | audit fix stage 0 (fix/audit-s0) | MpWorker exits with `MP_EXIT_CRASH=3` on non-CUDA init/loop failures instead of clean 0, so the health monitor sees crashes |
+| TD-AUD-S0-5 | audit fix stage 0 (fix/audit-s0) | `CameraEvent.__eq__` compares `other.timestamp`; single `pickle.loads` for worker event output |
+| TD-AUD-S0-6 | audit fix stage 0 (fix/audit-s0) | MainWindow None-guards for `controller` in resizeEvent/check_controller_status; dead `api/routes/events.py` removed; stale `visualization.spec` and Py3.9 `__pycache__` legacy dirs removed |
+| TD-AUD-S0-7 | audit fix stage 0 (fix/audit-s0) | gitleaks secret-scanning job added to CI (full history) |
 | TD-002 | phase 0 | Removed duplicate `DetectionThreadFactory` in `detection_thread_factory.py` |
 | TD-005 | phase 0 | Doc/CLI gaps D1–D6, D8–D10 addressed in README, Makefile, MULTIPROCESSING, launch/process |
 | TD-006 | phase 0 | `tool.coverage.run.source` uses `evileye` package prefix |

@@ -800,8 +800,9 @@ class EventDetectorModuleAdapter(_HealthMixin, EvilEyeBase):
                 )
                 continue
             try:
-                events.extend(pickle.loads(envelope[2]))
-                self._events_received += len(pickle.loads(envelope[2]))
+                payload = pickle.loads(envelope[2])
+                events.extend(payload)
+                self._events_received += len(payload)
                 self._updates_completed += 1
                 self._last_success_at = time.time()
             except Exception as exc:

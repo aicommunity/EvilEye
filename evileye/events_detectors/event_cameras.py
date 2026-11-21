@@ -12,7 +12,7 @@ class CameraEvent(Event):
         return f'Id: {self.event_id}, Source: {self.camera_address}'
 
     def __eq__(self, other):
-        return self.camera_address == other.camera_address and self.timestamp == self.timestamp
+        return self.camera_address == other.camera_address and self.timestamp == other.timestamp
 
     def is_connected(self):
         return self.con_status
