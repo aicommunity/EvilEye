@@ -26,7 +26,9 @@ def test_release_uses_shared_pipeline_teardown_and_resets_health():
 
     VideoCaptureGStreamer.release(capture)
 
-    capture._teardown_pipeline.assert_called_once_with("release", join_main_loop=True)
+    capture._teardown_pipeline.assert_called_once_with(
+        "release", join_main_loop=True, expected_generation=0
+    )
     assert capture.is_inited is False
     assert capture.is_working is False
     assert capture._release_lock.acquire(blocking=False)
@@ -56,7 +58,9 @@ def test_release_waits_for_concurrent_teardown_to_finish():
     worker.join(timeout=1.0)
     assert not worker.is_alive()
     assert finished.is_set()
-    capture._teardown_pipeline.assert_called_once_with("release", join_main_loop=True)
+    capture._teardown_pipeline.assert_called_once_with(
+        "release", join_main_loop=True, expected_generation=0
+    )
 
 
 def test_release_releases_lifecycle_lock_when_teardown_fails():
@@ -256,6 +260,91 @@ def test_recording_queue_pipeline_uses_leaky_downstream():
     assert candidates
     assert "leaky=downstream" in candidates[0]
     assert "leaky=no" not in candidates[0]
+
+
+def test_get_frames_impl_skips_duplicate_single_stream():
+    import numpy as np
+
+    image = np.zeros((2, 2, 3), dtype=np.uint8)
+    frame = SimpleNamespace(
+        frame_id=7,
+        connection_generation=1,
+        time_stamp=0,
+        source_id=0,
+        current_video_frame=0,
+        current_video_position=0,
+        pts_ns=0,
+        media_pts_sec=0,
+        image=image,
+    )
+    created = []
+
+    def _create_capture_image(**kwargs):
+        created.append(kwargs["frame_id"])
+        return SimpleNamespace(**kwargs)
+
+    capture = SimpleNamespace(
+        is_working=True,
+        _get_call_count=0,
+        _get_call_last_log=time.time(),
+        split_stream=False,
+        frame_lock=Lock(),
+        last_frame=frame,
+        _last_returned_frame_id=None,
+        _same_frame_count=0,
+        source_names=["cam"],
+        source_address="rtsp://example",
+        logger=Mock(),
+        subscribers=[],
+        _create_capture_image=_create_capture_image,
+    )
+
+    first = GStreamerCaptureFramesMixin.get_frames_impl(capture)
+    second = GStreamerCaptureFramesMixin.get_frames_impl(capture)
+    assert len(first) == 1
+    assert second == []
+    assert capture._same_frame_count == 1
+    frame.frame_id = 8
+    third = GStreamerCaptureFramesMixin.get_frames_impl(capture)
+    assert len(third) == 1
+    assert created == [7, 8]
+
+
+def test_release_does_not_clear_flags_of_a_newer_generation():
+    capture = _capture()
+    capture._pipeline_generation = 2
+    capture.pipeline = object()
+
+    def _teardown(*_args, **_kwargs):
+        capture._pipeline_generation = 3
+
+    capture._teardown_pipeline = Mock(side_effect=_teardown)
+    capture._generation_is_current = lambda generation: capture._pipeline_generation == generation
+
+    VideoCaptureGStreamer.release(capture)
+
+    capture._teardown_pipeline.assert_called_once_with(
+        "release", join_main_loop=True, expected_generation=2
+    )
+    assert capture.is_inited is True
+    assert capture.is_working is True
+
+
+def test_begin_reconnect_release_does_not_start_a_second_release():
+    calls = []
+    capture = SimpleNamespace(
+        source_names=["cam"],
+        logger=Mock(),
+        _reconnect_release_thread=SimpleNamespace(is_alive=lambda: True),
+        _reconnect_release_done=Event(),
+        release=lambda: calls.append("release"),
+        _abandon_stalled_teardown=lambda: calls.append("abandon"),
+    )
+    capture._reconnect_release_done.set()
+
+    GStreamerCaptureFramesMixin._begin_reconnect_release(capture, 0.01)
+
+    assert calls == []
 
 
 def test_restart_script_uses_detach_and_survived_kill_error():
