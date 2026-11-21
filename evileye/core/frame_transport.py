@@ -171,20 +171,12 @@ class SharedFrameTransport:
     def release_all_owned(self) -> None:
         """Close and unlink all segments owned by this transport instance."""
         with self._lock:
-            names = list(self._segments.keys())
+            owned = list(self._segments.values())
             free_lists = [seg for lst in self._free_segments.values() for seg in lst]
+            self._segments.clear()
             self._free_segments.clear()
-        for name in names:
-            self.release_frame(
-                FrameHandle(
-                    frame_id=0,
-                    shm_name=name,
-                    shape=(),
-                    dtype="uint8",
-                    stride=(),
-                    timestamp=0.0,
-                )
-            )
+        for shm in owned:
+            self._close_quietly(shm)
         for shm in free_lists:
             self._close_quietly(shm)
 

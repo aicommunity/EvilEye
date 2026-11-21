@@ -174,10 +174,12 @@ class MpControl:
             # Unbounded blocking put: do not hold the swap lock forever. A pool
             # restart during such a put may close the queue under it; callers in
             # the hot path use bounded/drop-oldest variants.
-            self.input_queue.put(data, block=True, timeout=None)
+            queue = self.input_queue
+            queue.put(data, block=True, timeout=None)
         else:
             with self._queues_lock:
-                self.input_queue.put(data, block=block, timeout=timeout)
+                queue = self.input_queue
+            queue.put(data, block=block, timeout=timeout)
         with self._stats_lock:
             self._stats["put_calls_total"] += 1
             self._stats["put_wait_ms_total"] += (timer() - started) * 1000.0
@@ -220,10 +222,12 @@ class MpControl:
 
     def get(self, block=True, timeout=None):
         if block and timeout is None:
-            result = self.output_queue.get(block=True, timeout=None)
+            queue = self.output_queue
+            result = queue.get(block=True, timeout=None)
         else:
             with self._queues_lock:
-                result = self.output_queue.get(block=block, timeout=timeout)
+                queue = self.output_queue
+            result = queue.get(block=block, timeout=timeout)
         with self._stats_lock:
             self._stats["get_calls_total"] += 1
         return result
