@@ -140,6 +140,80 @@ class TestScheduleAlarmFrames:
         assert event.img_detected is None
 
 
+class TestAdapterUpdatePath:
+    def _adapter(self, *, connected: bool, backend: str, tmp_path):
+        from evileye.database_controller.db_adapter import DatabaseAdapterBase
+
+        calls = {"update": [], "insert": [], "spool": []}
+
+        class _Controller:
+            def get_params(self):
+                return {"image_dir": str(tmp_path)}
+
+            def get_cameras_params(self):
+                return {}
+
+            def is_connected(self):
+                return connected
+
+        class _Adapter(DatabaseAdapterBase):
+            storage_backend = backend
+
+            def _process_queue_item(self, item):
+                return None
+
+            def _insert_impl(self, data):
+                calls["insert"].append(data)
+
+            def _update_impl(self, data):
+                calls["update"].append(data)
+
+        adapter = _Adapter(_Controller())
+        adapter.event_name = "ZoneEvent"
+        original = adapter._ensure_spool
+
+        def _spool():
+            spool = original()
+            if spool is None:
+                return None
+            real_append = spool.append
+
+            def _append(item):
+                calls["spool"].append(item)
+                return real_append(item)
+
+            spool.append = _append
+            return spool
+
+        adapter._ensure_spool = _spool
+        return adapter, calls
+
+    def test_update_calls_impl_when_connected(self, tmp_path):
+        adapter, calls = self._adapter(connected=True, backend="postgres", tmp_path=tmp_path)
+        adapter.update({"id": 1})
+        assert calls["update"] == [{"id": 1}]
+        assert calls["spool"] == []
+
+    def test_update_spools_when_postgres_down(self, tmp_path):
+        adapter, calls = self._adapter(connected=False, backend="postgres", tmp_path=tmp_path)
+        adapter.update({"id": 2})
+        assert calls["update"] == []
+        assert calls["spool"] == [("deferred", "update", {"id": 2})]
+        assert adapter._spooled_items == 1
+
+    def test_json_update_ignores_postgres_outage(self, tmp_path):
+        adapter, calls = self._adapter(connected=False, backend="json", tmp_path=tmp_path)
+        adapter.update({"id": 3})
+        assert calls["update"] == [{"id": 3}]
+        assert calls["spool"] == []
+
+    def test_json_insert_ignores_postgres_outage(self, tmp_path):
+        adapter, calls = self._adapter(connected=False, backend="json", tmp_path=tmp_path)
+        adapter.insert({"id": 4})
+        assert calls["insert"] == [{"id": 4}]
+        assert calls["spool"] == []
+
+
 class TestGetNextEventIdFallback:
     def test_get_last_id_epoch_fallback_when_db_unreadable(self, monkeypatch):
         import time as time_module

@@ -158,41 +158,53 @@ class DatabaseAdapterBase(EvilEyeBase, ABC):
     def release_impl(self) -> None:
         pass
 
+    def _postgres_disconnected(self) -> bool:
+        """True only for PostgreSQL adapters whose controller reports no connection.
+
+        JSON journals must keep writing while PostgreSQL is down. They do not
+        consult ``is_connected`` and they do not spill into ``pg_spool``.
+        """
+        if self.storage_backend != "postgres":
+            return False
+        controller = self.db_controller
+        if controller is None or not hasattr(controller, "is_connected"):
+            return False
+        return not controller.is_connected()
+
+    def _reject_if_closing(self, operation: str) -> None:
+        if self._closing:
+            exc = RuntimeError(
+                "Database adapter worker is not running because the adapter is stopping"
+            )
+            self._record_failure(operation, exc, category="enqueue")
+            raise exc
+
     def insert(self, data: Any) -> None:
-        # Проверяем, что БД подключена перед выполнением операций (только для БД адаптеров)
-        # JSON адаптеры не имеют db_controller с методом is_connected(), поэтому проверяем наличие метода
-        if self.db_controller and hasattr(self.db_controller, 'is_connected'):
-            if not self.db_controller.is_connected():
-                # Audit A5: defer to the local spool instead of losing the
-                # event (previously: ConnectionError after 3 retries).
-                if self._spool_deferred("insert", data):
-                    return
-                exc = ConnectionError(f"Database adapter '{self.event_name}' is disconnected")
-                self._record_failure('insert', exc, category='enqueue')
-                raise exc
+        if self._postgres_disconnected():
+            # Audit A5: defer to the local spool instead of losing the
+            # event (previously: ConnectionError after 3 retries).
+            if self._spool_deferred("insert", data):
+                return
+            exc = ConnectionError(f"Database adapter '{self.event_name}' is disconnected")
+            self._record_failure('insert', exc, category='enqueue')
+            raise exc
         # Serialize acceptance with stop(): work accepted before shutdown is drained,
         # and work arriving after shutdown is explicitly rejected.
         with self._lifecycle_lock:
-            if self._closing:
-                exc = RuntimeError(
-                    "Database adapter worker is not running because the adapter is stopping"
-                )
-                self._record_failure('insert', exc, category='enqueue')
-                raise exc
+            self._reject_if_closing("insert")
             self._insert_impl(data)
 
     def update(self, data: Any) -> None:
-        # Проверяем, что БД подключена перед выполнением операций (только для БД адаптеров)
-        # JSON адаптеры не имеют db_controller с методом is_connected(), поэтому проверяем наличие метода
-        if self.db_controller and hasattr(self.db_controller, 'is_connected'):
-            if not self.db_controller.is_connected():
-                # Audit A5: defer to the local spool instead of losing the
-                # event update.
-                if self._spool_deferred("update", data):
-                    return
-                exc = ConnectionError(f"Database adapter '{self.event_name}' is disconnected")
-                self._record_failure('update', exc, category='enqueue')
-                raise exc
+        if self._postgres_disconnected():
+            # Audit A5: defer to the local spool instead of losing the event update.
+            if self._spool_deferred("update", data):
+                return
+            exc = ConnectionError(f"Database adapter '{self.event_name}' is disconnected")
+            self._record_failure('update', exc, category='enqueue')
+            raise exc
+        with self._lifecycle_lock:
+            self._reject_if_closing("update")
+            self._update_impl(data)
 
     def _spool_deferred(self, operation: str, event: Any) -> bool:
         """Spool an event accepted while the database is disconnected."""
@@ -213,15 +225,6 @@ class DatabaseAdapterBase(EvilEyeBase, ABC):
             )
             return True
         return False
-        # Keep updates under the same acceptance boundary as inserts.
-        with self._lifecycle_lock:
-            if self._closing:
-                exc = RuntimeError(
-                    "Database adapter worker is not running because the adapter is stopping"
-                )
-                self._record_failure('update', exc, category='enqueue')
-                raise exc
-            self._update_impl(data)
 
     def get_db_params(self) -> Dict[str, Any]:
         return self.db_params
