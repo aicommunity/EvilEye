@@ -6,7 +6,8 @@
 param(
     [string]$Root = (Resolve-Path (Join-Path $PSScriptRoot "..\..")).Path,
     [switch]$EnableWatchdog,
-    [switch]$SkipDockerCheck
+    [switch]$SkipDockerCheck,
+    [switch]$InstallHostCli
 )
 
 $ErrorActionPreference = "Stop"
@@ -39,6 +40,14 @@ if ($EnableWatchdog) {
     & (Join-Path $PSScriptRoot "Install-Watchdog.ps1") -Root $Root
 }
 
+if ($InstallHostCli) {
+    $image = if ($env:EVILEYE_IMAGE) { $env:EVILEYE_IMAGE } elseif ($env:EVILEYE_DOCKER_IMAGE) { $env:EVILEYE_DOCKER_IMAGE } else { 'evileye/app:latest' }
+    & (Join-Path $PSScriptRoot "Install-HostCli.ps1") -SiteDir $Root -Image $image
+}
+
 Write-Host ""
 Write-Host "Done. Open http://127.0.0.1:8181"
 Write-Host "Docs: docs/WINDOWS_DOCKER_DEPLOYMENT.md"
+if ($InstallHostCli) {
+    Write-Host "Host CLI installed. Try: evileye --help"
+}

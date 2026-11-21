@@ -7,6 +7,14 @@ export default defineConfig({
     outDir: '../static',
     emptyOutDir: true,
     sourcemap: false,
+    rollupOptions: {
+      output: {
+        manualChunks(id) {
+          if (id.includes('/node_modules/@xyflow/') || id.includes('/node_modules/d3-')) return 'pipeline-graph';
+          if (id.includes('/node_modules/@rjsf/') || id.includes('/node_modules/ajv') || id.includes('/node_modules/fast-deep-equal')) return 'schema-forms';
+        },
+      },
+    },
   },
   server: {
     proxy: {
@@ -15,7 +23,8 @@ export default defineConfig({
     },
   },
   test: {
-    environment: 'node',
-    include: ['src/**/*.test.ts'],
+    environment: 'jsdom',
+    include: ['src/**/*.test.{ts,tsx}'],
+    setupFiles: ['./src/test/setup.ts'],
   },
 });

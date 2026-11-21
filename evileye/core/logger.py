@@ -28,7 +28,7 @@
 import logging
 import functools
 import time
-from typing import Any, Callable, Optional
+from typing import Callable, Optional
 from contextlib import contextmanager
 
 

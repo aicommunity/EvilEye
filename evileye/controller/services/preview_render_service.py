@@ -1,7 +1,10 @@
 from __future__ import annotations
 
+import atexit
 import threading
-from dataclasses import dataclass
+import time
+import weakref
+from dataclasses import dataclass, field
 from typing import Optional
 
 from evileye.core.logger import get_module_logger
@@ -17,10 +20,14 @@ class PreviewRenderJob:
     frame: object
     context: PreviewRenderContext
     source_id: int | None
+    submitted_at: float = field(default_factory=time.time)
 
 
 class PreviewRenderService:
     """Asynchronous preview renderer with latest-frame semantics."""
+
+    _instances: weakref.WeakSet[PreviewRenderService] = weakref.WeakSet()
+    _instances_lock = threading.Lock()
 
     def __init__(self):
         self.logger = get_module_logger("preview_render_service")
@@ -38,6 +45,19 @@ class PreviewRenderService:
             "render_errors": 0,
             "last_render_ms": 0.0,
         }
+        with self._instances_lock:
+            self._instances.add(self)
+
+    @classmethod
+    def shutdown_all(cls) -> None:
+        """Stop every live preview worker during test or process shutdown."""
+        with cls._instances_lock:
+            instances = list(cls._instances)
+        for service in instances:
+            try:
+                service.stop()
+            except Exception as exc:
+                service.logger.error("Failed to stop preview renderer: %s", exc, exc_info=True)
 
     def configure(self, *, streaming_service=None, num_workers: int = 1) -> None:
         with self._condition:
@@ -52,12 +72,16 @@ class PreviewRenderService:
         self._stop_event.set()
         with self._condition:
             self._condition.notify_all()
-        for worker in self._workers:
+        workers = list(self._workers)
+        for worker in workers:
             if worker.is_alive():
                 worker.join(timeout=2.0)
-        self._workers.clear()
+        alive = [worker for worker in workers if worker.is_alive()]
         with self._condition:
+            self._workers = alive
             self._pending_jobs.clear()
+        for worker in alive:
+            self.logger.error("Preview renderer worker did not stop: %s", worker.name)
 
     def wants_frame(self, source_id: int | None) -> bool:
         if self._streaming_service is None:
@@ -110,10 +134,13 @@ class PreviewRenderService:
         with self._condition:
             while not self._stop_event.is_set() and not self._pending_jobs:
                 self._condition.wait(timeout=0.5)
-            if self._stop_event.is_set():
+            if self._stop_event.is_set() or not self._pending_jobs:
                 return None
-            _, job = self._pending_jobs.popitem()
-            return job
+            oldest_key = min(
+                self._pending_jobs,
+                key=lambda key: self._pending_jobs[key].submitted_at,
+            )
+            return self._pending_jobs.pop(oldest_key)
 
     def _worker_loop(self) -> None:
         while not self._stop_event.is_set():
@@ -129,13 +156,19 @@ class PreviewRenderService:
                 if rendered is not None and self._streaming_service is not None:
                     image = getattr(rendered, "image", None)
                     shape = getattr(image, "shape", None)
-                    meta = serialize_preview_metadata(job.context, shape)
+                    meta = serialize_preview_metadata(
+                        job.context,
+                        shape,
+                        frame_id=getattr(job.frame, "frame_id", None),
+                        frame=job.frame,
+                    )
                     self._streaming_service.submit_frame(
                         rendered,
-                        objects=meta.get("objects"),
-                        zones=meta.get("zones"),
-                        signalization=bool(meta.get("signalization")),
+                        metadata=meta,
                     )
             except Exception as exc:
                 self._stats["render_errors"] += 1
                 self.logger.warning("Async preview render failed: %s", exc, exc_info=True)
+
+
+atexit.register(PreviewRenderService.shutdown_all)

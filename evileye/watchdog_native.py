@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import os
 import re
+import shutil
 import subprocess
 import sys
 import time
@@ -13,7 +14,7 @@ from pathlib import Path
 from typing import Any, Optional
 
 from evileye.core.paths import logs_dir, monitor_dir, site_root
-from evileye.core.process_control import find_pids_by_cmdline_regex, pid_exists, terminate_tree
+from evileye.core.process_control import find_pids_by_cmdline_regex, pid_exists, terminate_tree_gracefully
 
 LOG_STALE_SEC = int(os.environ.get("EVILEYE_WATCHDOG_LOG_STALE_SEC", "600"))
 RESTART_GRACE_SEC = int(os.environ.get("EVILEYE_WATCHDOG_GRACE_SEC", "900"))
@@ -57,6 +58,26 @@ def _config_stem(config: str) -> str:
     if name.endswith(".json"):
         name = name[:-5]
     return name
+
+
+def config_scope_stem(config: str | Path) -> str:
+    """Sanitize config stem for systemd unit names (a-z0-9-, max 200)."""
+    raw = _config_stem(str(config)).lower()
+    cleaned = re.sub(r"[^a-z0-9]+", "-", raw).strip("-")
+    if not cleaned:
+        cleaned = "pipeline"
+    return cleaned[:200]
+
+
+def scope_unit_name_for_config(config: str | Path) -> str:
+    """Return transient scope unit name without .scope suffix: evileye-run-<stem>."""
+    return f"evileye-run-{config_scope_stem(config)}"
+
+
+def pipeline_stdout_log_path(root: Path, config: str | Path) -> Path:
+    """Per-config stdout log under monitor/."""
+    stem = config_scope_stem(config)
+    return monitor_dir(root) / f"pipeline_stdout_{stem}.log"
 
 
 def _latest_main_log(root: Path) -> Optional[Path]:
@@ -115,7 +136,111 @@ def _reset_backoff(mdir: Path) -> None:
         marker.unlink()
 
 
-def find_cli_and_child(config: str) -> tuple[Optional[int], Optional[int]]:
+def manual_stop_active(root: Optional[Path] = None) -> bool:
+    mdir = _ensure_monitor(site_root(root))
+    marker = mdir / ".manual_stop_until"
+    if not marker.exists():
+        return False
+    try:
+        until = float(marker.read_text(encoding="utf-8").strip())
+        return time.time() < until
+    except Exception:
+        return False
+
+
+def restart_grace_active(root: Optional[Path] = None) -> bool:
+    return _grace_active(_ensure_monitor(site_root(root)))
+
+
+def set_manual_stop_cooldown(*, seconds: int = 3600, root: Optional[Path] = None) -> None:
+    mdir = _ensure_monitor(site_root(root))
+    until = time.time() + max(1, int(seconds))
+    (mdir / ".manual_stop_until").write_text(str(until), encoding="utf-8")
+
+
+def clear_manual_stop_cooldown(root: Optional[Path] = None) -> None:
+    marker = _ensure_monitor(site_root(root)) / ".manual_stop_until"
+    if marker.exists():
+        marker.unlink()
+
+
+def set_restart_grace(*, seconds: Optional[int] = None, root: Optional[Path] = None) -> None:
+    mdir = _ensure_monitor(site_root(root))
+    duration = RESTART_GRACE_SEC if seconds is None else max(1, int(seconds))
+    (mdir / ".restart_grace_until").write_text(str(time.time() + duration), encoding="utf-8")
+
+
+def _systemctl_stop_reset_scope(unit_name: str) -> None:
+    """Stop and reset-failed a user scope unit (unit_name may include .scope)."""
+    name = unit_name if unit_name.endswith(".scope") else f"{unit_name}.scope"
+    subprocess.run(["systemctl", "--user", "stop", name], check=False, capture_output=True)
+    subprocess.run(["systemctl", "--user", "reset-failed", name], check=False, capture_output=True)
+
+
+def _list_evileye_run_scopes() -> list[str]:
+    """Return active/inactive evileye-run*.scope unit names (with .scope suffix)."""
+    proc = subprocess.run(
+        [
+            "systemctl",
+            "--user",
+            "list-units",
+            "--all",
+            "--type=scope",
+            "--no-legend",
+            "--no-pager",
+            "evileye-run*.scope",
+        ],
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    names: list[str] = []
+    for line in (proc.stdout or "").splitlines():
+        parts = line.split()
+        if not parts:
+            continue
+        unit = parts[0]
+        if unit.startswith("evileye-run") and unit.endswith(".scope"):
+            names.append(unit)
+    return names
+
+
+def stop_evileye_run_scope(
+    *,
+    config: str | Path | None = None,
+    stop_all: bool = False,
+) -> None:
+    """Stop transient pipeline scope(s).
+
+    - config set: stop only ``evileye-run-<stem>.scope`` (plus legacy ``evileye-run.scope``
+      when stem matches the sole historical name).
+    - stop_all: stop all ``evileye-run*.scope`` including legacy ``evileye-run.scope``.
+    - neither: legacy behaviour — stop ``evileye-run.scope`` only (compat).
+    """
+    if not sys.platform.startswith("linux"):
+        return
+    if shutil.which("systemctl") is None:
+        return
+
+    if stop_all:
+        seen: set[str] = set()
+        for unit in _list_evileye_run_scopes():
+            seen.add(unit)
+            _systemctl_stop_reset_scope(unit)
+        # Always clear legacy name even if list-units missed it.
+        if "evileye-run.scope" not in seen:
+            _systemctl_stop_reset_scope("evileye-run.scope")
+        return
+
+    if config is not None:
+        unit = scope_unit_name_for_config(config)
+        _systemctl_stop_reset_scope(unit)
+        return
+
+    _systemctl_stop_reset_scope("evileye-run.scope")
+
+
+def find_cli_and_child(config: str, root: Optional[Path] = None) -> tuple[Optional[int], Optional[int]]:
     stem = re.escape(_config_stem(config))
     cli_pids = find_pids_by_cmdline_regex([rf"evileye(\.exe)?\s+run.*{stem}", rf"cli_wrapper.*run.*{stem}"])
     child_pids = find_pids_by_cmdline_regex([rf"process\.py.*{stem}", rf"process_wrapper.*{stem}"])
@@ -175,7 +300,7 @@ def health_check(*, config: str, root: Optional[Path] = None, do_restart: bool =
 
     if status == "ok":
         _reset_backoff(mdir)
-    elif do_restart and restart_reasons and not grace and not _backoff_blocked(mdir):
+    elif do_restart and restart_reasons and not grace and not _backoff_blocked(mdir) and not manual_stop_active(site):
         incident_id = datetime.now().strftime("%Y%m%d_%H%M%S")
         inc = mdir / "incidents" / incident_id
         inc.mkdir(parents=True, exist_ok=True)
@@ -204,7 +329,7 @@ def restart_evileye(*, config: str, root: Optional[Path] = None, reason: str = "
     cli_pid, child_pid = find_cli_and_child(config)
     for pid in (child_pid, cli_pid):
         if pid and pid_exists(pid):
-            terminate_tree(pid, grace_sec=5.0)
+            terminate_tree_gracefully(pid, grace_sec=5.0)
 
     config_arg = config
     if not Path(config_arg).is_absolute():
@@ -264,9 +389,83 @@ def morning_report(*, root: Optional[Path] = None) -> Path:
     return report
 
 
+def _monitor_install_timer_script(site: Path) -> Optional[Path]:
+    """Locate install_timer.sh under site monitor or package assets."""
+    site_script = site / "monitor" / "scripts" / "install_timer.sh"
+    if site_script.is_file():
+        return site_script
+    candidates = [
+        Path(__file__).resolve().parent / "deploy_monitor" / "scripts" / "install_timer.sh",
+        Path(__file__).resolve().parents[1] / "deploy" / "monitor" / "scripts" / "install_timer.sh",
+    ]
+    for candidate in candidates:
+        if candidate.is_file():
+            return candidate
+    return None
+
+
+def install_linux_systemd_watchdog(*, config: str, root: Optional[Path] = None, dry_run: bool = False) -> dict[str, Any]:
+    """Enable user systemd watchdog timers via monitor/scripts/install_timer.sh."""
+    site = site_root(root)
+    mdir = _ensure_monitor(site)
+    script = _monitor_install_timer_script(site)
+    config_name = Path(config).name
+    result: dict[str, Any] = {
+        "backend": "systemd-user-timer",
+        "config": config,
+        "site_dir": str(site),
+        "dry_run": dry_run,
+        "install_timer": str(script) if script else None,
+    }
+    if script is None:
+        raise RuntimeError(
+            "install_timer.sh not found. Run `evileye deploy` first or set DEPLOY_DIR and "
+            "invoke monitor/scripts/install_timer.sh manually."
+        )
+    if dry_run:
+        return result
+
+    # Ensure site has a copy of monitor scripts when we found the package path.
+    site_script = site / "monitor" / "scripts" / "install_timer.sh"
+    if not site_script.is_file():
+        scripts_dst = site / "monitor" / "scripts"
+        scripts_dst.mkdir(parents=True, exist_ok=True)
+        for src in script.parent.glob("*.sh"):
+            shutil.copy2(src, scripts_dst / src.name)
+            mode = (scripts_dst / src.name).stat().st_mode
+            (scripts_dst / src.name).chmod(mode | 0o111)
+        site_script = scripts_dst / "install_timer.sh"
+
+    env = os.environ.copy()
+    env["DEPLOY_DIR"] = str(site)
+    env["CONFIG_NAME"] = config_name
+    env.setdefault("SYNC_SCRIPTS", "0")
+    proc = subprocess.run(
+        ["bash", str(site_script)],
+        cwd=str(site),
+        env=env,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    result["returncode"] = proc.returncode
+    result["stdout"] = (proc.stdout or "").strip()
+    result["stderr"] = (proc.stderr or "").strip()
+    if proc.returncode != 0:
+        detail = result["stderr"] or result["stdout"] or f"exit {proc.returncode}"
+        raise RuntimeError(f"install_timer.sh failed: {detail}")
+    (mdir / "watchdog_install.json").write_text(json.dumps(result, indent=2) + "\n", encoding="utf-8")
+    _log_watchdog(mdir, f"linux systemd watchdog installed for config={config}")
+    return result
+
+
 def install_watchdog(*, config: str, root: Optional[Path] = None, dry_run: bool = False) -> dict[str, Any]:
     site = site_root(root)
     mdir = _ensure_monitor(site)
+
+    if sys.platform.startswith("linux"):
+        return install_linux_systemd_watchdog(config=config, root=site, dry_run=dry_run)
+
     scripts = site / "scripts"
     scripts.mkdir(parents=True, exist_ok=True)
     check_script = scripts / "evileye-watchdog-check.bat"

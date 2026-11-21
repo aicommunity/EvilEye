@@ -11,15 +11,15 @@ Site-facing ops tooling shipped with EvilEye (not the detection pipeline).
 ```bash
 pip install -e /path/to/EvilEye   # or: pip install evileye
 # optional: sudo apt install libturbojpeg
-evileye setup-web                 # ensure API Python deps + SPA static
-evileye deploy                    # credentials, configs/, monitor/ + ensure Web UI service
-# Open http://127.0.0.1:8181 and finish Basic setup in the UI
+evileye deploy                    # local site files only (no prompts)
+evileye service install            # only if you need the Web UI server (ensures `evileye web` deps/build if needed)
+# Open http://127.0.0.1:8181 (or https://…) and finish Basic setup in the UI
 # Optional watchdog timers (separate from app service):
 # DEPLOY_DIR=$PWD ./monitor/scripts/install_timer.sh
 ```
 
-`evileye deploy` copies monitor files into the current site directory and **ensures**
-the Web UI OS service (`evileye service-install`). Watchdog timers are still **not**
+`evileye deploy` copies monitor files into the current site directory.
+Web UI OS service and HTTPS: `evileye service install`. Watchdog timers are still **not**
 enabled automatically. See [`monitor/README.md`](monitor/README.md) and
 [`../docs/CLI_SERVICE_COMMANDS.md`](../docs/CLI_SERVICE_COMMANDS.md).
 

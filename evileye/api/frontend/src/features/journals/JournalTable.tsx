@@ -1,6 +1,6 @@
 import { journalPreviewUrl, type JournalGroupedRow } from '../../api';
 import { useI18n } from '../../i18n';
-import { formatJournalTime, redactMediaCredentials, rowKey, type JournalType } from './journalMath';
+import { eventTypeLabel, redactMediaCredentials, rowKey, type JournalType } from './journalMath';
 
 export function JournalTable({
   rows,
@@ -13,7 +13,7 @@ export function JournalTable({
   onSelect: (row: JournalGroupedRow) => void;
   emptyText: string;
 }) {
-  const { t, dateLocaleTag } = useI18n();
+  const { t, formatDateTime } = useI18n();
   if (!rows.length) return <p className="empty">{emptyText}</p>;
   return (
     <div className="journal-table-wrap">
@@ -34,11 +34,11 @@ export function JournalTable({
             const mode = row.preview ? 'found' : 'lost';
             return (
               <tr key={rowKey(row)} className="journal-row" onClick={() => onSelect(row)} style={{ cursor: 'pointer' }}>
-                <td>{formatJournalTime(row.time, dateLocaleTag)}</td>
-                <td>{String(row.event ?? '—')}</td>
+                <td>{formatDateTime(row.time as string | null | undefined)}</td>
+                <td>{eventTypeLabel(t, String(row.event ?? '—'))}</td>
                 <td>{redactMediaCredentials(row.information ?? '—')}</td>
                 <td>{redactMediaCredentials(row.source ?? '—')}</td>
-                <td>{formatJournalTime(row.time_lost, dateLocaleTag)}</td>
+                <td>{formatDateTime(row.time_lost as string | null | undefined)}</td>
                 <td>
                   {previewPath ? (
                     <img

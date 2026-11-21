@@ -1,5 +1,3 @@
-import os
-from pathlib import Path
 
 from ..core.mp_worker import MpWorker
 from ..core.frame_transport import SharedFrameTransport, materialize_payload_list

@@ -1,4 +1,3 @@
-import copy
 
 
 class ObjectResultHistory:
@@ -25,6 +24,8 @@ class ObjectResult(ObjectResultHistory):
         self.history: list[ObjectResultHistory] = []
         # Атрибуты первичного объекта: name -> AttributeState-like dict
         self.attributes: dict = {}
+        self.pts_ns = None
+        self.media_pts_sec = None
 
     def __str__(self):
         return f'ID: {self.object_id}, Source: {self.source_id}, Updated: {self.last_update}, Lost: {self.lost_frames}'
@@ -48,6 +49,7 @@ class ObjectResult(ObjectResultHistory):
         result.time_stamp = self.time_stamp
         result.time_detected = self.time_detected
         result.last_update = self.last_update
+        result.lost_frames = self.lost_frames
         # result.last_image = self.last_image
         result.lost_frames = self.lost_frames
         result.track = self.track

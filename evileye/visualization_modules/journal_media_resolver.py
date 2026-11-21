@@ -4,7 +4,7 @@ import datetime
 import glob
 import logging
 import os
-from typing import Any, Optional
+from typing import Any
 
 from evileye.visualization_modules.journal_metadata_extractor import EventMetadataExtractor
 from evileye.visualization_modules.journal_path_resolver import JournalPathResolver

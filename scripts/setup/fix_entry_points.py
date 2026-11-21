@@ -3,7 +3,6 @@
 Python script to fix EvilEye entry points automatically
 """
 
-import os
 import sys
 from pathlib import Path
 

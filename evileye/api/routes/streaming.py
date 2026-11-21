@@ -10,9 +10,11 @@ import threading
 from evileye.api.core.config_run_access import get_config_run_manager
 from evileye.api.core.runtime_registry import load_runtime_record
 from evileye.api.core.server_state import get_run_summary
+from evileye.core.logger import get_module_logger
 from evileye.core.runtime_services import get_frame_broker
 
 router = APIRouter(prefix="/api/v1", tags=["streaming"])
+diag_logger = get_module_logger("api.diag")
 
 _mjpeg_clients_lock = threading.Lock()
 _mjpeg_clients = 0
@@ -40,6 +42,11 @@ def _release_mjpeg_slot() -> None:
         _mjpeg_clients = max(0, _mjpeg_clients - 1)
 
 
+def mjpeg_clients_count() -> int:
+    with _mjpeg_clients_lock:
+        return int(_mjpeg_clients)
+
+
 def _touch_preview_demand(
     request: Request | None,
     rid: int,
@@ -62,7 +69,8 @@ def _touch_preview_demand(
         key = f"{rid}:{source_id}" if source_id is not None else str(rid)
         queue.put_nowait((key, touched_at, normalized_level, force))
         if source_id is not None:
-            queue.put_nowait((str(rid), touched_at, normalized_level, force))
+            # Soft-touch root rid without force so other stream consumers stay promoted.
+            queue.put_nowait((str(rid), touched_at, normalized_level, False))
     except Exception:
         return
 
@@ -75,17 +83,16 @@ class StreamStatusTouch(BaseModel):
 def _resolve_run(rid: int) -> dict:
     """Resolve run id to runtime record and validate availability.
 
-    First checks the legacy ConfigRunManager, then the shared runtime registry.
+    Merge ConfigRunManager with the shared runtime registry; registry liveness wins.
     """
+    from evileye.api.core.runtime_registry import merge_run_views
+
     runtime_info = load_runtime_record(rid)
     try:
-        run_info = get_config_run_manager().describe(rid)
+        manager_info = get_config_run_manager().describe(rid)
     except KeyError:
-        run_info = None
-    if run_info and runtime_info:
-        run_info = {**runtime_info, **run_info}
-    elif runtime_info:
-        run_info = runtime_info
+        manager_info = None
+    run_info = merge_run_views(runtime_info, manager_info)
     if not run_info:
         raise HTTPException(status_code=404, detail=f"Run '{rid}' not found")
     if run_info.get("state") != "running":
@@ -127,8 +134,8 @@ def _load_latest_frame(
         return broker.latest_jpeg(f"{run_id_str}:full:{source_id}")
     broker_key = f"{run_id_str}:{source_id}" if source_id is not None else run_id_str
     data = broker.latest_jpeg(broker_key)
-    if not data and source_id is not None:
-        data = broker.latest_jpeg(run_id_str)
+    # Never fall back to run-level JPEG when a source was requested — that
+    # shows the wrong camera after a per-source miss.
     if data:
         return data
     return None
@@ -167,6 +174,23 @@ async def _snapshot_impl(
     """
     Return the latest available JPEG snapshot for the given runtime.
     """
+    t0 = time.perf_counter()
+    from evileye.api.security import current_user
+
+    user = current_user(request)
+    username = str((user or {}).get("username") or "") or None
+
+    def _log(status: int) -> None:
+        diag_logger.info(
+            "snapshot user=%s run_id=%s source_id=%s full=%s status=%s ms=%.1f",
+            username,
+            rid,
+            source_id,
+            full,
+            status,
+            (time.perf_counter() - t0) * 1000.0,
+        )
+
     _touch_preview_demand(request, rid, source_id=source_id, level="grid")
     if full and source_id is not None:
         # Demand key for full-frame publisher throttle.
@@ -180,6 +204,9 @@ async def _snapshot_impl(
             pass
     run_info = _resolve_run(rid)
     _require_source_id_if_multi(run_info, source_id)
+    from evileye.api.core.camera_access import assert_source_id_allowed, resolve_camera_access
+
+    assert_source_id_allowed(resolve_camera_access(request), int(run_info["id"]), source_id)
     run_id_str = str(run_info["id"])
     if full and source_id is not None:
         broker_key = f"{run_id_str}:full:{source_id}"
@@ -189,10 +216,10 @@ async def _snapshot_impl(
     payload = broker.latest_payload(broker_key)
     if not payload and full and source_id is not None:
         # No full frame yet — do not fall back to cropped (would confuse split editor).
+        _log(404)
         raise HTTPException(status_code=404, detail="No full frame available")
-    if not payload and source_id is not None:
-        payload = broker.latest_payload(run_id_str)
     if not payload or not payload.data:
+        _log(404)
         raise HTTPException(status_code=404, detail="No frame available")
     data = payload.data
     meta = payload.metadata or {}
@@ -202,6 +229,7 @@ async def _snapshot_impl(
         etag = hashlib.md5(data).hexdigest()
     if_none_match = request.headers.get("if-none-match")
     if if_none_match and if_none_match.strip('"') == str(etag):
+        _log(304)
         return Response(
             status_code=304,
             headers={
@@ -209,6 +237,7 @@ async def _snapshot_impl(
                 "Cache-Control": "no-cache",
             },
         )
+    _log(200)
     return Response(
         content=data,
         media_type="image/jpeg",
@@ -252,6 +281,8 @@ async def _mjpeg_generator(
         demand_queue=None,
         rid: int | None = None,
         full: bool = False,
+        cancel_event: threading.Event | None = None,
+        mjpeg_client_id: int | None = None,
 ) -> AsyncGenerator[bytes, None]:
     boundary = b"--frame"
     delay = 1.0 / max(1, fps)
@@ -261,6 +292,8 @@ async def _mjpeg_generator(
 
     try:
         while not stop_event.is_set():
+            if cancel_event is not None and cancel_event.is_set():
+                break
             data = _load_latest_frame(run_info, source_id=source_id, full=full)
             if data:
                 no_frame_since = time.monotonic()
@@ -280,9 +313,20 @@ async def _mjpeg_generator(
             elapsed = 0.0
             check_interval = 0.1
             while elapsed < delay and not stop_event.is_set():
+                if cancel_event is not None and cancel_event.is_set():
+                    break
                 await asyncio.sleep(min(check_interval, delay - elapsed))
                 elapsed += check_interval
+            if cancel_event is not None and cancel_event.is_set():
+                break
     finally:
+        if mjpeg_client_id is not None:
+            try:
+                from evileye.api.core.transport_revoke import unregister_mjpeg_client
+
+                unregister_mjpeg_client(mjpeg_client_id)
+            except Exception:
+                pass
         _release_mjpeg_slot()
         try:
             broker.release_stream(stream_key)
@@ -322,40 +366,71 @@ async def _mjpeg_stream_impl(
             pass
     run_info = _resolve_run(rid)
     _require_source_id_if_multi(run_info, source_id)
+    from evileye.api.core.camera_access import assert_source_id_allowed, resolve_camera_access
+
+    assert_source_id_allowed(resolve_camera_access(request), int(run_info["id"]), source_id)
+    handed_off = False
     if not _acquire_mjpeg_slot():
         raise HTTPException(
             status_code=503,
             detail=f"Too many MJPEG clients (limit={_max_mjpeg_clients()})",
         )
+    from evileye.api.core.transport_revoke import register_mjpeg_client
+    from evileye.api.security import current_user
+
+    mjpeg_user = current_user(request)
+    mjpeg_username = str((mjpeg_user or {}).get("username") or "") or None
+    mjpeg_client_id, mjpeg_cancel = register_mjpeg_client(mjpeg_username)
     run_id_str = str(run_info["id"])
     if full and source_id is not None:
         stream_key = f"{run_id_str}:full:{source_id}"
     else:
         stream_key = f"{run_id_str}:{source_id}" if source_id is not None else run_id_str
-    stop_event = get_frame_broker().acquire_stream(stream_key)
-    idle_sec = float(os.getenv("EVILEYE_MJPEG_IDLE_SEC", "8") or 8)
-    demand_queue = getattr(request.app.state, "preview_demand_queue", None)
+    stop_event = None
+    try:
+        stop_event = get_frame_broker().acquire_stream(stream_key)
+        idle_sec = float(os.getenv("EVILEYE_MJPEG_IDLE_SEC", "8") or 8)
+        demand_queue = getattr(request.app.state, "preview_demand_queue", None)
 
-    return StreamingResponse(
-        _mjpeg_generator(
-            run_info,
-            fps,
-            stop_event,
-            source_id=source_id,
-            stream_key=stream_key,
-            idle_sec=idle_sec,
-            demand_queue=demand_queue,
-            rid=rid,
-            full=full,
-        ),
-        media_type="multipart/x-mixed-replace; boundary=frame",
-        headers={
-            "X-Accel-Buffering": "no",
-            "Cache-Control": "no-cache, no-store, must-revalidate",
-            "Pragma": "no-cache",
-            "Expires": "0",
-        },
-    )
+        response = StreamingResponse(
+            _mjpeg_generator(
+                run_info,
+                fps,
+                stop_event,
+                source_id=source_id,
+                stream_key=stream_key,
+                idle_sec=idle_sec,
+                demand_queue=demand_queue,
+                rid=rid,
+                full=full,
+                cancel_event=mjpeg_cancel,
+                mjpeg_client_id=mjpeg_client_id,
+            ),
+            media_type="multipart/x-mixed-replace; boundary=frame",
+            headers={
+                "X-Accel-Buffering": "no",
+                "Cache-Control": "no-cache, no-store, must-revalidate",
+                "Pragma": "no-cache",
+                "Expires": "0",
+            },
+        )
+        handed_off = True
+        return response
+    except BaseException:
+        if not handed_off:
+            try:
+                from evileye.api.core.transport_revoke import unregister_mjpeg_client
+
+                unregister_mjpeg_client(mjpeg_client_id)
+            except Exception:
+                pass
+            _release_mjpeg_slot()
+            if stop_event is not None:
+                try:
+                    get_frame_broker().release_stream(stream_key)
+                except Exception:
+                    pass
+        raise
 
 
 @router.get("/runs/{rid}/stream.mjpg")
@@ -446,6 +521,9 @@ async def _stream_status_impl(request: Request, rid: int, source_id: int | None 
     _touch_preview_demand(request, rid, source_id=source_id, level="grid")
     run_info = _resolve_run(rid)
     _require_source_id_if_multi(run_info, source_id)
+    from evileye.api.core.camera_access import assert_source_id_allowed, resolve_camera_access
+
+    assert_source_id_allowed(resolve_camera_access(request), int(run_info["id"]), source_id)
     return _stream_status_payload(rid, run_info, source_id=source_id)
 
 
@@ -463,7 +541,9 @@ async def stream_status_touch(request: Request, rid: int, body: StreamStatusTouc
         level=body.level,
     )
     run_info = _resolve_run(rid)
-    _require_source_id_if_multi(run_info, body.source_id)
+    from evileye.api.core.camera_access import assert_source_id_allowed, resolve_camera_access
+
+    assert_source_id_allowed(resolve_camera_access(request), int(run_info["id"]), body.source_id)
     return _stream_status_payload(rid, run_info, source_id=body.source_id)
 
 
@@ -473,16 +553,27 @@ async def stream_status_legacy(request: Request, rid: int, source_id: int | None
 
 
 @router.get("/runs/{rid}/metadata")
-async def stream_metadata(rid: int, source_id: int | None = Query(None)):
+async def stream_metadata(request: Request, rid: int, source_id: int | None = Query(None)):
     run_info = _resolve_run(rid)
     _require_source_id_if_multi(run_info, source_id)
+    from evileye.api.core.camera_access import assert_source_id_allowed, resolve_camera_access
+
+    assert_source_id_allowed(resolve_camera_access(request), int(run_info["id"]), source_id)
     key = f"{run_info['id']}:{source_id}" if source_id is not None else str(run_info["id"])
-    meta = get_frame_broker().latest_metadata(key) or get_frame_broker().latest_metadata(str(run_info["id"])) or {}
-    return {
+    broker = get_frame_broker()
+    if source_id is None:
+        meta = broker.latest_metadata(str(run_info["id"])) or {}
+    else:
+        # Never fallback to run-level metadata for source-scoped requests:
+        # it can mix overlays between different cameras.
+        meta = broker.latest_metadata(key) or {}
+    payload = dict(meta or {})
+    payload.update({
         "run_id": rid,
         "source_id": source_id,
         "ts": meta.get("ts") or meta.get("timestamp"),
-        "objects": meta.get("objects") or [],
-        "zones": meta.get("zones") or [],
-        "signalization": bool(meta.get("signalization")),
-    }
+        "objects": payload.get("objects") or [],
+        "zones": payload.get("zones") or [],
+        "signalization": bool(payload.get("signalization")),
+    })
+    return payload

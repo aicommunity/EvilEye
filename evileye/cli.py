@@ -13,7 +13,7 @@ import subprocess
 import logging
 import signal
 from pathlib import Path
-from typing import Optional, Tuple
+from typing import List, Optional, Tuple
 from datetime import datetime, timedelta
 import time
 
@@ -22,7 +22,7 @@ from rich.console import Console
 from rich.table import Table
 from rich.progress import Progress, SpinnerColumn, TextColumn
 
-from evileye.utils.utils import normalize_config_path
+from evileye.utils.config_paths import normalize_config_path
 from evileye.core.logging_config import setup_evileye_logging, log_system_info
 from evileye.core.logger import get_module_logger
 from evileye.core.config_validator import ConfigValidator
@@ -133,14 +133,14 @@ def _scheduler_prepare_next_launch(logger: logging.Logger) -> None:
 
 
 def _scheduler_terminate_child(proc: subprocess.Popen, logger: logging.Logger) -> None:
-    """Terminate the scheduled child process and its process group.
+    """Gracefully stop a scheduled pipeline before cleaning up its process group.
 
-    Polls ``proc`` during grace so a zombie leader is reaped promptly instead of
+    Poll ``proc`` during grace so a zombie leader is reaped promptly instead of
     blocking for the full ``EVILEYE_SCHEDULER_STOP_GRACE_SEC`` window.
     """
     import threading
 
-    from evileye.core.process_control import terminate_tree
+    from evileye.core.process_control import terminate_tree_gracefully
 
     pid = proc.pid
     grace_sec = _scheduler_stop_grace_sec()
@@ -148,14 +148,14 @@ def _scheduler_terminate_child(proc: subprocess.Popen, logger: logging.Logger) -
 
     def _run_terminate() -> None:
         try:
-            terminate_tree(int(pid), grace_sec=grace_sec)
+            terminate_tree_gracefully(int(pid), grace_sec=grace_sec)
         except Exception as exc:
             terminate_errors.append(exc)
 
     # Already exited (zombie until wait/poll) — short PG cleanup then reap.
     if proc.poll() is not None:
         try:
-            terminate_tree(int(pid), grace_sec=min(5.0, grace_sec))
+            terminate_tree_gracefully(int(pid), grace_sec=min(5.0, grace_sec))
         except Exception as exc:
             logger.warning("[scheduler] Post-exit process group cleanup failed for %s: %s", pid, exc)
         try:
@@ -172,7 +172,7 @@ def _scheduler_terminate_child(proc: subprocess.Popen, logger: logging.Logger) -
     )
     worker.start()
 
-    # Poll while terminate_tree runs so we reap as soon as the child exits.
+    # Poll while graceful termination runs so we reap as soon as the child exits.
     deadline = time.monotonic() + grace_sec + 15.0
     while time.monotonic() < deadline:
         if proc.poll() is not None:
@@ -220,6 +220,7 @@ def _run_with_scheduler(
         # Устанавливаем переменную окружения для определения запуска через CLI
         env = os.environ.copy()
         env['EVILEYE_CLI_LAUNCHED'] = '1'
+        env['EVILEYE_SITE_DIR'] = str(Path.cwd().resolve())
         subprocess.run(base_cmd, check=True, cwd=os.getcwd(), env=env)
         return
 
@@ -273,6 +274,7 @@ def _run_with_scheduler(
                 # Устанавливаем переменную окружения для определения запуска через CLI
                 env = os.environ.copy()
                 env['EVILEYE_CLI_LAUNCHED'] = '1'
+                env['EVILEYE_SITE_DIR'] = str(Path.cwd().resolve())
                 proc = subprocess.Popen(
                     base_cmd,
                     cwd=os.getcwd(),
@@ -282,7 +284,7 @@ def _run_with_scheduler(
             except Exception as e:
                 logger.error(f"[scheduler] Failed to start process: {e}", exc_info=True)
                 console.print(f"[red]Failed to start process: {e}[/red]")
-                raise typer.Exit(1)
+                raise typer.Exit(1) from e
 
             start_time = datetime.now()
 
@@ -435,7 +437,7 @@ def _run_with_scheduler(
 
                     time.sleep(1.0)
 
-            except KeyboardInterrupt:
+            except KeyboardInterrupt as exc:
                 logger.info("[scheduler] Interrupted by user, terminating child and stopping loop")
                 if proc.poll() is None:
                     try:
@@ -445,7 +447,7 @@ def _run_with_scheduler(
                             proc.kill()
                         except Exception:
                             pass
-                raise typer.Exit(0)
+                raise typer.Exit(0) from exc
 
             # Если процесс завершился сам до наступления следующего планового запуска —
             # выходим из основного цикла и НЕ перезапускаем приложение снова.
@@ -544,10 +546,10 @@ def _run_with_scheduler(
                         f"[scheduler] Ready to start next iteration, next_run time: {next_run.isoformat()}"
                     )
                     prev_iteration_end_time = wait_end_time
-                except KeyboardInterrupt:
+                except KeyboardInterrupt as exc:
                     logger.info("[scheduler] Interrupted during wait, stopping scheduler loop")
                     console.print("[yellow][scheduler] Interrupted during wait, stopping loop[/yellow]")
-                    raise typer.Exit(0)
+                    raise typer.Exit(0) from exc
     finally:
         signal.signal(signal.SIGTERM, prev_sigterm)
         if prev_sighup is not None:
@@ -561,7 +563,31 @@ app = typer.Typer(
     add_completion=False,
 )
 
+from evileye.cli_commands.register import register_stack_commands
+
+register_stack_commands(app)
+
 console = Console()
+
+
+@app.callback(invoke_without_command=True)
+def cli_root(
+    ctx: typer.Context,
+    no_interactive: bool = typer.Option(
+        False,
+        "--no-interactive",
+        "--nit",
+        help="Disable menus and prompts (also accepted after the command).",
+    ),
+) -> None:
+    """Open the command picker only for a bare invocation in a TTY."""
+    if ctx.invoked_subcommand is not None:
+        return
+    from evileye.cli_interactive import interactive_available, no_command_fallback, run_command_menu
+
+    if interactive_available():
+        run_command_menu(ctx)
+    no_command_fallback(ctx)
 
 
 def setup_logging(verbose: bool = False) -> None:
@@ -578,6 +604,7 @@ def run(
         autoclose: bool = typer.Option(False, "--autoclose/--no-autoclose",
                                        help="Automatic close application when video ends"),
         verbose: bool = typer.Option(False, "--verbose", help="Enable verbose logging"),
+        replace: bool = typer.Option(False, "--replace", help="Stop existing run for this config, then start"),
 ) -> None:
     """
     Launch EvilEye system.
@@ -589,6 +616,33 @@ def run(
         evileye run configs/test_sources_detectors_trackers_mc.json
         evileye run --video /path/to/video.mp4
     """
+    from evileye.cli_interactive import (
+        interactive_available,
+        prompt_choice,
+        prompt_config_path,
+        prompt_text,
+    )
+
+    # A bare `run` in a terminal is the guided entry to pipeline execution.
+    # Piped/scripted invocations retain the existing default-config behavior.
+    if not config and not video and interactive_available():
+        from evileye.cli_interactive import InteractiveInputError
+
+        try:
+            mode = prompt_choice(
+                "Что запустить?",
+                [("config", "Пайплайн из конфигурации"), ("video", "Обработать видеофайл")],
+            )
+            if mode == "config":
+                config = Path(prompt_config_path())
+            else:
+                video = prompt_text("Путь к видео")
+                if not video:
+                    raise InteractiveInputError("Путь к видео не указан.")
+        except InteractiveInputError as exc:
+            console.print(f"[yellow]{exc}[/yellow]")
+            raise typer.Exit(2) from exc
+
     # Setup logging
     setup_logging(verbose=verbose)
     logger = get_module_logger("cli")
@@ -642,6 +696,19 @@ def run(
 
     # Recording is configured only via config file; no CLI flags
 
+    if config_path is not None:
+        from evileye.site_runtime_guard import DuplicatePipelineError, ensure_pipeline_singleton, spawn_lock
+
+        site = Path.cwd().resolve()
+        policy = "replace" if replace else "fail"
+        try:
+            with spawn_lock(site):
+                ensure_pipeline_singleton(str(config_path), site, policy=policy)
+        except DuplicatePipelineError as exc:
+            logger.error(str(exc))
+            console.print(f"[red]{exc}[/red]")
+            raise typer.Exit(1) from exc
+
     try:
         logger.info(f"Launching command: {' '.join(cmd)}")
         console.print(f"[green]Launching with command:[/green] {' '.join(cmd)}")
@@ -653,16 +720,17 @@ def run(
             # Устанавливаем переменную окружения для определения запуска через CLI
             env = os.environ.copy()
             env['EVILEYE_CLI_LAUNCHED'] = '1'
+            env['EVILEYE_SITE_DIR'] = str(Path.cwd().resolve())
             subprocess.run(cmd, check=True, cwd=os.getcwd(), env=env)
         logger.info("Command executed successfully")
     except subprocess.CalledProcessError as e:
         logger.error(f"Launch error: {e}")
         console.print(f"[red]Error launching: {e}[/red]")
-        raise typer.Exit(1)
-    except KeyboardInterrupt:
+        raise typer.Exit(1) from e
+    except KeyboardInterrupt as exc:
         logger.info("Launch interrupted by user")
         console.print("[yellow]Launch interrupted by user[/yellow]")
-        raise typer.Exit(0)
+        raise typer.Exit(0) from exc
 
 
 @app.command("server")
@@ -692,13 +760,21 @@ def start_api(
         evileye server --config ./configs/poly-videos.json
     """
 
-    import time
-    import urllib.request
-    import urllib.error
 
     setup_logging(verbose=verbose)
     logger = get_module_logger("cli")
     log_system_info(logger)
+
+    from evileye.site_runtime_guard import DuplicateWebError, ensure_web_singleton, spawn_lock
+
+    site = Path.cwd().resolve()
+    try:
+        with spawn_lock(site):
+            ensure_web_singleton(site, policy="fail", port=port)
+    except DuplicateWebError as exc:
+        logger.error(str(exc))
+        console.print(f"[red]{exc}[/red]")
+        raise typer.Exit(1) from exc
 
     # Use server.py instead of process.py for API server
     cmd = [sys.executable, str(Path(__file__).parent / "server.py")]
@@ -713,29 +789,38 @@ def start_api(
 
     if config:
         cmd.extend(["--config", config])
-    if ssl_certfile:
-        cmd.extend(["--ssl-certfile", ssl_certfile])
-    if ssl_keyfile:
-        cmd.extend(["--ssl-keyfile", ssl_keyfile])
+    try:
+        from evileye.api.core.ssl_files import SslConfigError, resolve_ssl_files, ssl_enabled
+
+        cert, key = resolve_ssl_files(cli_cert=ssl_certfile, cli_key=ssl_keyfile)
+    except SslConfigError as exc:
+        logger.error("TLS configuration error: %s", exc)
+        console.print(f"[red]TLS configuration error: {exc}[/red]")
+        raise typer.Exit(1) from exc
+    if cert and key:
+        cmd.extend(["--ssl-certfile", str(cert), "--ssl-keyfile", str(key)])
 
     try:
         logger.info(f"Starting web server (server.py): {' '.join(cmd)}")
-        console.print(f"[green]Starting web server on {host}:{port}[/green]")
-        subprocess.run(cmd, check=True, cwd=os.getcwd())
+        scheme = "https" if ssl_enabled(cert, key) else "http"
+        console.print(f"[green]Starting web server on {scheme}://{host}:{port}[/green]")
+        env = os.environ.copy()
+        env["EVILEYE_SITE_DIR"] = str(Path.cwd().resolve())
+        subprocess.run(cmd, check=True, cwd=os.getcwd(), env=env)
     except subprocess.CalledProcessError as e:
         logger.error(f"Web server failed: {e}")
         console.print(f"[red]Web server failed: {e}[/red]")
-        raise typer.Exit(1)
-    except KeyboardInterrupt:
+        raise typer.Exit(1) from e
+    except KeyboardInterrupt as exc:
         logger.info("Web server interrupted by user")
         console.print("[yellow]Web server interrupted by user[/yellow]")
-        raise typer.Exit(0)
+        raise typer.Exit(0) from exc
 
 
 @app.command()
 def validate(
-        config: Path = typer.Argument(
-            ...,
+        config: Optional[Path] = typer.Argument(
+            None,
             help="Path to configuration JSON file",
             file_okay=True,
             dir_okay=False,
@@ -748,6 +833,22 @@ def validate(
         evileye validate single_cam.json
         evileye validate configs/single_cam.json
     """
+    if config is None:
+        from evileye.cli_interactive import (
+            InteractiveInputError,
+            interactive_available,
+            prompt_config_path,
+        )
+
+        if not interactive_available():
+            console.print("[red]Configuration path is required.[/red]")
+            raise typer.Exit(2)
+        try:
+            config = Path(prompt_config_path())
+        except InteractiveInputError as exc:
+            console.print(f"[yellow]{exc}[/yellow]")
+            raise typer.Exit(2) from exc
+
     try:
         # Normalize config path
         normalized_config = Path(normalize_config_path(config))
@@ -773,7 +874,7 @@ def validate(
 
     except Exception as e:
         console.print(f"[red]Configuration validation failed: {e}[/red]")
-        raise typer.Exit(1)
+        raise typer.Exit(1) from e
 
 
 @app.command()
@@ -890,11 +991,10 @@ def _deploy_monitor_assets(site_dir: Path) -> None:
             "Monitor scripts were deployed by `evileye deploy`.\n"
             "They are NOT started automatically.\n\n"
             "To enable the user systemd watchdog on this machine:\n"
-            f"  DEPLOY_DIR={site_dir} {scripts_dst / 'install_timer.sh'}\n\n"
+            f"  evileye watchdog-install --config configs/<your>.json\n"
+            f"  # or: DEPLOY_DIR={site_dir} {scripts_dst / 'install_timer.sh'}\n\n"
             "Manual health check:\n"
-            f"  DEPLOY_DIR={site_dir} {scripts_dst / 'health_check.sh'}\n\n"
-            "Cross-platform native watchdog (also works on Linux):\n"
-            "  evileye watchdog-install --config configs/single_video.json\n",
+            f"  DEPLOY_DIR={site_dir} {scripts_dst / 'health_check.sh'}\n",
             encoding="utf-8",
         )
 
@@ -911,12 +1011,14 @@ def _deploy_monitor_assets(site_dir: Path) -> None:
 @app.command()
 def deploy() -> None:
     """
-    Deploy EvilEye site files to the current directory.
+    Prepare EvilEye site files in the current directory (no prompts).
 
     This command:
     1. Copies credentials_proto.json to credentials.json (if missing)
     2. Creates configs/ and logs/ folders if missing
     3. Deploys monitor/watchdog scripts and systemd templates (does not start services)
+
+    Web UI OS service and HTTPS: `evileye service install`.
     """
 
     current_dir = Path.cwd()
@@ -935,7 +1037,7 @@ def deploy() -> None:
                 console.print(f"[green]Copied credentials_proto.json to credentials.json[/green]")
             except Exception as e:
                 console.print(f"[red]Error copying credentials file: {e}[/red]")
-                raise typer.Exit(1)
+                raise typer.Exit(1) from e
         else:
             console.print("[red]credentials_proto.json not found in package[/red]")
             raise typer.Exit(1)
@@ -950,111 +1052,56 @@ def deploy() -> None:
             console.print(f"[green]Created configs folder[/green]")
         except Exception as e:
             console.print(f"[red]Error creating configs folder: {e}[/red]")
-            raise typer.Exit(1)
+            raise typer.Exit(1) from e
 
     # Step 3: Monitor / watchdog assets (files only — no systemd enable, no process start)
     try:
         _deploy_monitor_assets(current_dir)
     except FileNotFoundError as e:
         console.print(f"[red]Error deploying monitor assets: {e}[/red]")
-        raise typer.Exit(1)
+        raise typer.Exit(1) from e
     except Exception as e:
         console.print(f"[red]Error deploying monitor assets: {e}[/red]")
-        raise typer.Exit(1)
-
-    # Step 4: Ensure OS service for Web UI (does not fail the whole deploy)
-    try:
-        from evileye.service_manager import ensure_service
-        from evileye.service_manager.minimal_config import ensure_system_config
-
-        ensure_system_config(current_dir)
-        svc = ensure_service(site_dir=current_dir, force_user=True)
-        if svc.ok:
-            console.print(f"[green]{svc.message}[/green]")
-        else:
-            console.print(f"[yellow]Service ensure skipped/failed: {svc.message}[/yellow]")
-            console.print("[dim]Run manually: evileye service-install[/dim]")
-    except Exception as e:
-        console.print(f"[yellow]Service ensure skipped: {e}[/yellow]")
-        console.print("[dim]Run manually: evileye service-install[/dim]")
+        raise typer.Exit(1) from e
 
     console.print("[green]Deployment completed successfully![/green]")
     console.print(
-        "[dim]Next: open the Web UI, set admin password, complete Basic setup. "
-        "Optional watchdog: monitor/scripts/install_timer.sh[/dim]"
+        "[dim]Local site files are ready. For the Web UI OS service: "
+        "evileye service install[/dim]"
     )
 
 
-@app.command("service-install")
-def service_install(
-    config: Optional[Path] = typer.Argument(
-        None,
-        help="Optional config name/path for auto-run after server start",
-    ),
-    host: str = typer.Option("0.0.0.0", "--host", help="Bind host for the service"),
-    port: int = typer.Option(8181, "--port", help="Bind port for the service"),
-    user: bool = typer.Option(False, "--user", help="Force systemd --user unit (Linux)"),
-    system: bool = typer.Option(False, "--system", help="Force system unit (may need sudo)"),
-    dry_run: bool = typer.Option(False, "--dry-run", help="Print unit/plan without applying"),
+@app.command("tls-cert", hidden=True)
+def tls_cert(
+    out_dir: Path = typer.Option(Path("certs"), "--out-dir", help="Directory for ca.crt / server.crt / keys"),
+    tls_ip: Optional[List[str]] = typer.Option(None, "--ip", help="SAN IP address (repeatable)"),
+    tls_dns: Optional[List[str]] = typer.Option(None, "--dns", help="SAN DNS name (repeatable)"),
+    days: int = typer.Option(825, "--days", help="Leaf certificate validity in days"),
+    force: bool = typer.Option(False, "--force", help="Overwrite existing files"),
 ) -> None:
-    """
-    Install and start EvilEye as an OS service (Web UI server).
+    """Issue a local mini-CA and SAN leaf certificate (advanced / CI)."""
+    from evileye.cli_interactive import interactive_available
+    from evileye.utils.tls_cert import TlsCertError, generate_minica_leaf
 
-    Without CONFIG starts `evileye server` only (minimal post-install mode).
-    Re-running updates the unit and restarts (idempotent ensure).
-    Use `evileye service-uninstall` to remove the service.
-    """
-    from evileye.service_manager import install_service
-
-    cfg = str(config) if config is not None else None
-    # Default to user unit when neither flag set on non-root installs
-    force_user = user or (not system)
-    force_system = system
-    if user and system:
-        console.print("[red]Cannot combine --user and --system[/red]")
-        raise typer.Exit(1)
-
-    try:
-        result = install_service(
-            site_dir=Path.cwd(),
-            config=cfg,
-            host=host,
-            port=port,
-            force_user=force_user and not force_system,
-            force_system=force_system,
-            dry_run=dry_run,
+    if interactive_available():
+        console.print(
+            "[red]tls-cert is available only in non-interactive mode. "
+            "Rerun with --no-interactive or --nit.[/red]"
         )
-    except Exception as e:
-        console.print(f"[red]service-install failed: {e}[/red]")
-        raise typer.Exit(1)
-
-    if dry_run and result.unit_text:
-        console.print("[blue]Dry-run unit file:[/blue]")
-        console.print(result.unit_text)
-
-    if result.ok:
-        console.print(f"[green]{result.message}[/green]")
-    else:
-        style = "yellow" if result.warn_only else "red"
-        console.print(f"[{style}]{result.message}[/{style}]")
-        if not result.warn_only:
-            raise typer.Exit(1)
-
-
-@app.command("service-uninstall")
-def service_uninstall(
-    dry_run: bool = typer.Option(False, "--dry-run", help="Show what would be removed"),
-) -> None:
-    """Stop and remove the EvilEye OS service installed by service-install."""
-    from evileye.service_manager import uninstall_service
+        raise typer.Exit(2)
 
     try:
-        result = uninstall_service(site_dir=Path.cwd(), dry_run=dry_run)
-    except Exception as e:
-        console.print(f"[red]service-uninstall failed: {e}[/red]")
-        raise typer.Exit(1)
-
-    console.print(f"[green]{result.message}[/green]")
+        paths = generate_minica_leaf(
+            out_dir,
+            ips=tls_ip or [],
+            dns_names=tls_dns or [],
+            days=days,
+            force=force,
+        )
+    except TlsCertError as exc:
+        console.print(f"[red]{exc}[/red]")
+        raise typer.Exit(1) from exc
+    console.print(f"[green]Wrote {paths['server_crt']} and {paths['ca_crt']}[/green]")
 
 
 @app.command("watchdog-install")
@@ -1076,7 +1123,7 @@ def watchdog_install(
         result = install_watchdog(config=cfg, dry_run=dry_run)
     except Exception as exc:
         console.print(f"[red]watchdog-install failed: {exc}[/red]")
-        raise typer.Exit(1)
+        raise typer.Exit(1) from exc
     console.print(f"[green]Watchdog installed[/green] backend={result.get('backend')} config={cfg}")
     if dry_run:
         console.print(str(result))
@@ -1093,7 +1140,7 @@ def watchdog_uninstall(
         uninstall_watchdog(dry_run=dry_run)
     except Exception as exc:
         console.print(f"[red]watchdog-uninstall failed: {exc}[/red]")
-        raise typer.Exit(1)
+        raise typer.Exit(1) from exc
     console.print("[green]Watchdog uninstalled[/green]")
 
 
@@ -1129,137 +1176,6 @@ def watchdog_morning() -> None:
 
     path = morning_report()
     console.print(f"[green]Report written:[/green] {path}")
-
-
-@app.command("setup-web")
-def setup_web(
-    check: bool = typer.Option(False, "--check", help="Only check environment; do not install or build"),
-    scope: str = typer.Option(
-        "user",
-        "--scope",
-        help="pip install scope: user (~/.local) or system (sudo pip)",
-        case_sensitive=False,
-    ),
-    build: Optional[bool] = typer.Option(
-        None,
-        "--build/--no-build",
-        help="Build SPA with npm (default: build only if static is missing)",
-    ),
-    force: bool = typer.Option(False, "--force", help="Reinstall missing Python packages and rebuild SPA"),
-) -> None:
-    """
-    Check and prepare Web UI dependencies (Python API packages + SPA static).
-
-    pip --scope user|system installs missing Python packages. Frontend npm
-    packages stay local to evileye/api/frontend (never global).
-    """
-    from evileye import setup_web as sw
-
-    scope_norm = (scope or "user").strip().lower()
-    if scope_norm not in {"user", "system"}:
-        console.print("[red]--scope must be 'user' or 'system'[/red]")
-        raise typer.Exit(1)
-
-    report = sw.collect_web_setup_report()
-    table = Table(title="EvilEye Web UI environment")
-    table.add_column("Check", style="cyan")
-    table.add_column("Status")
-    table.add_column("Detail")
-    for item in report.items:
-        status = "[green]OK[/green]" if item.ok else "[red]FAIL[/red]"
-        table.add_row(item.name, status, item.detail)
-    console.print(table)
-
-    if check:
-        if report.ok:
-            console.print("[green]Web UI environment looks ready.[/green]")
-            raise typer.Exit(0)
-        if report.needs_libturbojpeg():
-            console.print(f"[yellow]{sw.LIBTURBOJPEG_HINT}[/yellow]")
-        console.print("[red]Web UI environment check failed.[/red]")
-        raise typer.Exit(1)
-
-    if report.ok and not force and build is not True:
-        console.print("[green]Web UI environment already ready; nothing to do.[/green]")
-        console.print("[dim]Use --force to rebuild SPA or reinstall packages.[/dim]")
-        raise typer.Exit(0)
-
-    if scope_norm == "system" and not check:
-        confirm = typer.confirm(
-            "Install missing Python packages system-wide with sudo?",
-            default=False,
-        )
-        if not confirm:
-            console.print("[yellow]Aborted (system scope not confirmed).[/yellow]")
-            raise typer.Exit(1)
-
-    missing = report.missing_pip_packages()
-    if missing or force:
-        # On --force, still only install packages that fail import unless force wants all web pkgs
-        to_install = missing if missing else ([] if not force else [])
-        if force and not to_install:
-            # Re-check: force with everything ok → skip pip
-            pass
-        if to_install:
-            console.print(f"[blue]Installing Python packages ({scope_norm}): {', '.join(to_install)}[/blue]")
-            try:
-                sw.pip_install(to_install, scope=scope_norm)
-            except Exception as exc:
-                console.print(f"[red]pip install failed: {exc}[/red]")
-                raise typer.Exit(1)
-
-    # Re-check turbojpeg native after pip
-    report_after_pip = sw.collect_web_setup_report()
-    if report_after_pip.needs_libturbojpeg():
-        console.print(f"[yellow]{sw.LIBTURBOJPEG_HINT}[/yellow]")
-
-    should_build = force or build is True or report.needs_frontend_build() or report_after_pip.needs_frontend_build()
-    if build is False:
-        should_build = False
-
-    if should_build:
-        if report_after_pip.needs_node() or report.needs_node():
-            console.print(
-                "[red]Node.js/npm required to build the SPA. "
-                "Install with: sudo apt install nodejs npm[/red]"
-            )
-            raise typer.Exit(1)
-        console.print("[blue]Building frontend (npm install && npm run build)…[/blue]")
-        try:
-            sw.build_frontend()
-        except Exception as exc:
-            console.print(f"[red]Frontend build failed: {exc}[/red]")
-            raise typer.Exit(1)
-
-    final = sw.collect_web_setup_report()
-    if final.ok:
-        console.print("[green]Web UI setup completed successfully.[/green]")
-        raise typer.Exit(0)
-
-    if final.needs_libturbojpeg():
-        console.print(f"[yellow]{sw.LIBTURBOJPEG_HINT}[/yellow]")
-        # Native lib missing: SPA/API still usable with OpenCV fallback.
-        if all(
-            item.ok
-            for item in final.items
-            if item.name != "python:turbojpeg_native"
-            and item.name in {
-                "python:fastapi",
-                "python:uvicorn",
-                "python:pydantic",
-                "python:itsdangerous",
-                "python:turbojpeg",
-                "static",
-            }
-        ):
-            console.print(
-                "[yellow]Setup finished with TurboJPEG native library missing "
-                "(preview will use OpenCV fallback).[/yellow]"
-            )
-            raise typer.Exit(0)
-
-    console.print("[red]Web UI setup incomplete.[/red]")
-    raise typer.Exit(1)
 
 
 @app.command()
@@ -1509,8 +1425,15 @@ def create(
     """
     import os
     import json
-    from pathlib import Path
     from evileye.controller.controller import Controller
+    from evileye.cli_interactive import (
+        InteractiveInputError,
+        interactive_available,
+        prompt_choice,
+        prompt_integer,
+        prompt_text,
+        selected_from_menu,
+    )
 
     # Handle list pipelines
     if list_pipelines:
@@ -1537,14 +1460,38 @@ def create(
 
         except Exception as e:
             console.print(f"[red]Error listing pipeline classes: {e}[/red]")
-            raise typer.Exit(1)
+            raise typer.Exit(1) from e
 
     # Validate config_name is provided when not listing pipelines
     if not config_name:
-        console.print("[red]Configuration name is required![/red]")
-        console.print("[yellow]Usage: evileye create <config_name>[/yellow]")
-        console.print("[yellow]Use --help for more information.[/yellow]")
-        raise typer.Exit(1)
+        if not interactive_available():
+            console.print("[red]Configuration name is required![/red]")
+            console.print("[yellow]Usage: evileye create <config_name>[/yellow]")
+            console.print("[yellow]Use --help for more information.[/yellow]")
+            raise typer.Exit(1)
+        try:
+            config_name = prompt_text("Имя новой конфигурации")
+        except InteractiveInputError as exc:
+            console.print(f"[yellow]{exc}[/yellow]")
+            raise typer.Exit(2) from exc
+        if not config_name:
+            raise typer.Exit(2)
+
+    guided = interactive_available() and (sources <= 0 or selected_from_menu())
+    if guided:
+        try:
+            sources = prompt_integer("Количество видеоисточников", default=max(sources, 1))
+            if sources < 1:
+                console.print("[yellow]Нужно выбрать хотя бы один источник.[/yellow]")
+                raise typer.Exit(2)
+            available_pipelines = Controller().get_available_pipeline_classes()
+            if available_pipelines:
+                options = [(name, name) for name in available_pipelines]
+                default_pipeline = pipeline if pipeline in available_pipelines else None
+                pipeline = prompt_choice("Класс пайплайна", options, default=default_pipeline)
+        except InteractiveInputError as exc:
+            console.print(f"[yellow]{exc}[/yellow]")
+            raise typer.Exit(2) from exc
 
     # Ensure output directory exists
     os.makedirs(output_dir, exist_ok=True)
@@ -1557,9 +1504,15 @@ def create(
 
     # Check if file already exists
     if os.path.exists(output_path) and not force:
-        console.print(f"[red]Configuration file '{output_path}' already exists![/red]")
-        console.print("[yellow]Use --force to overwrite or choose a different name.[/yellow]")
-        raise typer.Exit(1)
+        if selected_from_menu() and interactive_available():
+            if not typer.confirm(f"Файл {output_path} уже существует. Перезаписать?", default=False):
+                console.print("[dim]Создание отменено.[/dim]")
+                raise typer.Exit(0)
+            force = True
+        else:
+            console.print(f"[red]Configuration file '{output_path}' already exists![/red]")
+            console.print("[yellow]Use --force to overwrite or choose a different name.[/yellow]")
+            raise typer.Exit(1)
 
     # Build optional parameters
     detector_params = {}
@@ -1607,7 +1560,7 @@ def create(
 
     except Exception as e:
         console.print(f"[red]Error creating configuration: {e}[/red]")
-        raise typer.Exit(1)
+        raise typer.Exit(1) from e
 
 
 @app.command()
@@ -1697,7 +1650,20 @@ def get_config_description(config_file: Path) -> str:
 
 def main() -> None:
     """Main entry point for CLI"""
-    app()
+    from evileye.cli_interactive import NON_INTERACTIVE_ENV, strip_non_interactive_flags
+
+    argv, forced_non_interactive = strip_non_interactive_flags(sys.argv[1:])
+    old_value = os.environ.get(NON_INTERACTIVE_ENV)
+    if forced_non_interactive:
+        os.environ[NON_INTERACTIVE_ENV] = "1"
+    try:
+        app(args=argv)
+    finally:
+        if forced_non_interactive:
+            if old_value is None:
+                os.environ.pop(NON_INTERACTIVE_ENV, None)
+            else:
+                os.environ[NON_INTERACTIVE_ENV] = old_value
 
 
 if __name__ == "__main__":

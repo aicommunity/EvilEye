@@ -1,11 +1,9 @@
-import os
 from evileye.core.logging_config import setup_evileye_logging
 from evileye.core.logger import get_module_logger
 import sys
 import pytest
 import numpy as np
 from pathlib import Path
-from types import SimpleNamespace
 
 sys.path.append(str(Path(__file__).parent.parent.parent.parent))
 from evileye.object_tracker.trackers.cfg.utils import read_cfg

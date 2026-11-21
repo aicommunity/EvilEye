@@ -31,10 +31,23 @@ def apply_startup_migrations(db_controller, logger: Optional[object] = None) -> 
         pass
 
     stmts: Tuple[str, ...] = (
+        # Rename legacy FOV events table if present
+        """
+        DO $$
+        BEGIN
+          IF to_regclass('public.fov_events') IS NOT NULL
+             AND to_regclass('public.schedule_alarm_events') IS NULL THEN
+            ALTER TABLE fov_events RENAME TO schedule_alarm_events;
+          END IF;
+        END $$;
+        """,
         # zone_events video fragments
         "ALTER TABLE zone_events ADD COLUMN IF NOT EXISTS video_path_entered text;",
         "ALTER TABLE zone_events ADD COLUMN IF NOT EXISTS video_path_left text;",
-        # fov_events video fragments
+        # schedule_alarm_events video fragments
+        "ALTER TABLE schedule_alarm_events ADD COLUMN IF NOT EXISTS video_path text;",
+        "ALTER TABLE schedule_alarm_events ADD COLUMN IF NOT EXISTS video_path_lost text;",
+        # legacy fov_events video fragments
         "ALTER TABLE fov_events ADD COLUMN IF NOT EXISTS video_path text;",
         "ALTER TABLE fov_events ADD COLUMN IF NOT EXISTS video_path_lost text;",
         # attribute_events additional payload
@@ -47,6 +60,21 @@ def apply_startup_migrations(db_controller, logger: Optional[object] = None) -> 
         "ALTER TABLE attribute_events ADD COLUMN IF NOT EXISTS class_id integer;",
         "ALTER TABLE attribute_events ADD COLUMN IF NOT EXISTS box_found real[];",
         "ALTER TABLE attribute_events ADD COLUMN IF NOT EXISTS box_finished real[];",
+        """
+        CREATE TABLE IF NOT EXISTS alarm_events (
+          event_id integer,
+          alarm_id text PRIMARY KEY,
+          time_stamp timestamp NOT NULL,
+          alarm_type text NOT NULL,
+          severity text NOT NULL,
+          source_id integer,
+          source_name text,
+          details jsonb NOT NULL DEFAULT '{}'::jsonb,
+          project_id integer,
+          job_id integer
+        );
+        """,
+        "CREATE INDEX IF NOT EXISTS idx_alarm_events_time_stamp ON alarm_events (time_stamp);",
     )
 
     try:

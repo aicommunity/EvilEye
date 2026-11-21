@@ -5,8 +5,7 @@
 import os
 import re
 import datetime
-from typing import Optional, Tuple, List
-from pathlib import Path
+from typing import Optional, Tuple
 
 
 class JournalPathResolver:

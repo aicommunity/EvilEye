@@ -5,9 +5,9 @@ Vite + React + TypeScript SPA for the EvilEye REST API.
 ## Preferred: CLI
 
 ```bash
-evileye setup-web          # check Python web deps; build SPA if static missing
-evileye setup-web --check
-evileye setup-web --build  # force npm install && npm run build
+evileye web build          # check Python web deps; build SPA if static missing
+evileye web build --check
+evileye web build --build  # force npm install && npm run build
 ```
 
 See [`docs/CLI_SETUP_WEB.md`](../../../docs/CLI_SETUP_WEB.md).

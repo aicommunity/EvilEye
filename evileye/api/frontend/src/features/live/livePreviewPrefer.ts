@@ -1,0 +1,45 @@
+/** Pure helpers for Live preview source selection (A1). */
+
+export function wantLiveSnapshotPoll(opts: {
+  running: boolean;
+  active: boolean;
+  useMjpeg: boolean;
+  previewWsActive: boolean;
+  hasWsFrame: boolean;
+}): boolean {
+  const { running, active, useMjpeg, previewWsActive, hasWsFrame } = opts;
+  return running && active && !useMjpeg && !(previewWsActive && hasWsFrame);
+}
+
+export function wantLiveWsPreview(opts: {
+  running: boolean;
+  active: boolean;
+  useMjpeg: boolean;
+  previewWsActive: boolean;
+  hasWsFrame: boolean;
+}): boolean {
+  const { running, active, useMjpeg, previewWsActive, hasWsFrame } = opts;
+  return running && active && !useMjpeg && previewWsActive && hasWsFrame;
+}
+
+/** Until IntersectionObserver is ready, tiles are inactive (R11: subscribe none). */
+export function cameraTileActive(opts: {
+  mode: 'fit' | 'fixed';
+  ioReady: boolean;
+  visible: boolean;
+  selected: boolean;
+}): boolean {
+  if (!opts.ioReady) return false;
+  return opts.mode === 'fit' || opts.visible || opts.selected;
+}
+
+/**
+ * Raise previewError (yellow status) only when there is no healthy WS blob to keep showing.
+ * Avoids 1–2s green blink when a brief snapshot 404 coincides with a live WS frame.
+ */
+export function shouldRaisePreviewError(opts: {
+  previewWsActive: boolean;
+  hasWsFrame: boolean;
+}): boolean {
+  return !(opts.previewWsActive && opts.hasWsFrame);
+}

@@ -1,4 +1,3 @@
-import os
 import cv2
 from typing import List
 from ultralytics import YOLO

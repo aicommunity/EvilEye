@@ -1,8 +1,7 @@
 import os
-import datetime
+from evileye.core.event_time import date_folder_from_ts, require_datetime
 from .json_event_io import append_json_record
-from .event_image_paths import ensure_event_image_dirs
-import copy
+from .event_image_paths import ensure_event_image_dirs, owner_from_event, write_owner_sidecar
 import cv2
 from .db_adapter import DatabaseAdapterBase
 from .image_storage_service import ImageStorageService
@@ -35,14 +34,18 @@ class JsonAdapterZoneEvents(DatabaseAdapterBase):
         self._image_storage = ImageStorageService(self.image_dir, preview_width=320, preview_height=240, logger=None)
 
     def start(self):
-        self.run_flag = True
+        with self._lifecycle_lock:
+            self._closing = False
+            self.run_flag = True
 
     def _process_queue_item(self, item):
         """JSON адаптер не использует очередь; метод требуется базовым классом."""
         return
 
     def stop(self):
-        self.run_flag = False
+        with self._lifecycle_lock:
+            self._closing = True
+            self.run_flag = False
 
     def _execute_query(self):
         pass
@@ -54,14 +57,14 @@ class JsonAdapterZoneEvents(DatabaseAdapterBase):
         self._write_event(event, is_update=True)
 
     def _write_event(self, event, is_update: bool):
-        date_folder = datetime.date.today().strftime('%Y-%m-%d')
+        ts = require_datetime(event.time_left or event.time_entered or event.timestamp)
+        date_folder = date_folder_from_ts(ts)
         day_dir = os.path.join(self.base_dir, date_folder)
         metadata_dir = os.path.join(day_dir, 'Metadata')
         os.makedirs(metadata_dir, exist_ok=True)
         file_name = 'zone_events_left.json' if is_update else 'zone_events_entered.json'
         file_path = os.path.join(metadata_dir, file_name)
 
-        ts = (event.time_left or event.time_entered)
         preview_rel, frame_rel = self._save_images(day_dir, event, is_update)
 
         # Normalize box if present using source image
@@ -75,8 +78,9 @@ class JsonAdapterZoneEvents(DatabaseAdapterBase):
 
         rec = {
             'event_id': event.event_id,
-            'ts': ts.isoformat() if hasattr(ts, 'isoformat') else str(ts),
+            'ts': ts.isoformat(),
             'source_id': event.source_id,
+            'source_name': owner_from_event(event),
             'object_id': event.object_id,
             'zone_id': event.zone.get_zone_id() if hasattr(event, 'zone') else None,
             'box': box,
@@ -88,7 +92,7 @@ class JsonAdapterZoneEvents(DatabaseAdapterBase):
 
     def _save_images(self, day_dir: str, event, is_update: bool):
         # Новые каталоги: Events/.../Images/FoundFrames/FoundPreviews/LostFrames/LostPreviews
-        ts = (event.time_left if is_update else event.time_entered)
+        ts = require_datetime(event.time_left if is_update else event.time_entered)
         ts_str = ts.strftime('%Y-%m-%d_%H-%M-%S-%f') if is_update else ts.strftime('%Y-%m-%d_%H-%M-%S.%f')
         previews_dir, frames_dir = ensure_event_image_dirs(day_dir, is_lost=is_update)
 
@@ -110,4 +114,7 @@ class JsonAdapterZoneEvents(DatabaseAdapterBase):
             preview = ImageStorageService.resize_preserving_aspect(image.image.copy(), 320, 240)
             cv2.imwrite(preview_abs, preview)
             cv2.imwrite(frame_abs, image.image)
+        owner = owner_from_event(event)
+        write_owner_sidecar(preview_abs, owner)
+        write_owner_sidecar(frame_abs, owner)
         return preview_rel, frame_rel

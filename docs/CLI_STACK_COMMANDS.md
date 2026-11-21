@@ -1,0 +1,241 @@
+# Управление стеком EvilEye (CLI)
+
+Единый интерфейс для Web UI, OS-сервиса и pipeline runtime.
+
+**Site directory** = текущий cwd (обычно каталог deploy-сайта, например `~/EvilEyeDeploy`). Запускайте команды из корня сайта.
+
+## Интерактивный режим
+
+Если запустить `evileye` без аргументов в терминале, откроется меню публичных команд. Вызов группы без подкоманды, например `evileye pipeline`, откроет меню её команд. Для команд с недостающими обязательными данными CLI предложит ввести их в терминале: например, `evileye validate` спросит конфигурацию, а `evileye pipeline stop` — какой запуск остановить.
+
+Интерактивность включается только при наличии TTY. Вызовы с аргументами продолжают выполнять ту же команду напрямую и не получают дополнительных подтверждений. В меню CLI отдельно подтверждает остановку, удаление, перезапуск и перезапись; по умолчанию ответ — «нет». Нажатие Ctrl-C отменяет текущий ввод, EOF завершает мастер с сообщением, не выполняя действие.
+
+Отключить меню и мастера можно независимо от TTY:
+
+```bash
+evileye --no-interactive status
+evileye pipeline stop --all --nit
+EVILEYE_NON_INTERACTIVE=1 evileye
+```
+
+`--no-interactive` и короткий алиас `--nit` принимаются до или после подкоманды. `service install --non-interactive` остаётся совместимым флагом. Без TTY CLI сохраняет справку и ошибки для неполных вызовов; для скриптов передавайте все аргументы явно. `--help` всегда показывает справку. Прямой вызов `evileye deploy` по-прежнему выполняется без вопросов.
+
+Скрытая служебная команда `evileye tls-cert` доступна только в
+неинтерактивном режиме; при запуске из терминала добавьте `--nit` или
+`--no-interactive`.
+
+Примеры для скриптов:
+
+```bash
+evileye --nit run configs/system.json --no-gui
+EVILEYE_NON_INTERACTIVE=1 evileye pipeline restart configs/system.json
+```
+
+## Миграция со старых команд
+
+| Было | Стало |
+|------|-------|
+| `evileye setup-web` | `evileye web check` / `evileye web build` / `evileye web deps` |
+| `evileye setup-web --force` | `evileye web build --force` или `evileye reload web --force-build` |
+| `evileye install-server` | `evileye service install` |
+| `evileye uninstall-server` | `evileye service uninstall` |
+| `systemctl --user restart evileye` | `evileye service restart` |
+| ручной stop + restart pipeline | `evileye pipeline restart` (CONFIG optional) |
+| неясно что запущено | `evileye status` |
+
+## Три сценария
+
+| Сценарий | Команды |
+|----------|---------|
+| **Разработка pipeline** | `evileye run CONFIG [--gui]` |
+| **Разработка Web UI / API** | `evileye dev server`, `evileye reload web` |
+| **Production на хосте** | `evileye prod init CONFIG` → `evileye prod up` |
+
+## Что нажать когда (decision table)
+
+| Ситуация | Команда |
+|----------|---------|
+| Всё ок / посмотреть состояние | `evileye status` |
+| После правки SPA/API, pipeline не трогать | `evileye reload web` |
+| Перезапустить только pipeline | `evileye pipeline restart` или `evileye reload pipeline` |
+| Полный reload web + pipeline | `evileye prod restart` или `evileye reload web --with-pipeline` |
+| Web service не активен | `evileye service start` |
+| Дубли pipeline | `evileye pipeline stop --all` затем `evileye pipeline start` |
+| Web collision (service + stray foreground) | `evileye service restart` |
+| Остановить prod (hold watchdog) | `evileye prod down` |
+| Поднять prod заново | `evileye prod up` |
+
+**`prod restart`** по умолчанию **с pipeline** (`--with-pipeline`).  
+**`reload web`** по умолчанию **только web** (pipeline не трогает).
+
+## Резолв CONFIG (порядок)
+
+Для `pipeline restart`, `reload pipeline`, `prod up/restart`, `reload web --with-pipeline`:
+
+1. Явный аргумент / `--config`
+2. Ровно один живой pipeline на site → его `config_path`
+3. `production_config` из `.evileye_service.json`
+4. `watchdog_config` из профиля
+5. Иначе — ошибка с подсказкой (`prod init` / `service install`)
+
+Если запущено **несколько** разных configs — нужно указать CONFIG явно.
+
+Для `pipeline start` без аргумента: только профиль (п.3–4), **не** берётся уже running config.
+
+## `evileye status [--json]`
+
+Показывает:
+
+1. Таблицу стека (OS service, порт, PIDs, pipeline counts, watchdog)
+2. Active pipeline runs
+3. Warnings
+4. **Recommended** — контекстные команды (1–3), с приоритетом проблем (дубли, collision, service down)
+5. **Commands** — компактный справочник основных операций
+
+`--json` включает `suggested_commands` и `command_catalog`.
+
+Для просмотра топологии, health модулей и настройки pipeline из SSH-консоли
+используйте [CLI_PIPELINE_COMMANDS.md](CLI_PIPELINE_COMMANDS.md):
+`evileye pipeline inspect`, `evileye pipeline configure` и `evileye plugin list`.
+
+## `evileye web`
+
+| Подкоманда | Описание |
+|------------|----------|
+| `check` | Проверка Python deps + SPA static |
+| `deps [--scope user\|system]` | Установка Python-пакетов API |
+| `build [--force]` | `npm install && npm run build` |
+| `refresh [--force]` | build при необходимости + `evileye service restart` |
+
+## `evileye service`
+
+| Подкоманда | Описание |
+|------------|----------|
+| `install [CONFIG]` | TLS (опционально) + OS unit (systemd / Windows Task); пишет `production_config` |
+| `uninstall` | Удаление сервиса |
+| `start` / `stop` / `restart` / `status` | Управление unit |
+
+Флаги TLS: `--no-tls`, `--tls-self-signed`, `--tls-ip`, `--ssl-certfile`, …
+
+## `evileye pipeline`
+
+| Подкоманда | Описание |
+|------------|----------|
+| `status` | Активные runs |
+| `stop --config CONFIG` / `stop --all` | Остановка; **обязателен** `--config` или `--all` |
+| `start [CONFIG] [--gui] [--detach] [--release] [--replace]` | managed (если web active) или direct; CONFIG optional из профиля |
+| `restart [CONFIG] [--detach/--foreground] [--hold/--no-hold]` | stop + start; CONFIG optional (unique run или профиль) |
+
+**Режимы запуска (managed vs direct):**
+
+| Условие | Режим | `--detach` |
+|---------|-------|------------|
+| Web OS service / порт API активен, или `pipeline_launch=managed` | **managed** (`process.py`) | Игнорируется (уже background) |
+| Иначе | **direct** (`evileye run`) | `--detach` → фон (systemd scope / Popen); без флага / `--foreground` → CLI ждёт exit |
+
+**Hold / grace / manual stop:**
+
+| Флаг / команда | Что делает |
+|----------------|------------|
+| `pipeline stop --hold` / `prod down` | Пишет `monitor/.manual_stop_until` (~1ч) — watchdog **не** поднимает pipeline |
+| `pipeline restart --hold` (default) | Только **restart grace** (`monitor/.restart_grace_until`) на окно stop→start; **не** 1h manual stop |
+| `pipeline start --release` | Снимает manual stop hold |
+| `reload web --with-pipeline --no-release` | Не сбрасывает manual stop после старта pipeline |
+
+**Singleton policy (per-site):** без `--replace` команды `pipeline start`, `evileye run` и API start завершаются с ошибкой, если для того же config уже есть живой `process.py`. `evileye prod up` идемпотентен. Явный перезапуск: `pipeline restart` или `pipeline start --replace`.
+
+На Linux direct+detach использует user scope `evileye-run-<config-stem>.scope` (`systemd-run --no-block`), поэтому CLI сразу возвращает prompt. Stop/restart одного config не останавливает scope другого config.
+
+Примеры:
+
+```bash
+evileye pipeline restart                          # один живой run; detach; grace only
+evileye pipeline restart configs/poly-cameras-gst.json
+evileye pipeline restart --foreground             # ждёт exit pipeline (direct)
+evileye pipeline stop --all --hold                # 1h manual stop
+evileye pipeline start --release --detach         # из production_config, фон
+```
+
+## `evileye reload`
+
+| Подкоманда | Описание |
+|------------|----------|
+| `web [--force-build] [--with-pipeline] [--config CONFIG] [--release/--no-release]` | Build → service restart → (опционально) pipeline |
+| `backend` | Только restart OS web service |
+| `pipeline [CONFIG]` | Alias `pipeline restart` (те же флаги: `--detach/--foreground`, `--hold/--no-hold`, `--gui`) |
+
+**`reload web` без `--with-pipeline` не трогает pipeline.**  
+При `--with-pipeline` stop phase ставит только grace (не 1h manual stop).
+
+```bash
+evileye reload web
+evileye reload web --with-pipeline
+evileye reload pipeline
+```
+
+## `evileye run`
+
+| Флаг | Описание |
+|------|----------|
+| `--replace` | Остановить существующий run для этого config, затем запустить |
+
+Без `--replace` — fail fast с pid и подсказкой `pipeline restart`.
+
+## `evileye prod`
+
+| Подкоманда | Описание |
+|------------|----------|
+| `init CONFIG` | `deploy` + `service install` + watchdog + site profile |
+| `up` | `service start` + pipeline (profile / unique running); idempotent |
+| `down [--stop-service]` | stop all pipelines + **manual** hold (~1ч) |
+| `restart [--with-pipeline/--web-only] [--config]` | Ordered reload; default **with pipeline** |
+
+Профиль сайта: `.evileye_service.json` (`production_config`, `pipeline_launch: auto`, `gui_default: false`).
+
+На Linux `prod init --watchdog` / `evileye watchdog-install` вызывает `monitor/scripts/install_timer.sh` (systemd user timers). На Windows — Scheduled Tasks.
+
+## `evileye dev server`
+
+Foreground `evileye server --no-reload` без systemd. Не запускается, если OS service активен, порт занят или уже есть foreground `evileye server` для этого site.
+
+## Диагностика дублей
+
+`evileye status` показывает предупреждения:
+
+- `duplicate_pipeline_detected` — несколько живых `process.py` на один config → Recommended: `pipeline stop --all`
+- `web_collision` — OS service + лишний foreground server → Recommended: `service restart`
+
+### Залипшие bbox на Live / рост RAM pipeline
+
+1. Снимок baseline: `scripts/diagnose_live_bbox_baseline.sh` (RSS, `/ready`, top процессов).
+2. Метрики handler: `curl -s http://127.0.0.1:8181/ready | jq .objects_handler`
+3. Диагностика в логе: `EVILEYE_PERF_DIAG=1 EVILEYE_PERF_DIAG_EVERY=30`
+4. Сброс памяти: `evileye reload pipeline` (CONFIG optional при одном run)
+
+## Docker
+
+В контейнере `evileye service *` недоступен. Используйте:
+
+| Native | Docker Compose |
+|--------|----------------|
+| `evileye reload web` | `docker compose restart web` |
+| `evileye pipeline stop --all` | `docker compose stop app` |
+| `evileye prod up` | `docker compose up -d` |
+
+Compose по-прежнему запускает `evileye server` и `evileye run` в отдельных контейнерах `web` и `app`.
+
+## См. также
+
+- [CLI_DEPLOY_COMMAND.md](CLI_DEPLOY_COMMAND.md)
+- [WEB_UI_GUIDE.md](WEB_UI_GUIDE.md)
+- [DOCKER_DEPLOYMENT.md](DOCKER_DEPLOYMENT.md)
+
+
+## Pipeline memory guards
+
+Direct detach (`pipeline start --detach` / watchdog `systemd-run` scope) applies:
+
+- `MemoryHigh=35G` / `MemoryMax=45G` (override via `EVILEYE_PIPELINE_MEMORY_HIGH` / `EVILEYE_PIPELINE_MEMORY_MAX`)
+- Watchdog high-water: tree RSS ≥ `EVILEYE_MEMORY_RSS_GB_LIMIT` (default 28) for `EVILEYE_MEMORY_STREAK` (default 3) consecutive health checks → `memory_high_water` restart
+
+Leak diagnosis: `EVILEYE_PERF_DIAG=1` (and optionally `EVILEYE_TRACEMALLOC=1`) then inspect `MemoryAttr` lines in the main log or `python scripts/dump_main_memory_attrs.py`.

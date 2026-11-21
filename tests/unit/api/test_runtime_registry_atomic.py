@@ -1,5 +1,3 @@
-import json
-from pathlib import Path
 
 import evileye.api.core.runtime_registry as rr
 

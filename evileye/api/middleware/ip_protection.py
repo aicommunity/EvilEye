@@ -10,6 +10,23 @@ from evileye.api.core.ip_ban_store import get_ip_ban_store
 from evileye.api.core.rate_guard import get_rate_guard
 
 
+def is_global_rate_exempt(path: str) -> bool:
+    """High-frequency legitimate UI paths should not burn the global flood bucket."""
+    if path == "/ready" or path.startswith("/assets/") or not path.startswith("/api/"):
+        return True
+    if path.endswith("/snapshot") or path.endswith("/stream.mjpg"):
+        return True
+    if "/stream:status" in path:
+        return True
+    if path.endswith("/metadata") and ("/runs/" in path or "/pipelines/" in path):
+        return True
+    if path.startswith("/api/v1/playback/media"):
+        return True
+    if path.startswith("/api/v1/playback/metadata"):
+        return True
+    return False
+
+
 def _ban_response(ban: dict) -> Response:
     payload = {
         "detail": "IP banned",
@@ -31,11 +48,7 @@ class ProtectionMiddleware(BaseHTTPMiddleware):
         if ban is not None:
             return _ban_response(ban)
 
-        skip_global = (
-            path == "/ready"
-            or path.startswith("/assets/")
-            or (not path.startswith("/api/"))
-        )
+        skip_global = is_global_rate_exempt(path)
         # Valid internal relay traffic should not burn global budget.
         if path.startswith("/api/v1/internal/"):
             auth = getattr(request.app.state, "web_auth", None)

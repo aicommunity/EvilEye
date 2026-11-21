@@ -5,10 +5,9 @@
 с предварительным просмотром и валидацией.
 """
 
-import copy
 import json
 from datetime import datetime
-from typing import Dict, Any, Optional
+from typing import Dict, Any
 
 try:
     from PyQt6.QtWidgets import (

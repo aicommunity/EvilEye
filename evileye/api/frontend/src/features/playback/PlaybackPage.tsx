@@ -3,75 +3,311 @@ import { useSearchParams } from 'react-router-dom';
 import {
   playbackApi,
   stateApi,
+  ApiError,
   type PlaybackCamera,
+  type PlaybackDetectionItem,
+  type PlaybackEventInterval,
   type PlaybackEventMarker,
   type PlaybackSegment,
+  type PlaybackTimelineBand,
   cacheGet,
   cacheSet,
+  formatApiError,
   isAbortError,
 } from '../../api';
-import { Button } from '../../components/ui';
+import { withAuthScope } from '../../auth/authScope';
+import { Button, DatePickerField } from '../../components/ui';
 import { useToast } from '../../components/ui/Toast';
 import { useI18n } from '../../i18n';
 import { useRunConfigFlags } from '../../hooks/useRunConfigFlags';
 import { Timeline } from './Timeline';
 import { PlaybackGrid } from './PlaybackGrid';
+import { ExpandedPlaybackView } from './ExpandedPlaybackView';
+import {
+  playbackDebugSetMeta,
+} from './playbackDebug';
 import { usePlaybackController } from './usePlaybackController';
+import { usePlaybackSeek } from './usePlaybackSeek';
+import {
+  applyPostLoadSnapIfNeeded,
+  createUserSeekGuard,
+  type UserSeekGuard,
+} from './playbackSeek';
+import { prevDetectionTs, nextDetectionTs } from './detectionSync';
+import {
+  globalEventStartTs,
+  nextEventTs,
+  prevEventTs,
+} from './markerNavigation';
+import { useDetectionIndex } from './useDetectionIndex';
 import { usePlaybackLayout } from './usePlaybackLayout';
 import { useTimelineViewport } from './useTimelineViewport';
+import { readPlaybackSession, usePlaybackSessionPersist } from './usePlaybackSession';
 import { fitColsForCount } from '../layout/fitGrid';
-import { localDateString, mergeSegments } from './timelineMath';
+import {
+  DAY_LOAD_BUFFER_SEC,
+  mergeSegments,
+  dayBoundsLocal,
+  dayViewUpperBound,
+  hasAnyPlayableAtPosition,
+  resolveTimelineViewChange,
+  segmentIntersectsDay,
+  snapUnionPositionToPlayable,
+  formatPlaybackTime,
+} from './timelineMath';
+import { filterLogicalCameraIds, preferLogicalCameras } from './playbackCameraIds';
 
 function today(): string {
   const d = new Date();
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
 }
 
+const INITIAL_WINDOW_SEC = 7200;
+const SEGMENTS_LOAD_TIMEOUT_MS = 60_000;
+/** Soft-retry delays for cold-index 503/timeout on initial day load. */
+const SEGMENTS_RETRY_BACKOFF_MS = [2_000, 5_000] as const;
+/** Half-width of the time range requested when seeking outside loaded data. */
+const SEEK_LOAD_HALF_SEC = 3600;
+
+function isSegmentsBusyOrTimeout(e: unknown): boolean {
+  if (!(e instanceof ApiError)) return false;
+  if (e.status !== 503) return false;
+  const detail = String(e.message || '').toLowerCase();
+  return (
+    detail.includes('busy') ||
+    detail.includes('timeout') ||
+    detail.includes('segments') ||
+    detail.includes('timeline') ||
+    detail.includes('playback')
+  );
+}
+
+function sleepAbortable(ms: number, signal: AbortSignal): Promise<void> {
+  return new Promise((resolve, reject) => {
+    if (signal.aborted) {
+      reject(new DOMException('Aborted', 'AbortError'));
+      return;
+    }
+    const timer = window.setTimeout(() => {
+      signal.removeEventListener('abort', onAbort);
+      resolve();
+    }, ms);
+    const onAbort = () => {
+      window.clearTimeout(timer);
+      reject(new DOMException('Aborted', 'AbortError'));
+    };
+    signal.addEventListener('abort', onAbort, { once: true });
+  });
+}
+
+function initialSegmentWindow(dateStr: string, anchorSec?: number | null): { from: number; to: number } {
+  const { start, end } = dayBoundsLocal(dateStr);
+  if (anchorSec != null && Number.isFinite(anchorSec) && anchorSec >= start && anchorSec <= end) {
+    return {
+      from: Math.max(start, anchorSec - SEEK_LOAD_HALF_SEC),
+      to: Math.min(end, anchorSec + SEEK_LOAD_HALF_SEC),
+    };
+  }
+  const nowSec = Date.now() / 1000;
+  if (dateStr === today()) {
+    const to = Math.min(end, nowSec);
+    const from = Math.max(start, nowSec - INITIAL_WINDOW_SEC);
+    return { from, to };
+  }
+  return { from: Math.max(start, end - INITIAL_WINDOW_SEC), to: end };
+}
+
+/** Prefer covering the current viewport (+ buffer) so hard-load does not leave visible gaps. */
+function hardLoadSegmentWindow(
+  dateStr: string,
+  anchorSec: number | null | undefined,
+  viewFrom: number | null,
+  viewTo: number | null,
+): { from: number; to: number } {
+  if (viewFrom != null && viewTo != null && viewTo > viewFrom) {
+    const { start } = dayBoundsLocal(dateStr);
+    const upper = dayViewUpperBound(dateStr);
+    return {
+      from: Math.max(start, viewFrom - DAY_LOAD_BUFFER_SEC),
+      to: Math.min(upper, viewTo + DAY_LOAD_BUFFER_SEC),
+    };
+  }
+  return initialSegmentWindow(dateStr, anchorSec);
+}
+
+function dateFromUnixSec(sec: number): string {
+  const d = new Date(sec * 1000);
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+}
+
 function parseDeepLinkTime(raw: string | null): number | null {
   if (!raw) return null;
   const n = Number(raw);
-  if (Number.isFinite(n) && n > 0) return n;
+  if (Number.isFinite(n) && n > 0) {
+    // Guard against ms timestamps (Date.now()) accidentally passed as `t`.
+    if (n > 1e12) return n / 1000;
+    // Reject absurd far-future values that are not unix seconds.
+    if (n > 1e11) return null;
+    return n;
+  }
   const parsed = Date.parse(raw);
   return Number.isFinite(parsed) ? parsed / 1000 : null;
 }
 
 const CAMERAS_TTL_MS = 30_000;
-const SEGMENTS_TTL_MS = 15_000;
+const SEGMENTS_TTL_MS = 60_000;
+/** Padding around viewport for the priority detection fetch. */
+const DETECTION_PRIORITY_PAD_SEC = 900;
+/** Coalesce playhead-driven detection windows (avoid refetch every RAF tick). */
+const DETECTION_POSITION_QUANT_SEC = 600;
+const VIEWPORT_DEBOUNCE_MS = 500;
+
+function useDebouncedValue<T>(value: T, delayMs: number): T {
+  const [debounced, setDebounced] = useState(value);
+  useEffect(() => {
+    const id = window.setTimeout(() => setDebounced(value), delayMs);
+    return () => window.clearTimeout(id);
+  }, [value, delayMs]);
+  return debounced;
+}
+
+function quantizeFloor(sec: number, step: number): number {
+  if (!(step > 0) || !Number.isFinite(sec)) return sec;
+  return Math.floor(sec / step) * step;
+}
 
 function camerasCacheKey(date: string, runId: number | null): string {
-  return `playback:cameras:${date}:${runId ?? 'none'}`;
+  return withAuthScope(`playback:cameras:${date}:${runId ?? 'none'}`);
 }
 
 export function PlaybackPage() {
   const [params] = useSearchParams();
   const { showError } = useToast();
-  const { t } = useI18n();
+  const { t, formatDate } = useI18n();
   const flags = useRunConfigFlags();
-  const [date, setDate] = useState(today());
+  const initialT = parseDeepLinkTime(params.get('t'));
+  const sessionSnap = useMemo(() => (initialT != null ? null : readPlaybackSession()), [initialT]);
+  const [date, setDate] = useState(() => {
+    if (initialT != null) return dateFromUnixSec(initialT);
+    if (sessionSnap?.date) return sessionSnap.date;
+    return today();
+  });
   const [runId, setRunId] = useState<number | null>(null);
-  const [runReady, setRunReady] = useState(false);
+  const [runResolved, setRunResolved] = useState(false);
   const [cameras, setCameras] = useState<PlaybackCamera[]>([]);
-  const [camerasLoading, setCamerasLoading] = useState(false);
+  const [camerasLoading, setCamerasLoading] = useState(true);
   const { cols, setCols, selectedIds, setSelectedIds, mode, setMode } = usePlaybackLayout();
   const [segmentsByCam, setSegmentsByCam] = useState<Record<string, PlaybackSegment[]>>({});
   const [markers, setMarkers] = useState<PlaybackEventMarker[]>([]);
+  const [eventIntervals, setEventIntervals] = useState<PlaybackEventInterval[]>([]);
+  const [inferenceGaps, setInferenceGaps] = useState<PlaybackTimelineBand[]>([]);
   const [segmentsLoaded, setSegmentsLoaded] = useState(false);
-  const initialT = parseDeepLinkTime(params.get('t'));
-  const ctrl = usePlaybackController(initialT);
+  const [segmentsLoading, setSegmentsLoading] = useState(false);
+  const [segmentsError, setSegmentsError] = useState<string | null>(null);
+  const [archivePreparing, setArchivePreparing] = useState(false);
+  const [showMetadata, setShowMetadata] = useState(true);
+  const [, setTimelinePanning] = useState(false);
+  const [expandedCameraId, setExpandedCameraId] = useState<string | null>(null);
+  const segmentsByCamRef = useRef<Record<string, PlaybackSegment[]>>({});
+  const [viewCursorSec, setViewCursorSec] = useState<number | null>(null);
+  const ctrl = usePlaybackController(initialT ?? sessionSnap?.positionSec ?? null, segmentsByCamRef);
   const viewport = useTimelineViewport();
+  const sessionViewRestoredRef = useRef(false);
+
+  useEffect(() => {
+    const linked = parseDeepLinkTime(params.get('t'));
+    if (linked == null) return;
+    setDate(dateFromUnixSec(linked));
+    ctrl.seek(linked);
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- sync deep link when query changes
+  }, [params]);
+  const debouncedViewFrom = useDebouncedValue(viewport.viewFrom, VIEWPORT_DEBOUNCE_MS);
+  const debouncedViewTo = useDebouncedValue(viewport.viewTo, VIEWPORT_DEBOUNCE_MS);
+  const dayBounds = useMemo(() => {
+    const { start } = dayBoundsLocal(date);
+    return { fromSec: start, toSec: dayViewUpperBound(date) };
+  }, [date]);
+
+  const priorityDetectionWindow = useMemo(() => {
+    const { start } = dayBoundsLocal(date);
+    const upper = dayViewUpperBound(date);
+    // Prefer the (debounced) timeline viewport — do NOT track live playhead every tick:
+    // that aborted/restarted /detections continuously and saturated the API (EMFILE).
+    if (debouncedViewFrom != null && debouncedViewTo != null && debouncedViewTo > debouncedViewFrom) {
+      return {
+        fromSec: Math.max(start, debouncedViewFrom - DETECTION_PRIORITY_PAD_SEC),
+        toSec: Math.min(upper, debouncedViewTo + DETECTION_PRIORITY_PAD_SEC),
+      };
+    }
+    const qPos = quantizeFloor(ctrl.positionSec, DETECTION_POSITION_QUANT_SEC);
+    return {
+      fromSec: Math.max(start, qPos - SEEK_LOAD_HALF_SEC),
+      toSec: Math.min(upper, qPos + DETECTION_POSITION_QUANT_SEC + SEEK_LOAD_HALF_SEC),
+    };
+  }, [date, ctrl.positionSec, debouncedViewFrom, debouncedViewTo]);
+
+  const detectionIndex = useDetectionIndex({
+    cameras: selectedIds,
+    date,
+    runId,
+    priorityFromSec: priorityDetectionWindow?.fromSec ?? null,
+    priorityToSec: priorityDetectionWindow?.toSec ?? null,
+    backgroundFromSec: dayBounds.fromSec,
+    backgroundToSec: dayBounds.toSec,
+    enabled: segmentsLoaded && showMetadata && selectedIds.length > 0,
+  });
+  const seedTicksRef = useRef(detectionIndex.seedTicks);
+  seedTicksRef.current = detectionIndex.seedTicks;
+  useEffect(() => {
+    ctrl.setDetectionTimestamps(detectionIndex.globalTs);
+    ctrl.setSkipEnabled(showMetadata);
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- controller setters are stable
+  }, [detectionIndex.globalTs, showMetadata]);
+
   const urlCamera = params.get('camera');
-  const dateChangeSourceRef = useRef<'user' | 'viewport'>('user');
+  const dateChangeSourceRef = useRef<'user' | 'viewport' | 'seek'>('user');
   const skipHardSegmentReloadRef = useRef(false);
+  const pendingViewportLoadRef = useRef<{ date: string; from: number; to: number } | null>(null);
   const loadTimerRef = useRef<number | null>(null);
+  const camerasLoadedDateRef = useRef<string | null>(null);
   const selectedIdsRef = useRef(selectedIds);
   selectedIdsRef.current = selectedIds;
+  const prevSelectedIdsRef = useRef<string[]>(selectedIds);
+  const prevDateForSegmentsRef = useRef(date);
   const camerasAbortRef = useRef<AbortController | null>(null);
   const segmentsAbortRef = useRef<AbortController | null>(null);
+  const ensureAdjacentLoadRef = useRef<(vf: number, vt: number, opts?: { immediate?: boolean }) => void>(() => {});
+  const allSegmentsRef = useRef<PlaybackSegment[]>([]);
+  const userSeekGuardRef = useRef<UserSeekGuard>(createUserSeekGuard());
+
+  useEffect(() => {
+    segmentsByCamRef.current = segmentsByCam;
+  }, [segmentsByCam]);
+
+  useEffect(() => {
+    if (sessionViewRestoredRef.current || initialT != null || !sessionSnap) return;
+    if (sessionSnap.date !== date) return;
+    sessionViewRestoredRef.current = true;
+    viewport.setView(sessionSnap.viewFrom, sessionSnap.viewTo, sessionSnap.date);
+  }, [sessionSnap, date, initialT, viewport]);
+
+  usePlaybackSessionPersist(
+    viewport.viewFrom != null && viewport.viewTo != null
+      ? {
+          date,
+          positionSec: ctrl.positionSec,
+          viewFrom: viewport.viewFrom,
+          viewTo: viewport.viewTo,
+          runId,
+        }
+      : null,
+    initialT == null,
+  );
 
   useEffect(() => {
     const ac = new AbortController();
     void stateApi
-      .runs('current', { signal: ac.signal })
+      .runs('active', { signal: ac.signal })
       .then((res) => {
         if (ac.signal.aborted) return;
         const items = Array.isArray(res) ? res : res.items ?? [];
@@ -82,7 +318,7 @@ export function PlaybackPage() {
         if (isAbortError(e)) return;
       })
       .finally(() => {
-        if (!ac.signal.aborted) setRunReady(true);
+        if (!ac.signal.aborted) setRunResolved(true);
       });
     return () => ac.abort();
   }, []);
@@ -91,11 +327,13 @@ export function PlaybackPage() {
     async (nextDate: string) => {
       try {
         const camRes = await playbackApi.cameras(nextDate, runId);
-        cacheSet(camerasCacheKey(nextDate, runId), camRes, CAMERAS_TTL_MS);
-        setCameras(camRes.items);
-        const ids = new Set(camRes.items.map((c) => c.id));
+        const logicalCams = preferLogicalCameras(camRes.items);
+        if (!logicalCams.length) return; // keep current on empty/timeout payloads
+        cacheSet(camerasCacheKey(nextDate, runId), { ...camRes, items: logicalCams }, CAMERAS_TTL_MS);
+        setCameras(logicalCams);
+        const ids = new Set(logicalCams.map((c) => c.id));
         setSelectedIds((prev) => {
-          const kept = prev.filter((id) => ids.has(id));
+          const kept = filterLogicalCameraIds(prev).filter((id) => ids.has(id));
           return kept.length ? kept : prev;
         });
       } catch {
@@ -106,44 +344,71 @@ export function PlaybackPage() {
   );
 
   useEffect(() => {
-    if (!runReady) return;
+    if (!runResolved) return;
     let cancelled = false;
-    if (dateChangeSourceRef.current === 'viewport') {
+    if (dateChangeSourceRef.current === 'viewport' || dateChangeSourceRef.current === 'seek') {
       dateChangeSourceRef.current = 'user';
       skipHardSegmentReloadRef.current = true;
       void softRefreshCameras(date);
+      const pending = pendingViewportLoadRef.current;
+      pendingViewportLoadRef.current = null;
+      if (pending && pending.date === date) {
+        void loadSegments(selectedIdsRef.current, {
+          from: pending.from,
+          to: pending.to,
+          merge: true,
+          date: pending.date,
+        });
+      }
       return;
     }
     camerasAbortRef.current?.abort();
     const ac = new AbortController();
     camerasAbortRef.current = ac;
+    // Wipe segments only when the calendar day actually changes — not when runId
+    // resolves mid-playback (that used to clear videos while UI stayed on Pause).
+    const dateChanged = camerasLoadedDateRef.current !== date;
     void (async () => {
       const cacheKey = camerasCacheKey(date, runId);
       const cached = cacheGet<{ items: PlaybackCamera[] }>(cacheKey);
       if (cached?.items?.length) {
-        setCameras(cached.items);
+        setCameras(preferLogicalCameras(cached.items));
         setCamerasLoading(false);
-      } else {
+      } else if (dateChanged) {
         setCamerasLoading(true);
       }
       try {
-        const camRes = await playbackApi.cameras(date, runId, { signal: ac.signal });
+        let camRes = await playbackApi.cameras(date, runId, { signal: ac.signal });
         if (cancelled || ac.signal.aborted) return;
-        cacheSet(cacheKey, camRes, CAMERAS_TTL_MS);
-        setCameras(camRes.items);
-        const ids = new Set(camRes.items.map((c) => c.id));
+        if (!camRes.items.length && runId != null) {
+          camRes = await playbackApi.cameras(date, null, { signal: ac.signal });
+        }
+        if (cancelled || ac.signal.aborted) return;
+        const logicalCams = preferLogicalCameras(camRes.items);
+        if (!logicalCams.length) {
+          // Keep previous cameras if API returns empty (timeout/partial).
+          return;
+        }
+        cacheSet(cacheKey, { ...camRes, items: logicalCams }, CAMERAS_TTL_MS);
+        setCameras(logicalCams);
+        camerasLoadedDateRef.current = date;
+        const ids = new Set(logicalCams.map((c) => c.id));
         setSelectedIds((prev) => {
-          const kept = prev.filter((id) => ids.has(id));
+          const kept = filterLogicalCameraIds(prev).filter((id) => ids.has(id));
           if (kept.length) return kept;
-          if (urlCamera && ids.has(urlCamera)) return [urlCamera];
-          return camRes.items.map((c) => c.id);
+          if (urlCamera && ids.has(urlCamera) && !urlCamera.includes('-')) return [urlCamera];
+          return logicalCams.map((c) => c.id);
         });
-        setSegmentsByCam({});
-        setMarkers([]);
-        setSegmentsLoaded(false);
+        if (dateChanged) {
+          setSegmentsByCam({});
+          setMarkers([]);
+          setSegmentsLoaded(false);
+        }
       } catch (e) {
         if (isAbortError(e) || cancelled) return;
-        showError(e instanceof Error ? e.message : t('playback.unavailable'));
+        // Do not wipe working cameras/segments on mid-play cameras timeout.
+        if (!dateChanged) return;
+        showError(formatApiError(e, t));
       } finally {
         if (!cancelled && !ac.signal.aborted) setCamerasLoading(false);
       }
@@ -152,45 +417,268 @@ export function PlaybackPage() {
       cancelled = true;
       ac.abort();
     };
-  }, [date, runId, runReady, showError, urlCamera, setSelectedIds, softRefreshCameras]);
+  }, [date, runId, runResolved, showError, urlCamera, setSelectedIds, softRefreshCameras, t]);
 
   const loadSegments = useCallback(
     async (camsOverride?: string[], opts?: { from?: number; to?: number; merge?: boolean; date?: string }) => {
       segmentsAbortRef.current?.abort();
       const ac = new AbortController();
       segmentsAbortRef.current = ac;
+      let timedOut = false;
+      const timeoutId = window.setTimeout(() => {
+        timedOut = true;
+        ac.abort();
+      }, SEGMENTS_LOAD_TIMEOUT_MS);
+      const isInitialLoad = !opts?.merge;
+      let didSetSegmentsLoading = false;
+      setSegmentsError(null);
       try {
-        const nextSelected = camsOverride ?? selectedIdsRef.current;
+        const nextSelected = filterLogicalCameraIds(camsOverride ?? selectedIdsRef.current);
         if (!nextSelected.length) {
           setSegmentsByCam({});
           setMarkers([]);
+          setEventIntervals([]);
+          setInferenceGaps([]);
           setSegmentsLoaded(true);
           if (!opts?.merge) {
             viewport.resetToData(null, null, opts?.date ?? date);
           }
           return;
         }
-        const useDate = opts?.merge ? undefined : (opts?.date ?? date);
-        const segKey = `playback:segments:${useDate ?? ''}:${opts?.from ?? ''}:${opts?.to ?? ''}:${nextSelected.join(',')}`;
-        const evKey = `playback:events:${useDate ?? ''}:${opts?.from ?? ''}:${opts?.to ?? ''}:${nextSelected.join(',')}`;
+        const useDate = opts?.date ?? date;
+        const segKey = withAuthScope(`playback:segments:${useDate ?? ''}:${opts?.from ?? ''}:${opts?.to ?? ''}:${nextSelected.join(',')}`);
+        const evKey = withAuthScope(`playback:events:${useDate ?? ''}:${opts?.from ?? ''}:${opts?.to ?? ''}:${nextSelected.join(',')}`);
 
-        const [batch, ev] = await Promise.all([
-          playbackApi.segmentsBatch(nextSelected, opts?.from, opts?.to, useDate, { signal: ac.signal }),
-          playbackApi.events(opts?.from, opts?.to, undefined, opts?.merge ? undefined : useDate, nextSelected, {
+        const cachedBatch = cacheGet<{ by_camera: Record<string, PlaybackSegment[]>; items: PlaybackSegment[] }>(segKey);
+        const cachedEv = cacheGet<{ items: PlaybackEventInterval[]; legacy_markers?: PlaybackEventMarker[] }>(evKey);
+        if (cachedBatch?.by_camera && cachedEv?.items) {
+          const incoming: Record<string, PlaybackSegment[]> = { ...(cachedBatch.by_camera || {}) };
+          for (const id of nextSelected) {
+            if (!incoming[id]) incoming[id] = [];
+          }
+          setSegmentsByCam((prev) => {
+            if (!opts?.merge) return incoming;
+            const merged: Record<string, PlaybackSegment[]> = { ...prev };
+            for (const id of nextSelected) {
+              merged[id] = mergeSegments(prev[id] ?? [], incoming[id] ?? []);
+            }
+            return merged;
+          });
+
+          const allSegs = Object.values(incoming).flat();
+          const from = allSegs.length ? Math.min(...allSegs.map((s) => s.start_ts)) : opts?.from;
+          const to = allSegs.length ? Math.max(...allSegs.map((s) => s.end_ts)) : opts?.to;
+          const coverFrom = opts?.from ?? from;
+          const coverTo = opts?.to ?? to;
+          if (coverFrom != null && coverTo != null && coverTo > coverFrom) {
+            if (!opts?.merge) viewport.setLoadedRange(coverFrom, coverTo);
+            else viewport.expandLoaded(coverFrom, coverTo);
+          }
+          if (from != null && to != null) {
+            const pos = ctrl.getPosition();
+            const keepPos =
+              Boolean(opts?.merge) ||
+              initialT != null ||
+              (Number.isFinite(pos) && pos > 0 && pos >= from && pos <= to);
+            ctrl.setRange(
+              opts?.merge ? Math.min(ctrl.fromSec ?? from, from) : from,
+              opts?.merge ? Math.max(ctrl.toSec ?? to, to) : to,
+              { preservePosition: keepPos },
+            );
+          }
+          if (!opts?.merge && (viewport.viewFrom == null || viewport.viewTo == null)) {
+            viewport.resetToData(from ?? null, to ?? null, useDate ?? date);
+          }
+
+          setMarkers((prev) => {
+            const incomingMarkers = cachedEv.legacy_markers ?? [];
+            if (!opts?.merge) return incomingMarkers;
+            const byKey = new Map<string, PlaybackEventMarker>();
+            for (const m of prev) byKey.set(`${m.ts}:${m.camera}:${m.type}`, m);
+            for (const m of incomingMarkers) byKey.set(`${m.ts}:${m.camera}:${m.type}`, m);
+            return Array.from(byKey.values()).sort((a, b) => a.ts - b.ts);
+          });
+          setEventIntervals((prev) => {
+            if (!opts?.merge) return cachedEv.items;
+            const byKey = new Map<string, PlaybackEventInterval>();
+            for (const it of prev) byKey.set(`${it.start_ts}:${it.end_ts}:${it.camera}:${it.event_type}:${it.label}`, it);
+            for (const it of cachedEv.items) byKey.set(`${it.start_ts}:${it.end_ts}:${it.camera}:${it.event_type}:${it.label}`, it);
+            return Array.from(byKey.values()).sort((a, b) => a.start_ts - b.start_ts);
+          });
+
+          setSegmentsLoaded(true);
+          applyPostLoadSnapIfNeeded(incoming, {
+            merge: opts?.merge,
+            initialT,
+            getPosition: ctrl.getPosition,
+            seek: ctrl.seek,
+            guard: userSeekGuardRef.current,
+          });
+          if (!opts?.merge && viewport.viewFrom != null && viewport.viewTo != null) {
+            ensureAdjacentLoadRef.current(viewport.viewFrom, viewport.viewTo);
+          }
+          return;
+        }
+
+        if (isInitialLoad) {
+          setSegmentsLoading(true);
+          setArchivePreparing(false);
+          didSetSegmentsLoading = true;
+        }
+        const preparingTimer = isInitialLoad
+          ? window.setTimeout(() => setArchivePreparing(true), 2000)
+          : null;
+
+        let incoming: Record<string, PlaybackSegment[]> = {};
+        let evItems: PlaybackEventInterval[] = [];
+        let evLegacy: PlaybackEventMarker[] = [];
+        let timelineTicks: Record<string, PlaybackDetectionItem[]> | null = null;
+        const gapBands: PlaybackTimelineBand[] = [];
+
+        const applyTimelineEnrichment = (timeline: {
+          by_camera?: Record<
+            string,
+            {
+              segments?: PlaybackSegment[];
+              detection_ticks?: PlaybackDetectionItem[];
+              events?: PlaybackEventInterval[];
+              bands?: PlaybackTimelineBand[];
+            }
+          >;
+        }) => {
+          for (const id of nextSelected) {
+            const row = timeline.by_camera?.[id];
+            if (row?.detection_ticks?.length) {
+              if (!timelineTicks) timelineTicks = {};
+              timelineTicks[id] = row.detection_ticks;
+            }
+            if (row?.events?.length) evItems.push(...row.events);
+            if (row?.bands?.length) {
+              for (const band of row.bands) {
+                if (band?.kind === 'inference_gap' && Number.isFinite(band.from) && Number.isFinite(band.to)) {
+                  gapBands.push(band);
+                }
+              }
+            }
+          }
+          if (timelineTicks) seedTicksRef.current(timelineTicks);
+        };
+
+        const fetchTimelineEnrichment = async () => {
+          const timeline = await playbackApi.timeline(useDate ?? date, nextSelected, {
+            from: opts?.from,
+            to: opts?.to,
+            runId,
             signal: ac.signal,
-          }),
-        ]);
-        if (ac.signal.aborted) return;
+          });
+          if (ac.signal.aborted) return;
+          applyTimelineEnrichment(timeline);
+          cacheSet(evKey, { items: evItems, legacy_markers: [] }, SEGMENTS_TTL_MS);
+          setMarkers((prev) => {
+            const incomingMarkers = evLegacy;
+            if (!opts?.merge) return incomingMarkers;
+            const byKey = new Map<string, PlaybackEventMarker>();
+            for (const m of prev) byKey.set(`${m.ts}:${m.camera}:${m.type}`, m);
+            for (const m of incomingMarkers) byKey.set(`${m.ts}:${m.camera}:${m.type}`, m);
+            return Array.from(byKey.values()).sort((a, b) => a.ts - b.ts);
+          });
+          setEventIntervals((prev) => {
+            if (!opts?.merge) return evItems;
+            const byKey = new Map<string, PlaybackEventInterval>();
+            for (const it of prev) byKey.set(`${it.start_ts}:${it.end_ts}:${it.camera}:${it.event_type}:${it.label}`, it);
+            for (const it of evItems) byKey.set(`${it.start_ts}:${it.end_ts}:${it.camera}:${it.event_type}:${it.label}`, it);
+            return Array.from(byKey.values()).sort((a, b) => a.start_ts - b.start_ts);
+          });
+          setInferenceGaps((prev) => {
+            if (!opts?.merge) return gapBands;
+            const byKey = new Map<string, PlaybackTimelineBand>();
+            for (const it of prev) byKey.set(`${it.kind}:${it.from}:${it.to}`, it);
+            for (const it of gapBands) byKey.set(`${it.kind}:${it.from}:${it.to}`, it);
+            return Array.from(byKey.values()).sort((a, b) => a.from - b.from);
+          });
+        };
 
-        if (!opts?.merge) {
-          cacheSet(segKey, batch, SEGMENTS_TTL_MS);
-          cacheSet(evKey, ev, SEGMENTS_TTL_MS);
+        try {
+          let attempt = 0;
+          const maxRetries = isInitialLoad ? SEGMENTS_RETRY_BACKOFF_MS.length : 0;
+          for (;;) {
+            try {
+              const batch = await playbackApi.segmentsBatch(nextSelected, opts?.from, opts?.to, useDate, {
+                signal: ac.signal,
+                runId,
+              });
+              if (ac.signal.aborted) return;
+              incoming = { ...(batch.by_camera || {}) };
+              for (const id of nextSelected) {
+                if (!incoming[id]) incoming[id] = [];
+              }
+              cacheSet(segKey, batch, SEGMENTS_TTL_MS);
+
+              if (isInitialLoad) {
+                const scheduleEnrich = () => {
+                  void fetchTimelineEnrichment().catch((timelineErr) => {
+                    if (isAbortError(timelineErr)) return;
+                  });
+                };
+                if (typeof window.requestIdleCallback === 'function') {
+                  window.requestIdleCallback(scheduleEnrich, { timeout: 3000 });
+                } else {
+                  window.setTimeout(scheduleEnrich, 50);
+                }
+              } else {
+                try {
+                  await fetchTimelineEnrichment();
+                } catch (timelineErr) {
+                  if (isAbortError(timelineErr)) throw timelineErr;
+                  const ev = await playbackApi.events(opts?.from, opts?.to, undefined, useDate, nextSelected, {
+                    signal: ac.signal,
+                  });
+                  if (ac.signal.aborted) return;
+                  cacheSet(evKey, ev, SEGMENTS_TTL_MS);
+                  evItems = ev.items;
+                  evLegacy = ev.legacy_markers ?? [];
+                }
+              }
+              break;
+            } catch (batchErr) {
+              if (isAbortError(batchErr)) throw batchErr;
+              try {
+                const timeline = await playbackApi.timeline(useDate ?? date, nextSelected, {
+                  from: opts?.from,
+                  to: opts?.to,
+                  runId,
+                  signal: ac.signal,
+                });
+                if (ac.signal.aborted) return;
+                incoming = {};
+                for (const id of nextSelected) {
+                  const row = timeline.by_camera?.[id];
+                  incoming[id] = row?.segments ?? [];
+                }
+                applyTimelineEnrichment(timeline);
+                cacheSet(segKey, { by_camera: incoming, items: Object.values(incoming).flat() }, SEGMENTS_TTL_MS);
+                cacheSet(evKey, { items: evItems, legacy_markers: [] }, SEGMENTS_TTL_MS);
+                break;
+              } catch (timelineErr) {
+                if (isAbortError(timelineErr)) throw timelineErr;
+                if (
+                  attempt < maxRetries &&
+                  isSegmentsBusyOrTimeout(batchErr) &&
+                  !ac.signal.aborted
+                ) {
+                  await sleepAbortable(SEGMENTS_RETRY_BACKOFF_MS[attempt], ac.signal);
+                  attempt += 1;
+                  continue;
+                }
+                throw batchErr;
+              }
+            }
+          }
+        } finally {
+          if (preparingTimer != null) window.clearTimeout(preparingTimer);
+          setArchivePreparing(false);
         }
 
-        const incoming: Record<string, PlaybackSegment[]> = { ...(batch.by_camera || {}) };
-        for (const id of nextSelected) {
-          if (!incoming[id]) incoming[id] = [];
-        }
         setSegmentsByCam((prev) => {
           if (!opts?.merge) return incoming;
           const merged: Record<string, PlaybackSegment[]> = { ...prev };
@@ -202,35 +690,88 @@ export function PlaybackPage() {
         const allSegs = Object.values(incoming).flat();
         const from = allSegs.length ? Math.min(...allSegs.map((s) => s.start_ts)) : opts?.from;
         const to = allSegs.length ? Math.max(...allSegs.map((s) => s.end_ts)) : opts?.to;
+        const coverFrom = opts?.from ?? from;
+        const coverTo = opts?.to ?? to;
+        if (coverFrom != null && coverTo != null && coverTo > coverFrom) {
+          if (!opts?.merge) viewport.setLoadedRange(coverFrom, coverTo);
+          else viewport.expandLoaded(coverFrom, coverTo);
+        }
         if (from != null && to != null) {
-          viewport.expandLoaded(from, to);
+          const pos = ctrl.getPosition();
+          const keepPos =
+            Boolean(opts?.merge) ||
+            initialT != null ||
+            (Number.isFinite(pos) && pos > 0 && pos >= from && pos <= to);
           ctrl.setRange(
             opts?.merge ? Math.min(ctrl.fromSec ?? from, from) : from,
             opts?.merge ? Math.max(ctrl.toSec ?? to, to) : to,
-            { preservePosition: Boolean(opts?.merge) || initialT != null },
+            { preservePosition: keepPos },
           );
         }
-        if (!opts?.merge) {
+        if (!opts?.merge && (viewport.viewFrom == null || viewport.viewTo == null)) {
           viewport.resetToData(from ?? null, to ?? null, useDate ?? date);
         }
         setMarkers((prev) => {
-          if (!opts?.merge) return ev.items;
+          const incomingMarkers = evLegacy;
+          if (!opts?.merge) return incomingMarkers;
           const byKey = new Map<string, PlaybackEventMarker>();
           for (const m of prev) byKey.set(`${m.ts}:${m.camera}:${m.type}`, m);
-          for (const m of ev.items) byKey.set(`${m.ts}:${m.camera}:${m.type}`, m);
+          for (const m of incomingMarkers) byKey.set(`${m.ts}:${m.camera}:${m.type}`, m);
           return Array.from(byKey.values()).sort((a, b) => a.ts - b.ts);
         });
+        setEventIntervals((prev) => {
+          if (!opts?.merge) return evItems;
+          const byKey = new Map<string, PlaybackEventInterval>();
+          for (const it of prev) byKey.set(`${it.start_ts}:${it.end_ts}:${it.camera}:${it.event_type}:${it.label}`, it);
+          for (const it of evItems) byKey.set(`${it.start_ts}:${it.end_ts}:${it.camera}:${it.event_type}:${it.label}`, it);
+          return Array.from(byKey.values()).sort((a, b) => a.start_ts - b.start_ts);
+        });
+        setInferenceGaps((prev) => {
+          if (!opts?.merge) return gapBands;
+          const byKey = new Map<string, PlaybackTimelineBand>();
+          for (const it of prev) byKey.set(`${it.kind}:${it.from}:${it.to}`, it);
+          for (const it of gapBands) byKey.set(`${it.kind}:${it.from}:${it.to}`, it);
+          return Array.from(byKey.values()).sort((a, b) => a.from - b.from);
+        });
         setSegmentsLoaded(true);
-        if (!opts?.merge && initialT != null) ctrl.seek(initialT);
+        applyPostLoadSnapIfNeeded(incoming, {
+          merge: opts?.merge,
+          initialT,
+          getPosition: ctrl.getPosition,
+          seek: ctrl.seek,
+          guard: userSeekGuardRef.current,
+        });
+        if (!opts?.merge && viewport.viewFrom != null && viewport.viewTo != null) {
+          ensureAdjacentLoadRef.current(viewport.viewFrom, viewport.viewTo);
+        }
       } catch (e) {
-        if (isAbortError(e)) return;
-        showError(e instanceof Error ? e.message : t('playback.unavailable'));
+        if (isAbortError(e)) {
+          // Ignore aborts from a newer loadSegments call superseding this one.
+          if (segmentsAbortRef.current !== ac) return;
+          if (isInitialLoad && timedOut) {
+            setSegmentsLoaded(true);
+            const msg = t('playback.loadTimeout');
+            setSegmentsError(msg);
+            showError(msg);
+          }
+          return;
+        }
+        const msg = formatApiError(e, t);
+        if (isInitialLoad) {
+          setSegmentsLoaded(true);
+          setSegmentsError(msg);
+        }
+        showError(msg);
+      } finally {
+        window.clearTimeout(timeoutId);
+        if (didSetSegmentsLoading) setSegmentsLoading(false);
       }
     },
-    [date, initialT, showError, ctrl, viewport],
+    [date, initialT, showError, ctrl, viewport, runId, t],
   );
   useEffect(() => {
-    // Show calendar-day timeline immediately on date change (before segments return).
+    // Only reset viewport when the user picks a date (DatePicker), not pan/seek cross-day.
+    if (dateChangeSourceRef.current !== 'user') return;
     viewport.resetToData(null, null, date);
     // eslint-disable-next-line react-hooks/exhaustive-deps -- only on date
   }, [date]);
@@ -239,40 +780,119 @@ export function PlaybackPage() {
     if (!selectedIds.length || camerasLoading) return;
     if (skipHardSegmentReloadRef.current) {
       skipHardSegmentReloadRef.current = false;
+      prevSelectedIdsRef.current = selectedIds;
+      prevDateForSegmentsRef.current = date;
       return;
     }
-    void loadSegments(selectedIds);
+    const deepLinkForDate = initialT != null && dateFromUnixSec(initialT) === date ? initialT : null;
+    const dateUnchanged = prevDateForSegmentsRef.current === date;
+    const hadSelection = prevSelectedIdsRef.current.length > 0;
+    const selectionChanged =
+      prevSelectedIdsRef.current.length !== selectedIds.length ||
+      prevSelectedIdsRef.current.some((id, i) => id !== selectedIds[i]) ||
+      selectedIds.some((id) => !prevSelectedIdsRef.current.includes(id));
+    // Camera toggle on the same day: soft-merge so other cams keep their segments.
+    const softMerge = dateUnchanged && hadSelection && selectionChanged;
+    prevSelectedIdsRef.current = selectedIds;
+    prevDateForSegmentsRef.current = date;
+    void loadSegments(selectedIds, {
+      ...hardLoadSegmentWindow(date, deepLinkForDate, viewport.viewFrom, viewport.viewTo),
+      merge: softMerge,
+    });
     // eslint-disable-next-line react-hooks/exhaustive-deps -- reload on date/selection only
   }, [date, selectedIds, camerasLoading]);
 
   const ensureAdjacentLoad = useCallback(
-    (vf: number, vt: number) => {
-      const { needFrom, needTo, needed } = viewport.needsLoad(vf, vt);
-      if (!needed) return;
+    (vf: number, vt: number, opts?: { immediate?: boolean }) => {
+      const { needFrom, needTo, needed, gaps } = viewport.needsLoad(vf, vt, date);
+      if (!needed || !gaps.length) return;
       if (loadTimerRef.current) window.clearTimeout(loadTimerRef.current);
-      loadTimerRef.current = window.setTimeout(() => {
+      const run = () => {
         void loadSegments(selectedIdsRef.current, {
           from: needFrom,
           to: needTo,
           merge: true,
+          date,
         });
-      }, 250);
+      };
+      // Deep pan / seek outside loaded range: load immediately (no 1.5s debounce).
+      if (opts?.immediate) {
+        run();
+        return;
+      }
+      // Request the uncovered span only (bounding box of gaps). expandLoaded will
+      // mark that window without falsely filling older disjoint coverage.
+      loadTimerRef.current = window.setTimeout(run, 1500);
     },
-    [loadSegments, viewport],
+    [loadSegments, viewport, date],
   );
+  ensureAdjacentLoadRef.current = ensureAdjacentLoad;
+
+  const { seek, holdVideoClock, userSeeking, cancelSeekSettle } = usePlaybackSeek({
+    ctrl,
+    viewport,
+    date,
+    setDate,
+    dateChangeSourceRef,
+    pendingViewportLoadRef,
+    loadTimerRef,
+    ensureAdjacentLoad,
+    userSeekGuardRef,
+    segmentsByCamRef,
+  });
+
+  const anyCameraPlayableAtPosition = useMemo(
+    () => hasAnyPlayableAtPosition(segmentsByCam, ctrl.positionSec),
+    [segmentsByCam, ctrl.positionSec],
+  );
+
+  const seekNearestPlayable = useCallback(() => {
+    const pos = ctrl.getPosition();
+    const snapped = snapUnionPositionToPlayable(segmentsByCam, pos);
+    if (Math.abs(snapped - pos) > 0.5) seek(snapped, { mode: 'playable', pauseIfNoVideo: false });
+  }, [ctrl, segmentsByCam, seek]);
+
+  useEffect(() => {
+    playbackDebugSetMeta({
+      scrubbing: holdVideoClock,
+      playing: ctrl.playing,
+      positionSec: ctrl.positionSec,
+      selectedIds,
+    });
+  }, [holdVideoClock, ctrl.playing, ctrl.positionSec, selectedIds]);
+
+  const togglePlay = useCallback(() => {
+    if (ctrl.playing) cancelSeekSettle();
+    ctrl.setPlaying(!ctrl.playing);
+  }, [ctrl, cancelSeekSettle]);
 
   const onViewChange = useCallback(
     (vf: number, vt: number) => {
-      viewport.setView(vf, vt);
-      ensureAdjacentLoad(vf, vt);
-      const centerDate = localDateString((vf + vt) / 2);
-      if (centerDate !== date) {
+      const resolved = resolveTimelineViewChange(vf, vt, date);
+      if (resolved.dateChanged) {
         dateChangeSourceRef.current = 'viewport';
-        setDate(centerDate);
+        const { start } = dayBoundsLocal(resolved.date);
+        const upper = dayViewUpperBound(resolved.date);
+        pendingViewportLoadRef.current = {
+          date: resolved.date,
+          from: Math.max(start, resolved.viewFrom - SEEK_LOAD_HALF_SEC),
+          to: Math.min(upper, resolved.viewTo + SEEK_LOAD_HALF_SEC),
+        };
+        setDate(resolved.date);
       }
+      viewport.setView(resolved.viewFrom, resolved.viewTo, resolved.date);
+      ensureAdjacentLoad(resolved.viewFrom, resolved.viewTo);
     },
     [viewport, ensureAdjacentLoad, date],
   );
+
+  useEffect(() => {
+    return () => {
+      if (loadTimerRef.current != null) window.clearTimeout(loadTimerRef.current);
+      camerasAbortRef.current?.abort();
+      segmentsAbortRef.current?.abort();
+    };
+  }, []);
 
   const toggleCamera = (id: string) => {
     const on = selectedIds.includes(id);
@@ -281,62 +901,249 @@ export function PlaybackPage() {
   };
 
   const cameraDefs = useMemo(() => Object.fromEntries(cameras.map((c) => [c.id, c])), [cameras]);
-  const allSegments = useMemo(() => Object.values(segmentsByCam).flat(), [segmentsByCam]);
-  const effectiveCols = mode === 'fit' ? fitColsForCount(selectedIds.length) : cols;
+  const expandedCamera = useMemo(() => {
+    if (!expandedCameraId) return null;
+    if (!selectedIds.includes(expandedCameraId)) return null;
+    const cam = cameraDefs[expandedCameraId];
+    if (!cam) return null;
+    return cam;
+  }, [expandedCameraId, selectedIds, cameraDefs]);
+
+  useEffect(() => {
+    if (!expandedCameraId) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') setExpandedCameraId(null);
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [expandedCameraId]);
+
+  useEffect(() => {
+    if (!expandedCameraId) return;
+    if (!selectedIds.includes(expandedCameraId)) {
+      setExpandedCameraId(null);
+      return;
+    }
+    if (segmentsLoaded && !(segmentsByCam[expandedCameraId]?.length)) {
+      setExpandedCameraId(null);
+    }
+  }, [expandedCameraId, selectedIds, segmentsLoaded, segmentsByCam]);
+
+  useEffect(() => {
+    setExpandedCameraId(null);
+  }, [date]);
+
+  const allSegments = useMemo(
+    () => Object.values(segmentsByCam).flat().filter((s) => segmentIntersectsDay(s, date)),
+    [segmentsByCam, date],
+  );
+  allSegmentsRef.current = allSegments;
+  const timelineMarkers = useMemo(() => {
+    const { start, end } = dayBoundsLocal(date);
+    return markers.filter((m) => m.ts >= start && m.ts < end);
+  }, [markers, date]);
+  const timelineEventIntervals = useMemo(() => {
+    const { start, end } = dayBoundsLocal(date);
+    return eventIntervals.filter((it) => it.end_ts >= start && it.start_ts < end);
+  }, [eventIntervals, date]);
+  const eventIntervalsByCamera = useMemo(() => {
+    const out: Record<string, PlaybackEventInterval[]> = {};
+    for (const id of selectedIds) out[id] = [];
+    for (const it of eventIntervals) {
+      if (it.camera && out[it.camera]) out[it.camera].push(it);
+    }
+    return out;
+  }, [eventIntervals, selectedIds]);
+  const globalEventStartTsList = useMemo(
+    () => globalEventStartTs(timelineEventIntervals, selectedIds),
+    [timelineEventIntervals, selectedIds],
+  );
+
+  const seekToDetection = useCallback(
+    (direction: -1 | 1) => {
+      const pos = ctrl.getPosition();
+      const ts =
+        direction < 0
+          ? prevDetectionTs(detectionIndex.globalTs, pos)
+          : nextDetectionTs(detectionIndex.globalTs, pos);
+      if (ts != null) seek(ts, { mode: 'marker' });
+    },
+    [ctrl, detectionIndex.globalTs, seek],
+  );
+
+  const seekToEvent = useCallback(
+    (direction: -1 | 1) => {
+      const pos = ctrl.getPosition();
+      const ts =
+        direction < 0
+          ? prevEventTs(globalEventStartTsList, pos)
+          : nextEventTs(globalEventStartTsList, pos);
+      if (ts != null) seek(ts, { mode: 'marker' });
+    },
+    [ctrl, globalEventStartTsList, seek],
+  );
+
+  const prevDetectionAvailable = prevDetectionTs(detectionIndex.globalTs, ctrl.positionSec) != null;
+  const nextDetectionAvailable = nextDetectionTs(detectionIndex.globalTs, ctrl.positionSec) != null;
+  const prevEventAvailable = prevEventTs(globalEventStartTsList, ctrl.positionSec) != null;
+  const nextEventAvailable = nextEventTs(globalEventStartTsList, ctrl.positionSec) != null;
+
+  const effectiveCols = mode === 'fit' ? fitColsForCount(selectedIds.length, 4) : cols;
+  useEffect(() => {
+    if (!segmentsLoaded || viewport.viewFrom == null || viewport.viewTo == null) return;
+    ensureAdjacentLoad(viewport.viewFrom, viewport.viewTo);
+    // Only after a hard load settles — adjacent merge fills empty edges.
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- intentional: once per segmentsLoaded flip / date
+  }, [segmentsLoaded, date]);
+
+  const hasPlayheadPosition = Number.isFinite(ctrl.positionSec) && ctrl.positionSec > 0;
+  const positionLabel = hasPlayheadPosition
+    ? `${formatDate(new Date(ctrl.positionSec * 1000))} ${formatPlaybackTime(ctrl.positionSec)}`
+    : '\u2014';
+  const detectionsReady = !detectionIndex.loading;
 
   let gridEmpty: string | null = null;
-  if (camerasLoading) gridEmpty = t('playback.loadingCamerasGrid');
+  if (!runResolved || camerasLoading) gridEmpty = t('playback.loadingCamerasGrid');
   else if (!cameras.length) gridEmpty = t('playback.noCamerasForDate');
   else if (!selectedIds.length) gridEmpty = t('playback.selectCameras');
-  else if (!segmentsLoaded) gridEmpty = t('playback.loadingCamerasGrid');
+  else if (archivePreparing) gridEmpty = t('playback.preparingArchive');
+  else if (segmentsLoading || (!segmentsLoaded && cameras.length > 0)) gridEmpty = t('playback.loadingSegment');
+  else if (segmentsError && !Object.values(segmentsByCam).some((s) => s.length)) gridEmpty = segmentsError;
+
+  const journalOnlyDay =
+    segmentsLoaded &&
+    selectedIds.length > 0 &&
+    !Object.values(segmentsByCam).some((s) => s.length) &&
+    cameras.some((c) => c.has_detection_ticks || c.has_events) &&
+    !cameras.some((c) => c.has_stream_segments || (c.segment_count ?? 0) > 0);
+
+  const seekToViewCursor = useCallback(() => {
+    const target =
+      viewCursorSec != null
+        ? viewCursorSec
+        : viewport.viewFrom != null && viewport.viewTo != null
+          ? (viewport.viewFrom + viewport.viewTo) / 2
+          : null;
+    if (target == null) return;
+    seek(target, { mode: 'playable', pauseIfNoVideo: false });
+  }, [viewCursorSec, viewport.viewFrom, viewport.viewTo, seek]);
 
   return (
     <section className={`panel active playback-page${mode === 'fit' ? ' playback-page--fit' : ''}`}>
       <div className="card playback-card">
-        <div className="toolbar" style={{ justifyContent: 'space-between', flexWrap: 'wrap' }}>
-          <div>
-            <h2 style={{ margin: 0 }}>{t('playback.title')}</h2>
-            <p className="hint">{t('playback.hint')}</p>
+        <div className="playback-header">
+          <div className="playback-header-title">
+            <h2>{t('playback.title')}</h2>
           </div>
-          <div className="toolbar">
-            <input
-              type="date"
-              className="search-input"
+          <div className="playback-controls-toolbar">
+            <DatePickerField
+              className="playback-date-input"
               value={date}
-              onChange={(e) => {
+              max={today()}
+              aria-label={t('playback.title')}
+              onChange={(next) => {
+                if (!next) return;
                 dateChangeSourceRef.current = 'user';
-                setDate(e.target.value);
+                const { start } = dayBoundsLocal(next);
+                const upper = dayViewUpperBound(next);
+                const pos = ctrl.getPosition();
+                if (pos < start || pos > upper) {
+                  ctrl.seek(Math.min(upper, Math.max(start, pos)));
+                }
+                setDate(next);
               }}
             />
-            <Button size="sm" variant={mode === 'fit' ? 'primary' : 'outline'} onClick={() => setMode('fit')}>
-              {t('layout.fit')}
-            </Button>
-            <Button size="sm" variant={mode === 'fixed' ? 'primary' : 'outline'} onClick={() => setMode('fixed')}>
-              {t('layout.fixed')}
-            </Button>
-            {mode === 'fixed'
-              ? [1, 2, 3, 4].map((n) => (
-                  <Button key={n} size="sm" variant={cols === n ? 'primary' : 'outline'} onClick={() => setCols(n)}>
-                    {n}
-                  </Button>
-                ))
-              : null}
-            <Button size="sm" variant={ctrl.playing ? 'danger' : 'success'} onClick={() => ctrl.setPlaying(!ctrl.playing)}>
-              {ctrl.playing ? t('playback.pause') : t('playback.play')}
-            </Button>
-            {[0.5, 1, 2, 4].map((s) => (
-              <Button key={s} size="sm" variant={ctrl.speed === s ? 'primary' : 'outline'} onClick={() => ctrl.setSpeed(s)}>
-                {s}x
+            <span className="playback-position-clock" title={t('playback.currentTime')}>
+              {positionLabel}
+            </span>
+            <div className="playback-controls-main">
+              <Button size="sm" variant={mode === 'fit' ? 'primary' : 'outline'} onClick={() => setMode('fit')}>
+                {t('layout.fit')}
               </Button>
-            ))}
+              <Button size="sm" variant={mode === 'fixed' ? 'primary' : 'outline'} onClick={() => setMode('fixed')}>
+                {t('layout.fixed')}
+              </Button>
+              {mode === 'fixed'
+                ? [1, 2, 3, 4].map((n) => (
+                    <Button key={n} size="sm" variant={cols === n ? 'primary' : 'outline'} onClick={() => setCols(n)}>
+                      {n}
+                    </Button>
+                  ))
+                : null}
+              <Button size="sm" variant={ctrl.playing ? 'danger' : 'success'} onClick={togglePlay}>
+                {ctrl.playing ? t('playback.pause') : t('playback.play')}
+              </Button>
+              <Button
+                size="sm"
+                variant="outline"
+                title={t('playback.seekToCursorTitle')}
+                onClick={seekToViewCursor}
+              >
+                {t('playback.seekToCursor')}
+              </Button>
+              {[0.5, 1, 2, 4].map((s) => (
+                <Button key={s} size="sm" variant={ctrl.speed === s ? 'primary' : 'outline'} onClick={() => ctrl.setSpeed(s)}>
+                  {s}x
+                </Button>
+              ))}
+              <span className="playback-nav-group" role="group" aria-label={t('playback.hint')}>
+                <Button
+                  size="sm"
+                  variant="outline"
+                  disabled={!prevDetectionAvailable}
+                  onClick={() => seekToDetection(-1)}
+                  title={t('playback.prevDetection')}
+                >
+                  ◀Det
+                </Button>
+                <Button
+                  size="sm"
+                  variant="outline"
+                  disabled={!nextDetectionAvailable}
+                  onClick={() => seekToDetection(1)}
+                  title={t('playback.nextDetection')}
+                >
+                  Det▶
+                </Button>
+                <Button
+                  size="sm"
+                  variant="outline"
+                  disabled={!prevEventAvailable}
+                  onClick={() => seekToEvent(-1)}
+                  title={t('playback.prevEvent')}
+                >
+                  ◀Ev
+                </Button>
+                <Button
+                  size="sm"
+                  variant="outline"
+                  disabled={!nextEventAvailable}
+                  onClick={() => seekToEvent(1)}
+                  title={t('playback.nextEvent')}
+                >
+                  Ev▶
+                </Button>
+              </span>
+              <label className="checkbox-label playback-metadata-toggle">
+                <input
+                  type="checkbox"
+                  checked={showMetadata}
+                  onChange={(e) => setShowMetadata(e.target.checked)}
+                />
+                {t('playback.showMetadata')}
+              </label>
+            </div>
           </div>
         </div>
         {!flags.loading && flags.recordingEnabled === false ? (
-          <p className="setup-banner">{t('playback.recordingDisabled')}</p>
+          <p className="setup-banner playback-setup-banner">{t('playback.recordingDisabled')}</p>
         ) : null}
-        <div className="toolbar" style={{ flexWrap: 'wrap' }}>
-          {camerasLoading ? <span className="hint">{t('playback.loadingCameras')}</span> : null}
-          {!camerasLoading && !cameras.length ? <span className="hint">{t('playback.noCameras')}</span> : null}
+        {journalOnlyDay ? (
+          <p className="setup-banner playback-setup-banner">{t('playback.noStreamSegmentsRetention')}</p>
+        ) : null}
+        <div className="playback-camera-picker">
+          {(!runResolved || camerasLoading) ? <span className="hint">{t('playback.loadingCameras')}</span> : null}
+          {runResolved && !camerasLoading && !cameras.length ? <span className="hint">{t('playback.noCameras')}</span> : null}
           {cameras.map((c) => {
             const on = selectedIds.includes(c.id);
             return (
@@ -346,35 +1153,102 @@ export function PlaybackPage() {
             );
           })}
         </div>
-        <div className="playback-main">
-          {gridEmpty ? (
-            <p className="empty">{gridEmpty}</p>
+        <div className="playback-main expanded-camera-view-host">
+          {expandedCamera ? (
+            <ExpandedPlaybackView
+              cameraId={expandedCamera.id}
+              camera={expandedCamera}
+              date={date}
+              segments={segmentsByCam[expandedCamera.id] ?? []}
+              getPosition={ctrl.getPosition}
+              positionSec={ctrl.positionSec}
+              playing={ctrl.playing}
+              speed={ctrl.speed}
+              runId={runId}
+              showMetadata={showMetadata}
+              playMode="normal"
+              scrubbing={holdVideoClock}
+              userSeeking={userSeeking}
+              detectionItems={detectionIndex.byCamera[expandedCamera.id] ?? []}
+              globalDetectionTs={detectionIndex.globalTs}
+              eventIntervals={eventIntervalsByCamera[expandedCamera.id] ?? []}
+              onVideoClock={ctrl.syncPositionFromVideo}
+              onPlaybackExhausted={() => ctrl.setPlaying(false)}
+              onClose={() => setExpandedCameraId(null)}
+              detectionsReady={detectionsReady}
+              anyCameraPlayableAtPosition={anyCameraPlayableAtPosition}
+              onSeekNearestPlayable={seekNearestPlayable}
+            />
+          ) : gridEmpty ? (
+            <div className="empty" style={{ display: 'grid', gap: 12, placeItems: 'start' }}>
+              <p style={{ margin: 0 }}>{gridEmpty}</p>
+              {segmentsError ? (
+                <Button
+                  size="sm"
+                  variant="outline"
+                  onClick={() => {
+                    const deepLink =
+                      initialT != null && dateFromUnixSec(initialT) === date ? initialT : null;
+                    void loadSegments(
+                      selectedIds,
+                      hardLoadSegmentWindow(date, deepLink, viewport.viewFrom, viewport.viewTo),
+                    );
+                  }}
+                >
+                  {t('playback.retryLoad')}
+                </Button>
+              ) : null}
+            </div>
           ) : (
             <PlaybackGrid
               cameras={selectedIds}
               cameraDefs={cameraDefs}
               cols={effectiveCols}
               mode={mode}
+              date={date}
               segmentsByCam={segmentsByCam}
               getPosition={ctrl.getPosition}
               positionSec={ctrl.positionSec}
               playing={ctrl.playing}
               speed={ctrl.speed}
+              runId={runId}
+              showMetadata={showMetadata}
+              playMode="normal"
+              scrubbing={holdVideoClock}
+              userSeeking={userSeeking}
+              detectionByCamera={detectionIndex.byCamera}
+              globalDetectionTs={detectionIndex.globalTs}
+              eventIntervalsByCamera={eventIntervalsByCamera}
+              onVideoClock={ctrl.syncPositionFromVideo}
+              onPlaybackExhausted={() => ctrl.setPlaying(false)}
+              onExpand={setExpandedCameraId}
+              segmentsLoading={segmentsLoading}
+              detectionsReady={detectionsReady}
+              anyCameraPlayableAtPosition={anyCameraPlayableAtPosition}
+              onSeekNearestPlayable={seekNearestPlayable}
             />
           )}
         </div>
-        <div className="playback-timeline-footer">
-          <p className="hint" style={{ margin: '0 0 2px', fontSize: '0.75rem' }}>
-            {t('playback.timelineHint')}
-          </p>
+        <div className="playback-timeline-footer" title={t('playback.timelineHint')}>
           <Timeline
+            date={date}
             viewFrom={viewport.viewFrom}
             viewTo={viewport.viewTo}
             position={ctrl.positionSec}
-            markers={markers}
+            getPosition={ctrl.getPosition}
+            markers={timelineMarkers}
             segments={allSegments}
-            onSeek={ctrl.seek}
+            segmentsByCamera={segmentsByCam}
+            selectedCameraCount={selectedIds.length}
+            detectionTs={detectionIndex.globalTs}
+            eventStartTs={globalEventStartTsList}
+            eventIntervals={timelineEventIntervals}
+            inferenceGaps={inferenceGaps}
+            dataLoading={camerasLoading || segmentsLoading || !segmentsLoaded}
+            onSeek={seek}
             onViewChange={onViewChange}
+            onPanningChange={setTimelinePanning}
+            onCursorChange={setViewCursorSec}
           />
         </div>
       </div>

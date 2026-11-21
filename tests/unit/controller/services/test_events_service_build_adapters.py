@@ -1,5 +1,7 @@
 from unittest.mock import MagicMock
 
+import pytest
+
 from evileye.controller.services.events_service import EventsService, JSON_EVENT_ADAPTER_CLASSES
 
 
@@ -15,6 +17,7 @@ class _DbDisconnected:
 
 def test_build_event_adapters_json_only_when_no_db(monkeypatch):
     started = []
+    stopped = []
 
     class _FakeJsonAdapter:
         def __init__(self, _ctrl):
@@ -28,6 +31,9 @@ def test_build_event_adapters_json_only_when_no_db(monkeypatch):
 
         def start(self):
             started.append(self)
+
+        def stop(self):
+            stopped.append(self)
 
         def get_event_name(self):
             return "fake_json"
@@ -45,7 +51,12 @@ def test_build_event_adapters_json_only_when_no_db(monkeypatch):
         db_controller=None,
     )
     assert len(adapters) == len(JSON_EVENT_ADAPTER_CLASSES)
+    assert started == []
+
+    svc.start_adapters()
     assert len(started) == len(JSON_EVENT_ADAPTER_CLASSES)
+    svc.stop_adapters()
+    assert stopped == list(reversed(started))
 
 
 def test_build_event_adapters_includes_db_when_connected():
@@ -153,3 +164,24 @@ def test_build_event_adapters_falls_back_image_dir(monkeypatch, tmp_path):
     assert len(adapters) == len(JSON_EVENT_ADAPTER_CLASSES)
     assert all(d == str(fallback.resolve()) for d in seen_dirs)
     assert params["database"]["image_dir"] == str(fallback.resolve())
+
+
+def test_start_event_adapters_rolls_back_failed_adapter():
+    class _FailingAdapter:
+        stopped = False
+
+        def start(self):
+            raise RuntimeError("start failed")
+
+        def stop(self):
+            self.stopped = True
+
+    svc = EventsService()
+    adapter = _FailingAdapter()
+    svc._owned_adapters.append(adapter)
+
+    with pytest.raises(RuntimeError, match="Failed to start event adapter"):
+        svc.start_adapters()
+
+    assert adapter.stopped is True
+    assert svc._started_adapters == []

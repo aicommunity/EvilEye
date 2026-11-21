@@ -1,21 +1,28 @@
 import datetime
 
 import cv2
-from threading import Lock, RLock, Thread
+from threading import Event, RLock, Thread
 import time
 from timeit import default_timer as timer
 from .video_capture_base import VideoCaptureBase, CaptureImage, CaptureDeviceType
 from .constants import CaptureConstants
-from .exceptions import CaptureInitializationError, CaptureConnectionError
+from .exceptions import CaptureConfigurationError, CaptureInitializationError, CaptureConnectionError
 from enum import IntEnum
 
 from ..core.base_class import EvilEyeBase
+from ..core.plugins import register_module
 from ..video_recorder.recording_params import RecordingParams
 from ..video_recorder.recorder_base import SourceMeta
 from ..video_recorder.continuous_recorder_manager import ContinuousRecorderManager
 
 
-@EvilEyeBase.register("VideoCaptureOpencv")
+@register_module(
+    "VideoCaptureOpencv",
+    kind="source",
+    capabilities=("capture_source_backend", "preserves_source_metadata", "shared_frame_transport"),
+    execution_modes=("thread", "process"),
+    default_execution_mode="process",
+)
 class VideoCaptureOpencv(VideoCaptureBase):
     class VideoCaptureAPIs(IntEnum):
         CAP_ANY = 0
@@ -26,8 +33,8 @@ class VideoCaptureOpencv(VideoCaptureBase):
     # Class variable to track already logged GStreamer errors
     _gstreamer_error_logged = set()  # Set of source_names for which error has already been logged
 
-    def __init__(self):
-        super().__init__()
+    def __init__(self, config=None):
+        super().__init__(plugin_config=config)
 
         self.capture = cv2.VideoCapture()
         self.recording_params: RecordingParams = RecordingParams()
@@ -38,6 +45,11 @@ class VideoCaptureOpencv(VideoCaptureBase):
         self._video_rewound = False
         # Счётчик пропущенных кадров после перемотки (для защиты от зависания retrieve())
         self._frames_to_skip_after_rewind = 0
+        # grab() can reach EOF before retrieve() consumes the last successful
+        # grab. Coordinate the two capture threads so each successful grab is
+        # retrieved before the next grab can overwrite OpenCV's pending frame.
+        self._grab_pending_event = Event()
+        self._grab_eof_event = Event()
 
         # Перф-метрики для оценки фактического FPS захвата (аналогично GStreamer)
         now = time.time()
@@ -52,6 +64,19 @@ class VideoCaptureOpencv(VideoCaptureBase):
 
     def _shutdown_requested(self) -> bool:
         return (not self.run_flag) or self.stop_event.is_set()
+
+    def start(self):
+        self._grab_pending_event.clear()
+        self._grab_eof_event.clear()
+        return super().start()
+
+    def _finish_video_file_after_eof(self) -> bool:
+        if not self._grab_eof_event.is_set():
+            return False
+        self.finished = True
+        self.run_flag = False
+        self.stop_event.set()
+        return True
 
     def is_opened(self) -> bool:
         return self.capture.isOpened()
@@ -249,6 +274,15 @@ class VideoCaptureOpencv(VideoCaptureBase):
 
     def _grab_frames(self):
         while self.run_flag and not self.stop_event.is_set():
+            # OpenCV pairs grab()/retrieve() on one mutable capture object.
+            # Do not let this producer overwrite a frame before its consumer
+            # has retrieved it.
+            while self._grab_pending_event.is_set() and self.run_flag and not self.stop_event.is_set():
+                if self.stop_event.wait(self.capture_config.min_sleep_seconds):
+                    break
+            if not self.run_flag or self.stop_event.is_set():
+                break
+
             begin_it = timer()
             # Health check: if no frames for too long, trigger reconnect/reset
             if (
@@ -348,6 +382,8 @@ class VideoCaptureOpencv(VideoCaptureBase):
             # Minimize lock hold time - only lock during actual grab operation
             with self.mutex:
                 is_grabbed = self.capture.grab()
+            if is_grabbed:
+                self._grab_pending_event.set()
             if not is_grabbed:
                 # End-of-file / grab failure handling
                 if self.source_type == CaptureDeviceType.VideoFile:
@@ -376,9 +412,9 @@ class VideoCaptureOpencv(VideoCaptureBase):
                                 break
                             continue
                     else:
-                        self.finished = True
-                        self.run_flag = False
-                        self.stop_event.set()
+                        # Leave the retrieve thread running for one more pass:
+                        # a successful grab may still be waiting for retrieve().
+                        self._grab_eof_event.set()
                         break
 
                 # Для живых источников (или fallback для роликов) — старая логика reconnection
@@ -396,11 +432,14 @@ class VideoCaptureOpencv(VideoCaptureBase):
                 # Verify reset was successful
                 if not (self.is_inited and self.is_opened()):
                     self.logger.warning(
-                        f"Reset may have failed for {self.source_names} "
-                        f"(is_inited={self.is_inited}, is_opened={self.is_opened()})"
+                        "Reset did not reopen %s (is_inited=%s, is_opened=%s); "
+                        "capture loop will retry with reconnect backoff",
+                        self.source_names,
+                        self.is_inited,
+                        self.is_opened(),
                     )
-                    self.run_flag = False
-                    self.stop_event.set()
+                    self._reconnect_attempt += 1
+                    continue
 
             end_it = timer()
             elapsed_seconds = end_it - begin_it
@@ -410,6 +449,13 @@ class VideoCaptureOpencv(VideoCaptureBase):
 
     def _retrieve_frames(self) -> None:
         while self.run_flag and not self.stop_event.is_set():
+            if not self._grab_pending_event.is_set():
+                if self._finish_video_file_after_eof():
+                    break
+                if self.stop_event.wait(self.capture_config.min_sleep_seconds):
+                    break
+                continue
+
             begin_it = timer()
 
             # Защита от зависания retrieve(): используем таймаут через threading
@@ -484,6 +530,7 @@ class VideoCaptureOpencv(VideoCaptureBase):
                 # Всегда освобождаем мьютекс, даже если retrieve() завис или произошло исключение
                 if mutex_acquired:
                     self.mutex.release()
+                    self._grab_pending_event.clear()
 
             if not is_read or src_image is None:
                 # End-of-file / retrieve failure handling
@@ -495,6 +542,8 @@ class VideoCaptureOpencv(VideoCaptureBase):
                     # If retrieve() returns False, it means grab() returned False (end of video)
                     # and grab() already looped, so we just continue to next iteration
                     # Small sleep to avoid tight loop
+                    if self._finish_video_file_after_eof():
+                        break
                     if self.stop_event.wait(self.capture_config.min_sleep_seconds):
                         break
                     continue
@@ -572,6 +621,11 @@ class VideoCaptureOpencv(VideoCaptureBase):
                 except Exception:
                     pass
 
+            # Do this after placing a successfully retrieved frame in the
+            # queue, so consumers can drain it after the source reports EOF.
+            if self._finish_video_file_after_eof():
+                break
+
             end_it = timer()
             elapsed_seconds = end_it - begin_it
 
@@ -582,7 +636,12 @@ class VideoCaptureOpencv(VideoCaptureBase):
 
         if not self.run_flag:
             self.logger.info('Not run flag')
-            self._cleanup_queue()
+            # At file EOF, the grab thread stops before the consumer has had a
+            # chance to drain the frames already retrieved.  Keep those frames
+            # available to get()/MpWorkerCapture; an explicit stop() performs
+            # queue cleanup after joining the capture threads.
+            if not self.finished:
+                self._cleanup_queue()
 
     def get_frames_impl(self) -> list[CaptureImage]:
         captured_images: list[CaptureImage] = []

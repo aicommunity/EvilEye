@@ -1,4 +1,3 @@
-import copy
 
 from ..object_detector.object_detection_base import DetectionResultList
 from ..object_detector.object_detection_base import DetectionResult

@@ -8,7 +8,7 @@ import re
 import time
 import gc
 import threading
-from typing import Optional, Dict, List, Any, Callable
+from typing import Optional, Dict, List, Callable
 from collections import deque, defaultdict
 from datetime import datetime
 from pathlib import Path

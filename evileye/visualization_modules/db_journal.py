@@ -26,6 +26,7 @@ from .journal_adapters.jadapter_fov_events import JournalAdapterFieldOfViewEvent
 from .journal_adapters.jadapter_cam_events import JournalAdapterCamEvents
 from .journal_adapters.jadapter_zone_events import JournalAdapterZoneEvents
 from .journal_adapters.jadapter_system_events import JournalAdapterSystemEvents
+from .journal_adapters.jadapter_alarm_events import JournalAdapterAlarmEvents
 from .journal_data_source_db import DatabaseJournalDataSource
 from .unified_objects_journal import UnifiedObjectsJournal
 from .unified_events_journal import UnifiedEventsJournal
@@ -63,6 +64,7 @@ class DatabaseJournalWindow(QWidget):
         self.zone_events_adapter = None
         self.attr_events_adapter = None
         self.system_events_adapter = None
+        self.alarm_events_adapter = None
 
         self.logger.info("Setting up window and tabs...")
         self.setWindowTitle('DB Journal')
@@ -204,6 +206,15 @@ class DatabaseJournalWindow(QWidget):
         except Exception:
             self.system_events_adapter = None
 
+        try:
+            self.alarm_events_adapter = JournalAdapterAlarmEvents()
+            self.alarm_events_adapter.set_params(**self.adapter_params.get(
+                'DatabaseAdapterAlarmEvents', {'table_name': 'alarm_events'}
+            ))
+            self.alarm_events_adapter.init()
+        except Exception:
+            self.alarm_events_adapter = None
+
     def _create_journal_tabs(self):
         """Создать вкладки журналов лениво - только заглушки"""
         if not self.db_controller or not self.tables:
@@ -313,6 +324,8 @@ class DatabaseJournalWindow(QWidget):
                     adapters.append(self.attr_events_adapter)
                 if self.system_events_adapter:
                     adapters.append(self.system_events_adapter)
+                if self.alarm_events_adapter:
+                    adapters.append(self.alarm_events_adapter)
 
                 # Create DatabaseJournalDataSource for events
                 events_ds = DatabaseJournalDataSource(

@@ -1,6 +1,5 @@
 """Multiprocessing spawn context for CUDA-safe workers."""
 
-import multiprocessing as mp
 
 import pytest
 

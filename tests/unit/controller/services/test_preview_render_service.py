@@ -6,7 +6,8 @@ from types import SimpleNamespace
 import numpy as np
 
 from evileye.core.frame import CaptureImage
-from evileye.controller.services.preview_render_service import PreviewRenderService
+from evileye.controller.services.preview_render_service import PreviewRenderJob, PreviewRenderService
+from evileye.controller.services.streaming_service import StreamingService
 from evileye.visualization_modules.preview_render import PreviewRenderContext, render_preview_frame
 
 
@@ -50,6 +51,26 @@ def test_render_preview_frame_keeps_source_image_immutable():
     assert np.count_nonzero(frame.image) == 0
 
 
+def test_preview_render_service_processes_oldest_pending_job_first():
+    service = PreviewRenderService()
+    now = time.time()
+    service._pending_jobs["src:1"] = PreviewRenderJob(
+        frame=_make_frame(source_id=1),
+        context=PreviewRenderContext(source_name="Cam1"),
+        source_id=1,
+        submitted_at=now + 0.2,
+    )
+    service._pending_jobs["src:2"] = PreviewRenderJob(
+        frame=_make_frame(source_id=2),
+        context=PreviewRenderContext(source_name="Cam2"),
+        source_id=2,
+        submitted_at=now,
+    )
+    job = service._get_next_job()
+    assert job is not None
+    assert job.source_id == 2
+
+
 def test_preview_render_service_skips_frames_without_consumers():
     class DummyStreamingService:
         def __init__(self):
@@ -72,3 +93,21 @@ def test_preview_render_service_skips_frames_without_consumers():
         assert streaming_service.submitted == []
     finally:
         service.stop()
+
+
+def test_shutdown_all_stops_preview_and_streaming_workers():
+    streaming = StreamingService()
+    streaming.configure(pipeline_id="test", publish_fps=1.0, num_workers=2)
+    preview = PreviewRenderService()
+    preview.configure(streaming_service=streaming, num_workers=2)
+
+    workers = [*streaming._workers, *preview._workers]
+    assert len(workers) == 4
+    assert all(worker.is_alive() for worker in workers)
+
+    PreviewRenderService.shutdown_all()
+    StreamingService.shutdown_all()
+
+    assert all(not worker.is_alive() for worker in workers)
+    assert preview._workers == []
+    assert streaming._workers == []

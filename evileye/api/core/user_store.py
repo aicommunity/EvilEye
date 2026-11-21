@@ -8,11 +8,23 @@ import time
 from pathlib import Path
 from typing import Any, Optional
 
+from evileye.api.core.user_prefs import (
+    default_prefs,
+    merge_prefs,
+    normalize_allowed_cameras,
+)
 from evileye.api.security import hash_password, normalize_role, verify_password
 from evileye.core.filelock import with_file_lock
 from evileye.core.paths import site_root
 
 EMAIL_RE = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
+
+
+def _new_user_acl_fields() -> dict[str, Any]:
+    return {
+        "allowed_cameras": [],
+        "prefs": default_prefs(),
+    }
 
 
 def _default_store_path() -> Path:
@@ -96,13 +108,21 @@ class UserStore:
                 "status": "pending",
                 "disabled": False,
                 "created_at": time.time(),
+                **_new_user_acl_fields(),
             }
             users.append(record)
             return record
 
         return _with_lock(self.path, mutate)
 
-    def create_user(self, email: str, password: str, *, role: str = "user") -> dict[str, Any]:
+    def create_user(
+        self,
+        email: str,
+        password: str,
+        *,
+        role: str = "user",
+        allowed_cameras: list[str] | None = None,
+    ) -> dict[str, Any]:
         """Admin-created user: immediately approved (no email invite)."""
         normalized = email.strip().lower()
         if not EMAIL_RE.match(normalized):
@@ -110,6 +130,9 @@ class UserStore:
         if len(password) < 8:
             raise ValueError("Password must be at least 8 characters")
         resolved_role = normalize_role(role)
+        acl = _new_user_acl_fields()
+        if allowed_cameras is not None:
+            acl["allowed_cameras"] = normalize_allowed_cameras(allowed_cameras)
 
         def mutate(payload: dict[str, Any]) -> dict[str, Any]:
             users = payload["users"]
@@ -123,6 +146,7 @@ class UserStore:
                 "status": "approved",
                 "disabled": False,
                 "created_at": time.time(),
+                **acl,
             }
             users.append(record)
             return record
@@ -180,6 +204,8 @@ class UserStore:
         role: str | None = None,
         status: str | None = None,
         disabled: bool | None = None,
+        allowed_cameras: list[str] | None = None,
+        prefs: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
         normalized = email.strip().lower()
         allowed_status = {"pending", "approved", "rejected", "disabled"}
@@ -205,6 +231,10 @@ class UserStore:
                         item["status"] = "disabled"
                     elif item.get("status") == "disabled":
                         item["status"] = "approved"
+                if allowed_cameras is not None:
+                    item["allowed_cameras"] = normalize_allowed_cameras(allowed_cameras)
+                if prefs is not None:
+                    item["prefs"] = merge_prefs(item.get("prefs"), prefs)
                 return item
             raise KeyError("User not found")
 

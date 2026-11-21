@@ -3,7 +3,6 @@
 Wrapper for evileye process that ensures proper path setup and auto-fixes entry points
 """
 import sys
-import os
 from pathlib import Path
 
 # Add project root to Python path

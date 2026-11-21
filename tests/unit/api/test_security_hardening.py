@@ -260,6 +260,68 @@ def test_global_rps_autoban(tmp_path, monkeypatch):
     assert get_ip_ban_store().is_banned("198.51.100.50")
 
 
+def test_default_global_max_requests_is_600():
+    assert ProtectionConfig().global_max_requests == 600
+
+
+def test_whitelist_supports_cidr():
+    cfg = ProtectionConfig(enabled=True, whitelist_ips=["10.245.1.0/24"])
+    guard = reset_rate_guard_for_tests(cfg)
+    assert guard.is_whitelisted("10.245.1.2") is True
+    assert guard.is_whitelisted("10.245.2.1") is False
+
+
+def test_global_rate_exempt_hot_paths():
+    from evileye.api.middleware.ip_protection import is_global_rate_exempt
+
+    assert is_global_rate_exempt("/api/v1/runs/1/snapshot") is True
+    assert is_global_rate_exempt("/api/v1/runs/1/stream.mjpg") is True
+    assert is_global_rate_exempt("/api/v1/runs/1/stream:status") is True
+    assert is_global_rate_exempt("/api/v1/runs/1/metadata") is True
+    assert is_global_rate_exempt("/api/v1/playback/media") is True
+    assert is_global_rate_exempt("/api/v1/playback/metadata") is True
+    assert is_global_rate_exempt("/api/v1/playback/timeline") is False
+    assert is_global_rate_exempt("/api/v1/state/cameras") is False
+
+
+def test_exempt_paths_do_not_count_toward_global_ban(tmp_path, monkeypatch):
+    """Middleware skip helper: hot paths must not be passed to record_global_request."""
+    monkeypatch.chdir(tmp_path)
+    reset_ip_ban_store_for_tests(tmp_path / "web_ip_bans.json")
+    from evileye.api.middleware.ip_protection import is_global_rate_exempt
+
+    cfg = ProtectionConfig(
+        enabled=True,
+        whitelist_ips=[],
+        global_max_requests=3,
+        global_window_sec=60,
+        global_ban_sec=600,
+    )
+    guard = reset_rate_guard_for_tests(cfg)
+
+    class Req:
+        def __init__(self, path: str):
+            self.url = type("U", (), {"path": path})()
+            self.client = type("C", (), {"host": "198.51.100.77"})()
+            self.headers = {}
+
+    # Simulate middleware: only count non-exempt paths.
+    for _ in range(10):
+        path = "/api/v1/playback/media"
+        if not is_global_rate_exempt(path):
+            guard.record_global_request(Req(path))
+    from evileye.api.core.ip_ban_store import get_ip_ban_store
+
+    assert get_ip_ban_store().is_banned("198.51.100.77") is False
+
+    for _ in range(3):
+        path = "/api/v1/state/cameras"
+        assert is_global_rate_exempt(path) is False
+        hit = guard.record_global_request(Req(path))
+    assert hit is True
+    assert get_ip_ban_store().is_banned("198.51.100.77") is True
+
+
 def test_mask_rtsp_in_config_secrets():
     from evileye.api.routes.configs import _mask_secrets
 
@@ -280,3 +342,150 @@ def test_internal_token_length_mismatch_is_401(secured_client):
         headers={"X-EvilEye-Internal-Token": "short"},
     )
     assert res.status_code == 401
+
+
+def test_extension_workspace_is_admin_only_and_localhost_only_by_default(secured_client, monkeypatch):
+    client, _ = secured_client
+    monkeypatch.delenv("EVILEYE_BUILDER_LOCALHOST_ONLY", raising=False)
+    assert client.post("/api/v1/auth/login", json={"username": "admin", "password": "correct-horse"}).status_code == 200
+    denied = client.get("/api/v1/admin/extensions/catalog")
+    assert denied.status_code == 403
+    monkeypatch.setenv("EVILEYE_BUILDER_LOCALHOST_ONLY", "0")
+    allowed = client.get("/api/v1/admin/extensions/catalog")
+    assert allowed.status_code == 200
+    assert {item["config_id"] for item in allowed.json()["pipelines"]} >= {
+        "PipelineSurveillance", "PipelineDeclarative", "PipelineCapture",
+    }
+
+
+def test_extension_workspace_rejects_spoofed_forwarded_localhost(secured_client, monkeypatch):
+    client, tmp_path = secured_client
+    monkeypatch.delenv("EVILEYE_BUILDER_LOCALHOST_ONLY", raising=False)
+    assert client.post("/api/v1/auth/login", json={"username": "admin", "password": "correct-horse"}).status_code == 200
+    path = tmp_path / "credentials.json"
+    payload = json.loads(path.read_text(encoding="utf-8"))
+    payload["web_auth"]["protection"].update({"trust_proxy": True, "trusted_proxy_ips": ["10.0.0.2"]})
+    path.write_text(json.dumps(payload), encoding="utf-8")
+    response = client.get("/api/v1/admin/extensions/catalog", headers={"X-Forwarded-For": "127.0.0.1"})
+    assert response.status_code == 403
+
+
+def test_extension_workspace_accepts_localhost_from_trusted_proxy(secured_client, monkeypatch):
+    client, tmp_path = secured_client
+    monkeypatch.delenv("EVILEYE_BUILDER_LOCALHOST_ONLY", raising=False)
+    assert client.post("/api/v1/auth/login", json={"username": "admin", "password": "correct-horse"}).status_code == 200
+    path = tmp_path / "credentials.json"
+    payload = json.loads(path.read_text(encoding="utf-8"))
+    payload["web_auth"]["protection"].update({"trust_proxy": True, "trusted_proxy_ips": ["testclient"]})
+    path.write_text(json.dumps(payload), encoding="utf-8")
+
+    response = client.get("/api/v1/admin/extensions/catalog", headers={"X-Forwarded-For": "127.0.0.1"})
+
+    assert response.status_code == 200
+
+
+def test_extension_api_rechecks_current_admin_role(secured_client, monkeypatch):
+    client, tmp_path = secured_client
+    monkeypatch.setenv("EVILEYE_BUILDER_LOCALHOST_ONLY", "0")
+    assert client.post("/api/v1/auth/login", json={"username": "admin", "password": "correct-horse"}).status_code == 200
+    path = tmp_path / "credentials.json"
+    payload = json.loads(path.read_text(encoding="utf-8"))
+    payload["web_auth"]["users"][0]["role"] = "user"
+    path.write_text(json.dumps(payload), encoding="utf-8")
+    assert client.get("/api/v1/admin/extensions/catalog").status_code == 403
+
+
+def test_extension_config_save_uses_backup_and_metadata_preview(secured_client, monkeypatch):
+    client, tmp_path = secured_client
+    monkeypatch.setenv("EVILEYE_BUILDER_LOCALHOST_ONLY", "0")
+    assert client.post("/api/v1/auth/login", json={"username": "admin", "password": "correct-horse"}).status_code == 200
+    config = {"pipeline": {"pipeline_class": "PipelineSurveillance", "sources": [], "detectors": []}, "vendor": {"marker": 1}}
+    preview = client.post("/api/v1/admin/extensions/preview", json={"config": config})
+    assert preview.status_code == 200
+    assert preview.json()["valid"] is True
+    created = client.post("/api/v1/admin/extensions/configs", json={"name": "builder-api.json", "config": config, "create_only": True})
+    assert created.status_code == 200, created.text
+    changed = {**config, "vendor": {"marker": 2}}
+    updated = client.post("/api/v1/admin/extensions/configs", json={"name": "builder-api.json", "config": changed, "create_only": False})
+    assert updated.status_code == 200, updated.text
+    backup = Path(updated.json()["backup"])
+    assert backup.is_file()
+    assert json.loads(backup.read_text(encoding="utf-8"))["vendor"]["marker"] == 1
+
+
+def test_extension_plugin_operation_and_archive_routes_share_saved_status(secured_client, monkeypatch):
+    from evileye.api.routes import extensions as extension_routes
+
+    client, tmp_path = secured_client
+    monkeypatch.setenv("EVILEYE_BUILDER_LOCALHOST_ONLY", "0")
+    assert client.post("/api/v1/auth/login", json={"username": "admin", "password": "correct-horse"}).status_code == 200
+    archive = tmp_path / "plugin.zip"
+    archive.write_bytes(b"zip contents")
+    operation = {
+        "id": "12345678-abcd",
+        "status": "pending_restart",
+        "name": "demo-plugin",
+        "plugin_id": "demo_plugin",
+        "template": "alarm",
+        "directory": str(tmp_path / "plugins" / "demo-plugin"),
+        "archive": str(archive),
+        "message": "Restart required",
+    }
+    monkeypatch.setattr(extension_routes, "create_plugin_operation", lambda *_args: operation)
+    monkeypatch.setattr(extension_routes, "get_plugin_operation", lambda _operation_id: operation)
+    monkeypatch.setattr(extension_routes, "list_plugin_operations", lambda: [operation])
+    monkeypatch.setattr(extension_routes, "plugin_operation_archive", lambda _operation_id: archive)
+
+    created = client.post("/api/v1/admin/extensions/plugins", json={"name": "demo-plugin", "template": "alarm", "password": "correct-horse"})
+    assert created.status_code == 200
+    assert created.json()["status"] == "pending_restart"
+    status = client.get("/api/v1/admin/extensions/operations/12345678-abcd")
+    assert status.status_code == 200
+    assert status.json()["plugin_id"] == "demo_plugin"
+    history = client.get("/api/v1/admin/extensions/operations")
+    assert history.status_code == 200
+    assert history.json()[0]["id"] == "12345678-abcd"
+    download = client.get("/api/v1/admin/extensions/operations/12345678-abcd/archive")
+    assert download.status_code == 200
+    assert download.content == b"zip contents"
+
+
+def _security_headers_client(tmp_path, monkeypatch, *, hsts_env=None, secure_cookies=True):
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.delenv("EVILEYE_ENV", raising=False)
+    if hsts_env is None:
+        monkeypatch.delenv("EVILEYE_HSTS", raising=False)
+    else:
+        monkeypatch.setenv("EVILEYE_HSTS", hsts_env)
+    creds = {
+        "web_auth": {
+            "enabled": True,
+            "session_secret": "test-session-secret-not-default-0123456789",
+            "internal_token": "test-internal-token",
+            "secure_cookies": secure_cookies,
+            "users": [
+                {
+                    "username": "admin",
+                    "password_hash": hash_password("correct-horse"),
+                    "role": "admin",
+                    "disabled": False,
+                }
+            ],
+        }
+    }
+    (tmp_path / "credentials.json").write_text(json.dumps(creds), encoding="utf-8")
+    from evileye.api.app import create_app
+
+    return TestClient(create_app())
+
+
+def test_hsts_absent_when_secure_cookies_without_flag(tmp_path, monkeypatch):
+    client = _security_headers_client(tmp_path, monkeypatch, secure_cookies=True)
+    res = client.get("/", follow_redirects=False)
+    assert "strict-transport-security" not in {k.lower() for k in res.headers}
+
+
+def test_hsts_present_when_env_set(tmp_path, monkeypatch):
+    client = _security_headers_client(tmp_path, monkeypatch, hsts_env="1", secure_cookies=False)
+    res = client.get("/", follow_redirects=False)
+    assert res.headers.get("strict-transport-security", "").startswith("max-age=")

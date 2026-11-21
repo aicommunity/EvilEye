@@ -6,6 +6,7 @@ import tempfile
 from pathlib import Path
 from typing import Any, Optional
 
+from evileye.api.core.user_prefs import merge_prefs, normalize_allowed_cameras
 from evileye.api.security import hash_password, normalize_role
 from evileye.core.paths import creds_path
 
@@ -86,6 +87,8 @@ def update_credentials_user(
     password: str | None = None,
     role: str | None = None,
     disabled: bool | None = None,
+    allowed_cameras: list[str] | None = None,
+    prefs: dict[str, Any] | None = None,
     path: Path | None = None,
 ) -> dict[str, Any]:
     creds_path = path or _default_creds()
@@ -106,6 +109,10 @@ def update_credentials_user(
         item["role"] = normalize_role(role)
     if disabled is not None:
         item["disabled"] = bool(disabled)
+    if allowed_cameras is not None:
+        item["allowed_cameras"] = normalize_allowed_cameras(allowed_cameras)
+    if prefs is not None:
+        item["prefs"] = merge_prefs(item.get("prefs"), prefs)
     users[idx] = item
     web_auth["users"] = users
     _atomic_write(creds_path, creds)

@@ -1,5 +1,4 @@
 from queue import Queue
-import threading
 from typing import Optional
 from ultralytics import RTDETR
 from .detection_thread_base import DetectionThreadBase

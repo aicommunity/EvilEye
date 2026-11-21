@@ -5,7 +5,6 @@ Requires EVILEYE_TEST_RTSP_PASSWORD (and optional URL/USER env vars).
 """
 import os
 import time
-import sys
 from pathlib import Path
 import datetime
 import tempfile

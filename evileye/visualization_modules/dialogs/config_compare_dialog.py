@@ -5,9 +5,8 @@
 с подсветкой различий и возможностью выбора для восстановления.
 """
 
-import copy
 import json
-from typing import Dict, Any, List, Tuple, Optional
+from typing import Dict, Any
 
 try:
     from PyQt6.QtWidgets import (

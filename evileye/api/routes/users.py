@@ -6,6 +6,7 @@ from urllib.parse import unquote
 from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel, Field
 
+from evileye.api.core.camera_access import catalog_camera_items
 from evileye.api.core.credentials_users import (
     count_active_admins,
     delete_credentials_user,
@@ -13,6 +14,7 @@ from evileye.api.core.credentials_users import (
     list_credentials_users,
     update_credentials_user,
 )
+from evileye.api.core.user_prefs import allowed_cameras_from_record
 from evileye.api.core.user_store import get_user_store
 from evileye.api.security import load_web_auth_config, normalize_role, require_permission
 
@@ -23,6 +25,7 @@ class CreateUserPayload(BaseModel):
     email: str = Field(..., min_length=3)
     password: str = Field(..., min_length=8)
     role: str = Field(default="user")
+    allowed_cameras: Optional[list[str]] = None
 
 
 class PatchUserPayload(BaseModel):
@@ -30,6 +33,7 @@ class PatchUserPayload(BaseModel):
     disabled: Optional[bool] = None
     status: Optional[Literal["pending", "approved", "rejected", "disabled"]] = None
     password: Optional[str] = Field(default=None, min_length=8)
+    allowed_cameras: Optional[list[str]] = None
 
 
 def _reload_web_auth(request: Request) -> None:
@@ -48,6 +52,7 @@ def _public_credentials_user(record: dict[str, Any]) -> dict[str, Any]:
         "source": "credentials",
         "disabled": disabled,
         "created_at": None,
+        "allowed_cameras": allowed_cameras_from_record(record),
     }
 
 
@@ -66,6 +71,7 @@ def _public_store_user(record: dict[str, Any]) -> dict[str, Any]:
         "source": "store",
         "disabled": disabled,
         "created_at": record.get("created_at"),
+        "allowed_cameras": allowed_cameras_from_record(record),
     }
 
 
@@ -132,6 +138,16 @@ async def list_users(request: Request) -> dict:
     return {"items": _merged_public_users()}
 
 
+@router.get("/camera-catalog")
+async def users_camera_catalog(request: Request) -> dict:
+    require_permission(request, "users:manage")
+    try:
+        items = catalog_camera_items(scope="active")
+    except Exception:
+        items = []
+    return {"items": items}
+
+
 @router.post("")
 async def create_user(payload: CreateUserPayload, request: Request) -> dict:
     require_permission(request, "users:manage")
@@ -139,7 +155,12 @@ async def create_user(payload: CreateUserPayload, request: Request) -> dict:
     if role not in {"user", "admin"}:
         raise HTTPException(status_code=400, detail="role must be user|admin")
     try:
-        item = get_user_store().create_user(payload.email, payload.password, role=role)
+        item = get_user_store().create_user(
+            payload.email,
+            payload.password,
+            role=role,
+            allowed_cameras=payload.allowed_cameras,
+        )
     except ValueError as exc:
         msg = str(exc)
         code = 409 if "already" in msg.lower() else 400
@@ -155,7 +176,13 @@ async def create_user(payload: CreateUserPayload, request: Request) -> dict:
 @router.patch("/{user_id:path}")
 async def patch_user(user_id: str, payload: PatchUserPayload, request: Request) -> dict:
     actor = require_permission(request, "users:manage")
-    if payload.role is None and payload.disabled is None and payload.status is None and payload.password is None:
+    if (
+        payload.role is None
+        and payload.disabled is None
+        and payload.status is None
+        and payload.password is None
+        and payload.allowed_cameras is None
+    ):
         raise HTTPException(status_code=400, detail="At least one field is required")
 
     source, record = _resolve_user(user_id)
@@ -183,6 +210,7 @@ async def patch_user(user_id: str, payload: PatchUserPayload, request: Request) 
                 disabled=payload.disabled if payload.disabled is not None else (
                     True if payload.status == "disabled" else False if payload.status == "approved" else None
                 ),
+                allowed_cameras=payload.allowed_cameras,
             )
             public = _public_credentials_user(updated)
         else:
@@ -195,9 +223,16 @@ async def patch_user(user_id: str, payload: PatchUserPayload, request: Request) 
                 role=payload.role,
                 status=payload.status,
                 disabled=payload.disabled,
+                allowed_cameras=payload.allowed_cameras,
             )
             # reload after password-only change
-            if payload.password is not None and payload.role is None and payload.status is None and payload.disabled is None:
+            if (
+                payload.password is not None
+                and payload.role is None
+                and payload.status is None
+                and payload.disabled is None
+                and payload.allowed_cameras is None
+            ):
                 updated = store.get_user_record(email) or updated
             public = _public_store_user(updated)
     except ValueError as exc:
@@ -206,6 +241,20 @@ async def patch_user(user_id: str, payload: PatchUserPayload, request: Request) 
         raise HTTPException(status_code=404, detail="User not found") from exc
 
     _reload_web_auth(request)
+    # F01/R08: revoke all transports when user is disabled, demoted, ACL shrinks, or deleted.
+    should_kick = (
+        payload.disabled is True
+        or payload.status in {"rejected", "disabled"}
+        or payload.allowed_cameras is not None
+        or (payload.role is not None and normalize_role(payload.role) != "admin")
+    )
+    if should_kick and target_id:
+        try:
+            from evileye.api.core.transport_revoke import revoke_user_transports
+
+            revoke_user_transports(target_id)
+        except Exception:
+            pass
     return {"ok": True, "user": public}
 
 
@@ -226,6 +275,13 @@ async def delete_user(user_id: str, request: Request) -> dict:
     except KeyError as exc:
         raise HTTPException(status_code=404, detail="User not found") from exc
     _reload_web_auth(request)
+    if target_id:
+        try:
+            from evileye.api.core.transport_revoke import revoke_user_transports
+
+            revoke_user_transports(target_id)
+        except Exception:
+            pass
     return {"ok": True}
 
 
@@ -248,4 +304,10 @@ async def reject_user(email: str, request: Request) -> dict:
     except KeyError as exc:
         raise HTTPException(status_code=404, detail="User not found") from exc
     _reload_web_auth(request)
+    try:
+        from evileye.api.core.transport_revoke import revoke_user_transports
+
+        revoke_user_transports(unquote(email).strip())
+    except Exception:
+        pass
     return {"ok": True, "user": _public_store_user(item)}

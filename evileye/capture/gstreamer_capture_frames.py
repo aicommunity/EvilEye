@@ -6,6 +6,7 @@ from .gstreamer_capture_common import (
     CaptureConstants,
     CaptureDeviceType,
     CaptureImage,
+    Any,
     Empty,
     Frame,
     Full,
@@ -280,6 +281,21 @@ class GStreamerCaptureFramesMixin:
                                         # Убрано отладочное сообщение для уменьшения флуда
                                         self.is_working = False
                             # Если _init_time нет, это может быть старая инициализация - не трогаем is_working
+                    elif (
+                        self.source_type == CaptureDeviceType.IpCamera
+                        and ret == Gst.StateChangeReturn.ASYNC
+                        and pending == Gst.State.PLAYING
+                    ):
+                        # RTSP negotiation is asynchronous. Keep the source in
+                        # its initializing state until the configured startup
+                        # grace period expires; otherwise the monitor tears down
+                        # rtspsrc while it is still negotiating SETUP/PLAY.
+                        if (
+                            not self._init_time
+                            or time.time() - self._init_time
+                            > CaptureConstants.INIT_GRACE_PERIOD_SECONDS
+                        ):
+                            self.is_working = False
                     else:
                         # Pipeline not in PLAYING state или ret != SUCCESS и state != PLAYING
                         if self.is_working:
@@ -337,6 +353,19 @@ class GStreamerCaptureFramesMixin:
                                 pipeline_state_str = "pipeline=None"
                         except Exception as e:
                             pipeline_state_str = f"error getting state: {e}"
+
+                        # Do not tear down an RTSP pipeline that is still negotiating PLAYING
+                        # or waiting for the first decoded frame inside the init grace window.
+                        if (
+                            should_reconnect
+                            and self.is_inited
+                            and self.pipeline is not None
+                            and self._init_time
+                            and (now - float(self._init_time))
+                            < CaptureConstants.INIT_GRACE_PERIOD_SECONDS
+                        ):
+                            should_reconnect = False
+                            last_frame_info = f"{last_frame_info}; waiting_for_startup"
 
                         # Реконнектим только если действительно нужно
                         if should_reconnect:
@@ -549,10 +578,52 @@ class GStreamerCaptureFramesMixin:
             except Exception:
                 pass
 
+    def _abandon_stalled_teardown(self) -> None:
+        """Stop waiting on a hung release() and invalidate the old pipeline generation."""
+        try:
+            self._reconnect_release_started_at = None
+        except Exception:
+            pass
+        try:
+            self._pipeline_null_abandoned = True
+        except Exception:
+            pass
+        try:
+            self._pipeline_generation = int(getattr(self, "_pipeline_generation", 0)) + 1
+        except Exception:
+            self._pipeline_generation = 1
+        try:
+            with self.pipeline_lock:
+                self.pipeline = None
+                self.bus = None
+                self.appsink = None
+                self.is_inited = False
+                self.is_working = False
+                self._last_sample_wall_ts = 0.0
+        except Exception:
+            self.is_inited = False
+            self.is_working = False
+        try:
+            # Force a new connection generation so downstream drops stale frames.
+            self._record_disconnect(datetime.datetime.now())
+        except Exception:
+            pass
+
     def _on_new_sample(self, appsink: Any) -> Any:
         """
         Callback for new frame from GStreamer pipeline.
         """
+        # Ignore samples from a pipeline that teardown already detached / abandoned.
+        try:
+            if appsink is not self.appsink:
+                return Gst.FlowReturn.OK
+            if getattr(self, "_appsink_generation", None) not in (
+                None,
+                getattr(self, "_pipeline_generation", None),
+            ):
+                return Gst.FlowReturn.OK
+        except Exception:
+            pass
         pull_duration = 0.0
         try:
             pull_start = time.perf_counter()
@@ -575,6 +646,7 @@ class GStreamerCaptureFramesMixin:
                     self._record_perf_metrics(pull_duration, process_time, None)
                     self.logger.error(f"Failed to extract frame data: {e}")
                     return Gst.FlowReturn.ERROR
+                pts_ns, media_pts_sec = self._pts_clock_fields(pts_value)
 
                 # Process frame metadata (optimized: only if needed for video files)
                 buffer = sample.get_buffer()
@@ -622,7 +694,9 @@ class GStreamerCaptureFramesMixin:
                             frame_id=frame_id,
                             timestamp=now,
                             current_video_frame=current_video_frame,
-                            current_video_position=current_video_position
+                            current_video_position=current_video_position,
+                            pts_ns=pts_ns,
+                            media_pts_sec=media_pts_sec,
                         )
                     except Exception as e:
                         self.logger.error(f"Error in _handle_split_stream for {self.source_names}: {e}", exc_info=True)
@@ -631,29 +705,32 @@ class GStreamerCaptureFramesMixin:
                     # Mark as working when we receive first valid frame after init
                     # IMPORTANT: For split streams, we mark as working even if capture_images is empty initially
                     # This allows subsequent frames to be processed
-                    if self._init_time and not self.is_working:
-                        if (now - self._init_time) < CaptureConstants.INIT_GRACE_PERIOD_SECONDS:
-                            if capture_images:
-                                self.logger.info(
-                                    f"First frame received {(now - self._init_time):.1f}s after init - marking as working")
-                                self.is_working = True
-                                # Frames are flowing again: clear noframes restart backoff.
-                                try:
-                                    self._noframes_restart_consecutive = 0
-                                except Exception:
-                                    pass
-                            else:
-                                # Even if split failed, we received a frame from GStreamer
-                                # Mark as working to allow subsequent frames to be processed
-                                self.logger.warning(
-                                    f"First frame received but split returned empty for {self.source_names} - marking as working anyway")
-                                self.is_working = True
-                                try:
-                                    self._noframes_restart_consecutive = 0
-                                except Exception:
-                                    pass
+                    if not self.is_working and (self._init_time or self.is_inited):
+                        if capture_images:
+                            self.logger.info(
+                                "First frame received %ss after init - marking as working",
+                                f"{(now - self._init_time):.1f}" if self._init_time else "?",
+                            )
+                            self.is_working = True
+                            self._pipeline_null_abandoned = False
+                            try:
+                                self._noframes_restart_consecutive = 0
+                            except Exception:
+                                pass
+                        else:
+                            # Even if split failed, we received a frame from GStreamer.
+                            self.logger.warning(
+                                "First frame received but split returned empty for %s - marking as working anyway",
+                                self.source_names,
+                            )
+                            self.is_working = True
+                            self._pipeline_null_abandoned = False
+                            try:
+                                self._noframes_restart_consecutive = 0
+                            except Exception:
+                                pass
 
-                    # If still not working after init grace period, skip frame
+                    # If still not working, skip frame
                     if not self.is_working:
                         process_time = time.perf_counter() - processing_start
                         self._record_perf_metrics(pull_duration, process_time, pts_value)
@@ -690,7 +767,9 @@ class GStreamerCaptureFramesMixin:
                                 timestamp=now,
                                 source_id=self.source_ids[0] if self.source_ids else 0,
                                 current_video_frame=current_video_frame,
-                                current_video_position=current_video_position
+                                current_video_position=current_video_position,
+                                pts_ns=pts_ns,
+                                media_pts_sec=media_pts_sec,
                             )
                             with self.frame_lock:
                                 # Always update to track latest frame reception time
@@ -706,21 +785,25 @@ class GStreamerCaptureFramesMixin:
                         timestamp=now,
                         source_id=source_id,
                         current_video_frame=current_video_frame,
-                        current_video_position=current_video_position
+                        current_video_position=current_video_position,
+                        pts_ns=pts_ns,
+                        media_pts_sec=media_pts_sec,
                     )
 
                     # Mark as working when we receive first frame after init
-                    if self._init_time and not self.is_working:
-                        if (now - self._init_time) < CaptureConstants.INIT_GRACE_PERIOD_SECONDS:
-                            self.logger.info(
-                                f"First frame received {(now - self._init_time):.1f}s after init - marking as working")
-                            self.is_working = True
-                            try:
-                                self._noframes_restart_consecutive = 0
-                            except Exception:
-                                pass
+                    if not self.is_working and (self._init_time or self.is_inited):
+                        self.logger.info(
+                            "First frame received %ss after init - marking as working",
+                            f"{(now - self._init_time):.1f}" if self._init_time else "?",
+                        )
+                        self.is_working = True
+                        self._pipeline_null_abandoned = False
+                        try:
+                            self._noframes_restart_consecutive = 0
+                        except Exception:
+                            pass
 
-                    # If still not working after init grace period, skip frame
+                    # If still not working, skip frame
                     if not self.is_working:
                         process_time = time.perf_counter() - processing_start
                         self._record_perf_metrics(pull_duration, process_time, pts_value)
@@ -835,27 +918,56 @@ class GStreamerCaptureFramesMixin:
                         total_str = ("∞" if max_attempts == 0 else str(max_attempts))
                         self.logger.info(
                             f"Reconnecting to source {self.source_names} (attempt {attempt}/{total_str}), backoff={wait_time:.1f}s")
-                        # Release old pipeline (with timeout to prevent blocking)
+                        # Reconnect must not reuse a pipeline while its native teardown is active.
                         try:
                             import threading as _thr_rel
-                            release_done = _thr_rel.Event()
+                            release_budget = float(
+                                getattr(
+                                    CaptureConstants,
+                                    "RECONNECT_RELEASE_WAIT_SEC",
+                                    15.0,
+                                )
+                            )
+                            release_done = getattr(self, '_reconnect_release_done', None)
+                            if release_done is None or release_done.is_set():
+                                release_done = _thr_rel.Event()
+                                self._reconnect_release_done = release_done
+                                self._reconnect_release_started_at = time.time()
 
-                            def _release_worker():
-                                try:
-                                    self.release()
-                                except Exception as e:
-                                    self.logger.debug(f"Error in release during reconnect: {e}")
-                                finally:
-                                    release_done.set()
+                                def _release_worker(done=release_done):
+                                    try:
+                                        self.release()
+                                    except Exception as e:
+                                        self.logger.debug(f"Error in release during reconnect: {e}")
+                                    finally:
+                                        self._reconnect_release_started_at = None
+                                        done.set()
 
-                            release_thread = _thr_rel.Thread(target=_release_worker, daemon=True)
-                            release_thread.start()
-                            # Wait up to 2 seconds for release
-                            if not release_done.wait(2.0):
-                                self.logger.warning(
-                                    f"Release timeout after 2s for {self.source_names}; continuing anyway")
+                                release_thread = _thr_rel.Thread(target=_release_worker, daemon=True)
+                                release_thread.start()
+                            release_deadline = time.monotonic() + release_budget
+                            if not release_done.wait(min(2.0, release_budget)):
+                                self.logger.error(
+                                    "GStreamer teardown is still running for %s; reconnect is waiting",
+                                    self.source_names,
+                                )
+                                while not release_done.wait(0.25):
+                                    if not self.run_flag or self.stop_event.is_set():
+                                        break
+                                    if time.monotonic() >= release_deadline:
+                                        break
+                            if not release_done.is_set():
+                                self.logger.error(
+                                    "Abandoning stalled GStreamer teardown for %s after %.1fs; forcing reconnect",
+                                    self.source_names,
+                                    release_budget,
+                                )
+                                self._abandon_stalled_teardown()
                         except Exception as e:
-                            self.logger.debug(f"Error starting release thread: {e}")
+                            self.logger.error("Cannot release GStreamer source before reconnect: %s", e)
+                            break
+                        if not self.run_flag or self.stop_event.is_set():
+                            break
                         # Wait a bit before retry
                         if self.stop_event.wait(2.0):
                             break
@@ -898,7 +1010,11 @@ class GStreamerCaptureFramesMixin:
                                     if self.pipeline is not None:
                                         try:
                                             self.logger.debug(f"Force setting pipeline to NULL for {self.source_names}")
-                                            self.pipeline.set_state(Gst.State.NULL)
+                                            self._set_gst_state_null_bounded(
+                                                self.pipeline,
+                                                timeout_sec=CaptureConstants.TEARDOWN_NULL_TIMEOUT_SEC,
+                                                label=f"reconnect-timeout:{self.source_names}",
+                                            )
                                         except Exception as e:
                                             self.logger.debug(f"Error setting pipeline to NULL: {e}")
                                         self.pipeline = None
@@ -920,8 +1036,11 @@ class GStreamerCaptureFramesMixin:
                             self._last_init_error = init_err
                             init_ok = False
                         else:
-                            # Check if init actually succeeded
-                            init_ok = self.is_inited and self.is_working
+                            # IP cameras become working on first frame; init success is is_inited.
+                            if self.source_type == CaptureDeviceType.IpCamera:
+                                init_ok = bool(self.is_inited)
+                            else:
+                                init_ok = self.is_inited and self.is_working
                             if not init_ok:
                                 self.logger.debug(
                                     f"init() completed but is_inited={self.is_inited}, is_working={self.is_working} for {self.source_names}")
@@ -1056,6 +1175,9 @@ class GStreamerCaptureFramesMixin:
             source_id = None
             current_video_frame = None
             current_video_position = None
+            connection_generation = None
+            pts_ns = None
+            media_pts_sec = None
             image_copy = None
 
             try:
@@ -1084,6 +1206,9 @@ class GStreamerCaptureFramesMixin:
                         source_id = last_frame_ref.source_id
                         current_video_frame = last_frame_ref.current_video_frame
                         current_video_position = last_frame_ref.current_video_position
+                        connection_generation = last_frame_ref.connection_generation
+                        pts_ns = last_frame_ref.pts_ns
+                        media_pts_sec = last_frame_ref.media_pts_sec
                         # Get reference to image (don't copy yet - do it outside lock)
                         image_ref = last_frame_ref.image
                     else:
@@ -1115,8 +1240,12 @@ class GStreamerCaptureFramesMixin:
                         timestamp=timestamp,
                         source_id=source_id,
                         current_video_frame=current_video_frame,
-                        current_video_position=current_video_position
+                        current_video_position=current_video_position,
+                        pts_ns=pts_ns,
+                        media_pts_sec=media_pts_sec,
                     )
+                    if connection_generation is not None:
+                        copied_frame.connection_generation = connection_generation
                     frames.append(copied_frame)
             except Exception as e:
                 # Log error but don't break the flow - return empty list if copy fails

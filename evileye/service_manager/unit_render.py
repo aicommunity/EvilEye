@@ -15,11 +15,12 @@ Wants=network-online.target
 [Service]
 Type=simple
 WorkingDirectory={{WORKING_DIRECTORY}}
-ExecStart={{EVILEYE_BIN}} server --host {{HOST}} --port {{PORT}} --no-reload{{CONFIG_ARGS}}
+ExecStart={{EVILEYE_BIN}} server --host {{HOST}} --port {{PORT}} --no-reload{{CONFIG_ARGS}}{{SSL_ARGS}}
 Restart=on-failure
 RestartSec=5
 TimeoutStopSec=30
 Environment=PYTHONUNBUFFERED=1
+Environment=EVILEYE_SITE_DIR={{WORKING_DIRECTORY}}
 
 [Install]
 WantedBy=multi-user.target
@@ -34,11 +35,12 @@ Wants=network-online.target
 [Service]
 Type=simple
 WorkingDirectory={{WORKING_DIRECTORY}}
-ExecStart={{EVILEYE_BIN}} server --host {{HOST}} --port {{PORT}} --no-reload{{CONFIG_ARGS}}
+ExecStart={{EVILEYE_BIN}} server --host {{HOST}} --port {{PORT}} --no-reload{{CONFIG_ARGS}}{{SSL_ARGS}}
 Restart=on-failure
 RestartSec=5
 TimeoutStopSec=30
 Environment=PYTHONUNBUFFERED=1
+Environment=EVILEYE_SITE_DIR={{WORKING_DIRECTORY}}
 
 [Install]
 WantedBy=default.target
@@ -51,6 +53,33 @@ def config_args(config: Optional[str]) -> str:
     return f" --config {config}"
 
 
+def ssl_args(ssl_certfile: Optional[str] = None, ssl_keyfile: Optional[str] = None) -> str:
+    if not ssl_certfile or not ssl_keyfile:
+        return ""
+    return f" --ssl-certfile {ssl_certfile} --ssl-keyfile {ssl_keyfile}"
+
+
+def _fill_placeholders(
+    template: str,
+    *,
+    working_directory: str | Path,
+    evileye_bin: str,
+    host: str,
+    port: int,
+    config: Optional[str],
+    ssl_certfile: Optional[str] = None,
+    ssl_keyfile: Optional[str] = None,
+) -> str:
+    return (
+        template.replace("{{WORKING_DIRECTORY}}", str(Path(working_directory).resolve()))
+        .replace("{{EVILEYE_BIN}}", evileye_bin)
+        .replace("{{HOST}}", host)
+        .replace("{{PORT}}", str(port))
+        .replace("{{CONFIG_ARGS}}", config_args(config))
+        .replace("{{SSL_ARGS}}", ssl_args(ssl_certfile, ssl_keyfile))
+    )
+
+
 def render_unit(
     *,
     working_directory: str | Path,
@@ -59,14 +88,19 @@ def render_unit(
     port: int = 8181,
     config: Optional[str] = None,
     user_mode: bool = True,
+    ssl_certfile: Optional[str] = None,
+    ssl_keyfile: Optional[str] = None,
 ) -> str:
     template = _USER_TEMPLATE if user_mode else _SYSTEM_TEMPLATE
-    return (
-        template.replace("{{WORKING_DIRECTORY}}", str(Path(working_directory).resolve()))
-        .replace("{{EVILEYE_BIN}}", evileye_bin)
-        .replace("{{HOST}}", host)
-        .replace("{{PORT}}", str(port))
-        .replace("{{CONFIG_ARGS}}", config_args(config))
+    return _fill_placeholders(
+        template,
+        working_directory=working_directory,
+        evileye_bin=evileye_bin,
+        host=host,
+        port=port,
+        config=config,
+        ssl_certfile=ssl_certfile,
+        ssl_keyfile=ssl_keyfile,
     )
 
 
@@ -94,9 +128,11 @@ def render_unit_prefer_file(
     port: int = 8181,
     config: Optional[str] = None,
     user_mode: bool = True,
+    ssl_certfile: Optional[str] = None,
+    ssl_keyfile: Optional[str] = None,
 ) -> str:
     packed = load_template_from_package(user_mode=user_mode)
-    if packed is None:
+    if packed is None or "{{SSL_ARGS}}" not in packed:
         return render_unit(
             working_directory=working_directory,
             evileye_bin=evileye_bin,
@@ -104,11 +140,16 @@ def render_unit_prefer_file(
             port=port,
             config=config,
             user_mode=user_mode,
+            ssl_certfile=ssl_certfile,
+            ssl_keyfile=ssl_keyfile,
         )
-    return (
-        packed.replace("{{WORKING_DIRECTORY}}", str(Path(working_directory).resolve()))
-        .replace("{{EVILEYE_BIN}}", evileye_bin)
-        .replace("{{HOST}}", host)
-        .replace("{{PORT}}", str(port))
-        .replace("{{CONFIG_ARGS}}", config_args(config))
+    return _fill_placeholders(
+        packed,
+        working_directory=working_directory,
+        evileye_bin=evileye_bin,
+        host=host,
+        port=port,
+        config=config,
+        ssl_certfile=ssl_certfile,
+        ssl_keyfile=ssl_keyfile,
     )

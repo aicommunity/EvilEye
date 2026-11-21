@@ -7,8 +7,8 @@ Base Window class for EvilEye GUI
 
 import json
 from pathlib import Path
-from typing import Optional, Dict, Any, Callable
-from abc import ABC, abstractmethod
+from typing import Optional, Dict, Any
+from abc import abstractmethod
 
 try:
     from PyQt6.QtWidgets import QWidget, QMainWindow, QMessageBox, QVBoxLayout

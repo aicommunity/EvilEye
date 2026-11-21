@@ -49,9 +49,17 @@ def journal_client(tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
     monkeypatch.setattr(
         journal_service,
-        "get_current_run_summary",
-        lambda: {"config_path": str(config_path)},
+        "get_current_config_path",
+        lambda: str(config_path),
     )
+    journal_service._runtime_params_cache = None
+    journal_service._light_config_path_cache = None
+    journal_service._image_base_dir_cache = None
+    journal_service._json_source_cache.clear()
+    journal_service._grouped_row_cache = {"events": {}, "objects": {}}
+    journal_service._filters_meta_cache = None
+    journal_service._journal_stats_page_cache.clear()
+    journal_service._path_resolve_cache.clear()
     app = create_app()
     return TestClient(app), str(preview.name), video_rel
 
@@ -200,7 +208,8 @@ def test_preview_cache_control_header(journal_client):
         f"/api/v1/journals/preview?path={preview_name}&date=2026-06-13&journal_type=objects"
     )
     assert response.status_code == 200
-    assert response.headers.get("cache-control") == "public, max-age=3600"
+    assert "no-store" in (response.headers.get("cache-control") or "").lower()
+    assert "private" in (response.headers.get("cache-control") or "").lower()
 
 
 def test_video_mkv_content_type(journal_client, tmp_path):

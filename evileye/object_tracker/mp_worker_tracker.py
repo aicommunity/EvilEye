@@ -65,7 +65,12 @@ class MpWorkerTracker(MpWorker):
             return None
         if self.tracker is None:
             return None
-        return run_tracker_update(self.tracker, detection_result, image.image)
+        return run_tracker_update(
+            self.tracker,
+            detection_result,
+            image.image,
+            time_stamp=getattr(image, "time_stamp", None),
+        )
 
     def _unpack_input(self, data):
         """Unpack either legacy tuple payload or descriptor payload."""
@@ -86,6 +91,8 @@ class MpWorkerTracker(MpWorker):
             frame.source_id = frame_meta.get("source_id")
             frame.frame_id = frame_meta.get("frame_id")
             frame.time_stamp = frame_meta.get("time_stamp")
+            frame.pts_ns = frame_meta.get("pts_ns")
+            frame.media_pts_sec = frame_meta.get("media_pts_sec")
             frame.current_video_frame = frame_meta.get("current_video_frame")
             frame.current_video_position = frame_meta.get("current_video_position")
             frame.source_video_duration = frame_meta.get("source_video_duration")

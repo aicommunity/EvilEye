@@ -158,7 +158,7 @@ export function SourceAdvancedEditor({
   useEffect(() => {
     if (!open || !rowReady) return;
     void resolvePreview();
-    const id = window.setInterval(() => void resolvePreview(), 5000);
+    const id = window.setInterval(() => void resolvePreview(), 15_000);
     return () => window.clearInterval(id);
   }, [open, rowReady, resolvePreview, previewSession]);
 

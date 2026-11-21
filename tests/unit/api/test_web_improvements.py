@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import json
-from pathlib import Path
 
 import pytest
 from fastapi.testclient import TestClient
@@ -164,7 +163,7 @@ def test_web_auth_bootstrap_creates_admin(tmp_path, monkeypatch):
     assert not ensure_default_admin_credentials(creds_path)
 
 
-def test_journal_json_fallback_when_database_disabled(tmp_path, monkeypatch):
+def test_journal_json_mode_when_database_disabled(tmp_path, monkeypatch):
     base_dir = tmp_path / "EvilEyeData"
     metadata = base_dir / "Detections" / "2026-06-13" / "Metadata"
     metadata.mkdir(parents=True)
@@ -195,12 +194,20 @@ def test_journal_json_fallback_when_database_disabled(tmp_path, monkeypatch):
     )
     monkeypatch.setattr(
         journal_service,
-        "get_current_run_summary",
-        lambda: {"config_path": str(config_path)},
+        "get_current_config_path",
+        lambda: str(config_path),
     )
+    monkeypatch.setattr(
+        "evileye.api.core.server_state.get_current_run_summary",
+        lambda: None,
+    )
+    journal_service._runtime_params_cache = None
+    journal_service._light_config_path_cache = None
+    journal_service._image_base_dir_cache = None
     status = journal_service.journal_availability()
     assert status["available"] is True
     assert status["mode"] == "json"
+    assert status["reason"] == "ok"
     payload = journal_service.load_objects_grouped_page(page=0, size=10, filters={})
     assert payload["available"] is True
     assert payload["mode"] == "json"
@@ -208,21 +215,108 @@ def test_journal_json_fallback_when_database_disabled(tmp_path, monkeypatch):
 
 
 def test_journal_disabled_message(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
     config_path = tmp_path / "poly.json"
     config_path.write_text(json.dumps({"controller": {"use_database": False}}), encoding="utf-8")
     monkeypatch.setattr(
         journal_service,
-        "get_current_run_summary",
-        lambda: {"config_path": str(config_path)},
+        "get_current_config_path",
+        lambda: str(config_path),
     )
+    monkeypatch.setattr(
+        "evileye.api.core.server_state.get_current_run_summary",
+        lambda: None,
+    )
+    journal_service._runtime_params_cache = None
+    journal_service._light_config_path_cache = None
+    journal_service._image_base_dir_cache = None
     payload = journal_service.load_events_page(page=0, size=10, filters={})
     assert payload["available"] is False
-    assert payload["reason"] == "database_disabled"
-    assert "use_database" in payload["message"]
+    assert payload["mode"] == "json"
+    assert payload["reason"] == "json_unavailable"
+    assert "EvilEyeData" in payload["message"]
+
+
+def test_journal_database_mode_falls_back_to_json_when_unreachable(tmp_path, monkeypatch):
+    base_dir = tmp_path / "EvilEyeData"
+    metadata = base_dir / "Detections" / "2026-06-13" / "Metadata"
+    metadata.mkdir(parents=True)
+    (metadata / "objects_found.json").write_text("[]", encoding="utf-8")
+    config_path = tmp_path / "poly.json"
+    config_path.write_text(
+        json.dumps({"controller": {"use_database": True, "image_dir": str(base_dir)}}),
+        encoding="utf-8",
+    )
+    creds_path = tmp_path / "credentials.json"
+    creds_path.write_text(
+        json.dumps({"database": {"host": "127.0.0.1", "port": 5432, "dbname": "x", "user": "x", "password": "x"}}),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(journal_service, "get_current_config_path", lambda: str(config_path))
+    monkeypatch.setattr(journal_service, "creds_path", lambda: creds_path)
+    monkeypatch.setattr(journal_service, "_db_controller", lambda: None)
+    monkeypatch.setattr(
+        "evileye.api.core.server_state.get_current_run_summary",
+        lambda: None,
+    )
+    journal_service._runtime_params_cache = None
+    journal_service._light_config_path_cache = None
+    journal_service._image_base_dir_cache = None
+
+    status = journal_service.journal_availability()
+    assert status["available"] is True
+    assert status["mode"] == "json"
+    assert status["reason"] == "database_fallback_json"
+
+    payload = journal_service.load_events_page(page=0, size=10, filters={})
+    assert payload["available"] is True
+    assert payload["mode"] == "json"
+    assert payload["reason"] == "database_fallback_json"
+
+
+def test_journal_json_mode_from_on_disk_config(tmp_path, monkeypatch):
+    base_dir = tmp_path / "EvilEyeData"
+    metadata = base_dir / "Detections" / "2026-06-13" / "Metadata"
+    metadata.mkdir(parents=True)
+    (metadata / "objects_found.json").write_text(
+        json.dumps(
+            [
+                {
+                    "event_id": 1,
+                    "timestamp": "2026-06-13T10:00:00",
+                    "source_id": 0,
+                    "source_name": "Cam1",
+                    "object_id": 42,
+                    "class_name": "person",
+                }
+            ]
+        ),
+        encoding="utf-8",
+    )
+    config_path = tmp_path / "poly.json"
+    config_path.write_text(
+        json.dumps({"controller": {"use_database": False, "image_dir": str(base_dir)}}),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(journal_service, "get_current_config_path", lambda: str(config_path))
+    journal_service._runtime_params_cache = None
+    journal_service._light_config_path_cache = None
+    journal_service._image_base_dir_cache = None
+
+    assert journal_service.configured_storage_mode() == "json"
+    status = journal_service.journal_availability()
+    assert status["available"] is True
+    assert status["mode"] == "json"
+
+    payload = journal_service.load_objects_grouped_page(page=0, size=10, filters={})
+    assert payload["available"] is True
+    assert payload["mode"] == "json"
+    assert payload["total"] >= 1
 
 
 def test_auth_register_and_users_flow(tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("EVILEYE_BOOTSTRAP_ADMIN_PASSWORD", "admin")
     creds_path = tmp_path / "credentials.json"
     creds_path.write_text(json.dumps({"web_auth": {"enabled": True, "users": []}}), encoding="utf-8")
     ensure_default_admin_credentials(creds_path)
@@ -230,10 +324,10 @@ def test_auth_register_and_users_flow(tmp_path, monkeypatch):
     app = create_app()
     client = TestClient(app)
 
-    reg = client.post("/api/v1/auth/register", json={"email": "test@example.com", "password": "secret1"})
+    reg = client.post("/api/v1/auth/register", json={"email": "test@example.com", "password": "secret123"})
     assert reg.status_code == 200
 
-    login_pending = client.post("/api/v1/auth/login", json={"username": "test@example.com", "password": "secret1"})
+    login_pending = client.post("/api/v1/auth/login", json={"username": "test@example.com", "password": "secret123"})
     assert login_pending.status_code == 401
 
     admin_login = client.post("/api/v1/auth/login", json={"username": "admin", "password": "admin"})
@@ -243,7 +337,7 @@ def test_auth_register_and_users_flow(tmp_path, monkeypatch):
     assert approve.status_code == 200
 
     app.state.web_auth = __import__("evileye.api.security", fromlist=["load_web_auth_config"]).load_web_auth_config()
-    user_login = client.post("/api/v1/auth/login", json={"username": "test@example.com", "password": "secret1"})
+    user_login = client.post("/api/v1/auth/login", json={"username": "test@example.com", "password": "secret123"})
     assert user_login.status_code == 200
     perms = set(user_login.json().get("permissions") or [])
     assert "logs:view" not in perms
@@ -251,6 +345,7 @@ def test_auth_register_and_users_flow(tmp_path, monkeypatch):
 
 def test_admin_create_user_approved_and_login(tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("EVILEYE_BOOTSTRAP_ADMIN_PASSWORD", "admin")
     creds_path = tmp_path / "credentials.json"
     creds_path.write_text(json.dumps({"web_auth": {"enabled": True, "users": []}}), encoding="utf-8")
     ensure_default_admin_credentials(creds_path)
@@ -286,6 +381,38 @@ def test_admin_create_user_approved_and_login(tmp_path, monkeypatch):
     assert login.status_code == 200
 
 
+def test_admin_create_user_with_allowed_cameras(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("EVILEYE_BOOTSTRAP_ADMIN_PASSWORD", "admin")
+    creds_path = tmp_path / "credentials.json"
+    creds_path.write_text(json.dumps({"web_auth": {"enabled": True, "users": []}}), encoding="utf-8")
+    ensure_default_admin_credentials(creds_path)
+
+    app = create_app()
+    client = TestClient(app)
+    assert client.post("/api/v1/auth/login", json={"username": "admin", "password": "admin"}).status_code == 200
+
+    created = client.post(
+        "/api/v1/users",
+        json={
+            "email": "camuser@example.com",
+            "password": "secret12",
+            "role": "user",
+            "allowed_cameras": ["Cam1", "Cam2"],
+        },
+    )
+    assert created.status_code == 200
+    assert created.json()["user"]["allowed_cameras"] == ["Cam1", "Cam2"]
+
+    listed = client.get("/api/v1/users")
+    assert listed.status_code == 200
+    users = listed.json()
+    items = users if isinstance(users, list) else users.get("items") or users.get("users") or []
+    row = next((u for u in items if u.get("email") == "camuser@example.com"), None)
+    assert row is not None
+    assert row.get("allowed_cameras") == ["Cam1", "Cam2"]
+
+
 def test_user_store_create_user_unit(tmp_path):
     from evileye.api.core.user_store import UserStore
 
@@ -294,3 +421,11 @@ def test_user_store_create_user_unit(tmp_path):
     assert record["status"] == "approved"
     assert record["role"] == "admin"
     assert store.authenticate("ops@example.com", "secret12") is not None
+
+    limited = store.create_user(
+        "limited@example.com",
+        "secret12",
+        role="user",
+        allowed_cameras=["Cam1", "Cam3"],
+    )
+    assert limited["allowed_cameras"] == ["Cam1", "Cam3"]

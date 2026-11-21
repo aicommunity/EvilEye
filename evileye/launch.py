@@ -7,9 +7,8 @@ Provides a graphical interface for the EvilEye surveillance system.
 
 import sys
 import json
-import logging
 from pathlib import Path
-from typing import Optional, Dict, Any
+from typing import Optional
 from evileye.core.logging_config import setup_evileye_logging
 from evileye.core.logger import get_module_logger
 
@@ -32,7 +31,7 @@ except ImportError:
 from evileye.controller import controller
 from evileye.visualization_modules.main_window import MainWindow
 from evileye.visualization_modules.unified_launcher import UnifiedLauncherWindow
-from evileye.utils.utils import normalize_config_path
+from evileye.utils.config_paths import normalize_config_path
 from evileye.core.logging_config import setup_evileye_logging, log_system_info
 from evileye.core.logger import get_module_logger
 
@@ -84,7 +83,7 @@ class ConfigLauncher:
             return True
         except Exception as e:
             self.logger.error(f"Error launching process: {e}")
-            raise RuntimeError(f"Failed to launch process: {e}")
+            raise RuntimeError(f"Failed to launch process: {e}") from e
 
     def stop(self):
         """Stop the launched process"""

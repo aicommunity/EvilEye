@@ -13,6 +13,7 @@ import {
   ApiError,
 } from '../../api';
 import { Button } from '../../components/ui';
+import { PageHeader } from '../../components/ui/PageHeader';
 import { useToast } from '../../components/ui/Toast';
 import { useAuth } from '../../auth/AuthContext';
 import { SourcesForm } from './sectionForms/SourcesForm';
@@ -34,6 +35,7 @@ import { JsonAdvancedTab } from './JsonAdvancedTab';
 import { ConfigHistoryPanel } from './ConfigHistoryPanel';
 import { RoiCanvas } from './RoiCanvas';
 import { ZoneCanvas } from './ZoneCanvas';
+import { AlarmScheduleEditor } from './AlarmScheduleEditor';
 import { ClassMappingEditor } from './ClassMappingEditor';
 import { configBasename, stableStringify, tabsFromLegacySections } from './studioTabs';
 import { useI18n } from '../../i18n';
@@ -109,7 +111,7 @@ export function ConfigStudio({
   const activePath = activeTab?.path ?? activeId;
 
   const specialIds = useMemo(() => {
-    const extra = ['roi', 'zones', 'classes', 'json'];
+    const extra = ['roi', 'zones', 'schedule', 'classes', 'json'];
     if (allowConfigHistory) extra.push('history');
     return extra;
   }, [allowConfigHistory]);
@@ -202,6 +204,12 @@ export function ConfigStudio({
     if (!name || !canRun) return;
     setApplying(true);
     try {
+      if (canEdit && dirty && sectionData != null && !specialIds.includes(activeId)) {
+        await configPutSection(name, activePath, sectionData);
+        setSectionData(sectionData);
+        setBaselineJson(stableStringify(sectionData));
+        setDirty(false);
+      }
       markPendingApply(false);
       const res = await restartConfigRun(name);
       markPendingApply(false);
@@ -266,7 +274,7 @@ export function ConfigStudio({
     return (
       <section className="panel active">
         <div className="card">
-          <h2>{t('configure.title')}</h2>
+          <PageHeader title={t('configure.title')} />
           <p className="empty">
             {mode === 'current'
               ? t('configure.noActiveRun')
@@ -280,7 +288,7 @@ export function ConfigStudio({
   return (
     <section className="panel active">
       <div className="card">
-        <h2>
+        <PageHeader title={<>
           {t('configure.title')}{' '}
           {currentBadge || mode === 'current' ? (
             <span className="config-active-badge">{t('configure.activeConfig', { name: configBasename(name) ?? name })}</span>
@@ -288,18 +296,7 @@ export function ConfigStudio({
             <span className="hint">· {name}</span>
           )}
           {dirty ? <span className="hint"> · {t('configure.dirty')}</span> : null}
-        </h2>
-        {pendingApply ? (
-          <div className="setup-banner setup-banner--pending">
-            <span>{t('setup.pendingApplyBanner')}</span>
-            {canRun ? (
-              <Button size="sm" variant="primary" disabled={applying} onClick={() => void applyRestart()}>
-                {t('setup.restart')}
-              </Button>
-            ) : null}
-          </div>
-        ) : null}
-        <div className="toolbar" style={{ gap: '0.75rem', flexWrap: 'wrap' }}>
+        </>} actions={<div className="toolbar">
           <ConfigModeToggle mode={uiMode} onChange={setUiMode} needsSetup={needsSetup} />
           {uiMode === 'advanced' ? (
             <Button
@@ -316,7 +313,17 @@ export function ConfigStudio({
               {t('configure.validate')}
             </Button>
           ) : null}
-        </div>
+        </div>} />
+        {pendingApply ? (
+          <div className="setup-banner setup-banner--pending">
+            <span>{t('setup.pendingApplyBanner')}</span>
+            {canRun ? (
+              <Button size="sm" variant="primary" disabled={applying} onClick={() => void applyRestart()}>
+                {t('setup.restart')}
+              </Button>
+            ) : null}
+          </div>
+        ) : null}
         {uiMode === 'basic' ? (
           <>
             <p className="hint">{t('setup.basicHint')}</p>
@@ -377,6 +384,16 @@ export function ConfigStudio({
           />
         ) : activeId === 'zones' ? (
           <ZoneCanvas
+            configName={name}
+            sourceId={sourceId}
+            onSourceIdChange={setSourceId}
+            readOnly={!canEdit}
+            onSaved={(restartRequired) => {
+              if (restartRequired) markPendingApply(true);
+            }}
+          />
+        ) : activeId === 'schedule' ? (
+          <AlarmScheduleEditor
             configName={name}
             sourceId={sourceId}
             onSourceIdChange={setSourceId}

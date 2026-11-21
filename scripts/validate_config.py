@@ -20,6 +20,30 @@ def validate(data: dict) -> list[str]:
                 f"detectors[{i}]: ObjectDetectorYoloMp is legacy; "
                 "use ObjectDetectorYolo with execution_mode=process"
             )
+        try:
+            nthreads = int(det.get("num_detection_threads", 1) or 1)
+        except (TypeError, ValueError):
+            nthreads = 1
+        if nthreads > 1:
+            warnings.append(
+                f"detectors[{i}]: num_detection_threads={nthreads} multiplies YOLO "
+                "RAM (~2GB+/process); prefer 1 unless you measured the tradeoff"
+            )
+
+    for section in ("attributes_roi", "attributes_classifier", "pipeline"):
+        blocks = data.get(section) or []
+        if isinstance(blocks, dict):
+            blocks = [blocks]
+        if not isinstance(blocks, list):
+            continue
+        for i, block in enumerate(blocks):
+            if not isinstance(block, dict):
+                continue
+            if block.get("execution_mode") == "process" and section.startswith("attributes"):
+                warnings.append(
+                    f"{section}[{i}]: execution_mode=process pickles full frames / "
+                    "spawns extra YOLO — prefer thread unless crops-only IPC is used"
+                )
 
     mc = data.get("mc_trackers") or []
     for i, block in enumerate(mc):

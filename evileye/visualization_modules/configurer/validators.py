@@ -5,12 +5,11 @@
 и интеграцию с PyQt виджетами для real-time валидации.
 """
 
-import os
 import re
 import json
 import cv2
 import numpy as np
-from typing import Any, Dict, List, Optional, Tuple, Union
+from typing import Any, Dict, List
 from pathlib import Path
 
 try:

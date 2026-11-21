@@ -1,6 +1,5 @@
 #!/usr/bin/env python3
 
-import sys
 import os
 def test_image_fixes(journal_test_logger, qapp):
     """Test image fixes: original images and bounding boxes"""
@@ -70,12 +69,9 @@ def test_image_fixes(journal_test_logger, qapp):
             if hasattr(journal, 'ds') and journal.ds:
                 journal.ds.close()
             # Выходим из приложения
-            app.quit()
         
         QTimer.singleShot(200, close_window)
-        # Даем время на закрытие окна и обработку событий (ДО app.quit())
         import time
-        # Даем время на закрытие окна и обработку событий (ДО app.quit())
         import time
         # Обрабатываем события несколько раз с проверками
         for _ in range(min(10, 5)):  # Ограничиваем количество итераций
@@ -100,8 +96,6 @@ def test_image_fixes(journal_test_logger, qapp):
             if hasattr(journal, 'ds') and journal.ds:
                 journal.ds.close()
             # Выходим из приложения
-            app.quit()
-        # Не вызываем app.quit() здесь, так как он уже вызван в close_window()
         except Exception:
             pass
         

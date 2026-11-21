@@ -13,6 +13,13 @@ export function rowKey(row: JournalGroupedRow): string {
   return String(row.row_key ?? `${row.time}|${row.event}|${row.information}`);
 }
 
+export function eventTypeLabel(t: (key: string) => string, eventType: string): string {
+  if (!eventType) return eventType;
+  const key = `journals.eventTypes.${eventType}`;
+  const translated = t(key);
+  return translated !== key ? translated : eventType;
+}
+
 export function formatJournalTime(value: unknown, localeTag = 'ru-RU'): string {
   const raw = String(value ?? '').trim();
   if (!raw) return '—';

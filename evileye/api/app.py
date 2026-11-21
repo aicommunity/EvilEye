@@ -2,12 +2,13 @@ import os
 import threading
 import asyncio
 import json
+import time
 from pathlib import Path
 from fastapi import FastAPI, Response, Request
 from fastapi.middleware.cors import CORSMiddleware
 from starlette.middleware.base import BaseHTTPMiddleware
-from starlette.middleware.sessions import SessionMiddleware
 from starlette.middleware.trustedhost import TrustedHostMiddleware
+from uvicorn.middleware.proxy_headers import ProxyHeadersMiddleware
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 from contextlib import asynccontextmanager
@@ -18,6 +19,7 @@ from evileye.api.routes.configs import router as configs_router
 from evileye.api.routes.config_editors import router as config_editors_router
 from evileye.api.routes.journals import router as journals_router
 from evileye.api.routes.logs import router as logs_router
+from evileye.api.routes.diagnostics import router as diagnostics_router
 from evileye.api.routes.users import router as users_router
 from evileye.api.routes.bans import router as bans_router
 from evileye.api.routes.state import router as state_router
@@ -26,13 +28,16 @@ from evileye.api.routes.realtime import router as realtime_router
 from evileye.api.routes.playback import router as playback_router
 from evileye.api.routes.internal import router as internal_router
 from evileye.api.routes.setup import router as setup_router
+from evileye.api.routes.extensions import router as extensions_router
 from evileye.api.routes.system import router as system_router
 from evileye.api.core.config_run_access import get_config_run_manager
 from evileye.api.core.web_auth_bootstrap import ensure_default_admin_credentials
 from evileye.api.core.ip_ban_store import get_ip_ban_store
 from evileye.api.core.rate_guard import get_rate_guard, load_protection_config
 from evileye.api.middleware.ip_protection import ProtectionMiddleware
+from evileye.api.middleware.adaptive_session import AdaptiveSessionMiddleware
 from evileye.api.security import (
+    csrf_origin_violation,
     current_user,
     is_api_request_protected,
     load_web_auth_config,
@@ -81,6 +86,11 @@ class AuthGuardMiddleware(BaseHTTPMiddleware):
         granted = set(user.get("permissions") or permissions_for_role(str(user.get("role") or "user")))
         if needed and not needed.issubset(granted):
             return Response('{"detail":"Insufficient permissions"}', status_code=403, media_type="application/json")
+        if path.startswith("/api/v1/admin/"):
+            violation = csrf_origin_violation(request, getattr(request.app.state, "allowed_origins", ()))
+            if violation:
+                logger.warning("Blocked admin request %s %s: %s", request.method, path, violation)
+                return Response('{"detail":"Cross-origin admin request rejected"}', status_code=403, media_type="application/json")
         return await call_next(request)
 
 
@@ -104,15 +114,44 @@ class SecurityHeadersMiddleware(BaseHTTPMiddleware):
             "form-action 'self'"
         )
         response.headers.setdefault("Content-Security-Policy", csp)
-        auth = getattr(request.app.state, "web_auth", None)
-        if auth is not None and getattr(auth, "secure_cookies", False):
+        from evileye.api.core.ssl_files import hsts_enabled
+
+        if hsts_enabled():
             response.headers.setdefault("Strict-Transport-Security", "max-age=31536000; includeSubDomains")
         return response
+
+
+def _shutdown_runtime_components() -> None:
+    """Stop producers before closing the Unix relay they publish to."""
+    try:
+        get_config_run_manager().shutdown()
+    except Exception as exc:
+        logger.error("Error during ConfigRunManager shutdown: %s", exc)
+
+    try:
+        from evileye.core.runtime_services import get_pipeline_manager
+
+        get_pipeline_manager().shutdown()
+    except Exception as exc:
+        logger.error("Error during PipelineManager shutdown: %s", exc)
+
+    try:
+        from evileye.api.core.internal_unix import stop_internal_unix_server
+
+        stop_internal_unix_server()
+    except Exception as exc:
+        logger.error("Error during internal Unix server shutdown: %s", exc)
 
 
 @asynccontextmanager
 async def lifespan(_app: FastAPI):
     logger.info("FastAPI lifespan startup")
+    try:
+        from evileye.core.extension_builder import reconcile_plugin_operations
+
+        reconcile_plugin_operations()
+    except Exception as exc:
+        logger.warning("Plugin operation reconciliation failed: %s", exc)
     ensure_default_admin_credentials()
     web_auth = load_web_auth_config()
     _app.state.web_auth = web_auth
@@ -163,6 +202,13 @@ async def lifespan(_app: FastAPI):
     _app.state.live_preview_hub = hub
 
     try:
+        from evileye.api.core.internal_unix import start_internal_unix_server
+
+        start_internal_unix_server(getattr(_app.state.web_auth, "internal_token", "") or "")
+    except Exception as exc:
+        logger.warning("Internal unix frame relay not started: %s", exc)
+
+    try:
         from evileye.core.mp_session_registry import cleanup_stale_sessions
 
         cleaned = cleanup_stale_sessions()
@@ -195,9 +241,35 @@ async def lifespan(_app: FastAPI):
     registry_prune_thread.start()
 
     try:
+        from evileye.api.core.server_state import start_background_runtime_discovery
+
+        start_background_runtime_discovery()
+    except Exception as exc:
+        logger.warning("Background runtime discovery failed to start: %s", exc)
+
+    try:
+        from evileye.api.core.playback_index_warmer import start_detection_ticks_warmer
+
+        start_detection_ticks_warmer()
+    except Exception as exc:
+        logger.warning("Detection ticks warmer failed to start: %s", exc)
+
+    try:
         yield
     finally:
         cleanup_stop.set()
+        try:
+            from evileye.api.core.playback_index_warmer import stop_detection_ticks_warmer
+
+            stop_detection_ticks_warmer()
+        except Exception:
+            pass
+        try:
+            from evileye.api.core.server_state import stop_background_runtime_discovery
+
+            stop_background_runtime_discovery()
+        except Exception:
+            pass
         try:
             from evileye.api.core.live_preview_hub import get_live_preview_hub
 
@@ -205,10 +277,7 @@ async def lifespan(_app: FastAPI):
         except Exception:
             pass
         logger.info("FastAPI lifespan shutdown")
-        try:
-            get_config_run_manager().shutdown()
-        except Exception as e:
-            logger.error(f"Error during ConfigRunManager shutdown: {e}")
+        _shutdown_runtime_components()
 
 def _cors_origins(web_auth) -> list[str]:
     raw = os.getenv("EVILEYE_CORS_ALLOW_ORIGINS", "*")
@@ -232,6 +301,8 @@ def _cors_origins(web_auth) -> list[str]:
 
 
 def create_app() -> FastAPI:
+    from evileye.core.runtime_identity import process_identity
+    process_identity()
     web_auth = load_web_auth_config()
     disable_docs = (
         os.getenv("EVILEYE_DISABLE_DOCS", "").strip().lower() in {"1", "true", "yes"}
@@ -260,18 +331,33 @@ def create_app() -> FastAPI:
         pass
 
     allow_origins = _cors_origins(web_auth)
+    app.state.allowed_origins = list(allow_origins or [])
+
+    protection_cfg = load_protection_config({})
+    try:
+        creds_file = creds_path()
+        if creds_file.exists():
+            payload = json.loads(creds_file.read_text(encoding="utf-8"))
+            section = payload.get("web_auth") if isinstance(payload, dict) else {}
+            protection_cfg = load_protection_config(section if isinstance(section, dict) else {})
+    except Exception:
+        pass
 
     # Starlette: last added = outermost. Desired order:
-    # SecurityHeaders -> CORS -> TrustedHost? -> Session -> Protection -> AuthGuard -> routes
+    # SecurityHeaders -> CORS -> TrustedHost? -> ProxyHeaders? -> Session -> Protection -> AuthGuard -> routes
     app.add_middleware(AuthGuardMiddleware)
     app.add_middleware(ProtectionMiddleware)
     app.add_middleware(
-        SessionMiddleware,
+        AdaptiveSessionMiddleware,
         secret_key=web_auth.session_secret,
         session_cookie=web_auth.cookie_name,
         same_site="lax",
-        https_only=web_auth.secure_cookies,
+        secure_cookies=web_auth.secure_cookies,
     )
+    if protection_cfg.trust_proxy:
+        trusted_hosts = [ip for ip in (protection_cfg.trusted_proxy_ips or []) if ip]
+        if trusted_hosts:
+            app.add_middleware(ProxyHeadersMiddleware, trusted_hosts=trusted_hosts)
     allowed_hosts = os.getenv("EVILEYE_ALLOWED_HOSTS", "").strip()
     if allowed_hosts:
         hosts = [h.strip() for h in allowed_hosts.split(",") if h.strip()]
@@ -283,14 +369,129 @@ def create_app() -> FastAPI:
         allow_credentials=True,
         allow_methods=["*"],
         allow_headers=["*"],
-        expose_headers=["X-Export-Truncated"],
+        expose_headers=["X-Export-Truncated", "X-Playback-Cache"],
     )
     app.add_middleware(SecurityHeadersMiddleware)
     logger.info("CORS / protection / security headers middleware configured")
 
     @app.get("/ready")
     async def ready():
-        return {"status": "ok"}
+        payload: dict = {"status": "ok"}
+        try:
+            from evileye.api.core.internal_unix import internal_socket_path
+            from evileye.api.routes.playback import (
+                detections_inflight_count,
+                media_inflight_count,
+                memory_cache_stats,
+            )
+
+            broker = get_frame_broker()
+            stats = broker.get_runtime_stats() if hasattr(broker, "get_runtime_stats") else {}
+            keys = int(stats.get("frames_keys") or stats.get("frame_count") or 0)
+            max_age = None
+            try:
+                # Prefer public helpers when present.
+                if hasattr(broker, "max_frame_age_sec"):
+                    max_age = broker.max_frame_age_sec()
+                else:
+                    with broker._lock:  # noqa: SLF001
+                        frames = getattr(broker, "_frames", {}) or {}
+                        keys = len(frames)
+                        now = time.time()
+                        ages = [
+                            max(0.0, now - float(fr.timestamp))
+                            for fr in frames.values()
+                            if getattr(fr, "timestamp", None) is not None
+                        ]
+                        max_age = max(ages) if ages else None
+            except Exception:
+                pass
+            sock_path = internal_socket_path()
+            payload["frame_broker"] = {
+                "keys": keys,
+                "max_age_sec": max_age,
+                "published_payloads": stats.get("published_payloads"),
+                "estimated_bytes": stats.get("estimated_bytes"),
+            }
+            payload["internal_unix"] = {
+                "listening": bool(sock_path.exists()),
+                "path": str(sock_path),
+            }
+            payload["playback_detections_inflight"] = detections_inflight_count()
+            payload["playback_media_inflight"] = media_inflight_count()
+            payload["playback_memory_cache"] = memory_cache_stats()
+            try:
+                from evileye.api.routes.state import state_thread_stats
+
+                payload["state_thread_stats"] = state_thread_stats()
+            except Exception:
+                payload["state_thread_stats"] = None
+            try:
+                from evileye.api.routes.streaming import mjpeg_clients_count
+
+                payload["mjpeg_clients"] = mjpeg_clients_count()
+            except Exception:
+                payload["mjpeg_clients"] = None
+            # Web-side proxy for relay lag: age of newest broker frame.
+            payload["relay_last_ok_age_sec"] = max_age
+            try:
+                from evileye.api.core.rate_guard import get_rate_guard
+
+                payload["ws_reject_counts"] = get_rate_guard().ws_reject_counts()
+            except Exception:
+                pass
+            try:
+                from evileye.api.core.control_ipc import control_socket_path, send_control_command
+
+                if control_socket_path().exists():
+                    def _fetch_pipeline_ipc_stats() -> tuple[dict | None, dict | None]:
+                        oh = None
+                        mem = None
+                        ipc_resp = send_control_command(
+                            {"cmd": "get_objects_handler_stats"}, timeout=1.0
+                        )
+                        if (
+                            isinstance(ipc_resp, dict)
+                            and ipc_resp.get("ok")
+                            and isinstance(ipc_resp.get("stats"), dict)
+                        ):
+                            oh = dict(ipc_resp["stats"])
+                            qsize = oh.get("queue_size")
+                            qmax = oh.get("queue_maxsize") or 200
+                            pressure = oh.get("queue_pressure")
+                            if pressure is None and qsize is not None and qmax:
+                                try:
+                                    pressure = float(qsize) / float(qmax)
+                                    oh["queue_pressure"] = pressure
+                                except Exception:
+                                    pass
+                            last_img = int(oh.get("active_last_image_bytes") or 0)
+                            oh["alert"] = bool(
+                                oh.get("alert")
+                                or (pressure is not None and pressure >= 0.9)
+                                or last_img > 100_000_000
+                            )
+                        mem_resp = send_control_command(
+                            {"cmd": "get_memory_attribution"}, timeout=1.5
+                        )
+                        if (
+                            isinstance(mem_resp, dict)
+                            and mem_resp.get("ok")
+                            and isinstance(mem_resp.get("stats"), dict)
+                        ):
+                            mem = mem_resp["stats"]
+                        return oh, mem
+
+                    oh_stats, mem_stats = await asyncio.to_thread(_fetch_pipeline_ipc_stats)
+                    if oh_stats is not None:
+                        payload["objects_handler"] = oh_stats
+                    if mem_stats is not None:
+                        payload["memory_attribution"] = mem_stats
+            except Exception:
+                pass
+        except Exception:
+            pass
+        return payload
 
     @app.get("/api/v1/version")
     async def version():
@@ -300,18 +501,20 @@ def create_app() -> FastAPI:
     app.include_router(state_router)
     app.include_router(journals_router)
     app.include_router(logs_router)
+    app.include_router(diagnostics_router)
     app.include_router(users_router)
     app.include_router(bans_router)
     app.include_router(config_editors_router)
     app.include_router(configs_router)
     app.include_router(setup_router)
+    app.include_router(extensions_router)
     app.include_router(system_router)
     app.include_router(streaming_router)
     app.include_router(realtime_router)
     app.include_router(playback_router)
     app.include_router(internal_router)
     logger.info(
-        "Routers registered: auth, state, journals, logs, users, bans, config_editors, configs, setup, system, streaming, realtime, playback, internal"
+        "Routers registered: auth, state, journals, logs, diagnostics, users, bans, config_editors, configs, setup, extensions, system, streaming, realtime, playback, internal"
     )
 
     static_dir = Path(__file__).parent / "static"

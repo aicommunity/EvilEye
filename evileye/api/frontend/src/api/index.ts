@@ -1,4 +1,5 @@
 export * from './client';
+export * from './formatApiError';
 export * from './types';
 export * from './auth';
 export * from './state';
@@ -13,3 +14,4 @@ export * from './playback';
 export * from './editors';
 export * from './dataCache';
 export * from './setup';
+export * from './extensions';

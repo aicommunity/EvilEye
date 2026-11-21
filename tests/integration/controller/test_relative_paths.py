@@ -6,8 +6,6 @@ Test script for relative path resolution in EvilEye components.
 import os
 from evileye.core.logging_config import setup_evileye_logging
 from evileye.core.logger import get_module_logger
-import sys
-from pathlib import Path
 
 # Инициализация логирования для тестов
 logger = setup_evileye_logging(log_level="INFO", log_to_console=True, log_to_file=True)
@@ -141,7 +139,6 @@ Test script to verify relative paths in labeling data.
 """
 
 import os
-import json
 import datetime
 from unittest.mock import Mock
 

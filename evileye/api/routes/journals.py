@@ -1,10 +1,20 @@
-from fastapi import APIRouter, HTTPException, Query
+from fastapi import APIRouter, HTTPException, Query, Request
 from fastapi.responses import FileResponse, StreamingResponse
 
 import asyncio
+import hashlib
 import mimetypes
 import os
+import time
 
+from evileye.core.logger import get_module_logger
+from pathlib import Path
+
+from evileye.api.core.camera_access import (
+    list_effective_names,
+    name_allowed_hard,
+    resolve_camera_access,
+)
 from evileye.api.core.journal_service import (
     DateScopeError,
     JournalPathForbidden,
@@ -24,8 +34,11 @@ from evileye.api.core.journal_service import (
     resolve_secured_journal_file,
     restore_config_history,
 )
+from evileye.api.core.archive_media_resolver import ArchiveMediaResolver
+from evileye.api.core.playback_service import data_dir as playback_data_dir
 
 router = APIRouter(prefix="/api/v1/journals", tags=["journals"])
+diag_logger = get_module_logger("api.diag")
 
 _THUMB_CACHE: dict[tuple[str, int, float], bytes] = {}
 _THUMB_CACHE_MAX = 256
@@ -38,6 +51,36 @@ def _filters(source_name: str | None, event_type: str | None) -> dict:
         filters["source_name"] = source_name
     if event_type:
         filters["event_type"] = event_type
+    return filters
+
+
+def _apply_camera_acl_filters(
+    request: Request,
+    source_name: str | None,
+    event_type: str | None,
+    *,
+    journal_kind: str,
+) -> dict:
+    """Inject ACL source_names; keep System for events."""
+    access = resolve_camera_access(request)
+    filters = _filters(source_name, event_type)
+    effective = list_effective_names(access)
+
+    if source_name:
+        if source_name != "System" and not name_allowed_hard(access, source_name):
+            raise HTTPException(status_code=403, detail="Camera access denied")
+        # Soft visible: if user hid the camera, still allow explicit filter only if hard-allowed
+        if effective is not None and source_name != "System" and source_name not in effective:
+            raise HTTPException(status_code=403, detail="Camera access denied")
+        return filters
+
+    if effective is None:
+        return filters
+
+    names = set(effective)
+    if journal_kind == "events":
+        names.add("System")
+    filters["source_names"] = sorted(names)
     return filters
 
 
@@ -54,16 +97,51 @@ def _media_type_for_path(path: str, fallback: str) -> str:
     return guessed or fallback
 
 
+_PRIVATE_NO_STORE = {"Accept-Ranges": "bytes", "Cache-Control": "private, no-store"}
+
+
 def _file_response(path: str, *, media_type: str | None = None) -> FileResponse:
     mt = media_type or _media_type_for_path(path, "application/octet-stream")
     return FileResponse(
         path,
         media_type=mt,
-        headers={
-            "Accept-Ranges": "bytes",
-            "Cache-Control": "public, max-age=3600",
-        },
+        headers=dict(_PRIVATE_NO_STORE),
     )
+
+
+def _authorize_journal_media(request: Request, secured: str, *, allow_kinds: frozenset[str]):
+    """Camera/kind ACL on canonical journal file (R02/F02)."""
+    access = resolve_camera_access(request)
+    secured_path = Path(secured)
+    roots: list[Path] = []
+    try:
+        from evileye.api.core.journal_service import _image_base_dir
+
+        roots.append(Path(_image_base_dir()))
+    except Exception:
+        pass
+    try:
+        roots.append(Path(playback_data_dir()))
+    except Exception:
+        pass
+    last_exc: Exception | None = None
+    for root in roots:
+        try:
+            return ArchiveMediaResolver(root).authorize_existing(
+                access,
+                secured_path,
+                allow_kinds=allow_kinds,
+            )
+        except HTTPException as exc:
+            last_exc = exc
+            continue
+        except Exception as exc:
+            last_exc = exc
+            continue
+    if isinstance(last_exc, HTTPException):
+        raise last_exc
+    raise HTTPException(status_code=403, detail="Camera access denied")
+
 
 
 def _resize_jpeg(path: str, width: int) -> bytes | None:
@@ -108,6 +186,7 @@ def _resize_jpeg(path: str, width: int) -> bytes | None:
 
 @router.get("/events")
 async def journal_events(
+        request: Request,
         page: int = Query(0, ge=0),
         size: int = Query(30, ge=1, le=200),
         source_name: str | None = None,
@@ -121,7 +200,7 @@ async def journal_events(
             load_events_page,
             page=page,
             size=size,
-            filters=_filters(source_name, event_type),
+            filters=_apply_camera_acl_filters(request, source_name, event_type, journal_kind="events"),
             **_date_kwargs(date, date_from, date_to),
         )
     except DateScopeError as exc:
@@ -130,6 +209,7 @@ async def journal_events(
 
 @router.get("/events/grouped")
 async def journal_events_grouped(
+        request: Request,
         page: int = Query(0, ge=0),
         size: int = Query(30, ge=1, le=200),
         source_name: str | None = None,
@@ -143,7 +223,7 @@ async def journal_events_grouped(
             load_events_grouped_page,
             page=page,
             size=size,
-            filters=_filters(source_name, event_type),
+            filters=_apply_camera_acl_filters(request, source_name, event_type, journal_kind="events"),
             **_date_kwargs(date, date_from, date_to),
         )
     except DateScopeError as exc:
@@ -152,6 +232,7 @@ async def journal_events_grouped(
 
 @router.get("/objects")
 async def journal_objects(
+        request: Request,
         page: int = Query(0, ge=0),
         size: int = Query(30, ge=1, le=200),
         source_name: str | None = None,
@@ -165,7 +246,7 @@ async def journal_objects(
             load_objects_page,
             page=page,
             size=size,
-            filters=_filters(source_name, event_type),
+            filters=_apply_camera_acl_filters(request, source_name, event_type, journal_kind="objects"),
             **_date_kwargs(date, date_from, date_to),
         )
     except DateScopeError as exc:
@@ -174,6 +255,7 @@ async def journal_objects(
 
 @router.get("/objects/grouped")
 async def journal_objects_grouped(
+        request: Request,
         page: int = Query(0, ge=0),
         size: int = Query(30, ge=1, le=200),
         source_name: str | None = None,
@@ -187,7 +269,7 @@ async def journal_objects_grouped(
             load_objects_grouped_page,
             page=page,
             size=size,
-            filters=_filters(source_name, event_type),
+            filters=_apply_camera_acl_filters(request, source_name, event_type, journal_kind="objects"),
             **_date_kwargs(date, date_from, date_to),
         )
     except DateScopeError as exc:
@@ -195,8 +277,15 @@ async def journal_objects_grouped(
 
 
 @router.get("/filters/meta")
-async def journal_filters_meta() -> dict:
-    return await asyncio.to_thread(load_filters_meta)
+async def journal_filters_meta(request: Request) -> dict:
+    payload = await asyncio.to_thread(load_filters_meta)
+    access = resolve_camera_access(request)
+    effective = list_effective_names(access)
+    if effective is not None:
+        names = [n for n in (payload.get("source_names") or []) if n in effective]
+        payload = dict(payload)
+        payload["source_names"] = names
+    return payload
 
 
 @router.get("/stats")
@@ -215,20 +304,27 @@ async def journal_stats(
 
 @router.get("/row-meta")
 async def journal_row_meta(
+        request: Request,
         row_key: str = Query(..., min_length=1),
         journal_type: str = Query("events", pattern="^(events|objects)$"),
         meta_only: bool = Query(True),
 ) -> dict:
     try:
-        return await asyncio.to_thread(
+        payload = await asyncio.to_thread(
             load_row_meta, row_key_value=row_key, journal_type=journal_type, meta_only=meta_only,
         )
-    except JournalPathNotFound:
-        raise HTTPException(status_code=404, detail="Row metadata not found")
+    except JournalPathNotFound as exc:
+        raise HTTPException(status_code=404, detail="Row metadata not found") from exc
+    access = resolve_camera_access(request)
+    src = str(payload.get("source_name") or payload.get("source") or "").strip()
+    if src and not name_allowed_hard(access, src):
+        raise HTTPException(status_code=403, detail="Camera access denied")
+    return payload
 
 
 @router.get("/preview")
 async def journal_preview(
+        request: Request,
         path: str = Query(..., min_length=1),
         date: str | None = None,
         journal_type: str = Query("events", pattern="^(events|objects)$"),
@@ -242,10 +338,11 @@ async def journal_preview(
                 path=path, date=date, journal_type=journal_type, mode=mode,
             ),
         )
-    except JournalPathForbidden:
-        raise HTTPException(status_code=403, detail="Path outside data directory")
-    except JournalPathNotFound:
-        raise HTTPException(status_code=404, detail="Preview image not found")
+        _authorize_journal_media(request, secured, allow_kinds=frozenset({"image"}))
+    except JournalPathForbidden as exc:
+        raise HTTPException(status_code=403, detail="Path outside data directory") from exc
+    except JournalPathNotFound as exc:
+        raise HTTPException(status_code=404, detail="Preview image not found") from exc
     if w:
         thumb = await asyncio.to_thread(_resize_jpeg, secured, int(w))
         if thumb is not None:
@@ -254,18 +351,25 @@ async def journal_preview(
             return Response(
                 content=thumb,
                 media_type="image/jpeg",
-                headers={"Cache-Control": "public, max-age=3600"},
+                headers={"Cache-Control": "private, no-store"},
             )
     return _file_response(secured, media_type=_media_type_for_path(secured, "image/jpeg"))
 
 
 @router.get("/frame")
 async def journal_frame(
+        request: Request,
         path: str = Query(..., min_length=1),
         date: str | None = None,
         journal_type: str = Query("events", pattern="^(events|objects)$"),
         mode: str = Query("found", pattern="^(found|lost)$"),
 ):
+    t0 = time.perf_counter()
+    from evileye.api.security import current_user
+
+    user = current_user(request)
+    username = str((user or {}).get("username") or "") or None
+    path_hash = hashlib.sha1(path.encode("utf-8", errors="replace")).hexdigest()[:12]
     try:
         secured = await asyncio.to_thread(
             resolve_secured_journal_file,
@@ -273,24 +377,54 @@ async def journal_frame(
                 path=path, date=date, journal_type=journal_type, mode=mode,
             ),
         )
-    except JournalPathForbidden:
-        raise HTTPException(status_code=403, detail="Path outside data directory")
-    except JournalPathNotFound:
-        raise HTTPException(status_code=404, detail="Frame image not found")
+        _authorize_journal_media(request, secured, allow_kinds=frozenset({"image"}))
+    except JournalPathForbidden as exc:
+        diag_logger.info(
+            "journal_frame user=%s status=403 path_hash=%s ms=%.1f",
+            username,
+            path_hash,
+            (time.perf_counter() - t0) * 1000.0,
+        )
+        raise HTTPException(status_code=403, detail="Path outside data directory") from exc
+    except JournalPathNotFound as exc:
+        diag_logger.info(
+            "journal_frame user=%s status=404 path_hash=%s basename=%s ms=%.1f",
+            username,
+            path_hash,
+            os.path.basename(path),
+            (time.perf_counter() - t0) * 1000.0,
+        )
+        raise HTTPException(status_code=404, detail="Frame image not found") from exc
+    except HTTPException as exc:
+        if exc.status_code == 403:
+            diag_logger.info(
+                "journal_frame user=%s status=403 path_hash=%s ms=%.1f",
+                username,
+                path_hash,
+                (time.perf_counter() - t0) * 1000.0,
+            )
+        raise
+    diag_logger.info(
+        "journal_frame user=%s status=200 path_hash=%s ms=%.1f",
+        username,
+        path_hash,
+        (time.perf_counter() - t0) * 1000.0,
+    )
     return _file_response(secured, media_type=_media_type_for_path(secured, "image/jpeg"))
 
 
 @router.get("/video")
-async def journal_video(path: str = Query(..., min_length=1)):
+async def journal_video(request: Request, path: str = Query(..., min_length=1)):
     try:
         secured = await asyncio.to_thread(
             resolve_secured_journal_file,
             resolver=lambda: resolve_journal_video_path(path=path),
         )
-    except JournalPathForbidden:
-        raise HTTPException(status_code=403, detail="Path outside data directory")
-    except JournalPathNotFound:
-        raise HTTPException(status_code=404, detail="Video not found")
+        _authorize_journal_media(request, secured, allow_kinds=frozenset({"video"}))
+    except JournalPathForbidden as exc:
+        raise HTTPException(status_code=403, detail="Path outside data directory") from exc
+    except JournalPathNotFound as exc:
+        raise HTTPException(status_code=404, detail="Video not found") from exc
     return _file_response(secured, media_type=_media_type_for_path(secured, "video/mp4"))
 
 
@@ -337,6 +471,7 @@ def _export_csv_chunks(items: list[dict]):
 
 @router.get("/export")
 async def journal_export(
+    request: Request,
     type: str = Query("events"),
     format: str = Query("json"),
     source_name: str | None = None,
@@ -353,7 +488,9 @@ async def journal_export(
         raise HTTPException(status_code=400, detail="type must be events|objects")
     if format not in {"json", "csv"}:
         raise HTTPException(status_code=400, detail="format must be json|csv")
-    filters = _filters(source_name, event_type)
+    filters = _apply_camera_acl_filters(
+        request, source_name, event_type, journal_kind="objects" if type == "objects" else "events"
+    )
     # Cap total export size; stream CSV when possible
     export_size = min(size, _EXPORT_HARD_CAP)
     loader = load_objects_grouped_page if type == "objects" else load_events_grouped_page

@@ -1,6 +1,5 @@
 """Tests for adaptive PIPELINE_SYNC_MP in ProcessorStep."""
 
-import os
 from unittest.mock import patch
 
 import pytest

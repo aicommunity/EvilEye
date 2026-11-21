@@ -7,7 +7,7 @@ source "$SCRIPT_DIR/common.sh"
 
 REASON="${1:-watchdog_restart}"
 # Require a healthy boot marker before declaring restart success.
-BOOT_OK_PATTERN="${BOOT_OK_PATTERN:-GUI shown|Starting main application loop}"
+BOOT_OK_PATTERN="${BOOT_OK_PATTERN:-GUI shown|Starting main application loop|Controller started in headless mode|Starting controller initialization synchronously \\(headless mode\\)}"
 # How long to wait for boot marker after child appears.
 BOOT_WAIT_SEC="${BOOT_WAIT_SEC:-120}"
 # Extra settle time after marker (or after child) before final liveness check.
@@ -23,12 +23,40 @@ if [[ -f "$RESTART_LOCK" ]]; then
 fi
 
 touch "$RESTART_LOCK"
-trap 'rm -f "$RESTART_LOCK"' EXIT
+
+SPAWN_LOCK="$MONITOR_DIR/.spawn.lock"
+_SPAWN_LOCKED=0
+_spawn_lock() {
+    exec 200>"$SPAWN_LOCK"
+    if ! flock -w 30 200; then
+        log_msg "Restart skipped: could not acquire spawn lock"
+        exit 0
+    fi
+    _SPAWN_LOCKED=1
+}
+
+_spawn_unlock() {
+    if ((_SPAWN_LOCKED)); then
+        flock -u 200 2>/dev/null || true
+        _SPAWN_LOCKED=0
+    fi
+}
+
+_cleanup_restart() {
+    _spawn_unlock
+    rm -f "$RESTART_LOCK"
+}
+trap '_cleanup_restart' EXIT
 
 mark_watchdog_restarting
 log_msg "Starting EvilEye restart (reason=$REASON)"
 
+_spawn_lock
+
 # Stop existing processes gracefully, then force-kill leftovers.
+# Keep this phase bounded so a D-state child cannot hold .spawn.lock forever.
+STOP_BUDGET_SEC="${STOP_BUDGET_SEC:-45}"
+stop_deadline=$(($(date +%s) + STOP_BUDGET_SEC))
 for pid in $(pgrep -f "$CHILD_PATTERN" 2>/dev/null || true); do
     kill -TERM "$pid" 2>/dev/null || true
 done
@@ -45,6 +73,22 @@ done
 
 cleanup_orphan_mp_workers
 
+surviving_child="$(find_child_pid)"
+if [[ -n "$surviving_child" ]]; then
+    if (( $(date +%s) >= stop_deadline )); then
+        log_msg "ERROR: child pid=$surviving_child survived SIGKILL within ${STOP_BUDGET_SEC}s; aborting restart"
+        exit 1
+    fi
+    # One more hard kill attempt, then fail loudly (do not pretend another agent owns it).
+    kill -KILL "$surviving_child" 2>/dev/null || true
+    sleep 1
+    surviving_child="$(find_child_pid)"
+    if [[ -n "$surviving_child" ]]; then
+        log_msg "ERROR: child pid=$surviving_child survived SIGKILL; aborting restart"
+        exit 1
+    fi
+fi
+
 # Cleanup stale MP workers if EvilEye package is importable.
 (
     cd "$DEPLOY_DIR"
@@ -59,14 +103,22 @@ except Exception as exc:
 PY
 ) || true
 
+# Release spawn lock BEFORE launching: `evileye pipeline start` acquires the same
+# monitor/.spawn.lock. Holding it here deadlocks the child forever.
+_spawn_unlock
+
 export EVILEYE_SCHEDULER_GPU_SETTLE_SEC="${EVILEYE_SCHEDULER_GPU_SETTLE_SEC:-15}"
 export EVILEYE_CLI_LAUNCHED=1
+export EVILEYE_SITE_DIR="${EVILEYE_SITE_DIR:-$DEPLOY_DIR}"
 
 load_gui_env
 
-if [[ -z "${DISPLAY:-}" ]]; then
-    log_msg "ERROR: DISPLAY is empty; refusing GUI restart"
-    exit 1
+USE_NO_GUI=1
+if [[ "$(profile_gui_default)" == "1" && -n "${DISPLAY:-}" ]]; then
+    USE_NO_GUI=0
+fi
+if [[ "$USE_NO_GUI" -eq 1 ]]; then
+    log_msg "Restarting headless (--no-gui)"
 fi
 
 # Snapshot latest log so we only match markers from the new run.
@@ -81,6 +133,34 @@ cd "$DEPLOY_DIR"
 # Launch outside the watchdog oneshot cgroup when possible (defense in depth for
 # KillMode). Falls back to setsid+nohup.
 launch_evileye() {
+    local port="${EVILEYE_PORT:-8181}"
+    if command -v systemctl >/dev/null 2>&1; then
+        if ! systemctl --user is-active evileye.service >/dev/null 2>&1; then
+            log_msg "Web service inactive; starting evileye.service before pipeline"
+            systemctl --user start evileye.service 2>/dev/null || true
+            sleep 3
+        fi
+    fi
+    if ! curl -sf "http://127.0.0.1:${port}/ready" >/dev/null 2>&1; then
+        log_msg "ERROR: Web UI not ready on :${port}; skip pipeline restart (run: evileye service start)"
+        exit 1
+    fi
+
+    if command -v evileye >/dev/null 2>&1; then
+        local gui_args=(--no-gui)
+        if [[ "$USE_NO_GUI" -eq 0 ]]; then
+            gui_args=(--gui)
+        fi
+        (
+            cd "$DEPLOY_DIR"
+            # --detach: never hold Python spawn.lock across a foreground run wait.
+            # pipeline start has its own spawn flock; do not hold bash flock across this call
+            evileye pipeline start "$CONFIG_NAME" --release --detach "${gui_args[@]}"
+        ) >>"$MONITOR_DIR/watchdog_stdout.log" 2>&1 &
+        echo $!
+        return
+    fi
+
     local run_cmd
     run_cmd=(env
         "DISPLAY=${DISPLAY:-}"
@@ -90,20 +170,36 @@ launch_evileye() {
         "EVILEYE_CLI_LAUNCHED=1"
         evileye run "$CONFIG_NAME"
     )
+    if [[ "$USE_NO_GUI" -eq 1 ]]; then
+        run_cmd=(env
+            "EVILEYE_SCHEDULER_GPU_SETTLE_SEC=${EVILEYE_SCHEDULER_GPU_SETTLE_SEC}"
+            "EVILEYE_CLI_LAUNCHED=1"
+            evileye run "$CONFIG_NAME" --no-gui
+        )
+    fi
 
     if command -v systemd-run >/dev/null 2>&1; then
-        # Transient scope survives watchdog oneshot exit even if KillMode regresses.
+        # Transient per-config scope survives watchdog oneshot exit even if KillMode regresses.
+        systemctl --user stop "${SCOPE_UNIT}.scope" 2>/dev/null || true
+        systemctl --user reset-failed "${SCOPE_UNIT}.scope" 2>/dev/null || true
+        # Also clear legacy global unit if present.
         systemctl --user stop evileye-run.scope 2>/dev/null || true
-        # Discard stale failed unit state if any.
         systemctl --user reset-failed evileye-run.scope 2>/dev/null || true
-        systemd-run --user --scope --unit=evileye-run \
+        systemd-run --user --scope --unit="$SCOPE_UNIT" --no-block --collect \
             --working-directory="$DEPLOY_DIR" \
+            -p "MemoryMax=${EVILEYE_PIPELINE_MEMORY_MAX:-45G}" \
+            -p "MemoryHigh=${EVILEYE_PIPELINE_MEMORY_HIGH:-35G}" \
             --setenv="DISPLAY=${DISPLAY:-}" \
             --setenv="XAUTHORITY=${XAUTHORITY:-}" \
             --setenv="DBUS_SESSION_BUS_ADDRESS=${DBUS_SESSION_BUS_ADDRESS:-}" \
             --setenv="EVILEYE_SCHEDULER_GPU_SETTLE_SEC=${EVILEYE_SCHEDULER_GPU_SETTLE_SEC}" \
             --setenv="EVILEYE_CLI_LAUNCHED=1" \
-            bash -c 'exec evileye run "$0" >>"$1" 2>&1' "$CONFIG_NAME" "$MONITOR_DIR/watchdog_stdout.log" &
+            --setenv="EVILEYE_SITE_DIR=${EVILEYE_SITE_DIR}" \
+            --setenv="EVILEYE_PERF_DIAG=${EVILEYE_PERF_DIAG:-}" \
+            --setenv="EVILEYE_PERF_DIAG_EVERY=${EVILEYE_PERF_DIAG_EVERY:-}" \
+            --setenv="EVILEYE_TRACEMALLOC=${EVILEYE_TRACEMALLOC:-}" \
+            bash -c 'if [[ "$2" == 1 ]]; then exec evileye run "$0" --no-gui >>"$1" 2>&1; else exec evileye run "$0" >>"$1" 2>&1; fi' \
+            "$CONFIG_NAME" "$MONITOR_DIR/watchdog_stdout.log" "$USE_NO_GUI" &
         echo $!
         return
     fi
@@ -115,32 +211,35 @@ launch_evileye() {
 launcher_pid="$(launch_evileye)"
 log_msg "Launched evileye via pid=$launcher_pid DISPLAY=$DISPLAY config=$CONFIG_NAME (GPU settle=${EVILEYE_SCHEDULER_GPU_SETTLE_SEC}s)"
 
-# Wait up to 90s for child process.py to appear.
+# Wait up to 90s for child process.py to appear (managed mode may have no evileye run cli).
 child_pid=""
 cli_pid=""
 for _ in $(seq 1 18); do
     sleep 5
     cli_pid="$(find_cli_pid)"
     child_pid="$(find_child_pid)"
-    if [[ -n "$child_pid" && -n "$cli_pid" ]]; then
+    if [[ -n "$child_pid" ]]; then
         break
     fi
 done
 
-if [[ -z "$child_pid" || -z "$cli_pid" ]]; then
-    log_msg "ERROR: process.py/cli did not start within 90s after restart (cli=$cli_pid child=$child_pid)"
+if [[ -z "$child_pid" ]]; then
+    log_msg "ERROR: process.py did not start within 90s after restart (cli=$cli_pid child=$child_pid)"
     exit 1
 fi
 
-log_msg "Child appeared: cli_pid=$cli_pid child_pid=$child_pid — waiting for boot marker"
+log_msg "Child appeared: cli_pid=${cli_pid:-none} child_pid=$child_pid — waiting for boot marker"
 
 boot_ok=false
 deadline=$(($(date +%s) + BOOT_WAIT_SEC))
 while (( $(date +%s) < deadline )); do
-    # Processes must stay alive while we wait for the marker.
-    if ! kill -0 "$cli_pid" 2>/dev/null || ! kill -0 "$child_pid" 2>/dev/null; then
-        log_msg "ERROR: process died before boot marker (cli=$cli_pid child=$child_pid)"
+    # Child must stay alive while we wait for the marker (cli optional in managed mode).
+    if ! kill -0 "$child_pid" 2>/dev/null; then
+        log_msg "ERROR: process died before boot marker (cli=${cli_pid:-none} child=$child_pid)"
         exit 1
+    fi
+    if [[ -n "$cli_pid" ]] && ! kill -0 "$cli_pid" 2>/dev/null; then
+        cli_pid=""
     fi
     # Prefer the newest main log; also accept growth of the previous file.
     main_log="$(latest_main_log)"
@@ -177,16 +276,16 @@ sleep "$POST_BOOT_SETTLE_SEC"
 # Re-resolve pids (CLI pid from systemd-run wrapper may differ from evileye pid).
 cli_pid="$(find_cli_pid)"
 child_pid="$(find_child_pid)"
-if [[ -z "$cli_pid" || -z "$child_pid" ]]; then
-    log_msg "ERROR: process disappeared after boot settle (cli=$cli_pid child=$child_pid)"
+if [[ -z "$child_pid" ]]; then
+    log_msg "ERROR: process disappeared after boot settle (cli=${cli_pid:-none} child=$child_pid)"
     exit 1
 fi
-if ! kill -0 "$cli_pid" 2>/dev/null || ! kill -0 "$child_pid" 2>/dev/null; then
-    log_msg "ERROR: process not alive after boot settle (cli=$cli_pid child=$child_pid)"
+if ! kill -0 "$child_pid" 2>/dev/null; then
+    log_msg "ERROR: process not alive after boot settle (cli=${cli_pid:-none} child=$child_pid)"
     exit 1
 fi
 
-log_msg "Restart OK: cli_pid=$cli_pid child_pid=$child_pid"
+log_msg "Restart OK: cli_pid=${cli_pid:-none} child_pid=$child_pid"
 set_restart_grace
 reset_restart_backoff
 update_state "$cli_pid" "$child_pid" "$(latest_main_log)" ""

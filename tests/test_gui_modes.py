@@ -3,10 +3,6 @@ Tests for GUI modes (headless, hidden, visible).
 """
 
 import unittest
-import json
-import tempfile
-import os
-from pathlib import Path
 
 from evileye.gui import GUIMode, determine_gui_mode
 

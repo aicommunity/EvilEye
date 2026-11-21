@@ -4,11 +4,9 @@ UML Diagram Generator for EvilEye System
 Generates various UML diagrams based on the codebase structure.
 """
 
-import os
-import ast
 import inspect
 import importlib
-from typing import Dict, List, Set, Tuple, Optional
+from typing import Dict, Optional
 from pathlib import Path
 import graphviz
 import plantuml

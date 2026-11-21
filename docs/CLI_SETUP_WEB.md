@@ -1,66 +1,27 @@
-# Команда `evileye setup-web`
+# Web UI: `evileye web`
 
-Проверяет и при необходимости доустанавливает окружение Web UI: Python-пакеты API и собранный SPA в `evileye/api/static/`.
+Проверка и сборка окружения Web UI (Python API + SPA).
 
-## Зачем
+Полный гайд: [CLI_STACK_COMMANDS.md](CLI_STACK_COMMANDS.md).
 
-- `pip install evileye` уже тянет FastAPI/uvicorn/`PyTurboJPEG`, но:
-  - SPA может отсутствовать в окружении → нужна сборка frontend;
-  - для реального TurboJPEG нужна системная `libturbojpeg` (иначе fallback на OpenCV).
-- Команда сначала **проверяет**, затем при необходимости ставит недостающее.
-
-## Использование
+## Подкоманды
 
 ```bash
-evileye setup-web                 # check + fix
-evileye setup-web --check         # только проверка (exit 1 при проблемах)
-evileye setup-web --scope user    # pip --user (по умолчанию)
-evileye setup-web --scope system  # sudo pip (спросит подтверждение)
-evileye setup-web --build         # принудительно npm install && npm run build
-evileye setup-web --no-build      # не трогать frontend
-evileye setup-web --force         # пересобрать SPA / доустановить missing Python pkgs
+evileye web check                 # только проверка
+evileye web deps                  # pip-пакеты API
+evileye web deps --scope system   # sudo pip
+evileye web build                 # npm install && npm run build
+evileye web build --force
+evileye web refresh               # build + evileye service restart
 ```
 
-## Что проверяется
+## TurboJPEG
 
-| Check | Смысл |
-|-------|--------|
-| `fastapi` / `uvicorn` / `pydantic` / `itsdangerous` | Python API |
-| `turbojpeg` import | пакет PyTurboJPEG |
-| `TurboJPEG()` | нативная `libturbojpeg.so` |
-| `static` | `evileye/api/static/index.html` + `assets/` |
-| `node` / `npm` | нужны только для сборки SPA |
-| `frontend_sources` | `evileye/api/frontend/package.json` |
+`PyTurboJPEG` ставится через pip; для нативного ускорения: `sudo apt install libturbojpeg`.
 
-## Pip scope vs npm
-
-- `--scope user|system` относится **только к pip**.
-- `npm install` всегда локальный в `evileye/api/frontend/node_modules` (без глобальной установки).
-
-## TurboJPEG / libjpeg-turbo
-
-`PyTurboJPEG` — pure-Python wheel: **`pip install` проходит без системной библиотеки**.
-
-Без `libturbojpeg`:
-
-- установка OK;
-- EvilEye стартует;
-- `TurboJPEG()` падает → encoder переключается на OpenCV (медленнее preview).
-
-Debian/Ubuntu:
+## Типовой dev-цикл
 
 ```bash
-sudo apt install libturbojpeg
+# после правки frontend или API:
+evileye reload web --with-pipeline --config configs/system.json
 ```
-
-## Типовой сценарий сайта
-
-```text
-pip install -e .          # или pip install evileye
-sudo apt install libturbojpeg   # рекомендуется
-evileye setup-web
-evileye deploy
-evileye run configs/my.json --no-gui
-```
-
-См. также [`WEB_UI_GUIDE.md`](WEB_UI_GUIDE.md), [`CLI_DEPLOY_COMMAND.md`](CLI_DEPLOY_COMMAND.md).

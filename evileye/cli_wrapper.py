@@ -3,7 +3,6 @@
 Wrapper for evileye CLI that ensures proper path setup and auto-fixes entry points
 """
 import sys
-import os
 from pathlib import Path
 
 # Add project root to Python path
@@ -15,6 +14,10 @@ if project_root.exists():
 current_dir = Path(__file__).parent
 if current_dir.exists():
     sys.path.insert(0, str(current_dir))
+
+from evileye.startup import configure_third_party_quiet
+
+configure_third_party_quiet()
 
 # No auto-fix needed - entry points are now self-healing
 

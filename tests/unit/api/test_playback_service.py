@@ -1,5 +1,6 @@
 import json
 import os
+import struct
 from pathlib import Path
 
 from evileye.api.core import playback_service as svc
@@ -24,7 +25,7 @@ def test_discover_cameras_and_segments(tmp_path, monkeypatch):
 
 
 def test_data_dir_falls_back_to_database_image_dir(tmp_path, monkeypatch):
-    """When EVILEYE_DATA_DIR is unset, use database.image_dir from current run config."""
+    """When EVILEYE_DATA_DIR is unset, use database.image_dir from current run config file."""
     root = tmp_path / "media_data"
     cam = root / "Streams" / "2026-08-05" / "Cam1"
     cam.mkdir(parents=True)
@@ -36,15 +37,38 @@ def test_data_dir_falls_back_to_database_image_dir(tmp_path, monkeypatch):
     )
     monkeypatch.delenv("EVILEYE_DATA_DIR", raising=False)
     monkeypatch.setattr(
-        svc,
-        "_load_current_run_config",
-        lambda: (str(cfg), {"database": {"image_dir": str(root)}}),
+        "evileye.api.core.server_state.get_current_config_path",
+        lambda: str(cfg),
     )
+    monkeypatch.setattr(svc, "_load_system_params", lambda: ("", {}))
     svc._data_dir_cache = None
 
     assert svc.data_dir() == root.resolve()
     cameras = svc.discover_cameras("2026-08-05")
     assert any(c["id"] == "Cam1" for c in cameras)
+
+
+def test_data_dir_ignores_empty_system_image_dir(tmp_path, monkeypatch):
+    """Empty system.json image_dir must not hide pipeline image_dir."""
+    media = tmp_path / "Data8" / "EvilEyeData"
+    cam = media / "Streams" / "2026-08-05" / "Cam1"
+    cam.mkdir(parents=True)
+    (cam / "Cam1_20260805_010000_0_00000.mp4").write_bytes(b"fake")
+    cfg = tmp_path / "poly.json"
+    cfg.write_text(
+        json.dumps({"database": {"image_dir": str(media)}, "pipeline": {"sources": []}}),
+        encoding="utf-8",
+    )
+    sys_json = tmp_path / "system.json"
+    sys_json.write_text(json.dumps({"database": {"image_dir": ""}}), encoding="utf-8")
+    monkeypatch.delenv("EVILEYE_DATA_DIR", raising=False)
+    monkeypatch.setattr(
+        "evileye.api.core.server_state.get_current_config_path",
+        lambda: str(cfg),
+    )
+    monkeypatch.setattr(svc, "_load_system_params", lambda: (str(sys_json), {"database": {"image_dir": ""}}))
+    svc._data_dir_cache = None
+    assert svc.data_dir() == media.resolve()
 
 
 def test_composite_folder_resolution(tmp_path, monkeypatch):
@@ -78,6 +102,7 @@ def test_path_traversal_rejected(tmp_path, monkeypatch):
 
 def test_date_dirs_covering_range(tmp_path):
     base = tmp_path / "Streams"
+    (base / "2026-08-03").mkdir(parents=True)
     (base / "2026-08-04").mkdir(parents=True)
     (base / "2026-08-05").mkdir(parents=True)
     (base / "2026-08-06").mkdir(parents=True)
@@ -85,9 +110,36 @@ def test_date_dirs_covering_range(tmp_path):
     end = __import__("datetime").datetime(2026, 8, 5, 18, 0, 0).timestamp()
     dirs = svc._date_dirs_covering(base, from_ts=start, to_ts=end)
     names = {p.name for p in dirs}
+    # Previous day included for GST overnight sessions.
+    assert "2026-08-03" in names
     assert "2026-08-04" in names
     assert "2026-08-05" in names
     assert "2026-08-06" not in names
+
+
+def test_date_dirs_today_includes_yesterday(tmp_path, monkeypatch):
+    base = tmp_path / "Streams"
+    today = __import__("datetime").datetime.now().astimezone().strftime("%Y-%m-%d")
+    from datetime import datetime, timedelta
+
+    yday = (datetime.now().astimezone().date() - timedelta(days=1)).isoformat()
+    (base / today).mkdir(parents=True)
+    (base / yday).mkdir(parents=True)
+    dirs = svc._date_dirs(base, today)
+    names = {p.name for p in dirs}
+    assert today in names
+    assert yday in names
+
+
+def test_date_dirs_past_day_includes_previous(tmp_path):
+    """Historical days also need D-1 for GST overnight parts left in the prior folder."""
+    base = tmp_path / "Streams"
+    (base / "2026-09-11").mkdir(parents=True)
+    (base / "2026-09-12").mkdir(parents=True)
+    dirs = svc._date_dirs(base, "2026-09-12")
+    names = {p.name for p in dirs}
+    assert "2026-09-12" in names
+    assert "2026-09-11" in names
 
 
 def test_load_segments_multi_day_from_to(tmp_path, monkeypatch):
@@ -142,3 +194,258 @@ def test_load_segments_splitmux_same_session_timestamp(tmp_path, monkeypatch):
     assert segs[1]["end_ts"] == segs[2]["start_ts"]
     # Three contiguous 30-min slots (~1.5h coverage from session start).
     assert abs(segs[2]["start_ts"] - segs[0]["start_ts"] - 3600) < 1
+
+
+def test_load_segments_splitmux_uses_mtime_when_media_drifts(tmp_path, monkeypatch):
+    """Real splitmux parts are a few seconds short of segment_length_sec."""
+    from datetime import datetime
+
+    root = tmp_path / "EvilEyeData"
+    cam = root / "Streams" / "2026-08-17" / "Cam4-Cam5"
+    cam.mkdir(parents=True)
+    session = datetime(2026, 8, 17, 1, 49, 11).timestamp()
+    part_len = 1795.0
+    files = []
+    for idx in range(20):
+        path = cam / f"Cam4_20260817_014911_0_{idx:05d}.mp4"
+        path.write_bytes(b"fake")
+        close = session + (idx + 1) * part_len
+        os.utime(path, (close, close))
+        files.append(path)
+    monkeypatch.setenv("EVILEYE_DATA_DIR", str(root))
+    monkeypatch.setattr(svc, "_configured_segment_length_sec", lambda: 1800.0)
+
+    segs = {Path(s["path"]).name: s for s in svc.load_segments("Cam4", date="2026-08-17")}
+    part18 = segs["Cam4_20260817_014911_0_00018.mp4"]
+    part19 = segs["Cam4_20260817_014911_0_00019.mp4"]
+    tick_1059 = datetime(2026, 8, 17, 10, 59, 27).timestamp()
+    tick_1118 = datetime(2026, 8, 17, 11, 18, 15).timestamp()
+    assert part18["start_ts"] <= tick_1059 <= part18["end_ts"]
+    assert part19["start_ts"] <= tick_1118 <= part19["end_ts"]
+    assert tick_1118 - part19["start_ts"] < 60
+    # index*1800 would start part 18 ~66s later and keep 11:18:15 in the previous file.
+    assert part18["start_ts"] < session + 18 * 1800 - 30
+
+
+def _minimal_mp4(duration_sec: float, timescale: int = 1000) -> bytes:
+    duration = int(round(duration_sec * timescale))
+    mvhd_payload = struct.pack(">BBBBIIII", 0, 0, 0, 0, 0, 0, timescale, duration)
+    mvhd = struct.pack(">I4s", 8 + len(mvhd_payload), b"mvhd") + mvhd_payload
+    moov = struct.pack(">I4s", 8 + len(mvhd), b"moov") + mvhd
+    ftyp_payload = b"isom" + struct.pack(">I", 0) + b"isom"
+    ftyp = struct.pack(">I4s", 8 + len(ftyp_payload), b"ftyp") + ftyp_payload
+    return ftyp + moov
+
+
+def test_mp4_duration_reads_mvhd(tmp_path):
+    path = tmp_path / "clip.mp4"
+    path.write_bytes(_minimal_mp4(1796.353))
+    assert abs(svc._mp4_duration_sec(str(path)) - 1796.353) < 0.002
+
+
+def test_load_segments_splitmux_ignores_first_file_finalize_delay(tmp_path, monkeypatch):
+    """async-finalize mtime of part 0 is ~12s after media; must not shift later parts."""
+    from datetime import datetime
+
+    root = tmp_path / "EvilEyeData"
+    cam = root / "Streams" / "2026-08-17" / "Cam4-Cam5"
+    cam.mkdir(parents=True)
+    session = datetime(2026, 8, 17, 1, 49, 11).timestamp()
+    media = [1796.353] + [1795.2] * 19
+    wall = session
+    for idx, dur in enumerate(media):
+        path = cam / f"Cam4_20260817_014911_0_{idx:05d}.mp4"
+        path.write_bytes(_minimal_mp4(dur))
+        wall += dur
+        extra = 11.7 if idx == 0 else 0.0
+        os.utime(path, (wall + extra, wall + extra))
+    monkeypatch.setenv("EVILEYE_DATA_DIR", str(root))
+    monkeypatch.setattr(svc, "_configured_segment_length_sec", lambda: 1800.0)
+    svc._MP4_DURATION_CACHE.clear()
+
+    segs = {Path(s["path"]).name: s for s in svc.load_segments("Cam4", date="2026-08-17")}
+    part0 = segs["Cam4_20260817_014911_0_00000.mp4"]
+    part1 = segs["Cam4_20260817_014911_0_00001.mp4"]
+    part18 = segs["Cam4_20260817_014911_0_00018.mp4"]
+    part19 = segs["Cam4_20260817_014911_0_00019.mp4"]
+    assert abs(part0["start_ts"] - session) < 0.1
+    assert abs(part1["start_ts"] - (session + 1796.353)) < 0.1
+    # mtime chain would have started part 1 ~12s later.
+    assert part1["start_ts"] < session + 1808
+    tick_1059 = datetime(2026, 8, 17, 10, 59, 27).timestamp()
+    tick_1118 = datetime(2026, 8, 17, 11, 18, 15).timestamp()
+    assert part18["start_ts"] <= tick_1059 <= part18["end_ts"]
+    assert part19["start_ts"] <= tick_1118 <= part19["end_ts"]
+    assert tick_1118 - part19["start_ts"] < 60
+
+
+def test_load_segments_prefers_sidecar_session_start(tmp_path, monkeypatch):
+    """First muxed-frame wall clock beats the pipeline-setup filename."""
+    from datetime import datetime
+
+    from evileye.video_recorder.session_sidecar import sidecar_path_for_segment, write_session_sidecar
+
+    root = tmp_path / "EvilEyeData"
+    cam = root / "Streams" / "2026-08-17" / "Cam4"
+    cam.mkdir(parents=True)
+    filename_start = datetime(2026, 8, 17, 1, 49, 11).timestamp()
+    mux_start = filename_start + 2.5
+    part0 = cam / "Cam4_20260817_014911_0_00000.mp4"
+    part0.write_bytes(_minimal_mp4(1796.353))
+    write_session_sidecar(sidecar_path_for_segment(part0), mux_start, first_pts_ns=0)
+    monkeypatch.setenv("EVILEYE_DATA_DIR", str(root))
+    monkeypatch.setattr(svc, "_configured_segment_length_sec", lambda: 1800.0)
+    svc._MP4_DURATION_CACHE.clear()
+
+    segs = svc.load_segments("Cam4", date="2026-08-17")
+    assert abs(segs[0]["start_ts"] - mux_start) < 0.05
+    assert segs[0]["start_ts"] - filename_start > 2.0
+
+
+def test_load_segments_skips_files_outside_window_before_mvhd(tmp_path, monkeypatch):
+    """Nominal slot filter must not open every MP4 in the day when from/to is set."""
+    from datetime import datetime
+
+    root = tmp_path / "EvilEyeData"
+    cam = root / "Streams" / "2026-08-17" / "Cam1"
+    cam.mkdir(parents=True)
+    for idx in range(20):
+        (cam / f"Cam1_20260817_014911_0_{idx:05d}.mp4").write_bytes(b"fake")
+    monkeypatch.setenv("EVILEYE_DATA_DIR", str(root))
+    monkeypatch.setattr(svc, "_configured_segment_length_sec", lambda: 1800.0)
+    # This assertion covers the synchronous window filter. The service also
+    # schedules a full-day index rebuild in the background, which is expected
+    # to inspect all files and must not be counted as route work here.
+    from evileye.api.core import playback_timeline_index
+
+    monkeypatch.setattr(playback_timeline_index, "schedule_segment_index_refresh", lambda *_a, **_k: None)
+
+    calls = {"n": 0}
+    real = svc._mp4_duration_sec
+
+    def counting(path: str):
+        calls["n"] += 1
+        return real(path)
+
+    monkeypatch.setattr(svc, "_mp4_duration_sec", counting)
+
+    tick = datetime(2026, 8, 17, 11, 18, 15).timestamp()
+    segs = svc.load_segments(
+        "Cam1",
+        from_ts=tick - 120,
+        to_ts=tick + 120,
+        date="2026-08-17",
+    )
+    assert segs
+    assert calls["n"] < 10
+    assert calls["n"] < 20
+
+
+def test_segment_playable_flag(tmp_path, monkeypatch):
+    root = tmp_path / "EvilEyeData"
+    cam = root / "Streams" / "2026-08-20" / "Cam1"
+    cam.mkdir(parents=True)
+    closed = cam / "Cam1_20260820_010000_0_00000.mp4"
+    open_part = cam / "Cam1_20260820_013000_0_00001.mp4"
+    closed.write_bytes(_minimal_mp4(60.0))
+    open_part.write_bytes(b"\x00" * 512 * 1024)  # in-progress size without moov
+    monkeypatch.setenv("EVILEYE_DATA_DIR", str(root))
+    monkeypatch.setattr(svc, "_configured_segment_length_sec", lambda: 1800.0)
+    svc._MP4_PLAYABLE_CACHE.clear()
+
+    segs = {Path(s["path"]).name: s for s in svc.load_segments("Cam1", date="2026-08-20")}
+    assert segs["Cam1_20260820_010000_0_00000.mp4"]["playable"] is True
+    assert segs["Cam1_20260820_013000_0_00001.mp4"]["playable"] is False
+
+
+def test_load_segments_repairs_midnight_sidecar_with_continued_index(tmp_path, monkeypatch):
+    """Day-rotate sidecar start_ts=midnight + continued idx must use mtime wall clock."""
+    from datetime import datetime
+
+    from evileye.video_recorder.session_sidecar import sidecar_path_for_segment, write_session_sidecar
+
+    root = tmp_path / "EvilEyeData"
+    cam = root / "Streams" / "2026-09-13" / "Cam1"
+    cam.mkdir(parents=True)
+    # Sidecar claims session started at midnight, but indices continue from 77.
+    midnight = datetime(2026, 9, 13, 0, 7, 41).timestamp()
+    part_len = 1790.0
+    files = []
+    for i, idx in enumerate(range(77, 81)):
+        path = cam / f"Cam1_20260913_000741_0_{idx:05d}.mp4"
+        path.write_bytes(_minimal_mp4(part_len))
+        close = midnight + (i + 1) * part_len
+        os.utime(path, (close, close))
+        files.append(path)
+    write_session_sidecar(sidecar_path_for_segment(files[0]), midnight, first_pts_ns=0)
+
+    monkeypatch.setenv("EVILEYE_DATA_DIR", str(root))
+    monkeypatch.setattr(svc, "_configured_segment_length_sec", lambda: 1800.0)
+    svc._MP4_DURATION_CACHE.clear()
+
+    day_start = datetime(2026, 9, 13, 0, 0, 0).timestamp()
+    day_end = day_start + 86400
+    segs = svc.load_segments("Cam1", date="2026-09-13", from_ts=day_start, to_ts=day_end)
+    assert len(segs) == 4
+    for s in segs:
+        assert day_start <= s["start_ts"] < day_end
+        assert "2026-09-13" in s["path"]
+    # Nominal idx*1800 from midnight would land on Sep 14 afternoon.
+    assert segs[0]["start_ts"] < midnight + 3600
+    assert abs(segs[0]["start_ts"] - midnight) < 5.0
+
+    last_close = midnight + 4 * part_len
+    window_segs = svc.load_segments(
+        "Cam1",
+        date="2026-09-13",
+        from_ts=last_close - 7200,
+        to_ts=last_close + 60,
+    )
+    assert len(window_segs) >= 1
+    assert any("00080" in Path(s["path"]).name for s in window_segs)
+
+
+def test_load_segments_batch_schedules_day_index_on_cold_window(tmp_path, monkeypatch):
+    """Windowed cold miss must kick background day-index rebuild without blocking."""
+    root = tmp_path / "EvilEyeData"
+    cam = root / "Streams" / "2026-08-21" / "Cam1"
+    cam.mkdir(parents=True)
+    (cam / "Cam1_20260821_120000_0_00000.mp4").write_bytes(b"fake")
+    monkeypatch.setenv("EVILEYE_DATA_DIR", str(root))
+    svc._data_dir_cache = None
+
+    calls: list[tuple] = []
+
+    def _seg(date, cams=None):
+        calls.append(("seg", date, list(cams or [])))
+
+    def _det(date, cams, *, run_id=None):
+        calls.append(("det", date, list(cams or []), run_id))
+
+    def _evt(date, cams=None, *, limit=2000):
+        calls.append(("evt", date, list(cams or [])))
+
+    monkeypatch.setattr(
+        "evileye.api.core.playback_timeline_index.schedule_segment_index_refresh",
+        _seg,
+    )
+    monkeypatch.setattr(
+        "evileye.api.core.playback_timeline_index.schedule_detection_ticks_refresh",
+        _det,
+    )
+    monkeypatch.setattr(
+        "evileye.api.core.playback_timeline_index.schedule_event_intervals_refresh",
+        _evt,
+    )
+    monkeypatch.setattr(
+        "evileye.api.core.playback_timeline_index.read_segment_index_if_fresh",
+        lambda date: None,
+    )
+    monkeypatch.setattr(svc, "load_segments_uncached", lambda cam, from_ts=None, to_ts=None, date=None: [{"path": "x", "start_ts": 1, "end_ts": 2}])
+
+    out = svc.load_segments_batch(["Cam1"], from_ts=1.0, to_ts=2.0, date="2026-08-21", run_id=7)
+    assert out["Cam1"]
+    kinds = [c[0] for c in calls]
+    assert kinds == ["seg", "det", "evt"]
+    assert calls[0][1] == "2026-08-21"
+    assert calls[1][3] == 7

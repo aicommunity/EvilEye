@@ -24,7 +24,6 @@ except ImportError:
 
 from ..core.logger import get_module_logger
 
-import sys
 import os
 from ..utils import utils
 from ..utils import threading_events

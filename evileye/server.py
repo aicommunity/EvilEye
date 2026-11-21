@@ -3,8 +3,10 @@ import argparse
 import json
 import sys
 import multiprocessing as mp
+import queue
 import threading
 import time
+import weakref
 from pathlib import Path
 import os
 import signal
@@ -20,6 +22,13 @@ from evileye.api.core.config_run_access import get_config_run_manager
 
 _PREVIEW_LEVEL_RANK = {"idle": 0, "grid": 1, "stream": 2}
 _VALID_PREVIEW_LEVELS = frozenset(_PREVIEW_LEVEL_RANK)
+
+
+def _preview_demand_ttl_sec() -> float:
+    try:
+        return max(5.0, float(os.getenv("EVILEYE_PREVIEW_DEMAND_TTL_SEC", "45")))
+    except Exception:
+        return 45.0
 
 
 def _normalize_preview_level(level: str | None) -> str:
@@ -53,9 +62,15 @@ def _run_server_in_process(host, port, log_level, frame_queue, demand_queue, ssl
     Receives JPEG frames from the main process via *frame_queue* and
     serves them through the MJPEG streaming endpoint
     """
+    from evileye.api.core.ssl_files import apply_ssl_env, ssl_enabled
+
+    apply_ssl_env(ssl_certfile, ssl_keyfile)
     setup_evileye_logging(log_level=log_level.upper(), log_to_console=True, log_to_file=True)
     logger = get_module_logger("server.child")
-    logger.info(f"Web server child process starting on {host}:{port}")
+    scheme = "https" if ssl_enabled(ssl_certfile, ssl_keyfile) else "http"
+    logger.info(f"Web server child process starting on {scheme}://{host}:{port}")
+    if ssl_certfile:
+        logger.info("TLS certificate: %s", ssl_certfile)
 
     try:
         app = _create_app()
@@ -87,6 +102,7 @@ def _run_server_in_process(host, port, log_level, frame_queue, demand_queue, ssl
             ssl_certfile=ssl_certfile,
             ssl_keyfile=ssl_keyfile,
             proxy_headers=True,
+            timeout_keep_alive=5,
         )
         server = uvicorn.Server(uvicorn_config)
         server.run()
@@ -100,11 +116,14 @@ def _run_server_in_process(host, port, log_level, frame_queue, demand_queue, ssl
 
 
 class ServerProcessManager:
-    """Manages the web server as a separate OS process
+    """Manages the web server as a separate OS process.
 
     The main process creates a ``frame_queue`` and passes it to the
-    child.  Frames are published by calling ``publish_frame()``
+    child. Frames are published by calling ``publish_frame()``.
     """
+
+    _instances: "weakref.WeakSet[ServerProcessManager]" = weakref.WeakSet()
+    _instances_lock = threading.Lock()
 
     def __init__(self):
         self.logger = get_module_logger("server_process_manager")
@@ -116,6 +135,37 @@ class ServerProcessManager:
         self._preview_demand: dict[str, tuple[float, str]] = {}
         self._dropped_frames = 0
         self._published_frames = 0
+        with self._instances_lock:
+            self._instances.add(self)
+
+    @classmethod
+    def shutdown_all(cls, timeout: float = 2.0) -> None:
+        """Stop live server managers before Qt/process teardown."""
+        with cls._instances_lock:
+            managers = list(cls._instances)
+        for manager in managers:
+            try:
+                manager.stop(timeout=timeout)
+            except Exception as exc:
+                manager.logger.error("Failed to stop server process manager: %s", exc, exc_info=True)
+
+    def _close_ipc_queue(self, ipc_queue, name: str) -> None:
+        if ipc_queue is None:
+            return
+        try:
+            while True:
+                ipc_queue.get_nowait()
+        except (queue.Empty, EOFError, OSError, ValueError):
+            pass
+        except Exception as exc:
+            self.logger.warning("Failed to drain server %s queue: %s", name, exc)
+        try:
+            ipc_queue.close()
+            ipc_queue.join_thread()
+        except (AttributeError, OSError, ValueError):
+            pass
+        except Exception as exc:
+            self.logger.warning("Failed to close server %s queue: %s", name, exc)
 
     def start(self, host="127.0.0.1", port=8181, log_level="info", ssl_certfile=None, ssl_keyfile=None):
         if self._process is not None and self._process.is_alive():
@@ -206,19 +256,24 @@ class ServerProcessManager:
             return None
         return level
 
-    def get_preview_demand_level(self, pipeline_key: str, *, ttl_sec: float = 20.0) -> str:
+    def get_preview_demand_level(self, pipeline_key: str, *, ttl_sec: float | None = None) -> str:
         now = time.time()
+        effective_ttl = _preview_demand_ttl_sec() if ttl_sec is None else ttl_sec
         key = str(pipeline_key)
-        level = self._demand_entry_level(key, ttl_sec=ttl_sec, now=now)
+        level = self._demand_entry_level(key, ttl_sec=effective_ttl, now=now)
         if level is not None:
             return level
+        # Full-frame keys are opt-in (split editor / ?full=true). Do not inherit root
+        # Live/grid demand — that would encode native frames and starve crop previews.
+        if ":full:" in key:
+            return "idle"
         root_key = key.split(":", 1)[0]
-        root_level = self._demand_entry_level(root_key, ttl_sec=ttl_sec, now=now)
+        root_level = self._demand_entry_level(root_key, ttl_sec=effective_ttl, now=now)
         if root_level is not None:
             return root_level
         return "idle"
 
-    def has_preview_demand(self, pipeline_key: str, *, ttl_sec: float = 20.0) -> bool:
+    def has_preview_demand(self, pipeline_key: str, *, ttl_sec: float | None = None) -> bool:
         return self.get_preview_demand_level(pipeline_key, ttl_sec=ttl_sec) != "idle"
 
     def publish_frame(self, pipeline_id: str, jpeg_bytes: bytes, metadata=None):
@@ -266,6 +321,8 @@ class ServerProcessManager:
         self._demand_stop.set()
         if self._demand_thread is not None and self._demand_thread.is_alive():
             self._demand_thread.join(timeout=2.0)
+            if self._demand_thread.is_alive():
+                self.logger.error("Server demand listener did not stop")
         self._demand_thread = None
 
         if self._process is not None:
@@ -282,7 +339,10 @@ class ServerProcessManager:
                 self._process.join(timeout=2.0)
                 if self._process.is_alive():
                     self._process.kill()
+                    self._process.join(timeout=1.0)
             self._process = None
+        self._close_ipc_queue(self._frame_queue, "frame")
+        self._close_ipc_queue(self._demand_queue, "demand")
         self._frame_queue = None
         self._demand_queue = None
         self._preview_demand.clear()
@@ -299,14 +359,23 @@ def run_api_server(host: str = "127.0.0.1", port: int = 8181,
                    config: str | None = None, workers: int = 1,
                    verbose: bool = False, ssl_certfile: str | None = None,
                    ssl_keyfile: str | None = None) -> None:
+    from evileye.api.core.ssl_files import apply_ssl_env, resolve_ssl_files, ssl_enabled
+
+    cert, key = resolve_ssl_files(cli_cert=ssl_certfile, cli_key=ssl_keyfile)
+    apply_ssl_env(cert, key)
+    ssl_certfile = str(cert) if cert else None
+    ssl_keyfile = str(key) if key else None
+
     logger = get_module_logger("server")
     effective_log_level = "debug" if verbose and log_level == "info" else log_level
     logger.info("=" * 60)
     logger.info("EvilEye API Server Initialization")
     logger.info("=" * 60)
-    logger.info(f"Starting EvilEye API server on {host}:{port}")
-    scheme = "https" if ssl_certfile and ssl_keyfile else "http"
+    scheme = "https" if ssl_enabled(ssl_certfile, ssl_keyfile) else "http"
+    logger.info(f"Starting EvilEye API server on {scheme}://{host}:{port}")
     logger.info(f"API documentation will be available at {scheme}://{host}:{port}/docs")
+    if ssl_certfile:
+        logger.info("TLS certificate: %s", ssl_certfile)
     if workers != 1:
         logger.warning(
             "workers=%s requested, but EvilEye API currently uses shared in-process state. "
@@ -372,10 +441,6 @@ def run_api_server(host: str = "127.0.0.1", port: int = 8181,
     logger.info("=" * 60)
 
     try:
-        if ssl_certfile:
-            os.environ["EVILEYE_SSL_CERTFILE"] = str(ssl_certfile)
-        if ssl_keyfile:
-            os.environ["EVILEYE_SSL_KEYFILE"] = str(ssl_keyfile)
         os.environ.setdefault("EVILEYE_HTTP_PORT", str(port))
         uvicorn_config = uvicorn.Config(
             app,
@@ -386,6 +451,7 @@ def run_api_server(host: str = "127.0.0.1", port: int = 8181,
             ssl_certfile=ssl_certfile,
             ssl_keyfile=ssl_keyfile,
             proxy_headers=True,
+            timeout_keep_alive=5,
         )
         if reload:
             logger.warning("Reload mode is not supported when passing app instance directly")
@@ -445,3 +511,6 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
+
+
+atexit.register(ServerProcessManager.shutdown_all)

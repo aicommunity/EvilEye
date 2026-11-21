@@ -1,11 +1,7 @@
 import threading
 import os
-import importlib
-import inspect
 import socket
 import copy
-from pathlib import Path
-from time import sleep
 
 from evileye.capture import video_capture_opencv
 from evileye.object_detector import object_detection_yolo
@@ -19,7 +15,8 @@ import time
 from timeit import default_timer as timer
 from evileye.visualization_modules.visualizer import Visualizer
 from evileye.events_detectors.cam_events_detector import CamEventsDetector
-from evileye.events_detectors.fov_events_detector import FieldOfViewEventsDetector
+from evileye.events_detectors.schedule_alarm_events_detector import ScheduleAlarmEventsDetector
+from evileye.events_detectors.schedule_alarm_logic import DETECTOR_CONFIG_KEY
 from evileye.events_detectors.zone_events_detector import ZoneEventsDetector
 from evileye.events_detectors.attribute_events_detector import AttributeEventsDetector
 from evileye.events_detectors.event_system import SystemEvent
@@ -27,7 +24,6 @@ import datetime
 from evileye.events_detectors.system_events_detector import SystemEventsDetector
 import json
 import datetime
-import pprint
 import copy
 import math
 import gc
@@ -36,6 +32,7 @@ from evileye.core.class_manager import ClassManager
 from evileye.pipelines import PipelineSurveillance
 from evileye.core.logger import get_module_logger
 from evileye.api.core.runtime_registry import update_runtime_snapshot
+from evileye.api.core.server_state import storage_mode_from_params, use_database_from_params
 from evileye.api.security import load_web_auth_config
 from evileye.core.system_diagnostics import SystemDiagnostics
 from evileye.core.memory_monitor import MemoryMonitor
@@ -62,6 +59,7 @@ except ImportError:
     pyqt_version = 5
 
 from evileye.controller.controller_processing_mixin import ControllerProcessingMixin
+from evileye.core.paths import creds_path
 
 
 class Controller(ControllerProcessingMixin):
@@ -75,7 +73,20 @@ class Controller(ControllerProcessingMixin):
         except OSError:
             return False
 
+    def _load_credentials(self) -> None:
+        """Load site credentials independently of the selected config path."""
+        credentials_file = creds_path()
+        try:
+            with credentials_file.open(encoding="utf-8") as creds_file:
+                self.credentials = json.load(creds_file)
+                self.credentials_loaded = True
+        except FileNotFoundError:
+            self.credentials = {}
+            self.credentials_loaded = False
+
     def __init__(self):
+        from evileye.core.runtime_identity import process_identity
+        process_identity()  # Freeze the revision before any later checkout changes.
         self.logger = get_module_logger("controller")
         self.main_window = None
         # self.application = application
@@ -101,6 +112,7 @@ class Controller(ControllerProcessingMixin):
         self._preview_active_events_by_source: dict[int, dict[tuple[int, str], dict]] = {}
         self._preview_events_lock = threading.Lock()
         self._preview_zones_by_source: dict[int, list] = {}
+        self._control_ipc_server = None
 
         self.pipeline = None
 
@@ -113,6 +125,8 @@ class Controller(ControllerProcessingMixin):
         self.pyqt_slots = None
         self.pyqt_signals = None
         self.fps = 30
+        self._fps_configured = 30.0
+        self.fps_headless = None
         self.show_main_gui = True
         self.show_journal = False
         self.enable_close_from_gui = True
@@ -131,6 +145,7 @@ class Controller(ControllerProcessingMixin):
         self.events_detectors_controller = None
         self.events_processor = None
         self.cam_events_detector = None
+        self.schedule_alarm_events_detector = None
         self.fov_events_detector = None
         self.zone_events_detector = None
         self.attr_events_detector = None
@@ -139,6 +154,7 @@ class Controller(ControllerProcessingMixin):
         self.db_controller = None
         self.db_adapter_obj = None
         self.db_adapter_cam_events = None
+        self.db_adapter_schedule_alarm_events = None
         self.db_adapter_fov_events = None
         self.db_adapter_zone_events = None
         self.db_adapter_attr_events = None
@@ -152,6 +168,7 @@ class Controller(ControllerProcessingMixin):
 
         # Initialize centralized class manager
         self.class_manager = ClassManager()
+        self._detector_class_mapping_cache: dict[str, dict[str, int]] = {}
 
         # Initialize service locator and services
         self.service_locator = ServiceLocator()
@@ -278,6 +295,13 @@ class Controller(ControllerProcessingMixin):
         except Exception:
             self._resource_stats_every_sec = 60.0
         self._resource_stats_last_ts = 0.0
+        try:
+            self._journal_heartbeat_every_sec = float(
+                os.getenv("EVILEYE_JOURNAL_HEARTBEAT_EVERY_SEC", "300") or "300"
+            )
+        except Exception:
+            self._journal_heartbeat_every_sec = 300.0
+        self._journal_heartbeat_last_ts = 0.0
 
         try:
             self._runtime_snapshot_every_sec = float(
@@ -316,6 +340,106 @@ class Controller(ControllerProcessingMixin):
     def get_params(self):
         return self.params
 
+    def _sync_use_database_to_params(self) -> None:
+        if not isinstance(self.params, dict):
+            return
+        controller = self.params.setdefault("controller", {})
+        if isinstance(controller, dict):
+            controller["use_database"] = bool(self.use_database)
+
+    def _collect_runtime_telemetry(self) -> dict:
+        """Collect health already exposed by live pipeline/event components.
+
+        This method only reads runtime statistics. It must not construct
+        processors, sources, models, or workers: snapshots are also consumed by
+        read-only CLI inspection.
+        """
+        telemetry = {
+            "published_at": time.time(),
+            "modules": {},
+            "module_instances": {},
+            "stages": {},
+        }
+        pipeline_stats = {}
+        get_pipeline_stats = getattr(self.pipeline, "get_runtime_stats", None)
+        if callable(get_pipeline_stats):
+            try:
+                value = get_pipeline_stats()
+                if isinstance(value, dict):
+                    pipeline_stats = value
+            except Exception as exc:
+                telemetry["stages"]["pipeline"] = {
+                    "degraded": True,
+                    "last_error": f"pipeline runtime stats failed: {exc}",
+                }
+        for key in ("modules", "module_instances", "stages"):
+            value = pipeline_stats.get(key)
+            if isinstance(value, dict):
+                telemetry[key].update(value)
+
+        try:
+            event_detectors = self._events_service.get_all_detectors()
+            event_detectors = event_detectors if isinstance(event_detectors, dict) else {}
+            event_config = (self.params or {}).get("events_detectors", {})
+            event_config = event_config if isinstance(event_config, dict) else {}
+            configured = [name for name in event_config if name != "enabled"]
+            enabled = event_config.get("enabled")
+            if not isinstance(enabled, list):
+                from evileye.events_detectors.event_registry import DEFAULT_ENABLED_EVENT_DETECTORS
+
+                enabled = list(DEFAULT_ENABLED_EVENT_DETECTORS)
+            names = list(dict.fromkeys([*(str(name) for name in enabled), *(str(name) for name in configured)]))
+            seen_detectors: set[int] = set()
+            for index, name in enumerate(names):
+                detector = event_detectors.get(name)
+                if detector is None or id(detector) in seen_detectors:
+                    continue
+                seen_detectors.add(id(detector))
+                module_id = name
+                config = event_config.get(name)
+                if isinstance(config, dict):
+                    module_id = str(config.get("module_id") or name)
+                get_stats = getattr(detector, "get_runtime_stats", None)
+                try:
+                    stats = get_stats() if callable(get_stats) else {
+                        "state": "unknown",
+                        "diagnostic": "event detector does not expose runtime statistics",
+                    }
+                except Exception as exc:
+                    stats = {"degraded": True, "last_error": str(exc)}
+                if not isinstance(stats, dict):
+                    stats = {"state": "unknown", "diagnostic": "runtime statistics must be a mapping"}
+                telemetry["modules"][f"events/{module_id}"] = stats
+                telemetry["module_instances"][f"events:{index}:{module_id}"] = stats
+        except Exception as exc:
+            telemetry["stages"]["events"] = {
+                "degraded": True,
+                "last_error": f"event runtime stats failed: {exc}",
+            }
+
+        event_controller = getattr(self, "events_detectors_controller", None)
+        get_event_stats = getattr(event_controller, "get_runtime_stats", None)
+        if callable(get_event_stats):
+            try:
+                event_stats = get_event_stats()
+                if isinstance(event_stats, dict):
+                    telemetry["stages"]["events"] = {
+                        **telemetry["stages"].get("events", {}),
+                        **event_stats,
+                    }
+            except Exception as exc:
+                telemetry["stages"]["events"] = {
+                    **telemetry["stages"].get("events", {}),
+                    "degraded": True,
+                    "last_error": f"event controller runtime stats failed: {exc}",
+                }
+        telemetry["degraded"] = any(
+            isinstance(value, dict) and bool(value.get("degraded"))
+            for collection in (telemetry["modules"], telemetry["module_instances"], telemetry["stages"])
+            for value in collection.values()
+        )
+        return telemetry
+
     def _publish_runtime_snapshot(self, *, state: str | None = None) -> None:
         try:
             runtime_id = int(self.stream_pipeline_id)
@@ -345,9 +469,12 @@ class Controller(ControllerProcessingMixin):
 
         try:
             server_cfg = params.get("server", {}) if isinstance(params, dict) else {}
+            use_database = use_database_from_params(params if isinstance(params, dict) else None)
+            storage_mode = storage_mode_from_params(params if isinstance(params, dict) else None)
             journal_context = {
                 "config_path": getattr(self, "config_path", None),
-                "database_enabled": bool(params.get("database")) if isinstance(params, dict) else False,
+                "database_enabled": use_database,
+                "storage_mode": storage_mode,
                 "source_names": [name for source in sources_payload for name in source.get("source_names", [])],
             }
             update_runtime_snapshot(
@@ -357,11 +484,13 @@ class Controller(ControllerProcessingMixin):
                 config_path=getattr(self, "config_path", None),
                 config=params,
                 sources=sources_payload,
+                runtime_telemetry=self._collect_runtime_telemetry(),
                 module_state={
                     "pipeline_class": self.pipeline.__class__.__name__ if self.pipeline is not None else None,
                     "detector_count": len(getattr(self.pipeline, "detectors", []) or []),
                     "tracker_count": len(getattr(self.pipeline, "trackers", []) or []),
-                    "database_enabled": bool(params.get("database")) if isinstance(params, dict) else False,
+                    "database_enabled": use_database,
+                    "storage_mode": storage_mode,
                     "event_detector_names": sorted((params.get("events_detectors") or {}).keys()) if isinstance(params,
                                                                                                                 dict) and isinstance(
                         params.get("events_detectors"), dict) else [],
@@ -475,6 +604,21 @@ class Controller(ControllerProcessingMixin):
         from evileye.controller.processing_service import ProcessingService
 
         self.logger.info(f"Controller main loop started, stream_pipeline_id: {self.stream_pipeline_id}")
+        source_drain_started_at = None
+        drain_timeout_sec = None
+        if self.autoclose:
+            try:
+                drain_timeout_sec = float(
+                    os.getenv("EVILEYE_AUTOCLOSE_DRAIN_TIMEOUT_SEC", "60.0")
+                )
+            except (TypeError, ValueError) as exc:
+                raise RuntimeError(
+                    "EVILEYE_AUTOCLOSE_DRAIN_TIMEOUT_SEC must be a positive number"
+                ) from exc
+            if drain_timeout_sec <= 0:
+                raise RuntimeError(
+                    "EVILEYE_AUTOCLOSE_DRAIN_TIMEOUT_SEC must be a positive number"
+                )
         # Emit system started via detector (unified path)
         if self.system_events_detector:
             self.system_events_detector.emit_started()
@@ -499,11 +643,22 @@ class Controller(ControllerProcessingMixin):
                     ):
                         self._resource_stats_last_ts = now_ts
                         self._log_resource_stats(context="periodic")
+                    j_every = float(self._journal_heartbeat_every_sec or 0.0)
+                    if ProcessingService.should_log_resource_stats(
+                            self._journal_heartbeat_last_ts, j_every, now_ts=now_ts
+                    ):
+                        self._journal_heartbeat_last_ts = now_ts
+                        self._log_journal_heartbeat()
                 except Exception:
                     pass
 
                 try:
                     self._maybe_publish_runtime_snapshot(now_ts=loop_now_ts)
+                    if loop_now_ts - getattr(self, '_event_heartbeat_at', 0) >= 5:
+                        from evileye.core.runtime_identity import publish_heartbeat
+                        self._event_heartbeat_at = loop_now_ts
+                        publish_heartbeat(os.getenv('EVILEYE_SITE_DIR') or os.getcwd(),
+                                          self._control_get_runtime_stats()['stats'])
                 except Exception:
                     pass
 
@@ -579,7 +734,29 @@ class Controller(ControllerProcessingMixin):
                 self.pipeline.insert_debug_info_by_id(self.debug_info)
 
                 if self.autoclose and all_sources_finished:
-                    self.run_flag = False
+                    pending_work = self.pipeline.has_pending_work()
+                    if not pending_work:
+                        self.run_flag = False
+                    else:
+                        now_mono = time.monotonic()
+                        if source_drain_started_at is None:
+                            source_drain_started_at = now_mono
+                            get_pending = self.pipeline.get_pending_work_summary
+                            self.logger.info(
+                                "All sources reached EOF; draining pending pipeline work: %s",
+                                ", ".join(get_pending()) or "pending work",
+                            )
+                        elif now_mono - source_drain_started_at >= drain_timeout_sec:
+                            get_pending = self.pipeline.get_pending_work_summary
+                            pending_summary = get_pending()
+                            self.logger.error(
+                                "Autoclose drain timed out after %.1fs; stopping with pending work: %s",
+                                drain_timeout_sec,
+                                ", ".join(pending_summary) or "unknown",
+                            )
+                            self.run_flag = False
+                else:
+                    source_drain_started_at = None
 
                 fallback_processing_frames = self._process_pipeline_results(objects_results)
                 processing_frames = ProcessingService.collect_processing_frames(
@@ -723,9 +900,50 @@ class Controller(ControllerProcessingMixin):
             self.system_events_detector.emit_stopped()
             time.sleep(0.2)
 
+    def _log_journal_heartbeat(self) -> None:
+        """INFO heartbeat: detection journal buffers / save thread / queue liveness."""
+        try:
+            parts: list[str] = []
+            handler = getattr(self, "obj_handler", None)
+            if handler is not None:
+                try:
+                    qsz = handler.objs_queue.qsize() if getattr(handler, "objs_queue", None) else None
+                    parts.append(f"handler_q={qsz}")
+                except Exception:
+                    parts.append("handler_q=?")
+                lm = getattr(handler, "labeling_manager", None)
+                if lm is not None and hasattr(lm, "get_statistics"):
+                    try:
+                        st = lm.get_statistics()
+                        parts.append(
+                            "found_buf={found_buffered} lost_buf={lost_buffered} "
+                            "save_alive={save_thread_alive} found_mtime_age={objects_found_mtime_age_sec}".format(
+                                **{
+                                    "found_buffered": st.get("found_buffered"),
+                                    "lost_buffered": st.get("lost_buffered"),
+                                    "save_thread_alive": st.get("save_thread_alive"),
+                                    "objects_found_mtime_age_sec": (
+                                        None
+                                        if st.get("objects_found_mtime_age_sec") is None
+                                        else round(float(st.get("objects_found_mtime_age_sec")), 1)
+                                    ),
+                                }
+                            )
+                        )
+                    except Exception:
+                        parts.append("labeling=?")
+            self.logger.info("journal_heartbeat %s", " ".join(parts) if parts else "n/a")
+        except Exception:
+            pass
+
     def _log_resource_stats(self, context: str) -> None:
         """Log lightweight RSS/threads/FD metrics for the current process."""
         from evileye.utils.resource_stats import collect_process_resource_stats, format_resource_stats_line
+        from evileye.utils.memory_attribution import (
+            collect_memory_attribution,
+            ensure_tracemalloc_started,
+            format_memory_attribution_line,
+        )
 
         try:
             pid = os.getpid()
@@ -736,6 +954,7 @@ class Controller(ControllerProcessingMixin):
             return
 
         try:
+            ensure_tracemalloc_started()
             extra_parts: list[str] = []
             if self.visualizer and hasattr(self.visualizer, "get_runtime_stats"):
                 try:
@@ -764,6 +983,11 @@ class Controller(ControllerProcessingMixin):
                     extra_parts.append(f" events={self.events_detectors_controller.get_runtime_stats()}")
                 except Exception:
                     pass
+            if self.events_processor and hasattr(self.events_processor, "get_runtime_stats"):
+                try:
+                    extra_parts.append(f" event_processor={self.events_processor.get_runtime_stats()}")
+                except Exception:
+                    pass
             if self.event_buffers:
                 try:
                     buf_stats = {sid: buf.get_runtime_stats() for sid, buf in self.event_buffers.items()}
@@ -782,6 +1006,21 @@ class Controller(ControllerProcessingMixin):
                 self._format_source_restart_counters(),
                 "".join(extra_parts),
             )
+            try:
+                attrs = collect_memory_attribution(self)
+                # Always INFO for attribution so leak hunts work without raising log level.
+                self.logger.info("%s", format_memory_attribution_line(attrs))
+                tm = attrs.get("tracemalloc")
+                if isinstance(tm, dict) and tm.get("top"):
+                    top3 = tm["top"][:3]
+                    self.logger.info(
+                        "MemoryAttr(tracemalloc) current_mb=%.1f peak_mb=%.1f top=%s",
+                        float(tm.get("current_bytes") or 0) / (1024 * 1024),
+                        float(tm.get("peak_bytes") or 0) / (1024 * 1024),
+                        top3,
+                    )
+            except Exception:
+                pass
         except Exception:
             pass
 
@@ -911,6 +1150,7 @@ class Controller(ControllerProcessingMixin):
 
                 # Полностью отключаем функциональность БД
                 self.use_database = False
+                self._sync_use_database_to_params()
                 # Останавливаем адаптеры БД, если они были запущены
                 try:
                     if self.db_adapter_obj:
@@ -935,6 +1175,7 @@ class Controller(ControllerProcessingMixin):
 
         # Start events detectors и processor через EventsService
         if self._events_service:
+            self._events_service.start_adapters()
             self._events_service.start_detectors()
             if self.events_detectors_controller:
                 self.events_detectors_controller.start()
@@ -966,9 +1207,273 @@ class Controller(ControllerProcessingMixin):
         self.logger.info(f"Starting control thread for stream_pipeline_id: {self.stream_pipeline_id}")
         self.control_thread.start()
         self.logger.info(f"Control thread started successfully")
+        self._start_control_ipc()
+
+    def _start_control_ipc(self) -> None:
+        try:
+            from evileye.api.core.control_ipc import ControlIpcServer
+
+            self._control_ipc_server = ControlIpcServer()
+            self._control_ipc_server.start(self._handle_control_command)
+        except Exception as exc:
+            self.logger.warning("Control IPC not started: %s", exc)
+
+    def _stop_control_ipc(self) -> None:
+        server = self._control_ipc_server
+        self._control_ipc_server = None
+        if server is not None:
+            try:
+                server.stop()
+            except Exception:
+                pass
+
+    def _handle_control_command(self, command: dict) -> dict:
+        cmd = str(command.get("cmd") or "")
+        if cmd == "apply_schedule_alarm":
+            return self._control_apply_schedule_alarm(command)
+        if cmd == "apply_zones":
+            return self._control_apply_zones(command)
+        if cmd == "apply_zone_detector_params":
+            return self._control_apply_zone_detector_params(command)
+        if cmd == "apply_roi":
+            return self._control_apply_roi(command)
+        if cmd == "get_objects_handler_stats":
+            return self._control_get_objects_handler_stats()
+        if cmd == "get_runtime_stats":
+            return self._control_get_runtime_stats()
+        if cmd == "get_memory_attribution":
+            return self._control_get_memory_attribution()
+        return {"ok": False, "error": "unknown_command"}
+
+    def _control_get_objects_handler_stats(self) -> dict:
+        handler = getattr(self, "obj_handler", None)
+        if handler is None or not hasattr(handler, "get_runtime_stats"):
+            return {"ok": False, "error": "objects_handler_unavailable"}
+        try:
+            return {"ok": True, "stats": handler.get_runtime_stats()}
+        except Exception as exc:
+            return {"ok": False, "error": str(exc)}
+
+    def _control_get_runtime_stats(self) -> dict:
+        """Return runtime health for the active pipeline and event delivery path."""
+        from evileye.core.runtime_identity import process_identity, redact
+        components = {}
+        providers = (
+            ("pipeline", getattr(self, "pipeline", None)),
+            ("objects_handler", getattr(self, "obj_handler", None)),
+            ("events_controller", getattr(self, "events_detectors_controller", None)),
+            ("events_processor", getattr(self, "events_processor", None)),
+        )
+        for name, component in providers:
+            getter = getattr(component, "get_runtime_stats", None)
+            if not callable(getter):
+                continue
+            try:
+                components[name] = getter()
+            except Exception as exc:
+                components[name] = {"degraded": True, "diagnostic_error": str(exc)}
+
+        event_buffers = getattr(self, "event_buffers", None) or {}
+        if event_buffers:
+            components["event_buffers"] = {}
+            for source_id, buffer in event_buffers.items():
+                getter = getattr(buffer, "get_runtime_stats", None)
+                if not callable(getter):
+                    continue
+                try:
+                    components["event_buffers"][str(source_id)] = getter()
+                except Exception as exc:
+                    components["event_buffers"][str(source_id)] = {
+                        "degraded": True,
+                        "diagnostic_error": str(exc),
+                    }
+
+        degraded = any(
+            isinstance(value, dict) and bool(value.get("degraded"))
+            for name, value in components.items()
+            if name != "event_buffers"
+        )
+        if "event_buffers" in components:
+            degraded = degraded or any(
+                isinstance(value, dict) and bool(value.get("degraded"))
+                for value in components["event_buffers"].values()
+            )
+        return {
+            "ok": True,
+            "stats": {
+                "available": bool(components),
+                "degraded": degraded,
+                "components": redact(components),
+                "identity": process_identity(getattr(self, "params", None)),
+            },
+        }
+
+    def _control_get_memory_attribution(self) -> dict:
+        try:
+            from evileye.utils.memory_attribution import collect_memory_attribution
+
+            return {"ok": True, "stats": collect_memory_attribution(self)}
+        except Exception as exc:
+            return {"ok": False, "error": str(exc)}
+
+    def _control_apply_schedule_alarm(self, command: dict) -> dict:
+        detector = self.schedule_alarm_events_detector or self.fov_events_detector
+        if detector is None:
+            return {"ok": False, "error": "schedule_alarm_detector_unavailable"}
+
+        scope = str(command.get("scope") or "")
+        try:
+            if scope == "source":
+                source_id = int(command.get("source_id"))
+                override = command.get("schedule")
+                if override is not None and not isinstance(override, dict):
+                    return {"ok": False, "error": "invalid_schedule"}
+                detector.apply_source_schedule(source_id, override)
+                events_cfg = self.params.setdefault("events_detectors", {})
+                section = events_cfg.setdefault(DETECTOR_CONFIG_KEY, {})
+                sources = section.setdefault("sources", {})
+                key = str(source_id)
+                if override is None:
+                    sources.pop(key, None)
+                else:
+                    sources[key] = override
+            elif scope == "global":
+                params = command.get("params") or {}
+                if not isinstance(params, dict):
+                    return {"ok": False, "error": "invalid_params"}
+                merged = {**detector.get_params(), **params}
+                detector.apply_schedule(merged)
+                events_cfg = self.params.setdefault("events_detectors", {})
+                events_cfg[DETECTOR_CONFIG_KEY] = detector.get_params()
+            else:
+                return {"ok": False, "error": "invalid_scope"}
+        except (TypeError, ValueError):
+            return {"ok": False, "error": "invalid_source_id"}
+
+        self._publish_runtime_snapshot(state="running")
+        return {"ok": True}
+
+    def _control_apply_zones(self, command: dict) -> dict:
+        try:
+            source_id = int(command.get("source_id"))
+        except (TypeError, ValueError):
+            return {"ok": False, "error": "invalid_source_id"}
+        zones = command.get("zones")
+        if not isinstance(zones, list):
+            return {"ok": False, "error": "invalid_zones"}
+        detector = self.zone_events_detector
+        if detector is None:
+            return {"ok": False, "error": "zone_detector_unavailable"}
+        from evileye.events_detectors.zone_events_detector import ZoneEventsDetector
+
+        normalized_zones = ZoneEventsDetector._normalize_zone_coords_list(zones)
+        current_config = detector.get_params() or {}
+        sources = dict(current_config.get("sources") or {})
+        sources[str(source_id)] = normalized_zones
+        detector.submit_command(
+            "replace_zones_for_source",
+            source_id=source_id,
+            zone_coords_list=normalized_zones,
+            config_patch={"sources": sources},
+        )
+        events_cfg = self.params.setdefault("events_detectors", {})
+        if isinstance(events_cfg, dict):
+            zone_cfg = events_cfg.setdefault("ZoneEventsDetector", {})
+            if isinstance(zone_cfg, dict):
+                zone_cfg["sources"] = sources
+        try:
+            self._preview_zones_by_source = self._extract_preview_zones()
+        except Exception:
+            pass
+        self._publish_runtime_snapshot(state="running")
+        return {"ok": True, "source_id": source_id, "zone_count": len(normalized_zones)}
+
+    def _control_apply_zone_detector_params(self, command: dict) -> dict:
+        detector = self.zone_events_detector
+        if detector is None:
+            return {"ok": False, "error": "zone_detector_unavailable"}
+        event_threshold = command.get("event_threshold")
+        zone_left_threshold = command.get("zone_left_threshold")
+        if event_threshold is None and zone_left_threshold is None:
+            return {"ok": False, "error": "missing_params"}
+        try:
+            et = int(event_threshold) if event_threshold is not None else None
+            zlt = int(zone_left_threshold) if zone_left_threshold is not None else None
+        except (TypeError, ValueError):
+            return {"ok": False, "error": "invalid_params"}
+        config_patch = {}
+        if et is not None:
+            config_patch["event_threshold"] = max(0, et)
+        if zlt is not None:
+            config_patch["zone_left_threshold"] = max(0, zlt)
+        detector.submit_command(
+            "apply_thresholds",
+            event_threshold=et,
+            zone_left_threshold=zlt,
+            config_patch=config_patch,
+        )
+        events_cfg = self.params.setdefault("events_detectors", {})
+        if isinstance(events_cfg, dict):
+            zone_cfg = events_cfg.setdefault("ZoneEventsDetector", {})
+            if isinstance(zone_cfg, dict):
+                zone_cfg.update(config_patch)
+        updated_config = detector.get_params()
+        self._publish_runtime_snapshot(state="running")
+        return {
+            "ok": True,
+            "event_threshold": updated_config.get("event_threshold"),
+            "zone_left_threshold": updated_config.get("zone_left_threshold"),
+        }
+
+    def _control_apply_roi(self, command: dict) -> dict:
+        from evileye.api.core.roi_config import set_detector_rois_for_source, xywh_list_to_xyxy_int
+
+        try:
+            source_id = int(command.get("source_id"))
+        except (TypeError, ValueError):
+            return {"ok": False, "error": "invalid_source_id"}
+        rois = command.get("rois")
+        if not isinstance(rois, list):
+            return {"ok": False, "error": "invalid_rois"}
+
+        det = None
+        if self.pipeline is not None and hasattr(self.pipeline, "get_detectors"):
+            for candidate in self.pipeline.get_detectors() or []:
+                try:
+                    src_ids = (
+                        candidate.get_source_ids()
+                        if hasattr(candidate, "get_source_ids")
+                        else getattr(candidate, "source_ids", [])
+                    )
+                    if source_id in (src_ids or []):
+                        det = candidate
+                        break
+                except Exception:
+                    continue
+
+        if det is None or not hasattr(det, "set_rois_for_source"):
+            return {"ok": False, "error": "detector_unavailable"}
+
+        rois_xywh: list[list[float]] = []
+        for item in rois:
+            if isinstance(item, (list, tuple)) and len(item) >= 4:
+                try:
+                    rois_xywh.append([float(v) for v in item[:4]])
+                except (TypeError, ValueError):
+                    continue
+
+        rois_xyxy = xywh_list_to_xyxy_int(rois_xywh)
+        det.set_rois_for_source(source_id, rois_xyxy)
+        try:
+            set_detector_rois_for_source(self.params, source_id, rois_xywh)
+        except Exception:
+            pass
+        self._publish_runtime_snapshot(state="running")
+        return {"ok": True, "source_id": source_id, "roi_count": len(rois_xywh)}
 
     def stop(self):
         self.run_flag = False
+        self._stop_control_ipc()
         self._publish_runtime_snapshot(state="stopping")
         self.logger.info("Controller shutdown: stopping pipeline")
         # Stop pipeline first (detectors/trackers/captures) so source reconnect and
@@ -997,16 +1502,20 @@ class Controller(ControllerProcessingMixin):
         # Stop events detectors через EventsService
         if self._events_service:
             self.logger.info("Controller shutdown: stopping events subsystem")
-            self._events_service.stop_detectors()
-            # Flush events controller once before stopping
+            # Stop polling before detector workers close their IPC queues.
             if self.events_detectors_controller:
+                self.events_detectors_controller.stop()
                 self.events_detectors_controller.flush_once()
                 events = self.events_detectors_controller.get()
                 if events and self.events_processor:
                     self.events_processor.put(events)
-                self.events_detectors_controller.stop()
+            self._events_service.stop_detectors()
             if self.events_processor:
                 self.events_processor.stop()
+            try:
+                self._events_service.stop_adapters()
+            except Exception as exc:
+                self.logger.error("Failed to stop event adapters: %s", exc, exc_info=True)
 
         # Stop event recording
         self.logger.info("Controller shutdown: stopping event recorders")
@@ -1019,12 +1528,16 @@ class Controller(ControllerProcessingMixin):
         self.event_recorders.clear()
         self.event_buffers.clear()
 
-        # Stop database adapters через DatabaseService
-        if self.use_database and self._database_service.is_connected():
+        # Stop database adapters even after the connection has failed or the
+        # runtime has switched to JSON-only mode. Workers may still be alive.
+        if self._database_service is not None:
             self.logger.info("Controller shutdown: stopping database adapters")
             self._database_service.stop_adapters()
-            if self.db_controller:
-                self.db_controller.disconnect()
+            if self.db_controller is not None:
+                try:
+                    self.db_controller.disconnect()
+                except Exception as exc:
+                    self.logger.warning("Error disconnecting database: %s", exc)
 
         # Stop storage monitor
         if self.storage_monitor:
@@ -1110,6 +1623,14 @@ class Controller(ControllerProcessingMixin):
         if 'controller' in self.params.keys():
             self.autoclose = self.params['controller'].get("autoclose", self.autoclose)
             self.fps = self.params['controller'].get("fps", self.fps)
+            # Preserve GUI-oriented fps for config save when headless policy rewrote runtime fps.
+            try:
+                self._fps_configured = float(
+                    self.params['controller'].get("fps_configured", self.fps) or self.fps
+                )
+            except (TypeError, ValueError):
+                self._fps_configured = float(self.fps or 30)
+            self.fps_headless = self.params['controller'].get("fps_headless", None)
             self.show_main_gui = self.params['controller'].get("show_main_gui", self.show_main_gui)
             self.gui_enabled = self.params['controller'].get("gui_enabled", self.gui_enabled)
             self.skip_objects_handler = self.params['controller'].get("skip_objects_handler", self.skip_objects_handler)
@@ -1147,12 +1668,7 @@ class Controller(ControllerProcessingMixin):
         if isinstance(server_cfg, dict):
             self._stream_publish_fps = float(server_cfg.get("publish_fps", self._stream_publish_fps) or 0.0)
 
-        try:
-            with open("credentials.json") as creds_file:
-                self.credentials = json.load(creds_file)
-                self.credentials_loaded = True
-        except FileNotFoundError as ex:
-            self.credentials_loaded = False
+        self._load_credentials()
 
         pipeline_params = self.params.get("pipeline", {})
         if self._config_service is not None:
@@ -1164,7 +1680,11 @@ class Controller(ControllerProcessingMixin):
         pipeline_class_name = pipeline_params.get("pipeline_class")
         self.logger.info(f"Using EVILEYE_PIPELINE_ID for streaming: {self.stream_pipeline_id}")
 
-        self.pipeline = self._pipeline_service.create_pipeline(pipeline_class_name)
+        self.pipeline = self._pipeline_service.create_pipeline(
+            pipeline_class_name,
+            pipeline_params=pipeline_params,
+            credentials=self.credentials,
+        )
         self.pipeline = self._pipeline_service.initialize_pipeline(
             pipeline=self.pipeline,
             pipeline_params=pipeline_params,
@@ -1215,13 +1735,18 @@ class Controller(ControllerProcessingMixin):
                 # Сохраняем ссылки на адаптеры для обратной совместимости
                 self.db_adapter_obj = self._database_service.get_adapter('DatabaseAdapterObjects')
                 self.db_adapter_cam_events = self._database_service.get_adapter('DatabaseAdapterCamEvents')
-                self.db_adapter_fov_events = self._database_service.get_adapter('DatabaseAdapterFieldOfViewEvents')
+                self.db_adapter_schedule_alarm_events = (
+                    self._database_service.get_adapter('DatabaseAdapterScheduleAlarmEvents')
+                    or self._database_service.get_adapter('DatabaseAdapterFieldOfViewEvents')
+                )
+                self.db_adapter_fov_events = self.db_adapter_schedule_alarm_events
                 self.db_adapter_zone_events = self._database_service.get_adapter('DatabaseAdapterZoneEvents')
                 self.db_adapter_attr_events = self._database_service.get_adapter('DatabaseAdapterAttributeEvents')
                 self.db_adapter_system_events = self._database_service.get_adapter('DatabaseAdapterSystemEvents')
             else:
                 # Fallback to no-database mode
                 self.use_database = False
+                self._sync_use_database_to_params()
                 self.db_controller = None
                 self.database_config = {"database": {}, "database_adapters": {}}
 
@@ -1237,10 +1762,14 @@ class Controller(ControllerProcessingMixin):
             )
 
         server_cfg = self.params.get("server", {}) if isinstance(self.params, dict) else {}
-        relay_base_url = os.environ.get("EVILEYE_WEB_API_BASE")
+        managed_run = os.environ.get("EVILEYE_MANAGED_RUN") == "1"
+        from evileye.api.core.internal_unix import internal_relay_target_url, internal_relay_url
+
+        relay_base_url = internal_relay_target_url() if managed_run else internal_relay_url()
         relay_token = os.environ.get("EVILEYE_INTERNAL_TOKEN") or load_web_auth_config().internal_token
+        default_workers = 2 if bool(server_cfg.get("enabled")) else 1
+        default_render_workers = max(3, default_workers)
         if self._streaming_service is not None:
-            default_workers = 2 if bool(server_cfg.get("enabled")) else 1
             self._streaming_service.configure(
                 pipeline_id=self.stream_pipeline_id,
                 publish_fps=self._stream_publish_fps,
@@ -1256,22 +1785,47 @@ class Controller(ControllerProcessingMixin):
         if self._preview_render_service is not None:
             self._preview_render_service.configure(
                 streaming_service=self._streaming_service,
-                num_workers=server_cfg.get("preview_render_workers", 1),
+                num_workers=server_cfg.get("preview_render_workers", default_render_workers),
             )
 
         # Managed API runs already have an outer web server; do not start another one inside the child runtime.
-        managed_run = os.environ.get("EVILEYE_MANAGED_RUN") == "1"
         # Initialize web server in a separate process if configured
         if managed_run and server_cfg.get("enabled", False):
             self.logger.info("Skipping embedded web server for managed runtime launch")
-            if self._streaming_service is not None and relay_base_url:
-                self._streaming_service.set_frame_relay(relay_base_url, relay_token)
+            if self._streaming_service is not None:
+                self._streaming_service.set_frame_relay(internal_relay_target_url(), relay_token)
         elif server_cfg.get("enabled", False) and str(server_cfg.get("execution_mode", "process")).lower() == "process":
             host = server_cfg.get("host", "127.0.0.1")
             port = int(server_cfg.get("port", 8181))
-            scheme = "https" if server_cfg.get("ssl_certfile") or server_cfg.get("ssl_keyfile") else "http"
-            inferred_base_url = relay_base_url or f"{scheme}://{host}:{port}/api/v1"
-            if not self._can_bind_embedded_server(host, port):
+            from evileye.service_manager import is_web_os_service_active, is_web_os_service_enabled
+
+            ssl_certfile = ssl_keyfile = None
+            try:
+                from evileye.api.core.ssl_files import SslConfigError, apply_ssl_env, resolve_ssl_files
+                from evileye.core.paths import site_root
+
+                cert, key = resolve_ssl_files(server_cfg=server_cfg, site_dir=site_root())
+                apply_ssl_env(cert, key)
+                ssl_certfile = str(cert) if cert else None
+                ssl_keyfile = str(key) if key else None
+            except SslConfigError as exc:
+                self.logger.error("Invalid TLS configuration for embedded web server: %s", exc)
+                raise
+            inferred_base_url = internal_relay_target_url()
+            if is_web_os_service_enabled() or is_web_os_service_active():
+                if is_web_os_service_enabled() and not is_web_os_service_active():
+                    self.logger.warning(
+                        "Skipping embedded web server: OS service evileye.service is enabled "
+                        "but not active; start it with: evileye service start"
+                    )
+                else:
+                    self.logger.info(
+                        "Skipping embedded web server: OS service evileye.service is active "
+                        "(Web UI is served separately, including HTTPS)"
+                    )
+                if self._streaming_service is not None:
+                    self._streaming_service.set_frame_relay(inferred_base_url, relay_token)
+            elif not self._can_bind_embedded_server(host, port):
                 self.logger.info(
                     "Skipping embedded web server because %s:%s is already in use",
                     host,
@@ -1288,6 +1842,8 @@ class Controller(ControllerProcessingMixin):
                         host=host,
                         port=port,
                         log_level=server_cfg.get("log_level", "info"),
+                        ssl_certfile=ssl_certfile,
+                        ssl_keyfile=ssl_keyfile,
                     )
                     time.sleep(0.2)
                     if not self._server_process_manager.is_alive():
@@ -1332,7 +1888,25 @@ class Controller(ControllerProcessingMixin):
     def update_params(self):
         self.params['controller'] = dict()
         self.params['controller']["autoclose"] = self.autoclose
-        self.params['controller']["fps"] = self.fps
+        # Persist GUI-oriented fps, not the headless-effective runtime value.
+        fps_to_save = getattr(self, "_fps_configured", None)
+        if fps_to_save is None:
+            try:
+                fps_to_save = (self.loaded_config or {}).get("controller", {}).get("fps_configured")
+            except Exception:
+                fps_to_save = None
+        if fps_to_save is None:
+            fps_to_save = self.fps
+        self.params['controller']["fps"] = fps_to_save
+        if getattr(self, "fps_headless", None) is not None:
+            self.params['controller']["fps_headless"] = self.fps_headless
+        else:
+            try:
+                orig_hl = (self.loaded_config or {}).get("controller", {}).get("fps_headless")
+            except Exception:
+                orig_hl = None
+            if orig_hl is not None:
+                self.params['controller']["fps_headless"] = orig_hl
         self.params['controller']["show_main_gui"] = self.show_main_gui
         self.params['controller']["gui_enabled"] = self.gui_enabled
         self.params['controller']["show_journal"] = self.show_journal
@@ -1409,7 +1983,9 @@ class Controller(ControllerProcessingMixin):
 
         self.params['events_detectors'] = dict()
         self.params['events_detectors']['CamEventsDetector'] = self.cam_events_detector.get_params()
-        self.params['events_detectors']['FieldOfViewEventsDetector'] = self.fov_events_detector.get_params()
+        self.params['events_detectors'][DETECTOR_CONFIG_KEY] = (
+            (self.schedule_alarm_events_detector or self.fov_events_detector).get_params()
+        )
         self.params['events_detectors']['ZoneEventsDetector'] = self.zone_events_detector.get_params()
         if self.attr_events_detector:
             self.params['events_detectors']['AttributeEventsDetector'] = self.attr_events_detector.get_params()
@@ -1748,10 +2324,12 @@ class Controller(ControllerProcessingMixin):
             self.debug_info.setdefault("cam_events_detector", {}))
         total_memory_usage += comp_debug_info["memory_measure_results"]
 
-        self.fov_events_detector.calc_memory_consumption()
-        comp_debug_info = self.fov_events_detector.insert_debug_info_by_id(
-            self.debug_info.setdefault("fov_events_detector", {}))
-        total_memory_usage += comp_debug_info["memory_measure_results"]
+        detector = self.schedule_alarm_events_detector or self.fov_events_detector
+        if detector:
+            detector.calc_memory_consumption()
+            comp_debug_info = detector.insert_debug_info_by_id(
+                self.debug_info.setdefault("schedule_alarm_events_detector", {}))
+            total_memory_usage += comp_debug_info["memory_measure_results"]
 
         self.zone_events_detector.calc_memory_consumption()
         comp_debug_info = self.zone_events_detector.insert_debug_info_by_id(
@@ -1780,10 +2358,12 @@ class Controller(ControllerProcessingMixin):
                 self.debug_info.setdefault("db_adapter_cam_events", {}))
             total_memory_usage += comp_debug_info["memory_measure_results"]
 
-            self.db_adapter_fov_events.calc_memory_consumption()
-            comp_debug_info = self.db_adapter_fov_events.insert_debug_info_by_id(
-                self.debug_info.setdefault("db_adapter_fov_events", {}))
-            total_memory_usage += comp_debug_info["memory_measure_results"]
+            db_schedule = self.db_adapter_schedule_alarm_events or self.db_adapter_fov_events
+            if db_schedule:
+                db_schedule.calc_memory_consumption()
+                comp_debug_info = db_schedule.insert_debug_info_by_id(
+                    self.debug_info.setdefault("db_adapter_schedule_alarm_events", {}))
+                total_memory_usage += comp_debug_info["memory_measure_results"]
 
             self.db_adapter_zone_events.calc_memory_consumption()
             comp_debug_info = self.db_adapter_zone_events.insert_debug_info_by_id(
@@ -1818,63 +2398,20 @@ class Controller(ControllerProcessingMixin):
             pass
 
     def _discover_pipeline_classes(self):
-        """Discover all pipeline classes from packages and current directory"""
-        pipeline_classes = {}
-
-        # Search in evileye.pipelines package
-        try:
-            pipelines_module = importlib.import_module('evileye.pipelines')
-            for name, obj in inspect.getmembers(pipelines_module):
-                # __bases__ - встроенный атрибут всех классов Python, getattr безопаснее и быстрее inspect.getmro
-                bases = getattr(obj, '__bases__', None)
-                if (inspect.isclass(obj) and
-                        bases and
-                        any('Pipeline' in base.__name__ for base in bases)):
-                    pipeline_classes[name] = obj
-        except ImportError as e:
-            self.logger.warning(f"Failed to import evileye.pipelines: {e}")
-
-        # Search in current working directory pipelines folder
-        current_dir = Path.cwd()
-        pipelines_dir = current_dir / "pipelines"
-        if pipelines_dir.exists() and pipelines_dir.is_dir():
-            try:
-                # Add current directory to Python path
-                import sys
-                sys.path.insert(0, str(current_dir))
-
-                # Try to import pipelines module from current directory
-                pipelines_module = importlib.import_module('pipelines')
-                for name, obj in inspect.getmembers(pipelines_module):
-                    # __bases__ - встроенный атрибут всех классов Python, getattr безопаснее и быстрее inspect.getmro
-                    bases = getattr(obj, '__bases__', None)
-                    if (inspect.isclass(obj) and
-                            bases and
-                            any('Pipeline' in base.__name__ for base in bases)):
-                        pipeline_classes[name] = obj
-
-                # Remove from path
-                sys.path.pop(0)
-            except ImportError as e:
-                self.logger.warning(f"Failed to import local pipelines: {e}")
-
-        return pipeline_classes
+        """Return pipelines exposed by the startup plugin registry."""
+        return self._pipeline_service._discover_pipeline_classes()
 
     def _create_pipeline_instance(self, pipeline_class_name: str):
-        """Create pipeline instance by class name"""
-        pipeline_classes = self._discover_pipeline_classes()
-
-        if pipeline_class_name not in pipeline_classes:
-            available_classes = list(pipeline_classes.keys())
-            raise ValueError(
-                f"Pipeline class '{pipeline_class_name}' not found. Available classes: {available_classes}")
-
-        pipeline_class = pipeline_classes[pipeline_class_name]
-        return pipeline_class()
+        """Create a pipeline through the shared plugin registry."""
+        return self._pipeline_service._create_pipeline_instance(
+            pipeline_class_name,
+            pipeline_params=(self.params or {}).get("pipeline", {}),
+            credentials=self.credentials,
+        )
 
     def get_available_pipeline_classes(self):
         """Get list of available pipeline classes"""
-        return list(self._discover_pipeline_classes().keys())
+        return self._pipeline_service.get_available_pipeline_classes()
 
     def get_class_name(self, class_id: int) -> str:
         """Get class name from class ID using class_mapping"""
@@ -1892,39 +2429,79 @@ class Controller(ControllerProcessingMixin):
         sorted_classes = sorted(self.class_mapping.items(), key=lambda x: x[1])
         return [name for name, _ in sorted_classes]
 
+    def _get_pipeline_detectors(self):
+        """Return detectors through the pipeline's declared detector accessor."""
+        if self.pipeline is None:
+            return []
+        get_detectors = getattr(self.pipeline, "get_detectors", None)
+        if not callable(get_detectors):
+            return []
+        return list(get_detectors() or [])
+
+    @staticmethod
+    def _get_detector_class_mapping(detector):
+        provider = getattr(detector, "get_model_class_mapping", None)
+        return provider() if callable(provider) else None
+
+    def _apply_detector_class_remap(self, detector, remap) -> None:
+        """Make the detectors stage emit class ids from the global class space."""
+        detector_name = str(getattr(detector, "module_id", None) or detector.__class__.__name__)
+        changed = {k: v for k, v in (remap or {}).items() if k != v}
+        if changed:
+            self.logger.warning(
+                "Detector %s uses class ids that collide with other models; "
+                "remapping to the global class space: %s", detector_name, changed,
+            )
+        for container in getattr(self.pipeline, "processors", None) or ():
+            setter = getattr(container, "set_class_id_remap", None)
+            if callable(setter) and setter(detector, remap):
+                return
+
+    def _merge_detector_class_mapping(self, detector, mapping) -> bool:
+        """Merge a newly published detector mapping into controller metadata."""
+        if not mapping:
+            return False
+        detector_name = str(
+            getattr(detector, "module_id", None) or detector.__class__.__name__
+        )
+        normalized = dict(mapping)
+        cache = getattr(self, "_detector_class_mapping_cache", None)
+        if cache is None:
+            cache = self._detector_class_mapping_cache = {}
+        if cache.get(detector_name) == normalized:
+            return False
+
+        cache[detector_name] = normalized
+        conflicts_before = len(self.class_manager.get_conflicts())
+        remap = self.class_manager.register_detector_mapping(normalized, detector_name)
+        if len(self.class_manager.get_conflicts()) > conflicts_before:
+            self.logger.warning(
+                "Conflicts detected when adding mapping from %s", detector_name
+            )
+        self._apply_detector_class_remap(detector, remap)
+        self.class_mapping = self.class_manager.get_class_mapping()
+        if self.visualizer:
+            self.visualizer.class_mapping = self.class_mapping
+        return True
+
     def update_class_mapping_from_detectors(self):
         """Update class_mapping from all detectors in the pipeline using ClassManager"""
         if not self.pipeline:
             return
 
-        # Get all detectors from pipeline
-        detectors = []
-        # PipelineProcessors инициализирует processors в __init__, поэтому прямой доступ безопасен
-        if hasattr(self.pipeline, 'processors') and self.pipeline.processors:
-            for processor in self.pipeline.processors:
-                # ProcessorFrame имеет метод get_processors, проверяем наличие метода
-                if hasattr(processor, 'get_processors'):
-                    for proc in processor.get_processors():
-                        # ObjectDetectorBase имеет метод get_model_class_mapping, проверяем наличие метода
-                        if hasattr(proc, 'get_model_class_mapping'):
-                            detectors.append(proc)
+        detectors = self._get_pipeline_detectors()
 
         # Collect class mappings from all detectors using ClassManager
         for detector in detectors:
-            mapping = detector.get_model_class_mapping()
+            mapping = self._get_detector_class_mapping(detector)
             if mapping:
-                detector_name = detector.__class__.__name__
-                success = self.class_manager.add_class_mapping(mapping, detector_name)
-                if not success:
-                    self.logger.warning(f"Conflicts detected when adding mapping from {detector_name}")
+                self._merge_detector_class_mapping(detector, mapping)
 
-                # CRITICAL: Force update classes after getting model mapping
-                # Проверяем наличие метода, так как не все детекторы могут его иметь
-                if hasattr(detector, '_update_classes_after_model_loading'):
-                    detector._update_classes_after_model_loading()
-            else:
-                # Model not loaded yet, try to get mapping (this will trigger late update if model is loaded)
-                detector.get_model_class_mapping()
+                update_classes = getattr(
+                    detector, "_update_classes_after_model_loading", None
+                )
+                if callable(update_classes):
+                    update_classes()
 
         # Update controller's class_mapping from ClassManager
         if self.class_manager.class_mapping:
@@ -1974,17 +2551,7 @@ class Controller(ControllerProcessingMixin):
                 if not self.pipeline:
                     continue
 
-                # Get all detectors from pipeline
-                detectors = []
-                # PipelineProcessors инициализирует processors в __init__, поэтому прямой доступ безопасен
-                if hasattr(self.pipeline, 'processors') and self.pipeline.processors:
-                    for processor in self.pipeline.processors:
-                        # ProcessorFrame имеет метод get_processors, проверяем наличие метода
-                        if hasattr(processor, 'get_processors'):
-                            for proc in processor.get_processors():
-                                # ObjectDetectorBase имеет метод get_model_class_mapping, проверяем наличие метода
-                                if hasattr(proc, 'get_model_class_mapping'):
-                                    detectors.append(proc)
+                detectors = self._get_pipeline_detectors()
 
                 # Check each detector
                 updated = False
@@ -1996,8 +2563,17 @@ class Controller(ControllerProcessingMixin):
                     )
                     if str(exec_mode).lower() not in {"process", "mp", "multiprocessing"}:
                         process_mode_only = False
-                    mapping = detector.get_model_class_mapping()
-                    # Проверяем наличие метода, так как не все детекторы могут его иметь
+                    mapping = self._get_detector_class_mapping(detector)
+                    if mapping:
+                        mapping_changed = self._merge_detector_class_mapping(
+                            detector, mapping
+                        )
+                        # A plugin publishes model metadata from its worker. Once
+                        # available, no legacy detector callback is required.
+                        if mapping_changed or getattr(
+                            detector, "reports_model_class_mapping", False
+                        ):
+                            updated = True
                     if mapping and hasattr(detector, '_check_and_update_classes_if_needed'):
                         detector._check_and_update_classes_if_needed()
                         updated = True
@@ -2006,9 +2582,13 @@ class Controller(ControllerProcessingMixin):
                     self.logger.info("Late model loading detected, classes updated")
                     break
 
-                if detectors and process_mode_only:
+                if detectors and process_mode_only and not any(
+                    getattr(detector, "reports_model_class_mapping", False)
+                    and not getattr(detector, "degraded", False)
+                    for detector in detectors
+                ):
                     self.logger.debug(
-                        "Model class late-update skipped: detectors run in process mode"
+                        "Model class late-update skipped: process detectors do not publish class mappings"
                     )
                     return
 
@@ -2027,13 +2607,8 @@ class Controller(ControllerProcessingMixin):
 
         # Create pipeline instance if class name is provided
         if pipeline_class:
-            try:
-                self.pipeline = self._create_pipeline_instance(pipeline_class)
-                self.logger.info(f"Created pipeline instance: {pipeline_class}")
-            except Exception as e:
-                self.logger.warning(f"Failed to create pipeline '{pipeline_class}': {e}")
-                self.logger.info("Using default pipeline")
-                self.pipeline = PipelineSurveillance()
+            self.pipeline = self._create_pipeline_instance(pipeline_class)
+            self.logger.info(f"Created pipeline instance: {pipeline_class}")
         else:
             # Use default pipeline
             self.pipeline = PipelineSurveillance()

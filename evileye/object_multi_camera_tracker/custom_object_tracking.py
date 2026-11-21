@@ -1,10 +1,8 @@
-from typing import Dict, List, Tuple
+from typing import List, Tuple
 import datetime
-from collections import deque
 import os
 import time
 from timeit import default_timer as timer
-import threading
 from queue import Empty
 
 import numpy as np
@@ -24,9 +22,9 @@ from ..object_tracker.tracking_results import TrackingResult, TrackingResultList
 from .object_multicam_tracking_base import ObjectMultiCameraTrackingBase
 from .mctrack import MCTrack
 from ..object_tracker.trackers.sctrack import SCTrack
-from dataclasses import dataclass
 from pympler import asizeof
 from ..core.base_class import EvilEyeBase
+from ..core.plugins import register_module
 from ..core.frame import Frame
 from ..core.ipc_contracts import BatchMeta
 from ..core.tracking_dto import TrackingDTO, TrackingObjectDTO
@@ -47,7 +45,7 @@ def _sync_tracking_result_with_frame(
         track_info.frame_id = frame.frame_id
 
 
-@EvilEyeBase.register("ObjectMultiCameraTracking")
+@register_module("ObjectMultiCameraTracking", kind="batch_processor", execution_modes=("thread",))
 class ObjectMultiCameraTracking(ObjectMultiCameraTrackingBase):
 
     def __init__(self):
@@ -273,6 +271,14 @@ class ObjectMultiCameraTracking(ObjectMultiCameraTrackingBase):
         if emitted:
             self._accumulated_tick_batch.clear()
         return emitted
+
+    def process_batch(
+        self,
+        batch: dict[int, tuple[TrackingResultList, Frame]],
+        state=None,
+    ) -> list[tuple[TrackingResultList, Frame]]:
+        """Plugin SPI entry point for one synchronized multi-camera batch."""
+        return self.ingest_tick_batch(batch)
 
     def process_tick_batch(
         self,

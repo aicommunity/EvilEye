@@ -1,13 +1,14 @@
 import { useEffect, useMemo, useState } from 'react';
-import { journalsApi, type JournalGroupedRow, cacheGet, cacheSet, isAbortError } from '../../api';
-import { Button } from '../../components/ui';
+import { journalsApi, type JournalGroupedRow, cacheGet, cacheSet, formatApiError, isAbortError } from '../../api';
+import { withAuthScope } from '../../auth/authScope';
+import { Button, DatePickerField } from '../../components/ui';
 import { useToast } from '../../components/ui/Toast';
 import { useI18n } from '../../i18n';
 import { useRunConfigFlags } from '../../hooks/useRunConfigFlags';
 import { JournalDetailDrawer } from './JournalDetailDrawer';
 import { JournalTable } from './JournalTable';
 import { useJournalFeed } from './useJournalFeed';
-import type { JournalType } from './journalMath';
+import { eventTypeLabel, type JournalType } from './journalMath';
 import { useVisibilityPolling } from '../../hooks/useVisibilityPolling';
 
 function formatLocalDate(d: Date): string {
@@ -24,7 +25,13 @@ function yesterday(): string {
   return formatLocalDate(d);
 }
 
-const META_CACHE_KEY = 'journals:meta';
+function daysAgo(n: number): string {
+  const d = new Date();
+  d.setDate(d.getDate() - n);
+  return formatLocalDate(d);
+}
+
+const metaCacheKey = () => withAuthScope('journals:meta');
 const META_TTL_MS = 60_000;
 
 export function EventsPage() {
@@ -40,7 +47,7 @@ export function EventsPage() {
     event_types_events: string[];
     event_types_objects: string[];
     source_names: string[];
-  }>(META_CACHE_KEY);
+  }>(metaCacheKey());
   const [eventTypes, setEventTypes] = useState<string[]>(() =>
     tab === 'objects' ? cachedMeta?.event_types_objects ?? [] : cachedMeta?.event_types_events ?? [],
   );
@@ -74,13 +81,13 @@ export function EventsPage() {
       setEventTypes(tab === 'objects' ? meta.event_types_objects : meta.event_types_events);
       setSources(meta.source_names);
     };
-    const cached = cacheGet<typeof cachedMeta>(META_CACHE_KEY);
+    const cached = cacheGet<typeof cachedMeta>(metaCacheKey());
     if (cached) apply(cached);
     void journalsApi
       .filtersMeta({ signal: ac.signal })
       .then((meta) => {
         if (ac.signal.aborted) return;
-        cacheSet(META_CACHE_KEY, meta, META_TTL_MS);
+        cacheSet(metaCacheKey(), meta, META_TTL_MS);
         apply(meta);
       })
       .catch((e) => {
@@ -133,7 +140,7 @@ export function EventsPage() {
       a.click();
       URL.revokeObjectURL(href);
     } catch (e) {
-      showError(e instanceof Error ? e.message : t('common.error'));
+      showError(formatApiError(e, t));
     } finally {
       setExporting(false);
     }
@@ -159,18 +166,13 @@ export function EventsPage() {
           <p className="setup-banner">{t('journals.detectionDisabled')}</p>
         ) : null}
         <div className="journal-toolbar toolbar">
-          <label className="hint" style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
+          <label className="toolbar-label">
             {t('journals.dateFrom')}
-            <input
-              type="date"
-              className="search-input"
-              value={dateFrom}
-              onChange={(e) => setDateFrom(e.target.value)}
-            />
+            <DatePickerField className="search-input" value={dateFrom} onChange={setDateFrom} />
           </label>
-          <label className="hint" style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
+          <label className="toolbar-label">
             {t('journals.dateTo')}
-            <input type="date" className="search-input" value={dateTo} onChange={(e) => setDateTo(e.target.value)} />
+            <DatePickerField className="search-input" value={dateTo} onChange={setDateTo} />
           </label>
           <Button
             size="sm"
@@ -206,7 +208,7 @@ export function EventsPage() {
             <option value="">{t('journals.allTypes')}</option>
             {eventTypes.map((et) => (
               <option key={et} value={et}>
-                {et}
+                {eventTypeLabel(t, et)}
               </option>
             ))}
           </select>
@@ -220,7 +222,7 @@ export function EventsPage() {
               ))}
             </select>
           ) : null}
-          <Button variant="outline" onClick={() => void feed.reload()}>
+          <Button size="sm" variant="outline" onClick={() => void feed.reload()}>
             {t('common.refresh')}
           </Button>
           {tab !== 'history' ? (
@@ -263,6 +265,25 @@ export function EventsPage() {
           )
         ) : (
           <>
+            {!feed.loading && !feed.rows.length ? (
+              <div className="empty" style={{ marginBottom: 12 }}>
+                <p>
+                  {eventType === 'zone_entered'
+                    ? t('journals.emptyZoneEntered')
+                    : t('journals.emptyEventsPeriod')}
+                </p>
+                <Button
+                  size="sm"
+                  variant="outline"
+                  onClick={() => {
+                    setDateFrom(daysAgo(30));
+                    setDateTo(today());
+                  }}
+                >
+                  {t('journals.expandDateRange30')}
+                </Button>
+              </div>
+            ) : null}
             {!feed.loading && feed.message ? <p className="empty">{feed.message}</p> : null}
             <JournalTable
               rows={feed.rows}

@@ -2,9 +2,11 @@ import json
 import os
 import tempfile
 import time
+import threading
 from contextlib import contextmanager
 from pathlib import Path
 from typing import Dict, Iterable, Optional
+import psutil
 
 from evileye.core.logger import get_module_logger
 
@@ -23,6 +25,7 @@ _corrupt_record_logged: set[int] = set()
 _corrupt_snapshot_logged: set[int] = set()
 _last_discover_ts: float = 0.0
 _DISCOVER_MIN_INTERVAL_SEC = 5.0
+_discover_lock = threading.Lock()
 _STUB_FIELDS = (
     "id",
     "pid",
@@ -55,7 +58,7 @@ def _snapshot_path(rid: int) -> Path:
     return SNAPSHOT_DIR / f"{int(rid)}.json"
 
 
-def _atomic_write_text(path: Path, text: str) -> None:
+def _atomic_write_text(path: Path, text: str, *, fsync: bool = True) -> None:
     """Write ``text`` to ``path`` via temp file + ``os.replace`` (atomic on POSIX)."""
     path.parent.mkdir(parents=True, exist_ok=True)
     fd, tmp_name = tempfile.mkstemp(
@@ -67,7 +70,8 @@ def _atomic_write_text(path: Path, text: str) -> None:
         with os.fdopen(fd, "w", encoding="utf-8") as handle:
             handle.write(text)
             handle.flush()
-            os.fsync(handle.fileno())
+            if fsync:
+                os.fsync(handle.fileno())
         os.replace(tmp_name, path)
     except Exception:
         try:
@@ -77,14 +81,34 @@ def _atomic_write_text(path: Path, text: str) -> None:
         raise
 
 
+_VOLATILE_KEYS = frozenset({"updated_at"})
+
+
+def _stable_payload(data: Dict) -> str:
+    """Canonical JSON for equality checks (ignore volatile timestamps)."""
+    filtered = {k: v for k, v in data.items() if k not in _VOLATILE_KEYS}
+    return json.dumps(filtered, ensure_ascii=False, sort_keys=True, separators=(",", ":"), default=str)
+
+
+def _unchanged_on_disk(path: Path, payload: str) -> bool:
+    if not path.exists():
+        return False
+    try:
+        return path.read_text(encoding="utf-8") == payload
+    except Exception:
+        return False
+
+
 def _is_pid_alive(pid: Optional[int]) -> bool:
     if not pid or pid <= 0:
         return False
     try:
-        os.kill(int(pid), 0)
-    except OSError:
+        process = psutil.Process(int(pid))
+        if not process.is_running() or process.status() == psutil.STATUS_ZOMBIE:
+            return False
+    except (psutil.Error, ValueError, TypeError):
         return False
-    return True
+    return _parse_process_cmdline(int(pid)) is not None
 
 
 @contextmanager
@@ -114,34 +138,39 @@ def allocate_pipeline_id(extra_ids: Optional[Iterable[int]] = None) -> int:
 
 
 def _parse_process_cmdline(pid: int) -> Optional[dict]:
-    proc_dir = Path("/proc") / str(pid)
     try:
-        raw_cmdline = (proc_dir / "cmdline").read_bytes()
-        parts = [p.decode("utf-8", errors="ignore") for p in raw_cmdline.split(b"\0") if p]
-    except Exception:
+        process = psutil.Process(pid)
+        parts = process.cmdline()
+    except (psutil.Error, ValueError, TypeError):
         return None
     if not parts:
         return None
-    joined = " ".join(parts)
-    if "evileye/process.py" not in joined:
+    normalized = [part.replace("\\", "/").lower() for part in parts]
+    if not any(part.endswith("/evileye/process.py") or part == "evileye/process.py" or
+               (part == "evileye.process" and index > 0 and parts[index - 1] == "-m")
+               for index, part in enumerate(normalized)):
         return None
     config_path = None
-    for idx, part in enumerate(parts[:-1]):
-        if part == "--config":
+    for idx, part in enumerate(parts):
+        if part == "--config" and idx + 1 < len(parts):
             config_path = parts[idx + 1]
             break
-    if not config_path:
+        if part.startswith("--config="):
+            config_path = part.split("=", 1)[1]
+            break
+    if not config_path and not any(part == "--video" or part.startswith("--video=") for part in parts):
         return None
     env: dict[str, str] = {}
     try:
-        raw_env = (proc_dir / "environ").read_bytes().split(b"\0")
-        for item in raw_env:
-            if b"=" not in item:
-                continue
-            key, value = item.split(b"=", 1)
-            env[key.decode("utf-8", errors="ignore")] = value.decode("utf-8", errors="ignore")
-    except Exception:
+        env = process.environ()
+    except psutil.Error:
         pass
+    if config_path and not Path(config_path).is_absolute():
+        try:
+            config_path = str(Path(process.cwd()) / config_path)
+        except psutil.Error:
+            # A known runtime record already contains its resolved path.
+            config_path = None
     return {
         "pid": pid,
         "config_path": config_path,
@@ -164,12 +193,16 @@ def discover_process_runtimes() -> None:
         record = load_runtime_record(rid, refresh_state=False)
         if record and record.get("pid"):
             known_by_pid[int(record["pid"])] = rid
-    for proc_dir in Path("/proc").iterdir():
-        if not proc_dir.name.isdigit():
-            continue
-        pid = int(proc_dir.name)
+    for process in psutil.process_iter(["pid"]):
+        pid = int(process.info["pid"])
         info = _parse_process_cmdline(pid)
         if not info:
+            continue
+        config_path = info.get("config_path")
+        if not config_path and pid in known_by_pid:
+            record = load_runtime_record(known_by_pid[pid], refresh_state=False) or {}
+            config_path = record.get("config_path")
+        if not config_path:
             continue
         rid_raw = info.get("pipeline_id")
         if rid_raw:
@@ -178,7 +211,7 @@ def discover_process_runtimes() -> None:
             rid = known_by_pid[pid]
         else:
             rid = allocate_pipeline_id()
-        config_path = str(Path(info["config_path"]).resolve())
+        config_path = str(Path(config_path).resolve())
         frame_dir = info.get("frame_dir")
         if not frame_dir:
             candidate = Path(tempfile.gettempdir()) / "evileye_frames" / str(rid)
@@ -202,7 +235,12 @@ def maybe_discover_process_runtimes(*, force: bool = False) -> None:
     now = time.time()
     if not force and (now - _last_discover_ts) < _DISCOVER_MIN_INTERVAL_SEC:
         return
-    discover_process_runtimes()
+    # Single-flight: avoid concurrent /proc walks when multiple UI calls race.
+    with _discover_lock:
+        now = time.time()
+        if not force and (now - _last_discover_ts) < _DISCOVER_MIN_INTERVAL_SEC:
+            return
+        discover_process_runtimes()
 
 def load_runtime_record(rid: int, *, refresh_state: bool = True) -> Optional[Dict]:
     path = _record_path(rid)
@@ -245,10 +283,17 @@ def save_runtime_record(record: Dict) -> Dict:
     _ensure_dirs()
     normalized = refresh_runtime_record(record)
     normalized["id"] = int(normalized["id"])
+    path = _record_path(normalized["id"])
+    # Preserve previous updated_at when content is unchanged to avoid churn.
+    existing = load_runtime_record(int(normalized["id"]), refresh_state=False)
+    if existing is not None and _stable_payload(existing) == _stable_payload(normalized):
+        return existing
     normalized.setdefault("updated_at", time.time())
     payload = json.dumps(normalized, ensure_ascii=False, indent=2)
     with _registry_lock():
-        _atomic_write_text(_record_path(normalized["id"]), payload)
+        if _unchanged_on_disk(path, payload):
+            return normalized
+        _atomic_write_text(path, payload)
     _corrupt_record_logged.discard(normalized["id"])
     return normalized
 
@@ -257,10 +302,17 @@ def save_runtime_snapshot(rid: int, snapshot: Dict) -> Dict:
     _ensure_dirs()
     normalized = dict(snapshot)
     normalized["id"] = int(rid)
+    path = _snapshot_path(rid)
+    existing = load_runtime_snapshot(int(rid))
+    if existing is not None and _stable_payload(existing) == _stable_payload(normalized):
+        return existing
     normalized["updated_at"] = time.time()
-    payload = json.dumps(normalized, ensure_ascii=False, indent=2)
+    # Compact JSON + no fsync: snapshots are rewritten often by the pipeline.
+    payload = json.dumps(normalized, ensure_ascii=False, separators=(",", ":"), default=str)
     with _registry_lock():
-        _atomic_write_text(_snapshot_path(rid), payload)
+        if _unchanged_on_disk(path, payload):
+            return normalized
+        _atomic_write_text(path, payload, fsync=False)
     _corrupt_snapshot_logged.discard(int(rid))
     return normalized
 
@@ -297,6 +349,8 @@ def delete_runtime_snapshot(rid: int) -> bool:
 def update_runtime_snapshot(rid: int, **updates) -> Dict:
     existing = load_runtime_snapshot(rid) or {}
     merged = {**existing, **updates}
+    if existing and _stable_payload(existing) == _stable_payload(merged):
+        return existing
     return save_runtime_snapshot(rid, merged)
 
 
@@ -368,11 +422,23 @@ def _record_to_stub(record: Dict) -> Dict:
     return stub
 
 
+_stubs_cache_lock = threading.Lock()
+_stubs_cache_ts: float = 0.0
+_stubs_cache_value: Optional[Dict[int, Dict]] = None
+_STUBS_CACHE_TTL_SEC = 0.75
+
+
 def list_runtime_record_stubs(*, discover: bool = False) -> Dict[int, Dict]:
     """Light registry scan: id/pid/state/alive/paths only (no snapshots)."""
+    global _stubs_cache_value, _stubs_cache_ts
     _ensure_dirs()
     if discover:
         maybe_discover_process_runtimes()
+    if not discover:
+        now = time.time()
+        with _stubs_cache_lock:
+            if _stubs_cache_value is not None and (now - _stubs_cache_ts) < _STUBS_CACHE_TTL_SEC:
+                return _stubs_cache_value
     items: Dict[int, Dict] = {}
     for path in REGISTRY_DIR.glob("*.json"):
         try:
@@ -383,7 +449,12 @@ def list_runtime_record_stubs(*, discover: bool = False) -> Dict[int, Dict]:
         if not record:
             continue
         items[rid] = _record_to_stub(record)
-    return dict(sorted(items.items(), key=lambda pair: pair[0]))
+    items = dict(sorted(items.items(), key=lambda pair: pair[0]))
+    if not discover:
+        with _stubs_cache_lock:
+            _stubs_cache_value = items
+            _stubs_cache_ts = time.time()
+    return items
 
 
 def prune_stale_runtime_records(
@@ -469,3 +540,39 @@ def list_runtime_records(*, include_stopped: bool = True, discover: bool = True)
             continue
         items[rid] = record
     return items
+
+
+def merge_run_views(
+    runtime_info: Optional[Dict],
+    manager_info: Optional[Dict],
+) -> Optional[Dict]:
+    """Combine ConfigRunManager + runtime registry views.
+
+    Process liveness (state/pid/alive) from the registry wins when the process is
+    alive. Otherwise a stale in-memory manager row (e.g. ``created`` after a failed
+    web restart) can hide a watchdog-started pipeline and break Live WS / streams.
+    """
+    if not runtime_info and not manager_info:
+        return None
+    if not runtime_info:
+        return dict(manager_info or {})
+    if not manager_info:
+        return dict(runtime_info)
+
+    merged = {**manager_info, **runtime_info}
+    rt_alive = bool(
+        runtime_info.get("alive")
+        or runtime_info.get("state") in {"running", "starting"}
+    )
+    if rt_alive:
+        if runtime_info.get("state"):
+            merged["state"] = runtime_info["state"]
+        if runtime_info.get("pid") is not None:
+            merged["pid"] = runtime_info["pid"]
+        merged["alive"] = True
+    elif manager_info.get("state") in {"starting", "running", "stopping"}:
+        # Registry lag while manager is intentionally transitioning.
+        for key in ("state", "pid", "error", "session_id"):
+            if key in manager_info:
+                merged[key] = manager_info[key]
+    return merged

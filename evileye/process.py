@@ -8,14 +8,23 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
+# Initialize GStreamer before importing the EvilEye package, Qt, CUDA, or
+# OpenCV. Importing an evileye.core submodule here would first execute the
+# heavier core package initializer and can load native libraries too early.
+try:
+    import gi
+
+    gi.require_version("Gst", "1.0")
+    from gi.repository import Gst
+
+    if not Gst.is_initialized():
+        Gst.init(None)
+except ImportError:
+    pass
+
 import multiprocessing as _mp
 
 _MP_SPAWN_CHILD = _mp.parent_process() is not None
-
-if _MP_SPAWN_CHILD:
-    from evileye.core.gstreamer_runtime import ensure_gstreamer_spawn_runtime
-
-    ensure_gstreamer_spawn_runtime()
 
 if not _MP_SPAWN_CHILD:
     try:
@@ -95,6 +104,9 @@ def _config_path_for_video(video_path: str, logger) -> str:
 
 
 def run_config(config_path: str, gui: bool = True, autoclose: bool = False) -> int:
+    from evileye.core.gstreamer_runtime import ensure_gstreamer_spawn_runtime
+
+    ensure_gstreamer_spawn_runtime()
     from evileye.run_config_helper import run_config as _run
     return _run(config_path=config_path, gui=gui, autoclose=autoclose)
 
@@ -103,6 +115,7 @@ def main():
     """Main entry point for the EvilEye process application"""
     ensure_spawn_start_method()
     args = create_args_parser()
+    os.environ.setdefault("EVILEYE_SITE_DIR", str(Path.cwd().resolve()))
     # Инициализация логирования после парсинга аргументов
     logger = setup_evileye_logging(log_level=args.log_level.upper(), log_to_console=True, log_to_file=True)
     os.environ.setdefault("EVILEYE_SESSION_ID", uuid.uuid4().hex)
@@ -153,7 +166,7 @@ def main():
     )
 
     try:
-        ret = run_config(args.config, gui=args.gui, autoclose=args.autoclose)
+        ret = run_config(config_path, gui=args.gui, autoclose=args.autoclose)
     except Exception as exc:
         update_runtime_snapshot(int(pipeline_id), state="error", error=str(exc))
         mark_runtime_stopped(int(pipeline_id), error=str(exc))

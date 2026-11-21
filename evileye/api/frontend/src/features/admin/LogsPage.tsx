@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { logsApi, ApiError, cacheGet, cacheSet, isAbortError } from '../../api';
 import { Button, Modal } from '../../components/ui';
+import { PageHeader } from '../../components/ui/PageHeader';
 import { useToast } from '../../components/ui/Toast';
 import { useI18n } from '../../i18n';
 
@@ -128,12 +129,11 @@ export function LogsPage() {
   return (
     <section className="panel active">
       <div className="card">
-        <div className="toolbar">
-          <h2 style={{ margin: 0 }}>{t('logs.title')}</h2>
+        <PageHeader title={t('logs.title')} actions={
           <Button variant="outline" onClick={() => void load()}>
             {t('logs.refresh')}
           </Button>
-        </div>
+        } />
         {queryFile ? <p className="hint">{t('logs.openFromQuery', { name: queryFile })}</p> : null}
         {!files.length ? (
           <p className="empty">{loading ? t('common.searching') : t('logs.empty')}</p>

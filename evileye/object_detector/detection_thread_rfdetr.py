@@ -1,5 +1,4 @@
 from queue import Queue
-import threading
 from typing import Optional
 from .detection_thread_base import DetectionThreadBase
 import logging
@@ -54,10 +53,10 @@ class DetectionThreadRfdetr(DetectionThreadBase):
                 # Update model_class_mapping from model
                 self._update_model_class_mapping_from_model()
 
-            except ImportError:
-                raise ImportError("RF-DETR package not installed. Please install it using: pip install rfdetr")
+            except ImportError as exc:
+                raise ImportError("RF-DETR package not installed. Please install it using: pip install rfdetr") from exc
             except Exception as e:
-                raise Exception(f"Failed to initialize RF-DETR model: {e}")
+                raise Exception(f"Failed to initialize RF-DETR model: {e}") from e
 
     def predict(self, images: list) -> list:
         """

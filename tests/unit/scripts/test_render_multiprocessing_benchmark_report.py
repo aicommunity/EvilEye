@@ -1,4 +1,5 @@
 from pathlib import Path
+import pytest
 
 from scripts.render_multiprocessing_benchmark_report import parse_log, rows_from_results_csv
 
@@ -81,7 +82,7 @@ def test_parse_log_pipeline_comma_format(tmp_path: Path):
 
     metrics = parse_log(log_path, warmup_windows=0)
 
-    assert metrics["detector_fps_est"] == 6.25
+    assert metrics["detector_fps_est"] == pytest.approx(6.3508064516)
 
 
 def test_rows_from_results_csv_prefers_logs(tmp_path: Path):

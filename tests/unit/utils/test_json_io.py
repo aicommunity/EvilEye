@@ -1,4 +1,3 @@
-import json
 
 from evileye.utils.json_io import load_json, save_json_atomic
 

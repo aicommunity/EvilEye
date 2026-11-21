@@ -26,9 +26,9 @@ async def _one_client(
 ) -> None:
     try:
         import websockets
-    except ImportError:
+    except ImportError as exc:
         print("Install websockets: pip install websockets", file=sys.stderr)
-        raise SystemExit(2)
+        raise SystemExit(2) from exc
 
     headers = {}
     if cookie:

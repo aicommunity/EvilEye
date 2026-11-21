@@ -1,36 +1,7 @@
-"""Определения зависимостей для Dependency Injection.
+"""Dependency definitions for application services.
 
-Этот модуль предоставляет реестр определений зависимостей для системы
-Dependency Injection. Реестр хранит метаданные о зависимостях (тип сервиса,
-фабрика создания, singleton-флаг и т.д.) и используется вместе с `DIContainer`
-для управления жизненным циклом сервисов.
-
-Статус: зарезервировано для будущего использования
--------------------------------------------
-
-В текущей версии EvilEye зависимости создаются напрямую в сервисах контроллера
-или через `EvilEyeBase._registry` для компонентов pipeline.
-
-`DependencyRegistry` планируется использовать для:
-- Централизованной регистрации всех зависимостей системы
-- Хранения метаданных о зависимостях (singleton, factory, scope)
-- Интеграции с `DIContainer` для автоматического создания сервисов
-- Упрощения конфигурации и инициализации системы
-
-Связь с DIContainer:
-- `DependencyRegistry` хранит определения зависимостей (что создавать, как создавать)
-- `DIContainer` использует эти определения для создания и кеширования экземпляров
-- Глобальный реестр (`get_registry()`, `register_dependency()`) позволяет
-  регистрировать зависимости в одном месте и использовать их через контейнер
-
-Пример планируемого использования:
-    registry = get_registry()
-    registry.register(IPipeline, factory=create_pipeline, singleton=True)
-    registry.register(IDatabaseService, factory=create_db_service, singleton=True)
-    
-    container = DIContainer()
-    # Контейнер использует registry для создания сервисов
-"""
+DependencyRegistry and DIContainer manage service factories and lifetimes.
+Pipeline modules use the shared PluginRegistry and ModuleSpec contracts."""
 
 from __future__ import annotations
 
@@ -71,9 +42,7 @@ class DependencyDefinition:
         self.capabilities = capabilities or {}
 
 
-# TODO: Планируется интеграция в будущих версиях для снижения связности
-# между компонентами. В текущей версии используется EvilEyeBase._registry
-# как основной механизм создания компонентов.
+# Registry for application service dependencies; pipeline modules use PluginRegistry.
 class DependencyRegistry:
     """Реестр зависимостей для системы."""
 

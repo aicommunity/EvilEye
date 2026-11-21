@@ -1,8 +1,7 @@
 from __future__ import annotations
 
 import threading
-from pathlib import Path
-from typing import Optional, Dict, Any
+from typing import Optional
 
 from evileye.core.logger import get_module_logger
 from evileye.video_recorder.recording_params import RecordingParams

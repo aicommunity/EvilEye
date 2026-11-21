@@ -11,16 +11,12 @@ import {
 import { locales, type Locale, type Dict } from './locales';
 
 const STORAGE_KEY = 'evileye.ui.lang';
+const DATE_FORMAT_KEY = 'evileye.ui.dateFormat';
 const warnedKeys = new Set<string>();
 
-const DATE_TIME_OPTS: Intl.DateTimeFormatOptions = {
-  year: 'numeric',
-  month: '2-digit',
-  day: '2-digit',
-  hour: '2-digit',
-  minute: '2-digit',
-  second: '2-digit',
-};
+export type DateFormat = 'DD-MM-YYYY' | 'YYYY-MM-DD' | 'MM-DD-YYYY';
+
+const DATE_FORMATS: DateFormat[] = ['DD-MM-YYYY', 'YYYY-MM-DD', 'MM-DD-YYYY'];
 
 function getByPath(dict: Dict, path: string): unknown {
   const parts = path.split('.');
@@ -48,19 +44,48 @@ function resolveDateLocale(uiLang: Locale): string {
   return uiLang === 'en' ? 'en-US' : 'ru-RU';
 }
 
+function pad2(n: number): string {
+  return String(n).padStart(2, '0');
+}
+
+export function formatDateParts(d: Date, pattern: DateFormat): string {
+  const day = pad2(d.getDate());
+  const month = pad2(d.getMonth() + 1);
+  const year = String(d.getFullYear());
+  if (pattern === 'YYYY-MM-DD') return `${year}-${month}-${day}`;
+  if (pattern === 'MM-DD-YYYY') return `${month}-${day}-${year}`;
+  return `${day}-${month}-${year}`;
+}
+
+/** Month-day (or day-month) without year, following the active DateFormat order. */
+export function formatDatePartsNoYear(d: Date, pattern: DateFormat): string {
+  const day = pad2(d.getDate());
+  const month = pad2(d.getMonth() + 1);
+  if (pattern === 'YYYY-MM-DD' || pattern === 'MM-DD-YYYY') return `${month}-${day}`;
+  return `${day}-${month}`;
+}
+
+export function formatTimeParts(d: Date): string {
+  return `${pad2(d.getHours())}:${pad2(d.getMinutes())}:${pad2(d.getSeconds())}`;
+}
+
 type I18nCtx = {
   lang: Locale;
   localeTag: 'ru-RU' | 'en-US';
   dateLocaleTag: string;
+  dateFormat: DateFormat;
   setLang: (lang: Locale) => void;
+  setDateFormat: (format: DateFormat) => void;
   t: (key: string, vars?: Record<string, string | number>) => string;
   formatDateTime: (value: number | Date | string | null | undefined) => string;
+  formatDateTimeNoYear: (value: number | Date | string | null | undefined) => string;
   formatDate: (value: number | Date | string | null | undefined) => string;
+  formatTime: (value: number | Date | string | null | undefined) => string;
 };
 
 const Ctx = createContext<I18nCtx | null>(null);
 
-function readInitial(): Locale {
+function readInitialLang(): Locale {
   try {
     const stored = localStorage.getItem(STORAGE_KEY);
     if (stored === 'en' || stored === 'ru') return stored;
@@ -68,6 +93,16 @@ function readInitial(): Locale {
     /* ignore */
   }
   return 'ru';
+}
+
+function readInitialDateFormat(): DateFormat {
+  try {
+    const stored = localStorage.getItem(DATE_FORMAT_KEY);
+    if (stored && DATE_FORMATS.includes(stored as DateFormat)) return stored as DateFormat;
+  } catch {
+    /* ignore */
+  }
+  return 'DD-MM-YYYY';
 }
 
 function toDate(value: number | Date | string | null | undefined): Date | null {
@@ -85,9 +120,12 @@ function toDate(value: number | Date | string | null | undefined): Date | null {
 }
 
 export function I18nProvider({ children }: { children: ReactNode }) {
-  const [lang, setLangState] = useState<Locale>(readInitial);
+  const [lang, setLangState] = useState<Locale>(readInitialLang);
+  const [dateFormat, setDateFormatState] = useState<DateFormat>(readInitialDateFormat);
   const langRef = useRef(lang);
   langRef.current = lang;
+  const dateFormatRef = useRef(dateFormat);
+  dateFormatRef.current = dateFormat;
 
   const setLang = useCallback((next: Locale) => {
     setLangState(next);
@@ -98,10 +136,17 @@ export function I18nProvider({ children }: { children: ReactNode }) {
     }
   }, []);
 
+  const setDateFormat = useCallback((next: DateFormat) => {
+    setDateFormatState(next);
+    try {
+      localStorage.setItem(DATE_FORMAT_KEY, next);
+    } catch {
+      /* ignore */
+    }
+  }, []);
+
   const localeTag: 'ru-RU' | 'en-US' = lang === 'en' ? 'en-US' : 'ru-RU';
   const dateLocaleTag = useMemo(() => resolveDateLocale(lang), [lang]);
-  const dateLocaleTagRef = useRef(dateLocaleTag);
-  dateLocaleTagRef.current = dateLocaleTag;
 
   // Stable identity: language changes re-render via `lang` in context, but must not
   // invalidate data-fetch callbacks that list `t` in their dependency arrays.
@@ -118,19 +163,55 @@ export function I18nProvider({ children }: { children: ReactNode }) {
     return interpolate(String(raw), vars);
   }, []);
 
-  const formatDateTime = useCallback((value: number | Date | string | null | undefined) => {
-    const d = toDate(value);
-    return d ? d.toLocaleString(dateLocaleTagRef.current, DATE_TIME_OPTS) : '—';
-  }, []);
-
   const formatDate = useCallback((value: number | Date | string | null | undefined) => {
     const d = toDate(value);
-    return d ? d.toLocaleDateString(dateLocaleTagRef.current) : '—';
+    return d ? formatDateParts(d, dateFormatRef.current) : '—';
+  }, []);
+
+  const formatTime = useCallback((value: number | Date | string | null | undefined) => {
+    const d = toDate(value);
+    return d ? formatTimeParts(d) : '—';
+  }, []);
+
+  const formatDateTime = useCallback((value: number | Date | string | null | undefined) => {
+    const d = toDate(value);
+    if (!d) return '—';
+    return `${formatDateParts(d, dateFormatRef.current)} ${formatTimeParts(d)}`;
+  }, []);
+
+  const formatDateTimeNoYear = useCallback((value: number | Date | string | null | undefined) => {
+    const d = toDate(value);
+    if (!d) return '—';
+    return `${formatDatePartsNoYear(d, dateFormatRef.current)} ${formatTimeParts(d)}`;
   }, []);
 
   const value = useMemo(
-    () => ({ lang, localeTag, dateLocaleTag, setLang, t, formatDateTime, formatDate }),
-    [lang, localeTag, dateLocaleTag, setLang, t, formatDateTime, formatDate],
+    () => ({
+      lang,
+      localeTag,
+      dateLocaleTag,
+      dateFormat,
+      setLang,
+      setDateFormat,
+      t,
+      formatDateTime,
+      formatDateTimeNoYear,
+      formatDate,
+      formatTime,
+    }),
+    [
+      lang,
+      localeTag,
+      dateLocaleTag,
+      dateFormat,
+      setLang,
+      setDateFormat,
+      t,
+      formatDateTime,
+      formatDateTimeNoYear,
+      formatDate,
+      formatTime,
+    ],
   );
   return createElement(Ctx.Provider, { value }, children);
 }

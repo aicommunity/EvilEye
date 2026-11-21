@@ -101,7 +101,6 @@ def test_pipeline_capture_controller_compatibility():
     
     try:
         from evileye.controller.controller import Controller
-        import json
         from evileye.core.logging_config import setup_evileye_logging
         from evileye.core.logger import get_module_logger
         

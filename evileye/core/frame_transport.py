@@ -53,28 +53,26 @@ class SharedFrameTransport:
                 pass
 
     def relinquish_frame(self, handle: FrameHandle) -> None:
-        """
-        Creator gives up local mapping after enqueueing a handle to another process.
+        """Mark a frame as transferred while keeping the creator mapping open.
 
-        Does not unlink and does not unregister from resource_tracker here: unregister
-        before a cross-process unlink confuses the tracker subprocess (KeyError on /psm_*).
-        The consumer must call release_frame() to unlink.
+        Windows removes a named shared-memory object after its last handle closes,
+        even if a consumer has not opened the name yet. Keep the creator handle
+        pinned until the consumer acknowledges the transfer; then call
+        ``release_frame`` (or ``release_all_owned``). The consumer unlinks the name.
         """
-        with self._lock:
-            shm = self._segments.pop(handle.shm_name, None)
-        if shm is None:
-            return
-        try:
-            shm.close()
-        except Exception:
-            pass
+        # Keep the SharedMemory object in _segments as a cross-platform pin.
+        return
 
-    def consume_frame(self, handle: FrameHandle) -> np.ndarray:
-        """Copy pixels from a foreign handle and unlink the segment (IPC consumer)."""
+    def consume_frame(self, handle: FrameHandle) -> Optional[np.ndarray]:
+        """Copy pixels from a foreign handle and unlink the segment (IPC consumer).
+
+        Returns ``None`` when the SHM segment is missing or empty so callers can
+        drop the frame instead of feeding a zero-size array into OpenCV/YOLO.
+        """
         try:
             shm = shared_memory.SharedMemory(name=handle.shm_name)
         except FileNotFoundError:
-            return np.array([])
+            return None
         try:
             view = np.ndarray(
                 handle.shape, dtype=np.dtype(handle.dtype), buffer=shm.buf
@@ -89,6 +87,8 @@ class SharedFrameTransport:
                 shm.close()
             except Exception:
                 pass
+        if image is None or getattr(image, "size", 0) == 0:
+            return None
         return image
 
     def release_frame(self, handle: FrameHandle) -> None:

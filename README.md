@@ -25,8 +25,8 @@ pip install evileye
 # Optional but recommended for fast JPEG live preview:
 # sudo apt install libturbojpeg   # Debian/Ubuntu
 
-# Ensure Web UI Python deps + packaged SPA (builds frontend if static is missing)
-evileye setup-web
+# optional; `evileye service install` also ensures web deps
+# evileye web check
 ```
 
 #### From Source (Developers)
@@ -43,20 +43,32 @@ pip install -e "."
 python scripts/setup/fix_entry_points.py
 
 # Check / prepare Web UI (SPA static + API packages)
-evileye setup-web
+evileye web check
 ```
 
 #### Docker (GPU)
 
 Run EvilEye in a container based on the official Ultralytics image (PyTorch + CUDA + YOLO). Data directories stay on the host by default. This path does **not** replace `pip install`.
 
+**From repository (build):**
+
 ```bash
 ./docker/prepare-host-dirs.sh
-# Edit credentials.json: set database.host_name to "db" for Compose Postgres
-docker compose -f docker/docker-compose.yml up --build
+make docker-up
+# or: docker compose --project-directory . -f docker/docker-compose.yml up -d --build
 
 # Optional: install host CLI wrappers (evileye → docker run)
 ./docker/install-host-cli.sh
+```
+
+**Empty folder (Docker Hub image):**
+
+```bash
+mkdir mysite && cd mysite
+docker pull evileye/app:latest
+docker run --rm -v "$PWD":/site -e EVILEYE_BOOTSTRAP_IMAGE=evileye/app:latest evileye/app:latest bootstrap
+docker compose up -d
+export PATH="$PWD/bin:$PATH"
 ```
 
 Full guide: [docs/DOCKER_DEPLOYMENT.md](docs/DOCKER_DEPLOYMENT.md). On Windows use [docs/WINDOWS_DOCKER_DEPLOYMENT.md](docs/WINDOWS_DOCKER_DEPLOYMENT.md) (`docker/windows/*.ps1`); bash host-cli is Linux/WSL-only.
@@ -71,10 +83,12 @@ Typical site bring-up:
 
 ```text
 pip install -e .          # or: pip install evileye
-evileye setup-web         # check + install missing Python pkgs; build SPA if needed
-evileye deploy            # credentials, configs/, monitor/ + ensure service-install
-# Open http://127.0.0.1:8181 → set admin password → Basic setup in Настройка
-# Optional: evileye service-uninstall / watchdog via monitor/scripts/install_timer.sh
+evileye deploy            # local site files only (no prompts, no OS service)
+evileye service install    # only if you want the Web UI server (web deps, HTTPS, OS service)
+# Open http://127.0.0.1:8181 (or https://…) → login as admin with bootstrap password from first-start log
+# Change password → complete Basic setup in Настройка
+# Then run runtime if needed: evileye run configs/system.json --no-gui
+# Optional: evileye service uninstall / evileye prod init / watchdog via monitor/scripts/install_timer.sh
 ```
 
 See also [docs/CLI_SERVICE_COMMANDS.md](docs/CLI_SERVICE_COMMANDS.md) and [docs/WEB_UI_GUIDE.md](docs/WEB_UI_GUIDE.md).
@@ -122,7 +136,7 @@ The `deploy` command creates the following structure in your current directory (
 ```
 your_project/
 ├── credentials.json          # Database and camera credentials
-├── configs/                  # Configuration files directory (empty)
+├── configs/                  # Configuration files directory
 ├── logs/                     # Application logs
 ├── monitor/                  # Watchdog scripts + systemd templates (not started)
 │   ├── scripts/
@@ -130,8 +144,9 @@ your_project/
 │   ├── incidents/
 │   ├── reports/
 │   └── INSTALL_HINT.txt
-└── (service-install attempted at end — Web UI OS service)
 ```
+
+`deploy` готовит **site directory** для web-first bootstrap. OS-сервис и HTTPS: `evileye service install`. Для новой машины не нужно вручную создавать runtime-конфиг до открытия Web UI.
 
 See [docs/CLI_DEPLOY_COMMAND.md](docs/CLI_DEPLOY_COMMAND.md) and [docs/CLI_SERVICE_COMMANDS.md](docs/CLI_SERVICE_COMMANDS.md).
 
@@ -676,11 +691,11 @@ evileye server --log-level debug
 **Веб-интерфейс (frontend):** React SPA раздаётся FastAPI из `evileye/api/static/`.
 
 ```bash
-# Preferred: check deps and build SPA only if static is missing
-evileye setup-web
-evileye setup-web --check          # verify only
-evileye setup-web --scope system   # pip via sudo (asks confirmation)
-evileye setup-web --force --build  # reinstall missing pkgs + npm rebuild
+# Preferred: rebuild SPA: evileye web build (also during service install)
+evileye web check
+evileye web check --check          # verify only
+evileye web check --scope system   # pip via sudo (asks confirmation)
+evileye web check --force --build  # reinstall missing pkgs + npm rebuild
 
 # Manual frontend build (developers):
 cd evileye/api/frontend && npm install && npm run build
@@ -746,9 +761,9 @@ The `evileye deploy` command:
 - `configs/` - Directory for your configuration files
 
 **Next Steps After Deploy:**
-1. Edit `credentials.json` with your actual credentials
-2. Create configurations using `evileye create`
-3. Run the system with `evileye run`
+1. `evileye service install` (HTTPS + Web UI OS service)
+2. Open the Web UI, change the admin password, complete Basic setup
+3. Run runtime if needed: `evileye run configs/system.json --no-gui`
 
 ### Configuration Management
 
@@ -778,10 +793,10 @@ evileye list-configs
 mkdir my_surveillance_project
 cd my_surveillance_project
 evileye deploy
+evileye service install
 
-# 2. Edit credentials.json with your actual credentials
-#    - Add camera usernames/passwords
-#    - Configure database connection
+# 2. Open the Web UI, change admin password, complete Basic setup
+#    (or edit credentials.json / create a config manually)
 
 # 3. Create configuration for 2 IP cameras
 evileye create surveillance_config --sources 2 --source-type ip_camera

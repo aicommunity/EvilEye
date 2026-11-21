@@ -3,8 +3,7 @@ import hmac
 import json
 import os
 from dataclasses import dataclass
-from pathlib import Path
-from typing import Any, Optional
+from typing import Any, Iterable, Optional
 
 from fastapi import HTTPException, Request, status
 
@@ -200,14 +199,66 @@ def authenticate_user(username: str, password: str, auth: WebAuthConfig) -> Opti
     return None
 
 
+def resolve_session_principal(session_user: Optional[dict[str, Any]]) -> Optional[dict[str, Any]]:
+    """Validate cookie/session user against the live credentials/web store (F01).
+
+    Returns a principal dict with username, role, permissions from the store record,
+    or None when the session must be treated as unauthenticated.
+    """
+    if not isinstance(session_user, dict):
+        return None
+    username = str(session_user.get("username") or "").strip()
+    if not username:
+        return None
+    try:
+        from evileye.api.core.camera_access import lookup_user_record
+
+        record = lookup_user_record(username)
+    except Exception:
+        record = None
+    if record is None:
+        return None
+    if bool(record.get("disabled", False)):
+        return None
+    status = str(record.get("status") or "").strip().lower()
+    # Credentials users have no status field (treated as approved when not disabled).
+    if status and status in {"rejected", "disabled", "pending"}:
+        return None
+    # Prefer store identity keys.
+    record_name = str(record.get("username") or record.get("email") or "").strip()
+    if record_name and record_name.lower() != username.lower():
+        return None
+    role = normalize_role(str(record.get("role") or "user"))
+    return {
+        "username": record_name or username,
+        "role": role,
+        "permissions": permissions_for_role(role),
+    }
+
+
 def current_user(request: Request) -> Optional[dict[str, Any]]:
     user = request.session.get("user")
     if not isinstance(user, dict):
         return None
-    if "role" in user:
-        user["role"] = normalize_role(str(user.get("role") or "user"))
-        user["permissions"] = permissions_for_role(user["role"])
-    return user
+    principal = resolve_session_principal(user)
+    if principal is None:
+        try:
+            request.session.clear()
+        except Exception:
+            try:
+                request.session.pop("user", None)
+            except Exception:
+                pass
+        return None
+    # Refresh session role/permissions from the live record (demote/ACL).
+    try:
+        request.session["user"] = {
+            "username": principal["username"],
+            "role": principal["role"],
+        }
+    except Exception:
+        pass
+    return principal
 
 
 def require_authenticated(request: Request) -> dict[str, Any]:
@@ -215,6 +266,48 @@ def require_authenticated(request: Request) -> dict[str, Any]:
     if user is None:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Authentication required")
     return user
+
+
+SAFE_HTTP_METHODS = frozenset({"GET", "HEAD", "OPTIONS"})
+
+
+def csrf_origin_violation(request: Request, allowed_origins: Iterable[str] = ()) -> Optional[str]:
+    """Return a reason when a state-changing request comes from a foreign web origin.
+
+    Browsers always attach ``Origin`` (or at least ``Referer``) to cross-site POST/PUT/PATCH/
+    DELETE requests, so a mismatch with the served host means the request was triggered by
+    another site using the admin's session cookie. Requests without either header come from
+    non-browser clients and are not browser-CSRF vectors.
+    """
+    from urllib.parse import urlsplit
+
+    if request.method in SAFE_HTTP_METHODS:
+        return None
+    raw = request.headers.get("origin") or request.headers.get("referer") or ""
+    if not raw:
+        return None
+    if raw.strip().lower() == "null":
+        return "opaque request origin"
+    try:
+        parts = urlsplit(raw)
+    except ValueError:
+        return "malformed request origin"
+    if not parts.scheme or not parts.netloc:
+        return "malformed request origin"
+    origin = f"{parts.scheme}://{parts.netloc}".lower()
+    hosts = {
+        value.strip().lower()
+        for value in (
+            request.headers.get("host", ""),
+            request.headers.get("x-forwarded-host", ""),
+        )
+        if value and value.strip()
+    }
+    if parts.netloc.lower() in hosts:
+        return None
+    if origin in {str(item).rstrip("/").lower() for item in allowed_origins}:
+        return None
+    return f"cross-origin request from {origin}"
 
 
 def require_role(request: Request, roles: set[str]) -> dict[str, Any]:
@@ -242,6 +335,8 @@ def required_permissions_for_request(path: str, method: str) -> set[str]:
         return set()
     if path.startswith("/api/v1/internal/"):
         return set()
+    if path.startswith("/api/v1/admin/extensions"):
+        return {"system:admin"}
     if path.startswith("/api/v1/playback"):
         return {"journal:view"}
     if path.startswith("/api/v1/journals/config-history"):
@@ -264,6 +359,8 @@ def required_permissions_for_request(path: str, method: str) -> set[str]:
         return {"runtime:view"} if method == "GET" else {"runtime:control"}
     if path.startswith("/api/v1/system/restart"):
         return {"runtime:control"}
+    if path in {"/api/v1/system/runtime", "/api/v1/system/metrics"}:
+        return {"runtime:view"}
     if path.startswith("/api/v1/system"):
         return {"system:admin"} if method not in {"GET"} else {"live:view"}
     if path.startswith("/api/v1/configs"):
@@ -271,5 +368,9 @@ def required_permissions_for_request(path: str, method: str) -> set[str]:
     if path.startswith("/api/v1/setup"):
         return {"config:view"} if method == "GET" else {"config:edit"}
     if path.startswith("/api/v1/version"):
+        return {"live:view"}
+    if path.startswith("/api/v1/diagnostics"):
+        # Ingest is authenticated-only at the route; any live viewer may upload
+        # client_debug batches (force-allowlist users are typically role=user).
         return {"live:view"}
     return {"system:admin"} if method not in {"GET"} else {"live:view"}

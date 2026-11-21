@@ -3,7 +3,6 @@ import datetime
 from ..core.base_class import EvilEyeBase
 from queue import Full, Queue, Empty
 import threading
-import time
 from .tracking_results import TrackingResultList
 from ..core.frame_transport import SharedFrameTransport
 from ..core.frame import Frame
@@ -206,6 +205,7 @@ class ObjectTrackingBase(EvilEyeBase):
             name=f"tracker-{id(self)}",
             restart_on_exit=restart_on_exit,
             no_restart_exit_codes=no_restart_exit_codes,
+            on_before_worker_restart=self._handle_before_worker_restart,
         )
         worker = self._mp_control.add_worker(MpWorkerTracker)
         worker.set_params(self.params if self.params else {})
@@ -254,6 +254,19 @@ class ObjectTrackingBase(EvilEyeBase):
 
     def _release_tracker_job(self, job: TrackerPendingJob) -> None:
         self._release_frame_handle(job.frame_handle)
+
+    def _handle_before_worker_restart(
+        self, slot_index: int, exit_code: int | None, pool_name: str
+    ) -> None:
+        """Reset bridge FIFO after MpControl drained IPC queues."""
+        self.logger.warning(
+            "Clearing tracker MP bridge before worker restart (slot=%s exit=%s pool=%s)",
+            slot_index,
+            exit_code,
+            pool_name,
+        )
+        if self._bridge is not None:
+            self._bridge.clear()
 
     def _enqueue_mp_tracker_job(self, detections, packed, frame_handle) -> bool:
         """Queue job for FIFO worker and submit packed payload to MpControl."""

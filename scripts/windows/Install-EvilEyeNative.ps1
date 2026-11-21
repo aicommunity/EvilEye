@@ -33,11 +33,11 @@ if ($RepoRoot -and (Test-Path (Join-Path $RepoRoot "pyproject.toml"))) {
 }
 
 $env:EVILEYE_SITE_DIR = $SiteDir
-& $evileye setup-web
+& $evileye web build
 & $evileye deploy
 
 if ($EnableService) {
-    & $evileye service-install
+    & $evileye service install
 }
 if ($EnableWatchdog) {
     & $evileye watchdog-install --config configs/system.json
@@ -45,4 +45,4 @@ if ($EnableWatchdog) {
 
 Write-Host "Native site ready at $SiteDir"
 Write-Host "Activate: $venv\Scripts\Activate.ps1"
-Write-Host "UI: start with 'evileye server' or service-install; http://127.0.0.1:8181"
+Write-Host "UI: start with 'evileye server' or 'evileye service install'; http://127.0.0.1:8181"

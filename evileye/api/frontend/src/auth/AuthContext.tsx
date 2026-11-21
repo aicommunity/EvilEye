@@ -4,10 +4,20 @@ import {
   useContext,
   useEffect,
   useMemo,
+  useRef,
   useState,
   type ReactNode,
 } from 'react';
-import { authApi, ApiError, type AuthUser } from '../api';
+import { authApi, ApiError, type AuthUser, type UserPrefs } from '../api';
+import { applyClientDebugFromAuth } from '../diagnostics/clientTelemetry';
+import {
+  aclFingerprint,
+  bumpAuthScope,
+  getAuthEpoch,
+  setAuthUsername,
+} from './authScope';
+
+export { getAuthEpoch } from './authScope';
 
 interface AuthState {
   loading: boolean;
@@ -15,6 +25,11 @@ interface AuthState {
   user: AuthUser | null;
   permissions: Set<string>;
   mustChangePassword: boolean;
+  allowedCameras: string[];
+  cameraAccess: 'all' | 'restricted';
+  prefs: UserPrefs | null;
+  clientDebug: boolean;
+  authEpoch: number;
   refresh: () => Promise<boolean>;
   login: (username: string, password: string) => Promise<void>;
   register: (email: string, password: string) => Promise<string>;
@@ -25,19 +40,67 @@ interface AuthState {
 
 const AuthContext = createContext<AuthState | null>(null);
 
+const emptyPrefs = (): UserPrefs => ({
+  visible_cameras: null,
+  lang: null,
+  date_format: null,
+});
+
 export function AuthProvider({ children }: { children: ReactNode }) {
   const [loading, setLoading] = useState(true);
   const [authEnabled, setAuthEnabled] = useState(false);
   const [user, setUser] = useState<AuthUser | null>(null);
   const [permissions, setPermissions] = useState<Set<string>>(new Set());
   const [mustChangePassword, setMustChangePassword] = useState(false);
+  const [allowedCameras, setAllowedCameras] = useState<string[]>([]);
+  const [cameraAccess, setCameraAccess] = useState<'all' | 'restricted'>('restricted');
+  const [prefs, setPrefs] = useState<UserPrefs | null>(null);
+  const [clientDebug, setClientDebug] = useState(false);
+  const [authEpoch, setAuthEpochState] = useState(() => getAuthEpoch());
+  const aclFpRef = useRef<string>('');
+  const userRef = useRef<string>('');
 
   const apply = useCallback(
-    (enabled: boolean, nextUser: AuthUser | null, perms: string[], mustChange = false) => {
+    (
+      enabled: boolean,
+      nextUser: AuthUser | null,
+      perms: string[],
+      mustChange = false,
+      extra?: {
+        allowed_cameras?: string[];
+        camera_access?: 'all' | 'restricted';
+        prefs?: UserPrefs;
+        client_debug?: boolean;
+      },
+      opts?: { bump?: boolean },
+    ) => {
+      const nextName = nextUser?.username ?? '';
+      const nextFp = aclFingerprint(extra?.allowed_cameras, extra?.camera_access);
+      const shouldBump =
+        opts?.bump === true ||
+        (Boolean(nextName) &&
+          nextName === userRef.current &&
+          aclFpRef.current !== '' &&
+          nextFp !== aclFpRef.current);
+
+      if (shouldBump) {
+        setAuthEpochState(bumpAuthScope(nextName || null));
+      } else {
+        setAuthUsername(nextName || null);
+      }
+      userRef.current = nextName;
+      aclFpRef.current = nextFp;
+
       setAuthEnabled(enabled);
       setUser(nextUser);
       setPermissions(new Set(perms));
       setMustChangePassword(Boolean(enabled && nextUser && mustChange));
+      setAllowedCameras(extra?.allowed_cameras ?? []);
+      setCameraAccess(extra?.camera_access ?? (enabled ? 'restricted' : 'all'));
+      setPrefs(extra?.prefs ?? emptyPrefs());
+      const debugOn = Boolean(extra?.client_debug);
+      setClientDebug(debugOn);
+      applyClientDebugFromAuth(debugOn, nextUser?.username ?? null);
     },
     [],
   );
@@ -45,13 +108,21 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const refresh = useCallback(async () => {
     try {
       const me = await authApi.me();
-      apply(me.auth_enabled, me.user, me.permissions ?? [], Boolean(me.must_change_password));
+      apply(me.auth_enabled, me.user, me.permissions ?? [], Boolean(me.must_change_password), {
+        allowed_cameras: me.allowed_cameras,
+        camera_access: me.camera_access,
+        prefs: me.prefs,
+        client_debug: me.client_debug,
+      });
       setLoading(false);
       if (!me.auth_enabled) return true;
       return Boolean(me.user);
     } catch (e) {
       if (e instanceof ApiError && e.status === 401) {
-        apply(true, null, [], false);
+        setAuthEpochState(bumpAuthScope(null));
+        userRef.current = '';
+        aclFpRef.current = '';
+        apply(true, null, [], false, undefined, { bump: false });
         setLoading(false);
         return false;
       }
@@ -67,11 +138,21 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const login = useCallback(
     async (username: string, password: string) => {
       const result = await authApi.login(username, password);
+      setAuthEpochState(bumpAuthScope(result.user?.username ?? username));
+      userRef.current = result.user?.username ?? username;
+      aclFpRef.current = aclFingerprint(result.allowed_cameras, result.camera_access);
       apply(
         result.auth_enabled,
         result.user,
         result.permissions ?? [],
         Boolean(result.must_change_password),
+        {
+          allowed_cameras: result.allowed_cameras,
+          camera_access: result.camera_access,
+          prefs: result.prefs,
+          client_debug: result.client_debug,
+        },
+        { bump: false },
       );
     },
     [apply],
@@ -84,7 +165,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   const logout = useCallback(async () => {
     await authApi.logout();
-    apply(authEnabled, null, [], false);
+    setAuthEpochState(bumpAuthScope(null));
+    userRef.current = '';
+    aclFpRef.current = '';
+    apply(authEnabled, null, [], false, undefined, { bump: false });
   }, [apply, authEnabled]);
 
   const hasPermission = useCallback(
@@ -104,6 +188,11 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       user,
       permissions,
       mustChangePassword,
+      allowedCameras,
+      cameraAccess,
+      prefs,
+      clientDebug,
+      authEpoch,
       refresh,
       login,
       register,
@@ -117,6 +206,11 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       user,
       permissions,
       mustChangePassword,
+      allowedCameras,
+      cameraAccess,
+      prefs,
+      clientDebug,
+      authEpoch,
       refresh,
       login,
       register,

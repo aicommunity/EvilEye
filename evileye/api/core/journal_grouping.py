@@ -74,6 +74,7 @@ def group_events_rows(
     grouped: dict[tuple, dict[str, Any]] = defaultdict(lambda: {"found": None, "lost": None})
     cam_events: list[dict[str, Any]] = []
     sys_events: list[dict[str, Any]] = []
+    alarm_events: list[dict[str, Any]] = []
 
     for ev in rows:
         event_type = ev.get("event_type") or ""
@@ -89,9 +90,9 @@ def group_events_rows(
                 grouped[key]["found"] = ev
             else:
                 grouped[key]["lost"] = ev
-        elif event_type in ("fov_found", "fov_lost"):
-            key = ("fov", ev.get("source_id"), ev.get("object_id"))
-            if event_type == "fov_found":
+        elif event_type in ("schedule_alarm_found", "schedule_alarm_lost", "fov_found", "fov_lost"):
+            key = ("schedule_alarm", ev.get("source_id"), ev.get("object_id"))
+            if event_type in ("schedule_alarm_found", "fov_found"):
                 grouped[key]["found"] = ev
             else:
                 grouped[key]["lost"] = ev
@@ -99,6 +100,8 @@ def group_events_rows(
             cam_events.append(ev)
         elif event_type == "sys":
             sys_events.append(ev)
+        elif event_type == "alarm":
+            alarm_events.append(ev)
 
     table_rows: list[dict[str, Any]] = []
     for key, pair in grouped.items():
@@ -122,8 +125,8 @@ def group_events_rows(
             zone_id = base.get("zone_id")
             info = f"ZoneEvent obj={base.get('object_id')} zone={zone_id}" if zone_id is not None else f"ZoneEvent obj={base.get('object_id')}"
         else:
-            event_name = "FOVEvent"
-            info = f"FOVEvent obj={base.get('object_id')}"
+            event_name = "ScheduleAlarmEvent"
+            info = f"ScheduleAlarmEvent obj={base.get('object_id')}"
 
         table_rows.append(
             {
@@ -180,6 +183,25 @@ def group_events_rows(
                 "time_lost": "",
                 "preview": "",
                 "lost_preview": "",
+            }
+        )
+
+    for ev in alarm_events:
+        alarm_type = ev.get("alarm_type") or "Alarm"
+        severity = ev.get("severity") or "warning"
+        details = ev.get("details") or {}
+        table_rows.append(
+            {
+                "source": ev.get("source_name") or str(ev.get("source_id", "")),
+                "event": str(alarm_type),
+                "information": ev.get("information") or f"{alarm_type} [{severity}]: {details}",
+                "time": ev.get("ts", ""),
+                "time_lost": "",
+                "preview": "",
+                "lost_preview": "",
+                "date_folder": ev.get("date_folder", ""),
+                "found_event": ev,
+                "lost_event": None,
             }
         )
 

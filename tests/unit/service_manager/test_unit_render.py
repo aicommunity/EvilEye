@@ -1,6 +1,6 @@
 from pathlib import Path
 
-from evileye.service_manager.unit_render import config_args, render_unit
+from evileye.service_manager.unit_render import config_args, render_unit, ssl_args
 
 
 def test_config_args_empty():
@@ -36,3 +36,21 @@ def test_render_system_unit_with_config(tmp_path: Path):
     )
     assert "--config configs/demo.json" in text
     assert "WantedBy=multi-user.target" in text
+
+
+def test_ssl_args_empty():
+    assert ssl_args(None, None) == ""
+    assert ssl_args("/certs/server.crt", None) == ""
+
+
+def test_render_unit_includes_ssl_flags(tmp_path: Path):
+    text = render_unit(
+        working_directory=tmp_path,
+        evileye_bin="/usr/bin/evileye",
+        ssl_certfile="/opt/site/certs/server.crt",
+        ssl_keyfile="/opt/site/certs/server.key",
+        user_mode=True,
+    )
+    exec_line = text.split("ExecStart=")[1].split("\n")[0]
+    assert "--ssl-certfile /opt/site/certs/server.crt" in exec_line
+    assert "--ssl-keyfile /opt/site/certs/server.key" in exec_line

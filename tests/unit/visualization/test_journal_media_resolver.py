@@ -39,7 +39,8 @@ def test_resolve_event_video_from_db_path(tmp_path):
         "video_path": rel,
     }
     resolved = resolve_event_video_path(event, str(base))
-    assert resolved == str(full)
+    assert resolved is not None
+    assert Path(resolved).resolve() == full.resolve()
 
 
 def test_resolve_event_video_rejects_small_file(tmp_path):
@@ -139,4 +140,5 @@ def test_resolve_event_video_mkv_extension(tmp_path):
         "video_path": rel,
     }
     resolved = resolve_event_video_path(event, str(base))
-    assert resolved == str(full)
+    assert resolved is not None
+    assert Path(resolved).resolve() == full.resolve()

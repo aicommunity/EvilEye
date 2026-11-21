@@ -133,6 +133,84 @@ def terminate_tree(pid: int, *, grace_sec: float = 5.0) -> None:
     _terminate_tree_psutil(pid, grace_sec=grace_sec)
 
 
+
+def terminate_tree_gracefully(pid: int, *, grace_sec: float = 5.0) -> None:
+    """Ask a runtime owner to stop before escalating to its process tree.
+
+    A managed pipeline's main process coordinates shutdown of its workers,
+    queues, and shared-memory resources. Signal only that owner first, then
+    wait for its process group to exit. Force-kill remaining group members only
+    after the grace period expires.
+    """
+    if pid <= 0:
+        return
+
+    if sys.platform.startswith("win"):
+        if psutil is None:
+            _terminate_tree_windows(pid, grace_sec=grace_sec)
+            return
+        try:
+            parent = psutil.Process(pid)
+        except psutil.Error:
+            return
+        procs = parent.children(recursive=True) + [parent]
+        try:
+            parent.terminate()
+        except psutil.Error:
+            pass
+        _, alive = psutil.wait_procs(procs, timeout=max(0.0, grace_sec))
+        for proc in alive:
+            try:
+                proc.kill()
+            except psutil.Error:
+                pass
+        return
+
+    try:
+        pgid = os.getpgid(pid)
+    except (ProcessLookupError, PermissionError, OSError):
+        _terminate_tree_psutil(pid, grace_sec=grace_sec)
+        return
+
+    # Only signal a process group when the target owns it. For an arbitrary
+    # child in the caller's group, fall back to process-tree handling.
+    if pgid <= 0 or pgid != pid:
+        _terminate_tree_psutil(pid, grace_sec=grace_sec)
+        return
+
+    try:
+        os.kill(pid, signal.SIGTERM)
+    except ProcessLookupError:
+        # The owner may have exited already while orphaned workers remain.
+        try:
+            os.killpg(pgid, signal.SIGTERM)
+        except ProcessLookupError:
+            return
+    except (PermissionError, OSError):
+        _terminate_tree_psutil(pid, grace_sec=grace_sec)
+        return
+
+    deadline = time.monotonic() + max(0.0, grace_sec)
+    while time.monotonic() < deadline:
+        if not _process_group_has_live_members(pgid):
+            return
+        time.sleep(min(0.1, max(0.0, deadline - time.monotonic())))
+    if not _process_group_has_live_members(pgid):
+        return
+
+    _logger.warning(
+        "Process group %s (leader pid=%s) did not exit after graceful SIGTERM "
+        "within %.1fs, sending SIGKILL",
+        pgid,
+        pid,
+        grace_sec,
+    )
+    try:
+        os.killpg(pgid, signal.SIGKILL)
+    except ProcessLookupError:
+        pass
+
+
 def _terminate_tree_windows(pid: int, *, grace_sec: float) -> None:
     if psutil is not None:
         _terminate_tree_psutil(pid, grace_sec=grace_sec)

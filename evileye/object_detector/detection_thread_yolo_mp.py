@@ -55,6 +55,7 @@ class DetectionThreadYoloMp(DetectionThreadBase):
             restart_on_exit=restart_on_exit,
             no_restart_exit_codes=no_restart_exit_codes,
             on_worker_fatal_exit=self._handle_worker_fatal_exit,
+            on_before_worker_restart=self._handle_before_worker_restart,
         )
         self.mp_worker = self.mp_control.add_worker(MpWorkerYolo)
         self.model_name = model_name
@@ -177,6 +178,19 @@ class DetectionThreadYoloMp(DetectionThreadBase):
             except Exception as exc:
                 self.logger.error("CUDA OOM callback failed: %s", exc, exc_info=True)
 
+    def _handle_before_worker_restart(
+        self, slot_index: int, exit_code: int | None, pool_name: str
+    ) -> None:
+        """Reset bridge FIFO after MpControl drained IPC queues."""
+        self.logger.warning(
+            "Clearing detection MP bridge before worker restart (slot=%s exit=%s pool=%s)",
+            slot_index,
+            exit_code,
+            pool_name,
+        )
+        if self._bridge is not None:
+            self._bridge.clear()
+
     def _drain_mp_output_queue(self) -> None:
         if self.mp_control is None:
             return
@@ -283,6 +297,9 @@ class DetectionThreadYoloMp(DetectionThreadBase):
                 image, self.roi, self.roi_coords_per_camera
             )
             if not split_image:
+                continue
+            if not self.consume_stride_slot():
+                self._put_empty_detection_for_capture(image)
                 continue
             if self._gpu_disabled or (self.mp_control is not None and not self.mp_control.is_operational()):
                 self._put_empty_detection_for_capture(image)

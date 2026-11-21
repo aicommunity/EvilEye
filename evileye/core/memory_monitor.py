@@ -8,9 +8,8 @@ import os
 import time
 import gc
 import threading
-from typing import Optional, Dict, List, Tuple
+from typing import Optional, Dict, List
 from collections import deque
-from datetime import datetime
 
 try:
     import psutil

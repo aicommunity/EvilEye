@@ -12,7 +12,6 @@ import time
 import argparse
 import signal
 from typing import Optional, List, Tuple
-from datetime import datetime
 
 try:
     import psutil

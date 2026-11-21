@@ -1,5 +1,5 @@
 from typing import List, Optional, Any
-from abc import ABC, abstractmethod
+from abc import abstractmethod
 from ..core.base_class import EvilEyeBase
 from queue import Queue, Empty
 import threading

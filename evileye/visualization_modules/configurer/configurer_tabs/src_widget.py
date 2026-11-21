@@ -36,7 +36,6 @@ from ..db_connection_window import DatabaseConnectionWindow
 from ....capture.video_capture_base import CaptureDeviceType
 from .. import parameters_processing
 from ....capture.video_capture_opencv import VideoCaptureOpencv
-from urllib.parse import urlparse
 from .. import parameters_processing
 
 

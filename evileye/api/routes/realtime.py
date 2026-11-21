@@ -4,7 +4,10 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import json
+import logging
 import time
+from dataclasses import dataclass
+from enum import Enum
 from typing import Optional, Callable
 
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect, Query
@@ -12,21 +15,38 @@ from fastapi import APIRouter, WebSocket, WebSocketDisconnect, Query
 from evileye.api.core.config_run_access import get_config_run_manager
 from evileye.api.core.live_preview_hub import get_live_preview_hub
 from evileye.api.core.runtime_registry import load_runtime_record
+from evileye.api.core.transport_revoke import (
+    register_metadata_ws,
+    unregister_metadata_ws,
+)
 from evileye.api.security import current_user, load_web_auth_config, permissions_for_role
 from evileye.core.runtime_services import get_frame_broker
 
+logger = logging.getLogger("evileye.api.realtime")
 router = APIRouter(prefix="/api/v1", tags=["realtime"])
 
 _WS_MIN_INTERVAL_SEC = 0.5
 
 
-def _touch_preview_demand_ws(websocket: WebSocket, rid: int, level: str = "grid", *, force: bool = False) -> None:
+def _touch_preview_demand_ws(
+    websocket: WebSocket,
+    rid: int,
+    level: str = "grid",
+    *,
+    force: bool = False,
+    source_id: int | None = None,
+) -> None:
     queue = getattr(websocket.app.state, "preview_demand_queue", None)
     if queue is None:
         return
     touched_at = time.time()
+    normalized_level = (level or "grid").strip().lower()
+    if normalized_level not in {"grid", "stream"}:
+        normalized_level = "grid"
     try:
-        queue.put_nowait((str(rid), touched_at, level, force))
+        if source_id is not None:
+            queue.put_nowait((f"{rid}:{source_id}", touched_at, normalized_level, force))
+        queue.put_nowait((str(rid), touched_at, normalized_level, force))
     except Exception:
         pass
 
@@ -47,49 +67,87 @@ def make_hub_demand_callback(app) -> Callable[[int], None]:
 async def _authorize_live_ws(websocket: WebSocket) -> bool:
     from evileye.api.core.ip_ban_store import get_ip_ban_store
     from evileye.api.core.rate_guard import get_rate_guard
+    from evileye.api.security import resolve_session_principal
 
     guard = get_rate_guard()
     ip = guard.client_ip(websocket)
     if get_ip_ban_store().is_banned(ip):
+        logger.warning("ws rejected code=4403 reason=banned bucket=ws_live_grid ip=%s", ip)
+        guard.note_ws_reject("banned")
         await websocket.close(code=4403)
         return False
-    if guard.record_ws_connect(websocket):
+    if guard.record_ws_connect(websocket, bucket="ws_live_grid"):
+        logger.warning("ws rejected code=4403 reason=ws_live_flood bucket=ws_live_grid ip=%s", ip)
         await websocket.close(code=4403)
         return False
 
     auth = load_web_auth_config()
     if not auth.enabled:
         return True
-    user = None
-    try:
-        user = current_user(websocket)  # type: ignore[arg-type]
-    except Exception:
-        user = None
-    if user is None:
-        session = websocket.scope.get("session") or {}
-        raw = session.get("user") if isinstance(session, dict) else None
-        if isinstance(raw, dict):
-            user = raw
+    session = websocket.scope.get("session") or {}
+    raw = session.get("user") if isinstance(session, dict) else None
+    if not isinstance(raw, dict):
+        try:
+            raw = current_user(websocket)  # type: ignore[arg-type]
+        except Exception:
+            raw = None
+    user = resolve_session_principal(raw if isinstance(raw, dict) else None)
     if user is None:
         await websocket.close(code=4401)
         return False
     granted = set(user.get("permissions") or permissions_for_role(str(user.get("role") or "user")))
     if "live:view" not in granted and "system:admin" not in granted:
+        logger.warning("ws rejected code=4403 reason=permission bucket=ws_live_grid ip=%s", ip)
+        guard.note_ws_reject("permission")
         await websocket.close(code=4403)
         return False
     return True
 
 
+def _camera_access_from_websocket(websocket: WebSocket):
+    from evileye.api.core.camera_access import CameraAccess, lookup_user_record
+    from evileye.api.core.user_prefs import allowed_cameras_from_record, prefs_from_record, normalize_allowed_cameras
+    from evileye.api.security import normalize_role, resolve_session_principal
+
+    auth = load_web_auth_config()
+    if not auth.enabled:
+        return CameraAccess(unrestricted=True, allowed_names=frozenset(), visible_names=None)
+    session = websocket.scope.get("session") or {}
+    raw = session.get("user") if isinstance(session, dict) else None
+    if not isinstance(raw, dict):
+        try:
+            raw = current_user(websocket)  # type: ignore[arg-type]
+        except Exception:
+            raw = None
+    principal = resolve_session_principal(raw if isinstance(raw, dict) else None)
+    if principal is None:
+        return CameraAccess(unrestricted=False, allowed_names=frozenset(), visible_names=frozenset())
+
+    username = str(principal.get("username") or "")
+    record = lookup_user_record(username) if username else None
+    # Admin bypass from live record only (F01).
+    role = normalize_role(str((record or {}).get("role") or principal.get("role") or "user"))
+    prefs = prefs_from_record(record)
+    visible_raw = prefs.get("visible_cameras")
+    visible_names = None if visible_raw is None else frozenset(normalize_allowed_cameras(visible_raw))
+    if role == "admin":
+        return CameraAccess(unrestricted=True, allowed_names=frozenset(), visible_names=visible_names)
+    return CameraAccess(
+        unrestricted=False,
+        allowed_names=frozenset(allowed_cameras_from_record(record)),
+        visible_names=visible_names,
+    )
+
+
 def _resolve_run(rid: int) -> dict:
+    from evileye.api.core.runtime_registry import merge_run_views
+
     runtime_info = load_runtime_record(rid)
     try:
-        run_info = get_config_run_manager().describe(rid)
+        manager_info = get_config_run_manager().describe(rid)
     except KeyError:
-        run_info = None
-    if run_info and runtime_info:
-        run_info = {**runtime_info, **run_info}
-    elif runtime_info:
-        run_info = runtime_info
+        manager_info = None
+    run_info = merge_run_views(runtime_info, manager_info)
     if not run_info:
         raise KeyError(rid)
     return run_info
@@ -111,14 +169,20 @@ async def run_metadata_ws(websocket: WebSocket, rid: int, source_id: Optional[in
     guard = get_rate_guard()
     ip = guard.client_ip(websocket)
     if get_ip_ban_store().is_banned(ip):
+        logger.warning("ws rejected code=4403 reason=banned bucket=ws_metadata ip=%s", ip)
+        guard.note_ws_reject("banned")
         await websocket.close(code=4403)
         return
-    if guard.record_ws_connect(websocket):
+    if guard.record_ws_connect(websocket, bucket="ws_metadata"):
+        logger.warning("ws rejected code=4403 reason=ws_metadata_flood bucket=ws_metadata ip=%s", ip)
         await websocket.close(code=4403)
         return
 
     auth = load_web_auth_config()
+    ws_username: str | None = None
     if auth.enabled:
+        from evileye.api.security import resolve_session_principal
+
         user = None
         try:
             user = current_user(websocket)  # type: ignore[arg-type]
@@ -127,13 +191,15 @@ async def run_metadata_ws(websocket: WebSocket, rid: int, source_id: Optional[in
         if user is None:
             session = websocket.scope.get("session") or {}
             raw = session.get("user") if isinstance(session, dict) else None
-            if isinstance(raw, dict):
-                user = raw
+            user = resolve_session_principal(raw if isinstance(raw, dict) else None)
         if user is None:
             await websocket.close(code=4401)
             return
+        ws_username = str(user.get("username") or "") or None
         granted = set(user.get("permissions") or permissions_for_role(str(user.get("role") or "user")))
         if "live:view" not in granted and "system:admin" not in granted:
+            logger.warning("ws rejected code=4403 reason=permission bucket=ws_metadata ip=%s", ip)
+            guard.note_ws_reject("permission")
             await websocket.close(code=4403)
             return
 
@@ -146,7 +212,33 @@ async def run_metadata_ws(websocket: WebSocket, rid: int, source_id: Optional[in
         await websocket.close(code=4001)
         return
 
+    from evileye.api.core.camera_access import assert_source_id_allowed, allowed_source_ids_for_run
+
+    access = _camera_access_from_websocket(websocket)
+    allowed_ids: set[int] | None = None
+    if not access.unrestricted:
+        allowed_ids = allowed_source_ids_for_run(access, int(run_info["id"]))
+
+    if source_id is not None:
+        try:
+            assert_source_id_allowed(access, int(run_info["id"]), source_id)
+        except Exception:
+            logger.warning(
+                "ws rejected code=4403 reason=camera_acl bucket=ws_metadata ip=%s source_id=%s",
+                ip,
+                source_id,
+            )
+            guard.note_ws_reject("camera_acl")
+            await websocket.close(code=4403)
+            return
+    elif allowed_ids is not None and len(allowed_ids) == 0:
+        logger.warning("ws rejected code=4403 reason=camera_acl_empty bucket=ws_metadata ip=%s", ip)
+        guard.note_ws_reject("camera_acl")
+        await websocket.close(code=4403)
+        return
+
     await websocket.accept()
+    register_metadata_ws(websocket, ws_username)
     broker = get_frame_broker()
     key = f"{rid}:{source_id}" if source_id is not None else str(rid)
     q = broker.subscribe(key)
@@ -158,7 +250,12 @@ async def run_metadata_ws(websocket: WebSocket, rid: int, source_id: Optional[in
             try:
                 meta = q.get_nowait()
             except Exception:
-                meta = broker.latest_metadata(key) or broker.latest_metadata(str(rid))
+                if source_id is None:
+                    meta = broker.latest_metadata(str(rid))
+                else:
+                    # Do not fallback to run-level payload for source-scoped WS:
+                    # this prevents cross-camera overlay leakage.
+                    meta = broker.latest_metadata(key)
             now = asyncio.get_event_loop().time()
             if meta is not None:
                 payload = dict(meta)
@@ -166,6 +263,15 @@ async def run_metadata_ws(websocket: WebSocket, rid: int, source_id: Optional[in
                 payload.setdefault("source_id", source_id)
                 payload.setdefault("objects", payload.get("objects") or [])
                 payload.setdefault("zones", payload.get("zones") or [])
+                sid_raw = payload.get("source_id")
+                if allowed_ids is not None and sid_raw is not None:
+                    try:
+                        if int(sid_raw) not in allowed_ids:
+                            await asyncio.sleep(0.1)
+                            continue
+                    except (TypeError, ValueError):
+                        await asyncio.sleep(0.1)
+                        continue
                 fp = _payload_fingerprint(payload)
                 if fp != last_fp or (now - last_sent) >= _WS_MIN_INTERVAL_SEC:
                     await websocket.send_json(payload)
@@ -180,7 +286,51 @@ async def run_metadata_ws(websocket: WebSocket, rid: int, source_id: Optional[in
         except Exception:
             pass
     finally:
+        unregister_metadata_ws(websocket)
         broker.unsubscribe(key, q)
+
+
+class LiveAclKind(str, Enum):
+    UNRESTRICTED = "unrestricted"
+    DENY = "deny"
+    ALLOW = "allow"
+
+
+@dataclass
+class LiveAcl:
+    kind: LiveAclKind
+    ids: frozenset[int] = frozenset()
+
+    @staticmethod
+    def from_allowed_ids(allowed_ids: set[int] | None) -> "LiveAcl":
+        if allowed_ids is None:
+            return LiveAcl(kind=LiveAclKind.UNRESTRICTED)
+        if len(allowed_ids) == 0:
+            return LiveAcl(kind=LiveAclKind.DENY)
+        return LiveAcl(kind=LiveAclKind.ALLOW, ids=frozenset(int(x) for x in allowed_ids))
+
+
+def filter_live_subscribe_ids(
+    allowed_ids: set[int] | None,
+    requested: list[int],
+) -> list[int]:
+    """Intersect subscribe list with ACL. Empty request stays empty (A01)."""
+    if allowed_ids is None:
+        return [int(x) for x in requested]
+    return [int(sid) for sid in requested if int(sid) in allowed_ids]
+
+
+def live_preview_acl_rejects_empty(allowed_ids: set[int] | None) -> bool:
+    """True when restricted user has zero allowed sources (close 4403)."""
+    return allowed_ids is not None and len(allowed_ids) == 0
+
+
+def _filter_subscribe_live_acl(acl: LiveAcl, requested: list[int]) -> list[int]:
+    if acl.kind == LiveAclKind.UNRESTRICTED:
+        return [int(x) for x in requested]
+    if acl.kind == LiveAclKind.DENY:
+        return []
+    return [int(sid) for sid in requested if int(sid) in acl.ids]
 
 
 @router.websocket("/runs/{rid}/ws/live")
@@ -196,6 +346,16 @@ async def live_grid_preview_ws(websocket: WebSocket, rid: int):
         await websocket.close(code=4001)
         return
 
+    from evileye.api.core.camera_access import allowed_source_ids_for_run
+    from evileye.api.security import resolve_session_principal
+
+    access = _camera_access_from_websocket(websocket)
+    allowed_ids = allowed_source_ids_for_run(access, int(run_info["id"]))
+    # Restricted with empty ACL: reject before accept/register (audit A01).
+    if live_preview_acl_rejects_empty(allowed_ids):
+        await websocket.close(code=4403)
+        return
+
     hub = get_live_preview_hub()
     if len(hub._clients) >= hub._max_clients:
         await websocket.close(code=4429)
@@ -203,10 +363,23 @@ async def live_grid_preview_ws(websocket: WebSocket, rid: int):
 
     await websocket.accept()
     _touch_preview_demand_ws(websocket, rid, "grid")
-    client = await hub.register(websocket, rid)
+    session = websocket.scope.get("session") or {}
+    raw_user = session.get("user") if isinstance(session, dict) else None
+    principal = resolve_session_principal(raw_user if isinstance(raw_user, dict) else None)
+    ws_username = (str(principal.get("username") or "") if principal else None) or (
+        str(raw_user.get("username") or "") if isinstance(raw_user, dict) else None
+    ) or None
+    client = await hub.register(websocket, rid, username=ws_username)
     if client is None:
         await websocket.close(code=4429)
         return
+    # Start with empty source_ids (= none until explicit subscribe).
+
+    def _refresh_acl() -> LiveAcl:
+        """Re-read ACL; DENY means close with 4403. UNRESTRICTED is not deny (F03)."""
+        access_now = _camera_access_from_websocket(websocket)
+        ids_now = allowed_source_ids_for_run(access_now, int(run_info["id"]))
+        return LiveAcl.from_allowed_ids(ids_now)
 
     try:
         while True:
@@ -217,11 +390,29 @@ async def live_grid_preview_ws(websocket: WebSocket, rid: int):
                 continue
             op = msg.get("op") or msg.get("subscribe")
             if op == "subscribe" or msg.get("subscribe") is not None:
+                acl = _refresh_acl()
+                if acl.kind == LiveAclKind.DENY:
+                    await websocket.close(code=4403)
+                    return
                 ids = msg.get("source_ids") or msg.get("subscribe") or []
                 if isinstance(ids, list):
-                    hub.set_client_sources(client, [int(x) for x in ids])
+                    source_ids = _filter_subscribe_live_acl(acl, [int(x) for x in ids])
+                    hub.set_client_sources(client, source_ids)
+                    for sid in source_ids:
+                        _touch_preview_demand_ws(websocket, rid, "grid", source_id=sid)
             elif op == "ping":
+                acl = _refresh_acl()
+                if acl.kind == LiveAclKind.DENY:
+                    await websocket.close(code=4403)
+                    return
+                # Narrow subscribed set if ACL shrank since last subscribe.
+                if acl.kind == LiveAclKind.ALLOW:
+                    narrowed = [sid for sid in client.source_ids if sid in acl.ids]
+                    if set(narrowed) != set(client.source_ids):
+                        hub.set_client_sources(client, narrowed)
                 _touch_preview_demand_ws(websocket, rid, "grid")
+                for sid in client.source_ids:
+                    _touch_preview_demand_ws(websocket, rid, "grid", source_id=sid)
                 await websocket.send_json({"op": "pong"})
     except WebSocketDisconnect:
         pass

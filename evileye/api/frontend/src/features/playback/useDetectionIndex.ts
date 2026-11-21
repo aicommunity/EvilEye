@@ -1,0 +1,334 @@
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { ApiError, cacheGet, cacheSet, isAbortError, playbackApi, type PlaybackDetectionItem } from '../../api';
+import { getAuthEpoch, withAuthScope } from '../../auth/authScope';
+import { mergeGlobalDetectionTs } from './detectionSync';
+
+const DETECTIONS_CACHE_TTL_MS = 90_000;
+const BACKOFF_MS = [5_000, 10_000, 20_000, 30_000];
+
+function detectionsCacheKey(
+  date: string,
+  runId: number | null,
+  fromSec: number,
+  toSec: number,
+  cameras: string[],
+): string {
+  return withAuthScope(
+    `playback:detections:${date}:${runId ?? 'none'}:${Math.round(fromSec)}:${Math.round(toSec)}:ticks-preview-v2:${cameras.join(',')}`,
+  );
+}
+
+/** Merge detection tick rows per camera (ts/kind/object_id). */
+export function mergeDetectionItems(
+  prev: Record<string, PlaybackDetectionItem[]>,
+  incoming: Record<string, PlaybackDetectionItem[]>,
+  cameras: string[],
+): Record<string, PlaybackDetectionItem[]> {
+  const merged: Record<string, PlaybackDetectionItem[]> = {};
+  for (const cam of cameras) {
+    const byKey = new Map<string, PlaybackDetectionItem>();
+    for (const it of [...(prev[cam] ?? []), ...(incoming[cam] ?? [])]) {
+      if (!Number.isFinite(it.ts)) continue;
+      const key = `${it.ts}:${it.kind}:${it.object_id ?? 'anon'}`;
+      if (!byKey.has(key)) byKey.set(key, it);
+    }
+    merged[cam] = Array.from(byKey.values()).sort((a, b) => a.ts - b.ts);
+  }
+  return merged;
+}
+
+function isBusyOrTimeout(e: unknown): boolean {
+  if (!(e instanceof ApiError)) return false;
+  if (e.status !== 503) return false;
+  const detail = String(e.message || '').toLowerCase();
+  return detail.includes('busy') || detail.includes('timeout') || detail.includes('detections');
+}
+
+async function fetchDetectionTicks(
+  cameras: string[],
+  opts: {
+    date: string;
+    runId: number | null;
+    fromSec: number;
+    toSec: number;
+    signal?: AbortSignal;
+  },
+): Promise<Record<string, PlaybackDetectionItem[]>> {
+  const epochAtStart = getAuthEpoch();
+  const cacheKey = detectionsCacheKey(opts.date, opts.runId, opts.fromSec, opts.toSec, cameras);
+  const cached = cacheGet<{ by_camera: Record<string, PlaybackDetectionItem[]> }>(cacheKey);
+  if (cached?.by_camera) {
+    return cached.by_camera;
+  }
+
+  const res = await playbackApi.detections(cameras, {
+    date: opts.date,
+    runId: opts.runId,
+    from: opts.fromSec,
+    to: opts.toSec,
+    ticksOnly: true,
+    signal: opts.signal,
+  });
+  if (epochAtStart !== getAuthEpoch()) {
+    return mappedEmpty(cameras);
+  }
+  cacheSet(cacheKey, { by_camera: res.by_camera ?? {} }, DETECTIONS_CACHE_TTL_MS);
+
+  const mapped: Record<string, PlaybackDetectionItem[]> = {};
+  for (const cam of cameras) {
+    mapped[cam] = res.by_camera?.[cam] ?? [];
+  }
+  return mapped;
+}
+
+function mappedEmpty(cameras: string[]): Record<string, PlaybackDetectionItem[]> {
+  const mapped: Record<string, PlaybackDetectionItem[]> = {};
+  for (const cam of cameras) mapped[cam] = [];
+  return mapped;
+}
+
+/**
+ * Archive detection index: ticks with optional preview_path / bounding_box for gap static frames.
+ */
+export function useDetectionIndex({
+  cameras,
+  date,
+  runId,
+  priorityFromSec,
+  priorityToSec,
+  backgroundFromSec,
+  backgroundToSec,
+  enabled,
+}: {
+  cameras: string[];
+  date: string;
+  runId: number | null;
+  priorityFromSec: number | null;
+  priorityToSec: number | null;
+  backgroundFromSec: number | null;
+  backgroundToSec: number | null;
+  enabled: boolean;
+}) {
+  const [tickByCamera, setTickByCamera] = useState<Record<string, PlaybackDetectionItem[]>>({});
+  const [loading, setLoading] = useState(false);
+  /** idle | primary | primary_done | background — gate day enrich (R13). */
+  const [phase, setPhase] = useState<'idle' | 'primary' | 'primary_done' | 'background'>('idle');
+  const backoffStepRef = useRef(0);
+  const backoffUntilRef = useRef(0);
+  const fetchGenRef = useRef(0);
+  const primaryDoneRef = useRef(false);
+  const [primaryDoneTick, setPrimaryDoneTick] = useState(0);
+  const retryPendingRef = useRef(false);
+
+  const cameraKey = cameras.join(',');
+  const queryKey = `${date}:${runId ?? 'none'}:${cameraKey}`;
+
+  // Prefer viewport (priority) first for time-to-first-marker; day-wide as background (B02).
+  const useViewportFirst = priorityFromSec != null && priorityToSec != null;
+  const ticksFromSec = useViewportFirst ? priorityFromSec : backgroundFromSec ?? priorityFromSec;
+  const ticksToSec = useViewportFirst ? priorityToSec : backgroundToSec ?? priorityToSec;
+  // True when the primary fetch already covers the full day (skip duplicate enrich).
+  const dayWideTicks =
+    !useViewportFirst &&
+    backgroundFromSec != null &&
+    backgroundToSec != null &&
+    ticksFromSec === backgroundFromSec &&
+    ticksToSec === backgroundToSec;
+
+  useEffect(() => {
+    if (!enabled || !cameras.length) {
+      setTickByCamera({});
+      setLoading(false);
+      setPhase('idle');
+      primaryDoneRef.current = false;
+      return;
+    }
+    setTickByCamera({});
+    setPhase('idle');
+    primaryDoneRef.current = false;
+    backoffStepRef.current = 0;
+    backoffUntilRef.current = 0;
+    fetchGenRef.current += 1;
+  }, [enabled, queryKey]);
+
+  useEffect(() => {
+    if (!enabled || !cameras.length || ticksFromSec == null || ticksToSec == null) {
+      setTickByCamera({});
+      setLoading(false);
+      setPhase('idle');
+      return;
+    }
+
+    const fromSec = Math.floor(ticksFromSec);
+    const toSec = Math.ceil(ticksToSec);
+    const ac = new AbortController();
+    let retryTimer: number | null = null;
+    const gen = ++fetchGenRef.current;
+    setPhase('primary');
+    retryPendingRef.current = false;
+
+    const markPrimaryDone = () => {
+      if (ac.signal.aborted || gen !== fetchGenRef.current) return;
+      primaryDoneRef.current = true;
+      setPhase('primary_done');
+      setPrimaryDoneTick((n) => n + 1);
+    };
+
+    const run = () => {
+      if (ac.signal.aborted || gen !== fetchGenRef.current) return;
+      const now = Date.now();
+      if (now < backoffUntilRef.current) {
+        retryPendingRef.current = true;
+        retryTimer = window.setTimeout(run, backoffUntilRef.current - now);
+        return;
+      }
+      setLoading(true);
+      retryPendingRef.current = false;
+      void fetchDetectionTicks(cameras, {
+        date,
+        runId,
+        fromSec,
+        toSec,
+        signal: ac.signal,
+      })
+        .then((mapped) => {
+          if (ac.signal.aborted || gen !== fetchGenRef.current) return;
+          backoffStepRef.current = 0;
+          setTickByCamera((prev) => mergeDetectionItems(prev, mapped, cameras));
+          markPrimaryDone();
+        })
+        .catch((e) => {
+          if (isAbortError(e) || ac.signal.aborted || gen !== fetchGenRef.current) return;
+          if (isBusyOrTimeout(e)) {
+            const step = backoffStepRef.current;
+            const delay = BACKOFF_MS[Math.min(step, BACKOFF_MS.length - 1)];
+            backoffStepRef.current = Math.min(step + 1, BACKOFF_MS.length - 1);
+            backoffUntilRef.current = Date.now() + delay;
+            retryPendingRef.current = true;
+            retryTimer = window.setTimeout(run, delay);
+            return;
+          }
+          setTickByCamera({});
+          markPrimaryDone();
+        })
+        .finally(() => {
+          if (!ac.signal.aborted && gen === fetchGenRef.current && !retryPendingRef.current) {
+            setLoading(false);
+          }
+        });
+    };
+
+    run();
+
+    return () => {
+      ac.abort();
+      if (retryTimer != null) window.clearTimeout(retryTimer);
+    };
+  }, [
+    cameraKey,
+    date,
+    runId,
+    ticksFromSec == null ? null : Math.floor(ticksFromSec),
+    ticksToSec == null ? null : Math.ceil(ticksToSec),
+    enabled,
+    dayWideTicks,
+    cameras,
+  ]);
+
+  // If primary window was viewport-only, still pull day ticks once for full-timeline markers.
+  // F05: trigger via primaryDoneTick — never put `phase` in deps (self-abort).
+  useEffect(() => {
+    if (
+      !enabled ||
+      !cameras.length ||
+      backgroundFromSec == null ||
+      backgroundToSec == null ||
+      dayWideTicks ||
+      !primaryDoneRef.current ||
+      primaryDoneTick < 1
+    ) {
+      return;
+    }
+
+    const ac = new AbortController();
+    let retryTimer: number | null = null;
+    const gen = fetchGenRef.current;
+    setPhase('background');
+
+    const finishBg = () => {
+      if (ac.signal.aborted || gen !== fetchGenRef.current) return;
+      setPhase('primary_done');
+    };
+
+    const run = () => {
+      if (ac.signal.aborted || gen !== fetchGenRef.current) return;
+      const now = Date.now();
+      if (now < backoffUntilRef.current) {
+        retryTimer = window.setTimeout(run, backoffUntilRef.current - now);
+        return;
+      }
+      void fetchDetectionTicks(cameras, {
+        date,
+        runId,
+        fromSec: backgroundFromSec,
+        toSec: backgroundToSec,
+        signal: ac.signal,
+      })
+        .then((mapped) => {
+          if (ac.signal.aborted || gen !== fetchGenRef.current) return;
+          setTickByCamera((prev) => mergeDetectionItems(prev, mapped, cameras));
+          finishBg();
+        })
+        .catch((e) => {
+          if (isAbortError(e) || ac.signal.aborted || gen !== fetchGenRef.current) return;
+          if (isBusyOrTimeout(e)) {
+            const step = backoffStepRef.current;
+            const delay = BACKOFF_MS[Math.min(step, BACKOFF_MS.length - 1)];
+            backoffStepRef.current = Math.min(step + 1, BACKOFF_MS.length - 1);
+            backoffUntilRef.current = Date.now() + delay;
+            retryTimer = window.setTimeout(run, delay);
+            return;
+          }
+          finishBg();
+        });
+    };
+
+    run();
+
+    return () => {
+      ac.abort();
+      if (retryTimer != null) window.clearTimeout(retryTimer);
+    };
+  }, [
+    cameraKey,
+    date,
+    runId,
+    backgroundFromSec,
+    backgroundToSec,
+    enabled,
+    dayWideTicks,
+    cameras,
+    primaryDoneTick,
+  ]);
+
+  const seedTicks = useCallback(
+    (incoming: Record<string, PlaybackDetectionItem[]>) => {
+      if (!enabled || !cameras.length) return;
+      setTickByCamera((prev) => mergeDetectionItems(prev, incoming, cameras));
+    },
+    [enabled, cameras, cameraKey],
+  );
+
+  const byCamera = tickByCamera;
+  const globalTs = useMemo(() => mergeGlobalDetectionTs(byCamera), [byCamera]);
+  const hasDetections = globalTs.length > 0;
+
+  return {
+    byCamera,
+    globalTs,
+    hasDetections,
+    loading,
+    backgroundLoading: phase === 'background',
+    seedTicks,
+  };
+}

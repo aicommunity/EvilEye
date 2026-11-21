@@ -9,7 +9,6 @@ except ImportError:
 
     pyqt_version = 5
 
-from abc import abstractmethod, ABC
 from .jadapter_base import JournalAdapterBase
 
 

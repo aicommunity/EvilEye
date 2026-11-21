@@ -1,7 +1,5 @@
 from __future__ import annotations
 
-import os
-from pathlib import Path
 
 from evileye.core.paths import configs_dir, creds_path, runtime_dir, site_root
 

@@ -1,5 +1,4 @@
-from collections import deque
-from typing import Any, List
+from typing import List
 import onnxruntime as ort
 import numpy as np
 import cv2

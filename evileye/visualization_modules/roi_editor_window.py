@@ -18,7 +18,6 @@ except ImportError:
     pyqt_version = 5
 
 import os
-from typing import List
 
 from ..core.logger import get_module_logger
 from ..utils import utils as utils_utils

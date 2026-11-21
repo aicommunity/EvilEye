@@ -1,14 +1,10 @@
-import time
 
 from .database_controller_pg import DatabaseControllerPg
 from .db_adapter import DatabaseAdapterBase
 from .constants import QueryType, EventType
-import json
-from ..utils.utils import ObjectResultEncoder
+from ..utils.utils import dumps_object_data
 import copy
-import datetime
 import os
-from timeit import default_timer as timer
 import cv2
 from ..utils import threading_events
 from ..utils import utils
@@ -69,36 +65,41 @@ class DatabaseAdapterObjects(DatabaseAdapterBase):
         if query_string is None:
             return
 
-        if (
-                not hasattr(self.db_controller, "is_connected")
-                or not self.db_controller.is_connected()
-        ):
-            self.logger.warning(
-                "Database is not connected in db_adapter_objects._process_queue_item; "
-                "skipping DB write operation."
-            )
-            return
-
-        record = self.db_controller.query(query_string, data)
+        record = self.db_controller.query_once(query_string, data)
 
         if not record:
-            self.logger.warning(
-                "Database query returned no records in db_adapter_objects._process_queue_item; "
-                "skipping image save and notifications."
+            if query_type == QueryType.INSERT:
+                raise RuntimeError(
+                    "Objects INSERT returned no row despite its RETURNING clause"
+                )
+            self.logger.info(
+                "Objects UPDATE matched no record; no image or notification is required"
             )
             return
 
-        try:
-            row_num = record[0][0]
+        if (
+            not isinstance(record, list)
+            or not record
+            or not isinstance(record[0], (list, tuple))
+            or len(record[0]) < 2
+            or record[0][1] is None
+        ):
+            self._record_failure(
+                'process object RETURNING row',
+                RuntimeError('Objects query returned an invalid record_id/bounding_box row'),
+                category='terminal_write',
+            )
+            box = None
+        else:
             box = record[0][1]
-        except Exception as ex:
-            self.logger.error(
-                f"Unexpected record format in db_adapter_objects._process_queue_item: {record}. "
-                f"Error: {ex}"
-            )
-            return
 
-        self._save_image(preview_path, frame_path, image, box)
+        if box is not None and image is not None and getattr(image, "image", None) is not None:
+            try:
+                self._save_image(preview_path, frame_path, image, box)
+            except Exception as exc:
+                self._record_failure(
+                    'save object event images', exc, category='terminal_write'
+                )
         if query_type == QueryType.INSERT:
             threading_events.notify(EventType.HANDLER_NEW_OBJECT)
         elif query_type == QueryType.UPDATE:
@@ -114,7 +115,7 @@ class DatabaseAdapterObjects(DatabaseAdapterBase):
                                'time_lost': obj.time_lost,
                                'lost_preview_path': '',
                                'lost_frame_path': '',
-                               'object_data': json.dumps(obj.__dict__, cls=ObjectResultEncoder)}
+                               'object_data': dumps_object_data(obj)}
 
         src_name = ''
         for camera in self.cameras_params:
@@ -127,12 +128,15 @@ class DatabaseAdapterObjects(DatabaseAdapterBase):
         fields_for_updating['lost_frame_path'] = self._get_img_path('frame', 'lost',
                                                                     src_name, obj)
 
-        image_height, image_width, _ = obj.last_image.image.shape
-        fields_for_updating['lost_bounding_box'] = copy.deepcopy(fields_for_updating['lost_bounding_box'])
-        fields_for_updating['lost_bounding_box'][0] /= image_width
-        fields_for_updating['lost_bounding_box'][1] /= image_height
-        fields_for_updating['lost_bounding_box'][2] /= image_width
-        fields_for_updating['lost_bounding_box'][3] /= image_height
+        last_image = getattr(obj, 'last_image', None)
+        image = getattr(last_image, 'image', None) if last_image is not None else None
+        if image is not None:
+            image_height, image_width, _ = image.shape
+            fields_for_updating['lost_bounding_box'] = copy.deepcopy(fields_for_updating['lost_bounding_box'])
+            fields_for_updating['lost_bounding_box'][0] /= image_width
+            fields_for_updating['lost_bounding_box'][1] /= image_height
+            fields_for_updating['lost_bounding_box'][2] /= image_width
+            fields_for_updating['lost_bounding_box'][3] /= image_height
         return (list(fields_for_updating.keys()), list(fields_for_updating.values()),
                 fields_for_updating['lost_preview_path'], fields_for_updating['lost_frame_path'])
 
@@ -150,7 +154,7 @@ class DatabaseAdapterObjects(DatabaseAdapterBase):
                              'lost_preview_path': None,
                              'frame_path': '',
                              'lost_frame_path': None,
-                             'object_data': json.dumps(obj.__dict__, cls=ObjectResultEncoder),
+                             'object_data': dumps_object_data(obj),
                              'project_id': self.db_controller.get_project_id(),
                              'job_id': self.db_controller.get_job_id(),
                              'camera_full_address': ''}
@@ -170,20 +174,24 @@ class DatabaseAdapterObjects(DatabaseAdapterBase):
         fields_for_saving['frame_path'] = self._get_img_path('frame', 'detected',
                                                              fields_for_saving['source_name'], obj)
 
-        image_height, image_width, _ = obj.last_image.image.shape
-        fields_for_saving['bounding_box'] = copy.deepcopy(fields_for_saving['bounding_box'])
-        fields_for_saving['bounding_box'][0] /= image_width
-        fields_for_saving['bounding_box'][1] /= image_height
-        fields_for_saving['bounding_box'][2] /= image_width
-        fields_for_saving['bounding_box'][3] /= image_height
+        last_image = getattr(obj, 'last_image', None)
+        image = getattr(last_image, 'image', None) if last_image is not None else None
+        if image is not None:
+            image_height, image_width, _ = image.shape
+            fields_for_saving['bounding_box'] = copy.deepcopy(fields_for_saving['bounding_box'])
+            fields_for_saving['bounding_box'][0] /= image_width
+            fields_for_saving['bounding_box'][1] /= image_height
+            fields_for_saving['bounding_box'][2] /= image_width
+            fields_for_saving['bounding_box'][3] /= image_height
         return (list(fields_for_saving.keys()), list(fields_for_saving.values()),
                 fields_for_saving['preview_path'], fields_for_saving['frame_path'])
 
     def _get_img_path(self, image_type, obj_event_type, src_name, obj):
         save_dir = self.db_params['image_dir']
         detections_dir = os.path.join(save_dir, 'Detections')
-        cur_date = datetime.date.today()
-        cur_date_str = cur_date.strftime('%Y-%m-%d')
+        from evileye.core.event_time import date_folder_from_ts
+        ts = obj.time_lost if obj_event_type != 'detected' else obj.time_detected
+        cur_date_str = date_folder_from_ts(ts)
 
         current_day_path = os.path.join(detections_dir, cur_date_str)
         images_dir = os.path.join(current_day_path, 'Images')

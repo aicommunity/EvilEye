@@ -1,0 +1,622 @@
+{
+  "base": "f458f39393f1522419bc92aeaf0ae182b7bddeca",
+  "head": "32acaa52ab8cdfa4e3f08d9d5adb746369345069",
+  "commits": [
+    {
+      "commit": "e14bf29352071715efda8d2419389eac47682cca",
+      "subject": "fix(audit): A05 — stop forcing pytest exit 0"
+    },
+    {
+      "commit": "a49d55216eb0b1f61fcd0033ea13b07ac454c571",
+      "subject": "ci(audit): A13 — verify Vite SPA build in CI"
+    },
+    {
+      "commit": "dd1999dd594eea7c55fb6dafa69d6248b4f448e2",
+      "subject": "fix(audit): A02/A14 — snapshot session fixture and no run-level fallback"
+    },
+    {
+      "commit": "58464ae4f794e0937bbd67cff9f63a586d46bb25",
+      "subject": "fix(audit): A01 — live preview empty source_ids means none"
+    },
+    {
+      "commit": "2b782a74c668e4395dadd435afe78c0fe7e13672",
+      "subject": "fix(audit): A03 — playback media path allowlist and composite ACL"
+    },
+    {
+      "commit": "a34baa84d9e3f5618a08a465fbf8da1dee223b35",
+      "subject": "fix(audit): A04 — inject camera ACL for playback events"
+    },
+    {
+      "commit": "be4eda55e42bd29f1f86d40f097bc5a7e051b6ce",
+      "subject": "fix(audit): A06 — notify snapshot uses stored etag only"
+    },
+    {
+      "commit": "46af6d2ae6af8b75c4accde947b2ac7f2794063f",
+      "subject": "fix(audit): A07 — key live preview by run_id and source_id"
+    },
+    {
+      "commit": "37bb3d37250fd13e76ebca254fba88a8a61420a0",
+      "subject": "fix(audit): A08 — clear Live cameras after empty-poll grace"
+    },
+    {
+      "commit": "9e1fb2343971bfdbad24c86c94f67b2c173a926c",
+      "subject": "fix(audit): A09/A10 — coverage-aware ticks and event intervals"
+    },
+    {
+      "commit": "e373b29581c468421b4f6dc66c153f501f216de5",
+      "subject": "fix(audit): A11 — metadata cache key uses sub-second timestamp"
+    },
+    {
+      "commit": "f03bf90915376191ef93e455cb942a9f4908dbe2",
+      "subject": "docs(audit): record Stage 2 perf baseline before optimizations"
+    },
+    {
+      "commit": "616ff8f9ffd4bf25ff341220b14c5a9fe3e4e3dd",
+      "subject": "fix(audit): A12 and B01–B06 — cache cap and UI hot-path limits"
+    },
+    {
+      "commit": "286e7aef0665cad5ff6b72bc75e04eb430b254bb",
+      "subject": "refactor(audit): shared media ACL, lazy routes, and docs sync"
+    },
+    {
+      "commit": "91badbdc205d782c25441300f253685451b3d400",
+      "subject": "build(audit): refresh SPA static after lazy routes"
+    },
+    {
+      "commit": "c84cc966a30b12efbb479005388e7d4c042b9b5d",
+      "subject": "test(audit): A01 — complete live WS ACL matrix"
+    },
+    {
+      "commit": "8ba363462428c4d861e05af9a9fd80716e862564",
+      "subject": "fix(audit): A03 — parse Events/Videos camera paths"
+    },
+    {
+      "commit": "d4e5b9e294d74d7b38a8df3974803c305a6dbbb7",
+      "subject": "fix(audit): A04 — keep System events under restricted ACL"
+    },
+    {
+      "commit": "33f4cd866587a4bdbf94845b0c4835c8fa944e64",
+      "subject": "fix(audit): A08 — clear Live cache on user change and mobile grace"
+    },
+    {
+      "commit": "8d928023698e19162016561a0857e52bd151d8e7",
+      "subject": "test(audit): A06/A07 — export fetchSnapshotBlob and multi-run frame keys"
+    },
+    {
+      "commit": "5e66d9f353b4ce2108d0b44e795d7e8da0d5a0de",
+      "subject": "docs(audit): measured Stage 2 perf baseline"
+    },
+    {
+      "commit": "abbc2d4ccb67edc1bd247ecea46252cb50b66c2c",
+      "subject": "fix(audit): A12 — soft byte budget and copy_ms for memory cache"
+    },
+    {
+      "commit": "819e08fe373d2963598858487dcc4aff53bac498",
+      "subject": "fix(audit): B06 — track in-flight to_thread until complete"
+    },
+    {
+      "commit": "fd1d683bf47e2d31ddad5bc1de52475bddd57723",
+      "subject": "fix(audit): B05 — throttle playhead React updates; Timeline rAF DOM"
+    },
+    {
+      "commit": "49834189d5b54dcc3e014c8b6f890772715328cb",
+      "subject": "fix(audit): B04 — ignore stale journal results after filter switch"
+    },
+    {
+      "commit": "c048d71d7f3c9664c83c260b8494a74cc1bdc0f6",
+      "subject": "docs(audit): refresh measured table with correct snapshot URLs"
+    },
+    {
+      "commit": "b9922c916c5f3c4a14dae942e42041e7d052efd8",
+      "subject": "refactor(audit): split playback memory cache module"
+    },
+    {
+      "commit": "ce72f4ba58b44483305b67eb83a80e080bd3dfc0",
+      "subject": "docs(audit): frame key contract, Python 3.10+, service restart note"
+    },
+    {
+      "commit": "32acaa52ab8cdfa4e3f08d9d5adb746369345069",
+      "subject": "build(audit): refresh SPA static and record B07 chunk metrics"
+    }
+  ],
+  "files": [
+    {
+      "path": ".github/workflows/web-journals.yml",
+      "added": 11,
+      "deleted": 4,
+      "category": "authored"
+    },
+    {
+      "path": "docs/ATTRIBUTES_DETECTION_README.md",
+      "added": 1,
+      "deleted": 1,
+      "category": "authored"
+    },
+    {
+      "path": "docs/CLI_SERVICE_COMMANDS.md",
+      "added": 8,
+      "deleted": 1,
+      "category": "authored"
+    },
+    {
+      "path": "docs/PLAYBACK_WAN_TESTING.md",
+      "added": 1,
+      "deleted": 1,
+      "category": "authored"
+    },
+    {
+      "path": "docs/WEB_UI_GUIDE.md",
+      "added": 5,
+      "deleted": 0,
+      "category": "authored"
+    },
+    {
+      "path": "evileye/api/core/live_preview_hub.py",
+      "added": 2,
+      "deleted": 1,
+      "category": "authored"
+    },
+    {
+      "path": "evileye/api/core/media_access.py",
+      "added": 57,
+      "deleted": 0,
+      "category": "authored"
+    },
+    {
+      "path": "evileye/api/core/playback_cache.py",
+      "added": 131,
+      "deleted": 0,
+      "category": "authored"
+    },
+    {
+      "path": "evileye/api/core/playback_metadata_service.py",
+      "added": 14,
+      "deleted": 5,
+      "category": "authored"
+    },
+    {
+      "path": "evileye/api/core/playback_service.py",
+      "added": 10,
+      "deleted": 1,
+      "category": "authored"
+    },
+    {
+      "path": "evileye/api/core/playback_timeline_index.py",
+      "added": 110,
+      "deleted": 25,
+      "category": "authored"
+    },
+    {
+      "path": "evileye/api/frontend/src/App.tsx",
+      "added": 79,
+      "deleted": 26,
+      "category": "authored"
+    },
+    {
+      "path": "evileye/api/frontend/src/features/journals/MobileEventsPage.tsx",
+      "added": 8,
+      "deleted": 1,
+      "category": "authored"
+    },
+    {
+      "path": "evileye/api/frontend/src/features/journals/useJournalFeed.test.ts",
+      "added": 32,
+      "deleted": 0,
+      "category": "authored"
+    },
+    {
+      "path": "evileye/api/frontend/src/features/journals/useJournalFeed.ts",
+      "added": 84,
+      "deleted": 59,
+      "category": "authored"
+    },
+    {
+      "path": "evileye/api/frontend/src/features/live/CameraGrid.tsx",
+      "added": 4,
+      "deleted": 4,
+      "category": "authored"
+    },
+    {
+      "path": "evileye/api/frontend/src/features/live/LivePage.tsx",
+      "added": 53,
+      "deleted": 32,
+      "category": "authored"
+    },
+    {
+      "path": "evileye/api/frontend/src/features/live/MobileLivePage.tsx",
+      "added": 50,
+      "deleted": 5,
+      "category": "authored"
+    },
+    {
+      "path": "evileye/api/frontend/src/features/live/mergeLiveCameraPoll.test.ts",
+      "added": 42,
+      "deleted": 0,
+      "category": "authored"
+    },
+    {
+      "path": "evileye/api/frontend/src/features/live/mergeLiveCameraPoll.ts",
+      "added": 59,
+      "deleted": 0,
+      "category": "authored"
+    },
+    {
+      "path": "evileye/api/frontend/src/features/live/notifyEtag.test.ts",
+      "added": 55,
+      "deleted": 0,
+      "category": "authored"
+    },
+    {
+      "path": "evileye/api/frontend/src/features/live/useLiveGridPreviewWs.ts",
+      "added": 212,
+      "deleted": 137,
+      "category": "authored"
+    },
+    {
+      "path": "evileye/api/frontend/src/features/live/useRunMetadataWs.ts",
+      "added": 27,
+      "deleted": 8,
+      "category": "authored"
+    },
+    {
+      "path": "evileye/api/frontend/src/features/playback/PlaybackPage.tsx",
+      "added": 1,
+      "deleted": 0,
+      "category": "authored"
+    },
+    {
+      "path": "evileye/api/frontend/src/features/playback/Timeline.tsx",
+      "added": 29,
+      "deleted": 0,
+      "category": "authored"
+    },
+    {
+      "path": "evileye/api/frontend/src/features/playback/useDetectionIndex.ts",
+      "added": 8,
+      "deleted": 6,
+      "category": "authored"
+    },
+    {
+      "path": "evileye/api/frontend/src/features/playback/usePlaybackController.ts",
+      "added": 12,
+      "deleted": 2,
+      "category": "authored"
+    },
+    {
+      "path": "evileye/api/routes/playback.py",
+      "added": 82,
+      "deleted": 109,
+      "category": "authored"
+    },
+    {
+      "path": "evileye/api/routes/realtime.py",
+      "added": 26,
+      "deleted": 11,
+      "category": "authored"
+    },
+    {
+      "path": "evileye/api/routes/state.py",
+      "added": 78,
+      "deleted": 37,
+      "category": "authored"
+    },
+    {
+      "path": "evileye/api/routes/streaming.py",
+      "added": 0,
+      "deleted": 2,
+      "category": "authored"
+    },
+    {
+      "path": "evileye/api/static/assets/BansPage-CVQU2S7G.js",
+      "added": 1,
+      "deleted": 0,
+      "category": "generated SPA"
+    },
+    {
+      "path": "evileye/api/static/assets/CameraAclEditor-C4vXoNkI.js",
+      "added": 1,
+      "deleted": 0,
+      "category": "generated SPA"
+    },
+    {
+      "path": "evileye/api/static/assets/ConfigFilePage-C7acXmOY.js",
+      "added": 1,
+      "deleted": 0,
+      "category": "generated SPA"
+    },
+    {
+      "path": "evileye/api/static/assets/ConfigStudio-D-tfIsD0.js",
+      "added": 1,
+      "deleted": 0,
+      "category": "generated SPA"
+    },
+    {
+      "path": "evileye/api/static/assets/ConfigsListPage-MYrIfxn3.js",
+      "added": 1,
+      "deleted": 0,
+      "category": "generated SPA"
+    },
+    {
+      "path": "evileye/api/static/assets/ConfigurePage-4mINe7NI.js",
+      "added": 1,
+      "deleted": 0,
+      "category": "generated SPA"
+    },
+    {
+      "path": "evileye/api/static/assets/EventsPage-CV5ShhQn.js",
+      "added": 1,
+      "deleted": 0,
+      "category": "generated SPA"
+    },
+    {
+      "path": "evileye/api/static/assets/LivePage-CzkzK1BM.js",
+      "added": 1,
+      "deleted": 0,
+      "category": "generated SPA"
+    },
+    {
+      "path": "evileye/api/static/assets/LogsPage-Brp7OW8o.js",
+      "added": 1,
+      "deleted": 0,
+      "category": "generated SPA"
+    },
+    {
+      "path": "evileye/api/static/assets/MetadataOverlayLayer-CksngEFb.js",
+      "added": 1,
+      "deleted": 0,
+      "category": "generated SPA"
+    },
+    {
+      "path": "evileye/api/static/assets/MobileEventsPage-ktAgowBd.js",
+      "added": 1,
+      "deleted": 0,
+      "category": "generated SPA"
+    },
+    {
+      "path": "evileye/api/static/assets/MobileLivePage-CP5dfWE-.js",
+      "added": 1,
+      "deleted": 0,
+      "category": "generated SPA"
+    },
+    {
+      "path": "evileye/api/static/assets/OverlayCanvas-BHL07xmJ.js",
+      "added": 1,
+      "deleted": 0,
+      "category": "generated SPA"
+    },
+    {
+      "path": "evileye/api/static/assets/PlaybackPage-Cz2bZItI.js",
+      "added": 1,
+      "deleted": 0,
+      "category": "generated SPA"
+    },
+    {
+      "path": "evileye/api/static/assets/RunsPage-DF9wo3rS.js",
+      "added": 1,
+      "deleted": 0,
+      "category": "generated SPA"
+    },
+    {
+      "path": "evileye/api/static/assets/SettingsPage-BhR0YUmd.js",
+      "added": 1,
+      "deleted": 0,
+      "category": "generated SPA"
+    },
+    {
+      "path": "evileye/api/static/assets/UsersPage-DVTgWrLE.js",
+      "added": 1,
+      "deleted": 0,
+      "category": "generated SPA"
+    },
+    {
+      "path": "evileye/api/static/assets/dataCache-BTx4mzH3.js",
+      "added": 1,
+      "deleted": 0,
+      "category": "generated SPA"
+    },
+    {
+      "path": "evileye/api/static/assets/fitGrid-N9i7lFdX.js",
+      "added": 1,
+      "deleted": 0,
+      "category": "generated SPA"
+    },
+    {
+      "path": "evileye/api/static/assets/formatApiError-CgJO7ICV.js",
+      "added": 1,
+      "deleted": 0,
+      "category": "generated SPA"
+    },
+    {
+      "path": "evileye/api/static/assets/index-BYSWqj5z.js",
+      "added": 68,
+      "deleted": 0,
+      "category": "generated SPA"
+    },
+    {
+      "path": "evileye/api/static/assets/index-mmpVsRKz.js",
+      "added": 0,
+      "deleted": 67,
+      "category": "generated SPA"
+    },
+    {
+      "path": "evileye/api/static/assets/journals-DVuAq6ay.js",
+      "added": 1,
+      "deleted": 0,
+      "category": "generated SPA"
+    },
+    {
+      "path": "evileye/api/static/assets/mergeLiveCameraPoll-DBfUZJjp.js",
+      "added": 1,
+      "deleted": 0,
+      "category": "generated SPA"
+    },
+    {
+      "path": "evileye/api/static/assets/restartConfigRun-CEX4coZn.js",
+      "added": 1,
+      "deleted": 0,
+      "category": "generated SPA"
+    },
+    {
+      "path": "evileye/api/static/assets/runLinks-DIgFYakK.js",
+      "added": 1,
+      "deleted": 0,
+      "category": "generated SPA"
+    },
+    {
+      "path": "evileye/api/static/assets/runs-DpMX-kiU.js",
+      "added": 1,
+      "deleted": 0,
+      "category": "generated SPA"
+    },
+    {
+      "path": "evileye/api/static/assets/setup-DP_G_Y_o.js",
+      "added": 1,
+      "deleted": 0,
+      "category": "generated SPA"
+    },
+    {
+      "path": "evileye/api/static/assets/state-DAR3YOhz.js",
+      "added": 1,
+      "deleted": 0,
+      "category": "generated SPA"
+    },
+    {
+      "path": "evileye/api/static/assets/streaming-vi6lQiOc.js",
+      "added": 1,
+      "deleted": 0,
+      "category": "generated SPA"
+    },
+    {
+      "path": "evileye/api/static/assets/studioTabs-BcwiRMfb.js",
+      "added": 1,
+      "deleted": 0,
+      "category": "generated SPA"
+    },
+    {
+      "path": "evileye/api/static/assets/useJournalFeed-Sxs7BrZJ.js",
+      "added": 1,
+      "deleted": 0,
+      "category": "generated SPA"
+    },
+    {
+      "path": "evileye/api/static/assets/useMediaLetterbox-F3_lozsB.js",
+      "added": 1,
+      "deleted": 0,
+      "category": "generated SPA"
+    },
+    {
+      "path": "evileye/api/static/assets/useRunConfigFlags-DJNvLuCj.js",
+      "added": 1,
+      "deleted": 0,
+      "category": "generated SPA"
+    },
+    {
+      "path": "evileye/api/static/assets/useVisibilityPolling-CXZOGPWG.js",
+      "added": 1,
+      "deleted": 0,
+      "category": "generated SPA"
+    },
+    {
+      "path": "evileye/api/static/index.html",
+      "added": 1,
+      "deleted": 1,
+      "category": "generated SPA"
+    },
+    {
+      "path": "pyproject.toml",
+      "added": 1,
+      "deleted": 1,
+      "category": "authored"
+    },
+    {
+      "path": "reports/audit_perf_baseline_2026-09-23.md",
+      "added": 47,
+      "deleted": 0,
+      "category": "authored"
+    },
+    {
+      "path": "reports/audit_perf_measured_2026-09-23.md",
+      "added": 80,
+      "deleted": 0,
+      "category": "authored"
+    },
+    {
+      "path": "scripts/audit_perf_probe.py",
+      "added": 298,
+      "deleted": 0,
+      "category": "authored"
+    },
+    {
+      "path": "scripts/verify_web_journals.sh",
+      "added": 17,
+      "deleted": 16,
+      "category": "authored"
+    },
+    {
+      "path": "tests/README.md",
+      "added": 1,
+      "deleted": 1,
+      "category": "authored"
+    },
+    {
+      "path": "tests/conftest.py",
+      "added": 7,
+      "deleted": 74,
+      "category": "authored"
+    },
+    {
+      "path": "tests/unit/api/test_live_preview_acl.py",
+      "added": 280,
+      "deleted": 0,
+      "category": "authored"
+    },
+    {
+      "path": "tests/unit/api/test_live_preview_ws.py",
+      "added": 2,
+      "deleted": 3,
+      "category": "authored"
+    },
+    {
+      "path": "tests/unit/api/test_playback_events_acl.py",
+      "added": 142,
+      "deleted": 0,
+      "category": "authored"
+    },
+    {
+      "path": "tests/unit/api/test_playback_index_coverage.py",
+      "added": 107,
+      "deleted": 0,
+      "category": "authored"
+    },
+    {
+      "path": "tests/unit/api/test_playback_media_acl.py",
+      "added": 153,
+      "deleted": 0,
+      "category": "authored"
+    },
+    {
+      "path": "tests/unit/api/test_playback_memory_cache.py",
+      "added": 9,
+      "deleted": 2,
+      "category": "authored"
+    },
+    {
+      "path": "tests/unit/api/test_playback_metadata_ts_cache.py",
+      "added": 18,
+      "deleted": 0,
+      "category": "authored"
+    },
+    {
+      "path": "tests/unit/api/test_snapshot_etag.py",
+      "added": 43,
+      "deleted": 6,
+      "category": "authored"
+    },
+    {
+      "path": "tests/unit/meta/test_pytest_exit_status.py",
+      "added": 46,
+      "deleted": 0,
+      "category": "authored"
+    }
+  ]
+}

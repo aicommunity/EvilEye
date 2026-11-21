@@ -1,70 +1,472 @@
-import { useEffect, useRef, useState } from 'react';
-import { streamMetadataWsUrl, type StreamMetadata } from '../../api';
+import { useEffect, useState } from 'react';
+import { request, streamMetadataWsUrl, type StreamMetadata } from '../../api';
+import { registerAuthScopeCleanup } from '../../auth/authScope';
 
-export function useRunMetadataWs(rid: number | null, sourceId: number | null | undefined) {
-  const [meta, setMeta] = useState<StreamMetadata | null>(null);
-  const lastFp = useRef<string>('');
+const REST_FALLBACK_MS = 1500;
+export const METADATA_TTL_MS = 4000;
+/** No new metadata sequence for this long → wipe objects (pipeline likely dead). */
+export const METADATA_HARD_CLEAR_MS = 30000;
+/** Keep last non-empty objects across briefly empty publish sequences. */
+export const EMPTY_OBJECTS_HOLD_MS = 1500;
 
-  useEffect(() => {
-    setMeta(null);
-    lastFp.current = '';
-    if (rid == null) return;
+function metadataFingerprint(payload: StreamMetadata): string {
+  try {
+    return JSON.stringify({
+      objects: payload.objects ?? [],
+      zones: payload.zones ?? [],
+      signalization: payload.signalization ?? false,
+      event_labels: payload.event_labels ?? [],
+      event_color: payload.event_color ?? null,
+      debug_rois: payload.debug_rois ?? [],
+      overlay: payload.overlay ?? null,
+    });
+  } catch {
+    return String(Date.now());
+  }
+}
 
-    let cancelled = false;
-    let ws: WebSocket | null = null;
-    let retryTimer: number | null = null;
-    let backoffMs = 1000;
+/** Exported for unit tests. Identifies a new logical metadata frame. */
+export function contentSequenceKey(payload: StreamMetadata): string {
+  const frameId = payload.frame_id;
+  if (frameId != null && Number.isFinite(Number(frameId))) {
+    return `f:${payload.source_id ?? 'all'}:${frameId}`;
+  }
+  const ts = payload.timestamp ?? payload.ts;
+  if (ts != null && Number.isFinite(Number(ts))) {
+    return `t:${payload.source_id ?? 'all'}:${Number(ts).toFixed(3)}`;
+  }
+  return metadataFingerprint(payload);
+}
 
-    const connect = () => {
-      if (cancelled) return;
-      const url = streamMetadataWsUrl(rid, sourceId ?? null);
-      try {
-        ws = new WebSocket(url);
-      } catch {
-        scheduleReconnect();
-        return;
+function clearedOverlayPayload(payload: StreamMetadata): StreamMetadata {
+  return {
+    ...payload,
+    objects: [],
+    event_labels: [],
+    signalization: false,
+  };
+}
+
+async function parseWsPayload(data: unknown): Promise<string | null> {
+  if (typeof data === 'string') return data;
+  if (data instanceof Blob) {
+    try {
+      return await data.text();
+    } catch {
+      return null;
+    }
+  }
+  return null;
+}
+
+type SourceKey = number | null;
+type Subscriber = (payload: StreamMetadata) => void;
+type FreshnessSubscriber = (fresh: boolean) => void;
+
+/** Exported for unit tests. */
+export class RunMetadataStore {
+  readonly rid: number;
+  private ws: WebSocket | null = null;
+  private wsOpen = false;
+  private cancelled = false;
+  private backoffMs = 1000;
+  private retryTimer: number | null = null;
+  private restTimer: number | null = null;
+
+  private listenersBySource: Map<SourceKey, Set<Subscriber>> = new Map();
+  private freshnessListenersBySource: Map<SourceKey, Set<FreshnessSubscriber>> = new Map();
+  private latestBySource: Map<SourceKey, StreamMetadata> = new Map();
+  private latestAtBySource: Map<SourceKey, number> = new Map();
+  private seqKeyBySource: Map<SourceKey, string> = new Map();
+  private wasFreshBySource: Map<SourceKey, boolean> = new Map();
+  private freshnessTimer: number | null = null;
+  private emptyHoldTimerBySource: Map<SourceKey, number> = new Map();
+  private heldObjectsBySource: Map<SourceKey, NonNullable<StreamMetadata['objects']>> = new Map();
+  private pendingEmptyBySource: Map<SourceKey, StreamMetadata> = new Map();
+
+  constructor(rid: number) {
+    this.rid = rid;
+  }
+
+  subscribe(sourceId: SourceKey, cb: Subscriber): () => void {
+    if (this.cancelled) this.cancelled = false;
+    if (!this.listenersBySource.has(sourceId)) this.listenersBySource.set(sourceId, new Set());
+    this.listenersBySource.get(sourceId)!.add(cb);
+    const latest = this.latestBySource.get(sourceId);
+    if (latest) cb(latest);
+    if (!this.ws) void this.connect();
+    this._ensureFreshnessTimer();
+    return () => {
+      this.listenersBySource.get(sourceId)?.delete(cb);
+      if ([...this.listenersBySource.values()].every((s) => s.size === 0)) {
+        this.close();
       }
-      ws.onmessage = (ev) => {
+    };
+  }
+
+  subscribeFreshness(sourceId: SourceKey, cb: FreshnessSubscriber): () => void {
+    if (!this.freshnessListenersBySource.has(sourceId)) {
+      this.freshnessListenersBySource.set(sourceId, new Set());
+    }
+    this.freshnessListenersBySource.get(sourceId)!.add(cb);
+    cb(this.isFresh(sourceId));
+    this._ensureFreshnessTimer();
+    return () => {
+      this.freshnessListenersBySource.get(sourceId)?.delete(cb);
+      if ([...this.freshnessListenersBySource.values()].every((s) => s.size === 0)) {
+        this._stopFreshnessTimer();
+      }
+    };
+  }
+
+  isFresh(sourceId: SourceKey, ttlMs = METADATA_TTL_MS): boolean {
+    const at = this.latestAtBySource.get(sourceId);
+    return at != null && Date.now() - at < ttlMs;
+  }
+
+  /** Test hook: push metadata without WebSocket. */
+  pushPayloadForTest(payload: StreamMetadata): void {
+    this.pushPayload(payload);
+  }
+
+  /** Test hook: run TTL expiry notifications. */
+  runFreshnessCheckForTest(): void {
+    this._notifyFreshness();
+  }
+
+  /** F06: clear cached metadata and tear down transport for auth scope change. */
+  resetAuthScope(): void {
+    this.latestBySource.clear();
+    this.latestAtBySource.clear();
+    this.pendingEmptyBySource.clear();
+    this.close();
+    this.cancelled = false;
+  }
+
+  private _ensureFreshnessTimer() {
+    if (this.freshnessTimer != null) return;
+    this.freshnessTimer = window.setInterval(() => this._notifyFreshness(), 500);
+  }
+
+  private _stopFreshnessTimer() {
+    if (this.freshnessTimer != null) {
+      window.clearInterval(this.freshnessTimer);
+      this.freshnessTimer = null;
+    }
+  }
+
+  private _notifySubscribers(key: SourceKey, payload: StreamMetadata) {
+    const subs = this.listenersBySource.get(key);
+    if (!subs?.size) return;
+    subs.forEach((fn) => fn(payload));
+  }
+
+  private _notifyFreshness() {
+    const keys = new Set<SourceKey>([
+      ...this.freshnessListenersBySource.keys(),
+      ...this.latestAtBySource.keys(),
+    ]);
+    for (const key of keys) {
+      const nowFresh = this.isFresh(key);
+      // Soft-stale: do NOT clear objects (hold + dim on the tile). Hard-clear only
+      // after a long gap with no new sequence key.
+      const at = this.latestAtBySource.get(key);
+      if (at != null && Date.now() - at >= METADATA_HARD_CLEAR_MS) {
+        const prev = this.latestBySource.get(key);
+        if (prev && (prev.objects?.length ?? 0) > 0) {
+          const cleared = clearedOverlayPayload(prev);
+          this.latestBySource.set(key, cleared);
+          this._notifySubscribers(key, cleared);
+        }
+      }
+
+      this.wasFreshBySource.set(key, nowFresh);
+
+      const subs = this.freshnessListenersBySource.get(key);
+      if (!subs?.size) continue;
+      subs.forEach((fn) => fn(nowFresh));
+    }
+  }
+
+  private _cancelEmptyHold(key: SourceKey) {
+    const timer = this.emptyHoldTimerBySource.get(key);
+    if (timer != null) {
+      window.clearTimeout(timer);
+      this.emptyHoldTimerBySource.delete(key);
+    }
+    this.pendingEmptyBySource.delete(key);
+  }
+
+  private pushPayload(payload: StreamMetadata) {
+    if (this.cancelled) return;
+    const key: SourceKey = payload.source_id ?? null;
+    const seqKey = contentSequenceKey(payload);
+    const prevSeq = this.seqKeyBySource.get(key);
+
+    if (seqKey === prevSeq) {
+      this._notifyFreshness();
+      return;
+    }
+
+    this.seqKeyBySource.set(key, seqKey);
+    this.latestAtBySource.set(key, Date.now());
+    this.wasFreshBySource.set(key, true);
+
+    const objects = payload.objects ?? [];
+    if (objects.length > 0) {
+      this._cancelEmptyHold(key);
+      this.heldObjectsBySource.set(key, objects);
+      this.latestBySource.set(key, payload);
+      this._notifySubscribers(key, payload);
+      this._notifyFreshness();
+      return;
+    }
+
+    const held = this.heldObjectsBySource.get(key);
+    if (held && held.length > 0) {
+      this._cancelEmptyHold(key);
+      this.pendingEmptyBySource.set(key, payload);
+      const display: StreamMetadata = { ...payload, objects: held };
+      this.latestBySource.set(key, display);
+      this._notifySubscribers(key, display);
+      const timer = window.setTimeout(() => {
+        this.emptyHoldTimerBySource.delete(key);
+        const pending = this.pendingEmptyBySource.get(key);
+        this.pendingEmptyBySource.delete(key);
+        this.heldObjectsBySource.delete(key);
+        if (!pending || this.cancelled) return;
+        const cleared = clearedOverlayPayload(pending);
+        this.latestBySource.set(key, cleared);
+        this._notifySubscribers(key, cleared);
+        this._notifyFreshness();
+      }, EMPTY_OBJECTS_HOLD_MS);
+      this.emptyHoldTimerBySource.set(key, timer);
+      this._notifyFreshness();
+      return;
+    }
+
+    this.latestBySource.set(key, payload);
+    this._notifySubscribers(key, payload);
+    this._notifyFreshness();
+  }
+
+  private restInFlight = false;
+  private restAbort: AbortController | null = null;
+  private restCursor = 0;
+
+  private startRestFallback() {
+    if (this.restTimer != null) window.clearInterval(this.restTimer);
+    const pollRest = async () => {
+      if (this.cancelled || this.wsOpen || this.restInFlight) return;
+      const sourceKeys = [...this.listenersBySource.entries()]
+        .filter(([, subs]) => subs.size > 0)
+        .map(([sourceId]) => sourceId);
+      if (!sourceKeys.length) return;
+
+      this.restInFlight = true;
+      this.restAbort?.abort();
+      const cycleAbort = new AbortController();
+      this.restAbort = cycleAbort;
+      const cycleDeadline = window.setTimeout(() => cycleAbort.abort(), 8000);
+      const concurrency = 2;
+      const perRequestMs = 2000;
+      try {
+        // Round-robin from cursor so starved sources get a turn (R12).
+        const start = this.restCursor % sourceKeys.length;
+        const ordered = [
+          ...sourceKeys.slice(start),
+          ...sourceKeys.slice(0, start),
+        ];
+        let idx = 0;
+        const workers = Array.from({ length: Math.min(concurrency, ordered.length) }, async () => {
+          while (idx < ordered.length) {
+            if (cycleAbort.signal.aborted || this.cancelled || this.wsOpen) return;
+            const myIdx = idx++;
+            const sourceId = ordered[myIdx];
+            const reqAbort = new AbortController();
+            const onCycleAbort = () => reqAbort.abort();
+            cycleAbort.signal.addEventListener('abort', onCycleAbort);
+            const reqTimer = window.setTimeout(() => reqAbort.abort(), perRequestMs);
+            try {
+              const qs = sourceId != null ? `?source_id=${sourceId}` : '';
+              const payload = await request<StreamMetadata>(`/runs/${this.rid}/metadata${qs}`, {
+                signal: reqAbort.signal,
+              });
+              if (!this.cancelled && !cycleAbort.signal.aborted) this.pushPayload(payload);
+            } catch {
+              /* ignore */
+            } finally {
+              window.clearTimeout(reqTimer);
+              cycleAbort.signal.removeEventListener('abort', onCycleAbort);
+            }
+          }
+        });
+        await Promise.all(workers);
+        // F07: advance from last assigned index, not ordered.length (which resets to start).
+        const assigned = Math.min(idx, ordered.length);
+        if (assigned > 0) {
+          const lastKey = ordered[assigned - 1];
+          const lastPos = sourceKeys.indexOf(lastKey);
+          this.restCursor = (Math.max(0, lastPos) + 1) % Math.max(1, sourceKeys.length);
+        }
+      } finally {
+        window.clearTimeout(cycleDeadline);
+        if (this.restAbort === cycleAbort) {
+          this.restInFlight = false;
+        }
+      }
+    };
+    void pollRest();
+    this.restTimer = window.setInterval(() => void pollRest(), REST_FALLBACK_MS);
+  }
+
+  private stopRestFallback() {
+    if (this.restTimer != null) {
+      window.clearInterval(this.restTimer);
+      this.restTimer = null;
+    }
+    this.restAbort?.abort();
+    this.restAbort = null;
+    this.restInFlight = false;
+  }
+
+  private scheduleReconnect() {
+    if (this.cancelled) return;
+    if (this.retryTimer != null) window.clearTimeout(this.retryTimer);
+    this.retryTimer = window.setTimeout(() => {
+      this.backoffMs = Math.min(this.backoffMs * 2, 8000);
+      void this.connect();
+    }, this.backoffMs);
+  }
+
+  private async connect() {
+    if (this.cancelled) return;
+    if (this.wsOpen) return;
+    if (this.ws != null && this.ws.readyState === WebSocket.OPEN) return;
+
+    const url = streamMetadataWsUrl(this.rid, null);
+    try {
+      this.ws = new WebSocket(url);
+    } catch {
+      this.startRestFallback();
+      this.scheduleReconnect();
+      return;
+    }
+
+    this.wsOpen = false;
+
+    this.ws.onmessage = (ev) => {
+      void (async () => {
         try {
-          const raw = String(ev.data);
-          if (raw === lastFp.current) return;
-          lastFp.current = raw;
-          setMeta(JSON.parse(raw) as StreamMetadata);
+          const raw = await parseWsPayload(ev.data);
+          if (!raw) return;
+          this.pushPayload(JSON.parse(raw) as StreamMetadata);
         } catch {
           /* ignore */
         }
-      };
-      ws.onopen = () => {
-        backoffMs = 1000;
-      };
-      ws.onerror = () => {
-        /* reconnect on close */
-      };
-      ws.onclose = () => {
-        if (!cancelled) scheduleReconnect();
-      };
+      })();
     };
 
-    const scheduleReconnect = () => {
-      if (cancelled) return;
-      if (retryTimer != null) window.clearTimeout(retryTimer);
-      retryTimer = window.setTimeout(() => {
-        backoffMs = Math.min(backoffMs * 2, 8000);
-        connect();
-      }, backoffMs);
+    this.ws.onopen = () => {
+      this.backoffMs = 1000;
+      this.wsOpen = true;
+      this.stopRestFallback();
     };
 
-    connect();
-    return () => {
-      cancelled = true;
-      if (retryTimer != null) window.clearTimeout(retryTimer);
-      try {
-        ws?.close();
-      } catch {
-        /* ignore */
+    this.ws.onerror = () => {
+      /* reconnect on close */
+    };
+
+    this.ws.onclose = () => {
+      this.wsOpen = false;
+      if (!this.cancelled) {
+        this.startRestFallback();
+        this.scheduleReconnect();
       }
+    };
+  }
+
+  private close() {
+    this.cancelled = true;
+    this._stopFreshnessTimer();
+    this.stopRestFallback();
+    for (const timer of this.emptyHoldTimerBySource.values()) {
+      window.clearTimeout(timer);
+    }
+    this.emptyHoldTimerBySource.clear();
+    this.pendingEmptyBySource.clear();
+    this.latestBySource.clear();
+    if (this.retryTimer != null) window.clearTimeout(this.retryTimer);
+    if (this.restTimer != null) window.clearInterval(this.restTimer);
+    this.retryTimer = null;
+    this.restTimer = null;
+    try {
+      this.ws?.close();
+    } catch {
+      /* ignore */
+    }
+    this.ws = null;
+  }
+}
+
+const runStores = new Map<number, RunMetadataStore>();
+function getRunStore(rid: number) {
+  let store = runStores.get(rid);
+  if (!store) {
+    store = new RunMetadataStore(rid);
+    runStores.set(rid, store);
+  }
+  return store;
+}
+
+/** F06: drop all run metadata stores on auth scope change. */
+export function clearAllRunMetadataStores() {
+  for (const [, store] of [...runStores.entries()]) {
+    try {
+      store.resetAuthScope();
+    } catch {
+      /* ignore */
+    }
+  }
+  runStores.clear();
+}
+
+export function useRunMetadataWs(rid: number | null, sourceId: number | null | undefined) {
+  const [meta, setMeta] = useState<StreamMetadata | null>(null);
+  useEffect(() => {
+    setMeta(null);
+    if (rid == null) return;
+
+    const key: SourceKey = sourceId ?? null;
+    const store = getRunStore(rid);
+    const unsub = store.subscribe(key, (payload) => setMeta(payload));
+    return () => {
+      unsub();
     };
   }, [rid, sourceId]);
 
   return meta;
 }
+
+export function useMetadataFreshness(
+  rid: number | null,
+  sourceId: number | null | undefined,
+  ttlMs = METADATA_TTL_MS,
+) {
+  const [fresh, setFresh] = useState(false);
+  useEffect(() => {
+    setFresh(false);
+    if (rid == null) return;
+    const key: SourceKey = sourceId ?? null;
+    const store = getRunStore(rid);
+    const unsub = store.subscribeFreshness(key, (isFresh) => setFresh(isFresh));
+    const timer = window.setInterval(() => setFresh(store.isFresh(key, ttlMs)), 500);
+    return () => {
+      unsub();
+      window.clearInterval(timer);
+    };
+  }, [rid, sourceId, ttlMs]);
+  return fresh;
+}
+
+registerAuthScopeCleanup(clearAllRunMetadataStores);

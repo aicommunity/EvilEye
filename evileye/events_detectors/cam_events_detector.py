@@ -1,7 +1,5 @@
 import time
 from .event import Event
-from threading import Thread
-from queue import Queue
 from .events_detector import EventsDetector
 from .event_cameras import CameraEvent
 import itertools

@@ -1,10 +1,32 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { Link } from 'react-router-dom';
-import { stateApi, streamSnapshotUrl, streamStatus, type StateCamera, cacheGet, cacheSet, isAbortError } from '../../api';
+import {
+  stateApi,
+  streamSnapshotUrl,
+  streamStatus,
+  type StateCamera,
+  cacheGet,
+  cacheSet,
+  cacheInvalidate,
+  isAbortError,
+} from '../../api';
+import { useAuth } from '../../auth/AuthContext';
 import { Badge, Button } from '../../components/ui';
 import { useVisibilityPolling } from '../../hooks/useVisibilityPolling';
 import { StreamOverlay } from '../../components/StreamOverlay';
 import { useI18n } from '../../i18n';
+import {
+  liveCamerasCacheKey,
+  mergeLiveCameraPoll,
+  resetLiveCameraCache,
+} from './mergeLiveCameraPoll';
+
+const EMPTY_CAMERA_GRACE_POLLS = 2;
+const CAMERAS_TTL_MS = 12_000;
+
+let lastGoodMobileCameras: StateCamera[] = [];
+let emptyMobilePollStreak = 0;
+let lastMobileUsername: string | null = null;
 
 export function MobileLivePage() {
   return <MobileLiveInner />;
@@ -12,37 +34,80 @@ export function MobileLivePage() {
 
 function MobileLiveInner() {
   const { t, lang, setLang } = useI18n();
-  const cached = cacheGet<{ items: StateCamera[] }>('state:cameras:current');
+  const { user } = useAuth();
+  const username = user?.username ?? null;
+  const cached = cacheGet<{ items: StateCamera[] }>(liveCamerasCacheKey());
   const [cameras, setCameras] = useState<StateCamera[]>(() => cached?.items ?? []);
   const [camerasLoading, setCamerasLoading] = useState(() => !(cached?.items?.length));
   const [idx, setIdx] = useState(0);
   const [fullscreen, setFullscreen] = useState(false);
   const [snapTs, setSnapTs] = useState(Date.now());
   const abortRef = useRef<AbortController | null>(null);
+  const camerasLoadingTimerRef = useRef<number | null>(null);
+  const camerasRef = useRef(cameras);
+  camerasRef.current = cameras;
+
+  useEffect(() => {
+    if (username !== lastMobileUsername) {
+      lastMobileUsername = username;
+      const reset = resetLiveCameraCache(cacheInvalidate);
+      lastGoodMobileCameras = reset.lastGood;
+      emptyMobilePollStreak = reset.emptyStreak;
+      setCameras([]);
+    }
+  }, [username]);
 
   const load = useCallback(async () => {
     abortRef.current?.abort();
     const ac = new AbortController();
     abortRef.current = ac;
+    if (camerasLoadingTimerRef.current != null) {
+      window.clearTimeout(camerasLoadingTimerRef.current);
+      camerasLoadingTimerRef.current = null;
+    }
     setCameras((prev) => {
-      if (!prev.length) setCamerasLoading(true);
+      if (!prev.length) {
+        camerasLoadingTimerRef.current = window.setTimeout(() => setCamerasLoading(true), 1500);
+      }
       return prev;
     });
     try {
       const res = await stateApi.cameras('current', { signal: ac.signal });
       if (ac.signal.aborted) return;
-      cacheSet('state:cameras:current', res, 8_000);
-      setCameras(res.items ?? []);
+      const items = res.items ?? [];
+      const decision = mergeLiveCameraPoll(
+        items,
+        camerasRef.current,
+        lastGoodMobileCameras,
+        emptyMobilePollStreak,
+        EMPTY_CAMERA_GRACE_POLLS,
+      );
+      emptyMobilePollStreak = decision.emptyStreak;
+      lastGoodMobileCameras = decision.lastGood;
+      if (decision.cleared || items.length) {
+        cacheSet(liveCamerasCacheKey(), { items: decision.cameras }, CAMERAS_TTL_MS);
+      }
+      setCameras(decision.cameras);
     } catch (e) {
       if (isAbortError(e)) return;
     } finally {
+      if (camerasLoadingTimerRef.current != null) {
+        window.clearTimeout(camerasLoadingTimerRef.current);
+        camerasLoadingTimerRef.current = null;
+      }
       if (!ac.signal.aborted) setCamerasLoading(false);
     }
   }, []);
 
   useEffect(() => () => abortRef.current?.abort(), []);
+  useEffect(() => () => {
+    if (camerasLoadingTimerRef.current != null) {
+      window.clearTimeout(camerasLoadingTimerRef.current);
+      camerasLoadingTimerRef.current = null;
+    }
+  }, []);
 
-  useVisibilityPolling(load, 5000, true, 200);
+  useVisibilityPolling(load, 15_000, true, 200);
   useEffect(() => {
     if (idx >= cameras.length) setIdx(0);
   }, [cameras, idx]);
@@ -69,10 +134,10 @@ function MobileLiveInner() {
     const rid = cam.run_id;
     const tick = () => {
       if (typeof document !== 'undefined' && document.hidden) return;
-      void streamStatus(rid).catch(() => undefined);
+      void streamStatus(rid, null).catch(() => undefined);
     };
     tick();
-    const id = window.setInterval(tick, 15000);
+    const id = window.setInterval(tick, 5_000);
     return () => window.clearInterval(id);
   }, [cam?.run_id, cam?.run_state]);
 

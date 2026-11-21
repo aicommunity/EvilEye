@@ -114,3 +114,6 @@ def test_list_logical_cameras_split_counts_shared_segments(tmp_path, monkeypatch
     assert by_id["Alpha"]["segment_count"] == 1
     assert by_id["Beta"]["segment_count"] == 1
     assert by_id["Beta"]["available"] is True
+    assert by_id["Beta"]["shares_media_with"] == "Alpha"
+    assert by_id["Alpha"].get("shares_media_with") in (None, "")
+    assert by_id["Beta"]["has_stream_segments"] is True

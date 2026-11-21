@@ -9,7 +9,7 @@
 """
 
 import copy
-from typing import Any, Dict, List, Optional, Union
+from typing import Any, Dict, List
 
 try:
     from PyQt6.QtWidgets import QWidget, QGroupBox, QVBoxLayout, QHBoxLayout, QFormLayout, QPushButton, QLabel, \

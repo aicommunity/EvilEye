@@ -61,6 +61,17 @@ PipelineBase (abstract)
 - **Нормализация выхода:** [`stage_result_normalizer`](../../evileye/core/stage_result_normalizer.py) приводит результат к `(data, frame)` для downstream.
 - **Backlog snapshot:** перед `process()` вызывается `estimate_mp_backlog_stats()` → `_mp_pending_snapshot` для adaptive sync (`EVILEYE_PIPELINE_SYNC_MP`).
 - **mc_trackers:** только `_process_mc_trackers_sync` — без MP wait; `execution_mode: process` на MC не поддерживается.
+- Для совпадающего `source_id` кадр направляется всем подходящим модулям стадии, включая несколько детекторов.
+- Неполный fanout управляется настройкой `pipeline.detector_fanout_policy`: `forward_partial` сохраняет прежнее поведение, `drop_frame` не передаёт неполный результат следующей стадии. Второй режим оставляет pipeline degraded и публикует отдельный счётчик отброшенных кадров.
+- Для PipelineSurveillance пределы ожидания detector fanout задаются настройками
+`detector_fanout_timeout_sec` и `detector_fanout_max_pending`. Положительный
+timeout по умолчанию равен 3 секундам (значение можно переопределить legacy
+переменной `EVILEYE_DETECTOR_FANOUT_TIMEOUT_SEC`), лимит по умолчанию — 64
+кадра (около двух секунд при 30 FPS). Runtime health публикует эффективные значения.
+Детектор, вернувший `None`, считается давшим пустой ответ и не делает fanout неполным.
+Флаг `degraded` у стадии и модулей учитывает неполные fanout и перегрузку очередей
+только за последние `EVILEYE_DEGRADED_WINDOW_SEC` секунд (по умолчанию 60); накопительные
+счётчики доступны в `/api/v1/system/runtime` и в формате Prometheus на `/api/v1/system/metrics`.
 
 ### PipelineCapture
 
@@ -115,12 +126,45 @@ evileye/
 │   └── pipeline_processors.py    # PipelineProcessors
 ├── pipelines/
 │   ├── pipeline_surveillance.py  # PipelineSurveillance
+│   ├── pipeline_declarative.py   # PipelineDeclarative (JSON stages[])
 │   └── pipeline_capture.py       # PipelineCapture
 └── samples_configs/
     └── pipeline_capture.json     # Конфигурация для PipelineCapture
 ```
 
+## Touch matrix (расширение)
+
+| Задача | Что трогать | Пример |
+|--------|-------------|--------|
+| Новый detector/tracker того же слота | Plugin package + `module_id`; legacy `@EvilEyeBase.register` и `type` остаются совместимы | [PLUGINS.md](PLUGINS.md) |
+| Новая стадия в графе | `PipelineDeclarative` + `stages[]` **или** форк Surveillance | [examples/custom_pipeline_stage](../examples/custom_pipeline_stage/) |
+| Dual-mode (thread/process) | `DualModeProcessor` + `MpWorker` | [developing_dual_mode_modules.md](developing_dual_mode_modules.md); RoiFeeder adopted |
+| Event detector / alarm | Plugin package + `AlarmEvent` + `events_detectors.enabled` | [PLUGINS.md](PLUGINS.md) |
+| Custom pipeline | `PipelineSpec` через `evileye.plugins` entry point | [PLUGINS.md](PLUGINS.md) |
+
+**Текущее состояние миграции:** встроенные источники OpenCV/GStreamer используют `SourceModuleAdapter`; YOLO/RT-DETR, BoT-SORT, предобработка и атрибутные компоненты используют общий `processor_item` runtime; `ObjectMultiCameraTracking` использует `batch_processor` и остаётся thread-only. Встроенные модули не используют `LegacyProcessorModuleAdapter`; он сохранён только как явный мост для сторонних реализаций старого `put/get` API. Новые модули подключаются через Plugin SPI из [PLUGINS.md](PLUGINS.md).
+
+**DI / DualMode:** `DIContainer` — roadmap (не product path). `DualModeProcessor` используется внутренними реализациями; публичный путь пользовательских обработчиков — Plugin SPI из [PLUGINS.md](PLUGINS.md).
+
 ## Создание новых pipeline
+
+### PipelineDeclarative
+
+Конфиг без форка Surveillance:
+
+```json
+{
+  "pipeline_class": "PipelineDeclarative",
+  "stages": [
+    {"name": "sources", "kind": "source", "items": [{"type": "VideoCaptureOpencv", "...": "..."}]},
+    {"name": "detectors", "kind": "step", "items": [{"type": "ObjectDetectorYolo", "...": "..."}]},
+    {"name": "my_stage", "kind": "step", "items": [{"type": "IdentityPass", "source_ids": [0]}]}
+  ],
+  "final_results": "my_stage"
+}
+```
+
+Каждый элемент `items[]` может иметь свой `type` (не только `params[0].type`).
 
 ### Простая pipeline
 

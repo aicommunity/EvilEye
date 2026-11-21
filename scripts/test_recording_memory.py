@@ -5,12 +5,10 @@ Test memory usage of video recording modules.
 Tests EventBuffer and EventRecorder with large numbers of frames.
 """
 
-import os
 import sys
 import time
 import numpy as np
 from pathlib import Path
-from typing import List
 
 # Add project root to path
 project_root = Path(__file__).parent.parent

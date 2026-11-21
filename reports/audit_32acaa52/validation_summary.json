@@ -1,0 +1,349 @@
+{
+  "revision": "32acaa52ab8cdfa4e3f08d9d5adb746369345069",
+  "environment": {
+    "platform": "win32",
+    "python": "3.13.7",
+    "node": "24.19.0",
+    "npm": "10.9.4",
+    "python_packages": {
+      "pytest": "9.0.2",
+      "pytest-asyncio": "1.4.0",
+      "itsdangerous": "2.2.0",
+      "fastapi": "0.120.1",
+      "starlette": "0.48.0",
+      "httpx": "0.28.1"
+    },
+    "note": "itsdangerous and pytest-asyncio installed in isolated .audit_validation/python; npm ci uses committed package-lock"
+  },
+  "api_tests": {
+    "command": "python -m pytest tests/unit/api tests/unit/meta/test_pytest_exit_status.py --basetemp=.audit_validation/pytest --junitxml=.audit_validation/api-tests.xml -q --tb=short",
+    "exit_code": 1,
+    "total": 348,
+    "failed": 13,
+    "passed": 335,
+    "seconds": 164.952,
+    "failures": [
+      {
+        "test": "tests.unit.api.test_internal_frame_metadata::test_frame_relay_jpeg_and_metadata_header",
+        "message": "AttributeError: module 'socket' has no attribute 'AF_UNIX'"
+      },
+      {
+        "test": "tests.unit.api.test_playback_memory_cache::test_different_cam_lists_are_separate_cache_entries",
+        "message": "AttributeError: module 'evileye.api.routes.playback' has no attribute '_memory_cache'. Did you mean: 'clear_memory_cache'?"
+      },
+      {
+        "test": "tests.unit.api.test_playback_memory_cache::test_memory_cache_stats_and_clear",
+        "message": "AttributeError: module 'evileye.api.routes.playback' has no attribute '_memory_cache'. Did you mean: 'clear_memory_cache'?"
+      },
+      {
+        "test": "tests.unit.api.test_playback_memory_cache::test_memory_cache_evicts_when_over_max_keys",
+        "message": "AttributeError: module 'evileye.api.routes.playback' has no attribute '_memory_cache'. Did you mean: 'clear_memory_cache'?"
+      },
+      {
+        "test": "tests.unit.api.test_playback_memory_cache::test_second_recall_faster_than_cold_remember",
+        "message": "AttributeError: module 'evileye.api.routes.playback' has no attribute '_memory_cache'. Did you mean: 'clear_memory_cache'?"
+      },
+      {
+        "test": "tests.unit.api.test_playback_route_timeouts::test_playback_segments_timeout_serves_stale",
+        "message": "AttributeError: module 'evileye.api.routes.playback' has no attribute '_memory_cache'. Did you mean: 'clear_memory_cache'?"
+      },
+      {
+        "test": "tests.unit.api.test_playback_route_timeouts::test_playback_timeout_without_cache_raises_503",
+        "message": "AttributeError: module 'evileye.api.routes.playback' has no attribute '_memory_cache'. Did you mean: 'clear_memory_cache'?"
+      },
+      {
+        "test": "tests.unit.api.test_playback_route_timeouts::test_playback_events_timeout_raises_503",
+        "message": "AttributeError: module 'evileye.api.routes.playback' has no attribute '_memory_cache'. Did you mean: 'clear_memory_cache'?"
+      },
+      {
+        "test": "tests.unit.api.test_playback_service::test_load_segments_skips_files_outside_window_before_mvhd",
+        "message": "assert 11 < 10"
+      },
+      {
+        "test": "tests.unit.api.test_runtime_registry_prune::test_get_current_run_summary_hydrates_one",
+        "message": "TypeError: test_get_current_run_summary_hydrates_one.<locals>.tracked() got an unexpected keyword argument 'include_logs'"
+      },
+      {
+        "test": "tests.unit.api.test_setup_basic_merge::test_split_sources_preserved_on_basic_roundtrip",
+        "message": "AssertionError: assert {'ScheduleAla... {'0': True}}} == {'ZoneEventsD... {'0': True}}}\n  \n  Omitting 1 identical items, use -vv to show\n  Left contains 1 more item:\n  {'ScheduleAlarmEventsDetector': {'camera_cooldown_sec': 0,\n                                   'default_schedule': {'class_ids': [],\n                                                        'enabled': False,\n                                                        'periods': [],...\n  \n  ...Full output truncated (28 lines hidden), use '-vv' to show"
+      },
+      {
+        "test": "tests.unit.api.test_web_improvements::test_auth_register_and_users_flow",
+        "message": "assert 422 == 200\n +  where 422 = <Response [422 Unprocessable Entity]>.status_code"
+      },
+      {
+        "test": "tests.unit.api.test_web_improvements::test_admin_create_user_approved_and_login",
+        "message": "AssertionError: assert 401 == 200\n +  where 401 = <Response [401 Unauthorized]>.status_code\n +    where <Response [401 Unauthorized]> = post('/api/v1/auth/login', json={'password': 'admin', 'username': 'admin'})\n +      where post = <starlette.testclient.TestClient object at 0x000001A5D131AF90>.post"
+      }
+    ]
+  },
+  "frontend_tests": {
+    "command": "npm test",
+    "exit_code": 0,
+    "files_passed": 23,
+    "tests_passed": 176
+  },
+  "typecheck": {
+    "command": "node node_modules/typescript/bin/tsc --noEmit",
+    "exit_code": 0
+  },
+  "build": {
+    "command": "node node_modules/vite/bin/vite.js build --outDir E:/Work/Stu/EvilEye/.audit_validation/spa",
+    "exit_code": 0,
+    "assets": [
+      {
+        "path": "assets/BansPage-CVQU2S7G.js",
+        "bytes": 4120,
+        "sha256": "7d808dde000f56910b8ba70708ca2dddead4111c5672caf31c014edace0c43c0",
+        "matches_git_blob": true,
+        "matches_worktree_normalized_newlines": true
+      },
+      {
+        "path": "assets/CameraAclEditor-C4vXoNkI.js",
+        "bytes": 4553,
+        "sha256": "ba11b4456eb8adc696efedbaf01a4dcf692ba318fd84586b2b23363503d4b1ff",
+        "matches_git_blob": true,
+        "matches_worktree_normalized_newlines": true
+      },
+      {
+        "path": "assets/ConfigFilePage-C7acXmOY.js",
+        "bytes": 483,
+        "sha256": "b52a67c2ede0319890ecde2bf3d9a548ec6ded3a3d18b9b25edfd58b42e7d869",
+        "matches_git_blob": true,
+        "matches_worktree_normalized_newlines": true
+      },
+      {
+        "path": "assets/ConfigsListPage-MYrIfxn3.js",
+        "bytes": 3811,
+        "sha256": "dfeb751a14887e98cc07c62e4f845863d4fec6aa1e42b8966771161dc1bc3b5b",
+        "matches_git_blob": true,
+        "matches_worktree_normalized_newlines": true
+      },
+      {
+        "path": "assets/ConfigStudio-D-tfIsD0.js",
+        "bytes": 89747,
+        "sha256": "090ca33b2e52ee093b31685e832da747f834f36914d11ddd11ec49f8035d4aea",
+        "matches_git_blob": true,
+        "matches_worktree_normalized_newlines": true
+      },
+      {
+        "path": "assets/ConfigurePage-4mINe7NI.js",
+        "bytes": 1219,
+        "sha256": "82d9c38d2d52383ff0dc3bf0f15ff6a75193c6043b5a25b0c96c6e6301051fd4",
+        "matches_git_blob": true,
+        "matches_worktree_normalized_newlines": true
+      },
+      {
+        "path": "assets/dataCache-BTx4mzH3.js",
+        "bytes": 440,
+        "sha256": "99c83a1a82839f391b21bd1e48d4ac3d90d93525b28043869c212068a78ed99f",
+        "matches_git_blob": true,
+        "matches_worktree_normalized_newlines": true
+      },
+      {
+        "path": "assets/EventsPage-CV5ShhQn.js",
+        "bytes": 7642,
+        "sha256": "50a4fb446b3a75ecd35b1377297b759c85f532bc1e4870c74c15d6f17220f47a",
+        "matches_git_blob": true,
+        "matches_worktree_normalized_newlines": true
+      },
+      {
+        "path": "assets/fitGrid-N9i7lFdX.js",
+        "bytes": 124,
+        "sha256": "248048aa8161cc8b154f0d615d0451d3e956af86d26206fddaa85d4d70331031",
+        "matches_git_blob": true,
+        "matches_worktree_normalized_newlines": true
+      },
+      {
+        "path": "assets/formatApiError-CgJO7ICV.js",
+        "bytes": 346,
+        "sha256": "a8a85fe4bb3303134eaeb6019e22c96e5b41bb7ceaf9f7d29d5cf07ab7838048",
+        "matches_git_blob": true,
+        "matches_worktree_normalized_newlines": true
+      },
+      {
+        "path": "assets/index-BYSWqj5z.js",
+        "bytes": 243477,
+        "sha256": "36de4417bffb4fd1b68880000a6a2898217621d34220fc81f6fbd46876b3c5b6",
+        "matches_git_blob": true,
+        "matches_worktree_normalized_newlines": true
+      },
+      {
+        "path": "assets/index-C_EU4yNc.css",
+        "bytes": 46656,
+        "sha256": "3ebedcb681fecf10020a777cfdebbb24153c7acdcf1db73406205d15915ad982",
+        "matches_git_blob": true,
+        "matches_worktree_normalized_newlines": true
+      },
+      {
+        "path": "assets/journals-DVuAq6ay.js",
+        "bytes": 2402,
+        "sha256": "299f3e3d26c0a274fbf3f225b4f46a172c32486c0ee3a14b0265cd8ffadf4602",
+        "matches_git_blob": true,
+        "matches_worktree_normalized_newlines": true
+      },
+      {
+        "path": "assets/LivePage-CzkzK1BM.js",
+        "bytes": 21773,
+        "sha256": "6b1746d84d3029526d9041f3d15eadedd8e7794e1353a95ac30579b370b10e39",
+        "matches_git_blob": true,
+        "matches_worktree_normalized_newlines": true
+      },
+      {
+        "path": "assets/LogsPage-Brp7OW8o.js",
+        "bytes": 3530,
+        "sha256": "ce33fe63e2584f4410651afb541ef43b4c42426cfcddde4a82612b6e985e6c69",
+        "matches_git_blob": true,
+        "matches_worktree_normalized_newlines": true
+      },
+      {
+        "path": "assets/mergeLiveCameraPoll-DBfUZJjp.js",
+        "bytes": 12272,
+        "sha256": "f434c1f338ea0c3fed14ce759f83621dd9d9f169f1ffdeefe49ca3f616efc5b2",
+        "matches_git_blob": true,
+        "matches_worktree_normalized_newlines": true
+      },
+      {
+        "path": "assets/MetadataOverlayLayer-CksngEFb.js",
+        "bytes": 258,
+        "sha256": "7cdc1b86f948de0dd2a614649555ffc7850e358e9b9b70f7678776aa562dd386",
+        "matches_git_blob": true,
+        "matches_worktree_normalized_newlines": true
+      },
+      {
+        "path": "assets/MobileEventsPage-ktAgowBd.js",
+        "bytes": 2591,
+        "sha256": "0ab4dafca86ef6f27361d1cca0ad8f7ad80d68e90fd0a1ca0f50fb722ea14297",
+        "matches_git_blob": true,
+        "matches_worktree_normalized_newlines": true
+      },
+      {
+        "path": "assets/MobileLivePage-CP5dfWE-.js",
+        "bytes": 4503,
+        "sha256": "aeec3407f5e992e459c16acf88641084099c6d0960ae1ba51ab30a2dc870f07c",
+        "matches_git_blob": true,
+        "matches_worktree_normalized_newlines": true
+      },
+      {
+        "path": "assets/OverlayCanvas-BHL07xmJ.js",
+        "bytes": 5312,
+        "sha256": "26146360af73ff15b64150263435b0c88521ba16032a93db5d5b1ac30b4941d6",
+        "matches_git_blob": true,
+        "matches_worktree_normalized_newlines": true
+      },
+      {
+        "path": "assets/PlaybackPage-Cz2bZItI.js",
+        "bytes": 100512,
+        "sha256": "83212e33dcaa0f04fe218ec398d030e202d5387cba15f223eb9d4ef705aafbd8",
+        "matches_git_blob": true,
+        "matches_worktree_normalized_newlines": true
+      },
+      {
+        "path": "assets/restartConfigRun-CEX4coZn.js",
+        "bytes": 2350,
+        "sha256": "6029179d1b1f08ca9fb54938ae881b1c785d188642f1a9b940dcd88565423b0d",
+        "matches_git_blob": true,
+        "matches_worktree_normalized_newlines": true
+      },
+      {
+        "path": "assets/runLinks-DIgFYakK.js",
+        "bytes": 1233,
+        "sha256": "baff5536c91a48c351c71cd146210c73b6a6b6d279dc9a231e2a9750e56a2e04",
+        "matches_git_blob": true,
+        "matches_worktree_normalized_newlines": true
+      },
+      {
+        "path": "assets/runs-DpMX-kiU.js",
+        "bytes": 380,
+        "sha256": "91901baf1d9791cea8941cda91b775e95a61235bcf112e737b11fc9b171a89d3",
+        "matches_git_blob": true,
+        "matches_worktree_normalized_newlines": true
+      },
+      {
+        "path": "assets/RunsPage-DF9wo3rS.js",
+        "bytes": 9401,
+        "sha256": "b18d9d72b52a26d28e8c2102c8f675d099a1af80f245d758dc618dc9b11470ce",
+        "matches_git_blob": true,
+        "matches_worktree_normalized_newlines": true
+      },
+      {
+        "path": "assets/SettingsPage-BhR0YUmd.js",
+        "bytes": 7141,
+        "sha256": "8fe4d335336f48f15a8d50be1e58d5c8afc375e5313e32912b804dbe07a91313",
+        "matches_git_blob": true,
+        "matches_worktree_normalized_newlines": true
+      },
+      {
+        "path": "assets/setup-DP_G_Y_o.js",
+        "bytes": 502,
+        "sha256": "cd861b9ebf94ecdd1ca3e1e47d2313463c2c01dcabd5e9bab3fb566eb6ed7472",
+        "matches_git_blob": true,
+        "matches_worktree_normalized_newlines": true
+      },
+      {
+        "path": "assets/state-DAR3YOhz.js",
+        "bytes": 272,
+        "sha256": "fea87f58aa8cb0b1f6866f2251c9ace56130ae612a367056e3da6afec62840a5",
+        "matches_git_blob": true,
+        "matches_worktree_normalized_newlines": true
+      },
+      {
+        "path": "assets/streaming-vi6lQiOc.js",
+        "bytes": 820,
+        "sha256": "e21fab0b6c5f8415c0153cb6884bef3be519bf75b2cfb19aaae3e533ae7c48f1",
+        "matches_git_blob": true,
+        "matches_worktree_normalized_newlines": true
+      },
+      {
+        "path": "assets/studioTabs-BcwiRMfb.js",
+        "bytes": 667,
+        "sha256": "ace46d444cd465bb14cdabc13ceeaefbc039299f1fb4bc34c72246bce7f4117c",
+        "matches_git_blob": true,
+        "matches_worktree_normalized_newlines": true
+      },
+      {
+        "path": "assets/useJournalFeed-Sxs7BrZJ.js",
+        "bytes": 5704,
+        "sha256": "d62f97f64c46da4881295e8f81a039997f76f91dc1978908ceca8e6ad2267aa4",
+        "matches_git_blob": true,
+        "matches_worktree_normalized_newlines": true
+      },
+      {
+        "path": "assets/useMediaLetterbox-F3_lozsB.js",
+        "bytes": 2189,
+        "sha256": "a13b7efee2447216a6afddd157abad27e81b1cb0c246f24b8e527dc8aadf0a44",
+        "matches_git_blob": true,
+        "matches_worktree_normalized_newlines": true
+      },
+      {
+        "path": "assets/UsersPage-DVTgWrLE.js",
+        "bytes": 8085,
+        "sha256": "e509c4ed8c2f4452c5f740fa623fc99b9f33cff207d746135fbc674b0d3407e1",
+        "matches_git_blob": true,
+        "matches_worktree_normalized_newlines": true
+      },
+      {
+        "path": "assets/useRunConfigFlags-DJNvLuCj.js",
+        "bytes": 4319,
+        "sha256": "34bf750df863aee7d4bfe39f47f4aa40dbec45e3f85811d61cd2eb88120041a8",
+        "matches_git_blob": true,
+        "matches_worktree_normalized_newlines": true
+      },
+      {
+        "path": "assets/useVisibilityPolling-CXZOGPWG.js",
+        "bytes": 617,
+        "sha256": "96274473d5eb3c816040f0f2acdcff24b8d1fc2db252f7671760768fb285b838",
+        "matches_git_blob": true,
+        "matches_worktree_normalized_newlines": true
+      },
+      {
+        "path": "index.html",
+        "bytes": 700,
+        "sha256": "0e862fa494bf0292b90b73fee4f6054e2e37b939f7447c6ca35c1297fc291448",
+        "matches_git_blob": false,
+        "matches_worktree_normalized_newlines": false
+      }
+    ],
+    "note": "All 34 JS files and CSS match Git blobs byte for byte. index.html differs only by an extra blank line before </body>. Windows worktree CRLF differs from generated LF."
+  }
+}

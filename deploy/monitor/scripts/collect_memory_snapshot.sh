@@ -23,20 +23,60 @@ from pathlib import Path
 journal_path, cli_pattern, child_pattern, deploy_dir = sys.argv[1:5]
 
 
-def pgrep(pattern: str) -> list[int]:
+def cmdline(pid: int) -> str:
+    try:
+        raw = Path(f"/proc/{pid}/cmdline").read_bytes().replace(b"\0", b" ")
+        return raw.decode(errors="replace")[:240]
+    except OSError:
+        return ""
+
+
+def pgrep(pattern: str, *, require_substr: str | None = None) -> list[int]:
+    """pgrep -f, then drop false positives (shells whose argv merely mentions the pattern)."""
     try:
         out = subprocess.check_output(["pgrep", "-f", pattern], text=True)
     except subprocess.CalledProcessError:
         return []
-    return [int(x) for x in out.split() if x.strip().isdigit()]
+    pids = [int(x) for x in out.split() if x.strip().isdigit()]
+    if not require_substr:
+        return pids
+    needle = require_substr.lower()
+    filtered: list[int] = []
+    for pid in pids:
+        cmd = cmdline(pid).lower()
+        # Real EvilEye processes are python …/process.py or …/evileye…, not bash wrappers.
+        if needle not in cmd:
+            continue
+        first = cmd.split(None, 1)[0] if cmd else ""
+        if first.endswith("bash") or "/bash" in first:
+            continue
+        if "cursor" in cmd and "sandbox" in cmd:
+            continue
+        filtered.append(pid)
+    return filtered
 
 
 def children(pid: int) -> list[int]:
-    try:
-        out = subprocess.check_output(["pgrep", "-P", str(pid)], text=True)
-    except subprocess.CalledProcessError:
-        return []
-    return [int(x) for x in out.split() if x.strip().isdigit()]
+    """All descendants via recursive pgrep -P."""
+    found: list[int] = []
+    stack = [pid]
+    seen: set[int] = set()
+    while stack:
+        cur = stack.pop()
+        if cur in seen:
+            continue
+        seen.add(cur)
+        try:
+            out = subprocess.check_output(["pgrep", "-P", str(cur)], text=True)
+        except subprocess.CalledProcessError:
+            continue
+        for x in out.split():
+            if not x.strip().isdigit():
+                continue
+            c = int(x)
+            found.append(c)
+            stack.append(c)
+    return found
 
 
 def rss_pss_swap_kb(pid: int) -> tuple[int, int, int]:
@@ -59,14 +99,6 @@ def rss_pss_swap_kb(pid: int) -> tuple[int, int, int]:
     except OSError:
         pss = rss
     return rss, pss, swap
-
-
-def cmdline(pid: int) -> str:
-    try:
-        raw = Path(f"/proc/{pid}/cmdline").read_bytes().replace(b"\0", b" ")
-        return raw.decode(errors="replace")[:160]
-    except OSError:
-        return ""
 
 
 def swap_used_kb() -> int:
@@ -96,10 +128,22 @@ def meminfo_kb() -> dict:
     return out
 
 
-cli_pids = pgrep(cli_pattern)
-child_pids = pgrep(child_pattern)
+cli_pids = pgrep(cli_pattern, require_substr="evileye")
+child_pids = pgrep(child_pattern, require_substr="process.py")
+# Prefer the largest RSS process.py — real main, not a tiny false match.
+def _rss_kb(pid: int) -> int:
+    try:
+        with open(f"/proc/{pid}/status", encoding="utf-8") as f:
+            for line in f:
+                if line.startswith("VmRSS:"):
+                    return int(line.split()[1])
+    except OSError:
+        return 0
+    return 0
+
+
 cli_pid = cli_pids[0] if cli_pids else None
-child_pid = child_pids[0] if child_pids else None
+child_pid = max(child_pids, key=_rss_kb) if child_pids else None
 
 roles = {
     "process_main": {"rss_kb": 0, "pss_kb": 0, "swap_kb": 0, "count": 0},

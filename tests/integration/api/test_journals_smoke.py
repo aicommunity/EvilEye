@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import json
-from pathlib import Path
 
 import pytest
 from fastapi.testclient import TestClient
@@ -51,6 +50,29 @@ def smoke_client(tmp_path, monkeypatch):
         encoding="utf-8",
     )
 
+    alarm_metadata = base / "Events" / date / "Metadata"
+    alarm_metadata.mkdir(parents=True)
+    (alarm_metadata / "alarm_events.json").write_text(
+        json.dumps(
+            [
+                {
+                    "alarm_id": "web-journal-smoke-ppe-violation",
+                    "ts": f"{date}T10:05:00",
+                    "event_type": "alarm",
+                    "alarm_type": "ppe_violation",
+                    "severity": "critical",
+                    "source_id": 0,
+                    "source_name": "Cam1",
+                    "details": {
+                        "rule": "hardhat_required",
+                        "object_ids": [42],
+                    },
+                }
+            ]
+        ),
+        encoding="utf-8",
+    )
+
     config_path = tmp_path / "poly.json"
     config_path.write_text(
         json.dumps(
@@ -61,12 +83,31 @@ def smoke_client(tmp_path, monkeypatch):
         ),
         encoding="utf-8",
     )
+    (tmp_path / "credentials.json").write_text(
+        json.dumps(
+            {
+                "web_auth": {
+                    "enabled": False,
+                    "users": [{"username": "test", "password": "test", "role": "admin"}],
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
     monkeypatch.chdir(tmp_path)
     monkeypatch.setattr(
         journal_service,
-        "get_current_run_summary",
-        lambda: {"config_path": str(config_path)},
+        "get_current_config_path",
+        lambda: str(config_path),
     )
+    journal_service._runtime_params_cache = None
+    journal_service._light_config_path_cache = None
+    journal_service._image_base_dir_cache = None
+    journal_service._json_source_cache.clear()
+    journal_service._grouped_row_cache = {"events": {}, "objects": {}}
+    journal_service._filters_meta_cache = None
+    journal_service._journal_stats_page_cache.clear()
+    journal_service._path_resolve_cache.clear()
     return TestClient(create_app()), date, found_preview.name, lost_preview.name, video_rel
 
 
@@ -86,6 +127,19 @@ def test_journals_smoke_flow(smoke_client):
 
     events = client.get(f"/api/v1/journals/events/grouped?page=0&size=5&date={date}")
     assert events.status_code == 200
+    events_payload = events.json()
+    assert events_payload["available"] is True
+    alarm_rows = [
+        row
+        for row in events_payload["items"]
+        if row.get("event") == "ppe_violation"
+    ]
+    assert len(alarm_rows) == 1
+    alarm_row = alarm_rows[0]
+    assert alarm_row["source"] == "Cam1"
+    assert "critical" in alarm_row["information"]
+    assert "hardhat_required" in alarm_row["information"]
+    assert alarm_row["time"].startswith(f"{date}T10:05:00")
 
     found = client.get(
         f"/api/v1/journals/preview?path={found_name}&date={date}&journal_type=objects&mode=found"

@@ -2,8 +2,17 @@ from .processor_base import ProcessorBase
 
 
 class ProcessorFrame(ProcessorBase):
-    def __init__(self, processor_name, class_name, num_processors: int, order: int):
-        super().__init__(processor_name, class_name, num_processors, order)
+    def __init__(
+        self,
+        processor_name,
+        class_name,
+        num_processors: int,
+        order: int,
+        class_names: list[str] | None = None,
+    ):
+        super().__init__(
+            processor_name, class_name, num_processors, order, class_names=class_names
+        )
 
     def process(self, frames_list=None):
         processing_results = []
@@ -26,12 +35,12 @@ class ProcessorFrame(ProcessorBase):
                 is_processor_found = False
                 for processor in self.processors:
                     source_ids = processor.get_source_ids()
-                    if hasattr(frame_to_process, 'source_id') and frame_to_process.source_id in source_ids:
+                    if (
+                        hasattr(frame_to_process, 'source_id')
+                        and (source_ids is None or frame_to_process.source_id in source_ids)
+                    ):
                         processor.put(frame_to_process)
                         is_processor_found = True
-
-                    if is_processor_found:
-                        break
 
                 if not is_processor_found:
                     processing_results.append(item)

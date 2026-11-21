@@ -3,8 +3,6 @@
 Test script to verify path resolution for working directory vs package directory.
 """
 
-import sys
-import os
 from evileye.core.logging_config import setup_evileye_logging
 from evileye.core.logger import get_module_logger
 from pathlib import Path
@@ -111,7 +109,7 @@ def test_configuration_paths():
     test_logger.info(f"\n📋 Testing Configuration Path Resolution")
     test_logger.info("=" * 60)
     
-    from evileye.utils.utils import normalize_config_path
+    from evileye.utils.config_paths import normalize_config_path
     
     test_configs = [
         "my_config.json",

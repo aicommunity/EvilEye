@@ -1,8 +1,5 @@
-import time
 from .db_adapter import DatabaseAdapterBase
 from .constants import QueryType, EventType
-import copy
-import datetime
 import os
 import cv2
 from ..utils import threading_events
@@ -28,7 +25,7 @@ class DatabaseAdapterFieldOfViewEvents(DatabaseAdapterBase):
 
     def set_params_impl(self):
         super().set_params_impl()
-        self.event_name = self.params['event_name']
+        self.event_name = self.params.get('event_name', 'ScheduleAlarmEvent')
 
     def _insert_impl(self, event):
         fields, data, preview_path = self._prepare_for_saving(event)
@@ -60,18 +57,7 @@ class DatabaseAdapterFieldOfViewEvents(DatabaseAdapterBase):
         if query_string is None:
             return
 
-        try:
-            record = self.db_controller.query(query_string, data)
-        except Exception as e:
-            should_retry, last_error = self.error_handler.handle_query_error(
-                error=e,
-                query_string=str(query_string) if query_string else None,
-                retry_callback=None,
-                max_retries=1,
-            )
-            if last_error:
-                return
-            record = self.db_controller.query(query_string, data)
+        self.db_controller.query_once(query_string, data)
         if query_type == QueryType.INSERT:
             threading_events.notify(EventType.NEW_EVENT)
         elif query_type == QueryType.UPDATE:
@@ -127,8 +113,8 @@ class DatabaseAdapterFieldOfViewEvents(DatabaseAdapterBase):
     def _get_img_path(self, image_type, obj_event_type, src_name, time_stamp=None, time_lost=None):
         save_dir = self.db_params['image_dir']
         events_dir = os.path.join(save_dir, 'Events')
-        cur_date = datetime.date.today()
-        cur_date_str = cur_date.strftime('%Y-%m-%d')
+        from evileye.core.event_time import date_folder_from_ts
+        cur_date_str = date_folder_from_ts(time_lost if obj_event_type != 'detected' else time_stamp)
 
         current_day_path = os.path.join(events_dir, cur_date_str)
         images_dir = os.path.join(current_day_path, 'Images')

@@ -6,6 +6,7 @@ import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
+from evileye.api.middleware.adaptive_session import AdaptiveSessionMiddleware
 from evileye.core.runtime_services import get_frame_broker
 from evileye.api.routes import streaming as streaming_routes
 
@@ -13,6 +14,12 @@ from evileye.api.routes import streaming as streaming_routes
 @pytest.fixture
 def mjpeg_app(monkeypatch):
     app = FastAPI()
+    app.add_middleware(
+        AdaptiveSessionMiddleware,
+        secret_key="x" * 32,
+        session_cookie="evileye_session",
+        secure_cookies=False,
+    )
     app.include_router(streaming_routes.router)
     app.state.preview_demand_queue = None
 

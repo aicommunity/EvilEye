@@ -1,7 +1,12 @@
 import os
 import json
 import hashlib
-from typing import List, Dict, Tuple, Callable, Optional
+import time
+from typing import Any, List, Dict, Tuple, Callable, Optional
+from evileye.database_controller.json_adapter_schedule_alarm_events import (
+    JSON_FOUND_FILENAMES,
+    JSON_LOST_FILENAMES,
+)
 from .journal_data_source import EventJournalDataSource
 from ..core.logger import get_module_logger
 
@@ -70,6 +75,14 @@ class JsonLabelJournalDataSource(EventJournalDataSource):
         except Exception as e:
             self.logger.warning(f"Failed to load source mappings: {e}")
 
+    def _source_name_for_id(self, source_id: Any) -> Optional[str]:
+        if source_id is None:
+            return None
+        for source_name, (configured_id, _address) in self._source_name_id_address.items():
+            if str(configured_id) == str(source_id):
+                return source_name
+        return None
+
     def force_refresh(self) -> None:
         """Force refresh of cache by clearing timestamps"""
         self._last_file_timestamps.clear()
@@ -109,18 +122,22 @@ class JsonLabelJournalDataSource(EventJournalDataSource):
     def _metadata_files_for_date(self, date_folder: str) -> List[tuple[str, str, str]]:
         detections_metadata = os.path.join(self.base_dir, 'Detections', date_folder, 'Metadata')
         events_metadata = os.path.join(self.base_dir, 'Events', date_folder, 'Metadata')
-        return [
+        files = [
             (os.path.join(detections_metadata, 'objects_found.json'), 'found', date_folder),
             (os.path.join(detections_metadata, 'objects_lost.json'), 'lost', date_folder),
             (os.path.join(events_metadata, 'attribute_events_found.json'), 'attr_found', date_folder),
             (os.path.join(events_metadata, 'attribute_events_finished.json'), 'attr_lost', date_folder),
-            (os.path.join(events_metadata, 'fov_events_found.json'), 'fov_found', date_folder),
-            (os.path.join(events_metadata, 'fov_events_lost.json'), 'fov_lost', date_folder),
             (os.path.join(events_metadata, 'zone_events_entered.json'), 'zone_entered', date_folder),
             (os.path.join(events_metadata, 'zone_events_left.json'), 'zone_left', date_folder),
             (os.path.join(events_metadata, 'camera_events.json'), 'cam', date_folder),
             (os.path.join(events_metadata, 'system_events.json'), 'sys', date_folder),
+            (os.path.join(events_metadata, 'alarm_events.json'), 'alarm', date_folder),
         ]
+        for found_name in JSON_FOUND_FILENAMES:
+            files.append((os.path.join(events_metadata, found_name), 'schedule_alarm_found', date_folder))
+        for lost_name in JSON_LOST_FILENAMES:
+            files.append((os.path.join(events_metadata, lost_name), 'schedule_alarm_lost', date_folder))
+        return files
 
     def _purge_cache_for_file(self, filepath: str) -> None:
         self._cache = [entry for entry in self._cache if entry.get('_source_file') != filepath]
@@ -188,6 +205,12 @@ class JsonLabelJournalDataSource(EventJournalDataSource):
                 except json.JSONDecodeError as json_err:
                     self.logger.warning(
                         f"JSON parse error in {filepath}: {json_err}. File may be corrupted or incomplete. Skipping file.")
+                    try:
+                        backup_path = f"{filepath}.corrupt.{int(time.time())}.bak"
+                        os.replace(filepath, backup_path)
+                        self.logger.warning("Backed up corrupted JSON to %s", backup_path)
+                    except Exception:
+                        pass
                     # Mark file as failed
                     self._failed_files.add(filepath)
                     try:
@@ -272,6 +295,7 @@ class JsonLabelJournalDataSource(EventJournalDataSource):
                     'event_type': event_type,
                     'ts': timestamp,
                     'source_id': item.get('source_id'),
+                    'source_name': item.get('source_name') or self._source_name_for_id(item.get('source_id')),
                     'object_id': item.get('object_id'),
                     'class_id': item.get('class_id'),
                     'class_name': item.get('class_name'),
@@ -283,17 +307,21 @@ class JsonLabelJournalDataSource(EventJournalDataSource):
                     'video_path_lost': item.get('video_path_finished') if event_type == 'attr_lost' else None,
                     'date_folder': date_folder,
                 }
-            elif event_type in ('fov_found', 'fov_lost'):
+            elif event_type in ('schedule_alarm_found', 'schedule_alarm_lost', 'fov_found', 'fov_lost'):
+                normalized_type = 'schedule_alarm_found' if event_type.endswith('_found') else 'schedule_alarm_lost'
                 return {
                     'event_id': event_id_str,
                     'event_id_numeric': event_id_numeric,
-                    'event_type': event_type,
+                    'event_type': normalized_type,
                     'ts': timestamp,
                     'source_id': item.get('source_id'),
+                    # Alarm records carry only the numeric id; the camera name drives labels and ACL.
+                    'source_name': item.get('source_name') or self._source_name_for_id(item.get('source_id')),
                     'object_id': item.get('object_id'),
+                    'class_id': item.get('class_id'),
                     'image_filename': item.get('preview_path'),
-                    'video_path': item.get('video_path') if event_type == 'fov_found' else None,
-                    'video_path_lost': item.get('video_path_lost') if event_type == 'fov_lost' else None,
+                    'video_path': item.get('video_path') if normalized_type == 'schedule_alarm_found' else None,
+                    'video_path_lost': item.get('video_path_lost') if normalized_type == 'schedule_alarm_lost' else None,
                     'date_folder': date_folder,
                 }
             elif event_type in ('zone_entered', 'zone_left'):
@@ -301,11 +329,8 @@ class JsonLabelJournalDataSource(EventJournalDataSource):
                 source_id = item.get('source_id')
                 source_name = item.get('source_name')
                 # If source_name is missing, try to get it from _source_name_id_address
-                if not source_name and source_id is not None:
-                    for src_name, (src_id, address) in self._source_name_id_address.items():
-                        if src_id == source_id:
-                            source_name = src_name
-                            break
+                if not source_name:
+                    source_name = self._source_name_for_id(source_id)
                 return {
                     'event_id': event_id_str,
                     'event_id_numeric': event_id_numeric,
@@ -367,6 +392,22 @@ class JsonLabelJournalDataSource(EventJournalDataSource):
                     'source_name': None,
                     'video_path': None,  # System events don't have video
                     'video_path_lost': None,
+                    'date_folder': date_folder,
+                }
+            elif event_type == 'alarm':
+                source_id = item.get('source_id')
+                source_name = item.get('source_name') or self._source_name_for_id(source_id)
+                return {
+                    'event_id': event_id_str,
+                    'event_id_numeric': event_id_numeric,
+                    'event_type': 'alarm',
+                    'ts': timestamp,
+                    'alarm_id': item.get('alarm_id'),
+                    'alarm_type': item.get('alarm_type', 'Alarm'),
+                    'severity': item.get('severity', 'warning'),
+                    'details': item.get('details') or {},
+                    'source_id': source_id,
+                    'source_name': source_name,
                     'date_folder': date_folder,
                 }
         except Exception as e:

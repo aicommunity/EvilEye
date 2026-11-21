@@ -50,6 +50,10 @@ class CaptureConstants:
     NOFRAMES_RECONNECT_MIN_INTERVAL_SEC: float = 45.0
     # Minimum wait on repeated reconnect sessions (avoid backoff=0 storms).
     RECONNECT_MIN_FIRST_BACKOFF_SEC: float = 3.0
+    # How long reconnect may wait for a background release()/teardown before abandoning it.
+    RECONNECT_RELEASE_WAIT_SEC: float = 15.0
+    # Bound native GStreamer set_state(NULL); stuck streaming threads must not hang Python forever.
+    TEARDOWN_NULL_TIMEOUT_SEC: float = 5.0
 
     # Default FPS fallback
     DEFAULT_FPS_FALLBACK: float = 15.0

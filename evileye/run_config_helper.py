@@ -4,7 +4,6 @@ import signal
 import sys
 import warnings
 from pathlib import Path
-from typing import Optional
 
 try:
     from PyQt6.QtWidgets import QApplication, QMessageBox
@@ -19,12 +18,13 @@ except ImportError:
 
 from evileye.controller import controller
 from evileye.visualization_modules.controller_init_thread import ControllerInitThread
-from evileye.utils.utils import normalize_config_path
+from evileye.utils.config_paths import normalize_config_path
 from evileye.core.logger import get_module_logger
 from evileye.core.config_validator import ConfigValidator
 from evileye.gui import GUIManager, GUIMode, determine_gui_mode
 from evileye.core.mp_session_registry import cleanup_current_session_workers
 from evileye.core.mp_context import ensure_spawn_start_method
+from evileye.core.paths import pin_site_root
 
 # Shared-memory descriptor path can trigger noisy shutdown warnings from
 # multiprocessing resource_tracker when segments are already cleaned up.
@@ -59,6 +59,9 @@ def run_config(config_path: str, gui: bool = True, autoclose: bool = False) -> i
     ensure_spawn_start_method()
     logger = get_module_logger("run_config")
 
+    # Configs outside the site's configs/ directory cause a cwd change below.
+    # Pin the launch directory first so credentials and data paths stay stable.
+    pin_site_root()
     config_file_name = normalize_config_path(config_path)
     config_dir = os.path.dirname(os.path.abspath(config_file_name))
     if config_dir:
@@ -97,6 +100,22 @@ def run_config(config_path: str, gui: bool = True, autoclose: bool = False) -> i
     # Determine GUI mode from config and CLI arguments
     gui_mode = determine_gui_mode(config_data, cli_gui=gui if gui is not None else None)
     logger.info(f"GUI mode determined: {gui_mode.value}")
+
+    try:
+        from evileye.controller.fps_policy import apply_controller_fps_policy
+
+        effective_fps = apply_controller_fps_policy(controller_cfg, gui_mode)
+        configured_fps = controller_cfg.get("fps_configured", controller_cfg.get("fps"))
+        if effective_fps != configured_fps:
+            logger.info(
+                "controller fps policy: configured=%s effective=%s fps_headless=%s gui_mode=%s",
+                configured_fps,
+                effective_fps,
+                controller_cfg.get("fps_headless"),
+                gui_mode.value,
+            )
+    except Exception as exc:
+        logger.warning("controller fps policy skipped: %s", exc)
 
     if autoclose:
         # Disable looping for all sources so that video files actually finish

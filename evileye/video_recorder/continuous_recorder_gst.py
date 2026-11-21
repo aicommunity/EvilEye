@@ -2,16 +2,19 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Optional, List
+from typing import Optional
 import datetime as _dt
 import threading
 import time
-import weakref
 import atexit
 
 from evileye.core.logger import get_module_logger
 from evileye.video_recorder.recording_params import RecordingParams
 from evileye.video_recorder.recorder_base import VideoRecorderBase, SourceMeta
+from evileye.video_recorder.session_sidecar import (
+    sidecar_path_from_splitmux_location,
+    write_session_sidecar,
+)
 
 
 @dataclass
@@ -39,17 +42,28 @@ class GstContinuousRecorder(VideoRecorderBase):
 
     def __init__(self) -> None:
         super().__init__()
+        self.invalid_pts_dropped = 0
         self.logger = get_module_logger("gst_continuous_recorder")
         self._refs: Optional[GstBranchRefs] = None
         self._check_thread: Optional[threading.Thread] = None
         self._check_stop = threading.Event()
         self._recording_out_dir: Optional[Path] = None
+        self._recording_out_dirs: set[Path] = set()
         self._recording_checked_files: set[Path] = set()
         self._recording_min_file_size_kb: int = 0
         self._recording_container: str = "mp4"
         self._lock = threading.RLock()
         self._segments_attached: int = 0
         self._last_stats_ts: float = 0.0
+        self._session_date_str: Optional[str] = None
+        self._session_stem: Optional[Path] = None
+        # Wall-clock of first muxed frame for this splitmux session; kept across
+        # midnight day-folder rotates so sidecar start_ts matches continuing fragment_id.
+        self._session_start_ts: Optional[float] = None
+        self._session_has_buffer = False
+        self._camera_folder: str = "source"
+        self._source_name: str = "source"
+        self._streams_base: Optional[Path] = None
         try:
             GstContinuousRecorder._instances.add(self)
         except Exception:
@@ -113,12 +127,13 @@ class GstContinuousRecorder(VideoRecorderBase):
             except Exception:
                 pass
 
-            # IMPORTANT: bound mux queue to avoid runaway RSS if mux/disk stalls.
+            # Bound mux queue. Do not leak until the first muxed buffer so media t=0
+            # matches the first appsink frame; leaky is enabled in the first-buffer probe.
             try:
                 queue_before_mux.set_property("max-size-buffers", 200)
                 queue_before_mux.set_property("max-size-bytes", 5 * 1024 * 1024)
                 queue_before_mux.set_property("max-size-time", 2_000_000_000)
-                queue_before_mux.set_property("leaky", 2)  # downstream
+                queue_before_mux.set_property("leaky", 0)
             except Exception:
                 pass
 
@@ -130,77 +145,226 @@ class GstContinuousRecorder(VideoRecorderBase):
             splitmuxsink.set_property("async-finalize", True)
 
             # Build output path: base/Streams/YYYY-MM-DD/CameraName/
+            # format-location recreates the path per fragment so midnight rotates the day folder.
             camera_folder = (
                 "-".join(self.source.source_names)
                 if self.source and self.source.source_names
                 else (self.source.source_name if self.source else "source")
             )
             base_dir = Path(self.params.out_dir) if self.params.out_dir else Path("EvilEyeData")
-            date_dir = _dt.datetime.now().strftime("%Y-%m-%d")
-            out_dir = base_dir / "Streams" / date_dir / camera_folder
-            out_dir.mkdir(parents=True, exist_ok=True)
-
-            ts = _dt.datetime.now().strftime("%Y%m%d_%H%M%S")
-            source_name = self.source.source_name if self.source else camera_folder
-            name = self.params.filename_tmpl.format(
-                source_name=source_name,
-                start_time=ts,
-                seq=0,
-                ext=self.params.container,
-            )
-            stem = (out_dir / name).with_suffix("")
-            location = str(stem) + "_%05d." + self.params.container
+            self._camera_folder = camera_folder
+            self._source_name = self.source.source_name if self.source else camera_folder
+            self._streams_base = base_dir / "Streams"
+            self._session_date_str = None
+            self._session_stem = None
+            self._session_start_ts = None
+            self._session_has_buffer = False
+            # Prime session stem/out_dir; property keeps printf pattern as fallback.
+            self.fragment_location_for_id(0)
+            location = str(self._session_stem) + "_%05d." + self.params.container
             splitmuxsink.set_property("location", location)
+            try:
+                splitmuxsink.connect("format-location", self._on_format_location)
+            except Exception:
+                self.logger.exception("Failed to connect splitmux format-location; day folder stays session-sticky")
 
-            self._recording_out_dir = out_dir
             self._recording_min_file_size_kb = self.params.min_file_size_kb
             self._recording_container = self.params.container
             self._recording_checked_files = set()
 
-            # Add to pipeline and link
-            pipeline.add(videoconvert)
-            pipeline.add(capsfilter)
-            pipeline.add(x264enc)
-            pipeline.add(h264parse)
-            pipeline.add(queue_before_mux)
-            pipeline.add(splitmuxsink)
-
-            if not recording_queue_elem.link(videoconvert):
-                raise RuntimeError("Failed to link recording_queue -> videoconvert")
-            if not videoconvert.link(capsfilter):
-                raise RuntimeError("Failed to link videoconvert -> capsfilter(I420)")
-            if not capsfilter.link(x264enc):
-                raise RuntimeError("Failed to link capsfilter -> x264enc")
-            if not x264enc.link(h264parse):
-                raise RuntimeError("Failed to link x264enc -> h264parse")
-            if not h264parse.link(queue_before_mux):
-                raise RuntimeError("Failed to link h264parse -> queue_before_mux")
-            if not queue_before_mux.link(splitmuxsink):
-                raise RuntimeError("Failed to link queue_before_mux -> splitmuxsink")
-
-            # Sync state if safe
+            # Attach as one transaction. A partial branch must not remain in
+            # the capture pipeline when a link or element setup fails.
+            branch_elements = [
+                videoconvert,
+                capsfilter,
+                x264enc,
+                h264parse,
+                queue_before_mux,
+                splitmuxsink,
+            ]
             try:
+                for element in branch_elements:
+                    pipeline.add(element)
+
+                if not recording_queue_elem.link(videoconvert):
+                    raise RuntimeError("Failed to link recording queue to videoconvert")
+                if not videoconvert.link(capsfilter):
+                    raise RuntimeError("Failed to link videoconvert to I420 caps")
+                if not capsfilter.link(x264enc):
+                    raise RuntimeError("Failed to link I420 caps to x264enc")
+                if not x264enc.link(h264parse):
+                    raise RuntimeError("Failed to link x264enc to h264parse")
+                if not h264parse.link(queue_before_mux):
+                    raise RuntimeError("Failed to link h264parse to mux queue")
+                if not queue_before_mux.link(splitmuxsink):
+                    raise RuntimeError("Failed to link mux queue to splitmuxsink")
+
+                self._attach_timestamp_guard(Gst, queue_before_mux)
+                self._attach_first_mux_probe(
+                    Gst,
+                    recording_queue_elem=recording_queue_elem,
+                    queue_before_mux=queue_before_mux,
+                    location=location,
+                )
+
                 ret, current_state, _pending = pipeline.get_state(Gst.SECOND)
-                if ret != Gst.StateChangeReturn.FAILURE and current_state in (Gst.State.NULL, Gst.State.READY):
-                    for elem in (videoconvert, capsfilter, x264enc, h264parse, queue_before_mux, splitmuxsink):
-                        elem.sync_state_with_parent()
+                if ret != Gst.StateChangeReturn.FAILURE and current_state in (
+                    Gst.State.NULL,
+                    Gst.State.READY,
+                ):
+                    for element in branch_elements:
+                        element.sync_state_with_parent()
+
+                self._refs = GstBranchRefs(
+                    recording_queue=recording_queue_elem,
+                    videoconvert=videoconvert,
+                    capsfilter=capsfilter,
+                    x264enc=x264enc,
+                    h264parse=h264parse,
+                    queue_before_mux=queue_before_mux,
+                    splitmuxsink=splitmuxsink,
+                )
+                self._start_check_thread()
+                self._segments_attached += 1
+                self._last_stats_ts = time.time()
+                self.logger.info("GstContinuousRecorder branch attached: location=%s", location)
             except Exception:
-                pass
+                self.is_running = False
+                self._refs = None
+                self._session_has_buffer = False
+                self._check_stop.set()
+                check_thread = self._check_thread
+                self._check_thread = None
+                if check_thread is not None and check_thread.is_alive():
+                    check_thread.join(timeout=2.0)
+                for element in reversed(branch_elements):
+                    try:
+                        if element.get_parent() == pipeline:
+                            element.set_state(Gst.State.NULL)
+                            pipeline.remove(element)
+                    except Exception as cleanup_error:
+                        self.logger.error(
+                            "Failed to remove partial GStreamer recorder element %s: %s",
+                            element,
+                            cleanup_error,
+                        )
+                raise
 
-            self._refs = GstBranchRefs(
-                recording_queue=recording_queue_elem,
-                videoconvert=videoconvert,
-                capsfilter=capsfilter,
-                x264enc=x264enc,
-                h264parse=h264parse,
-                queue_before_mux=queue_before_mux,
-                splitmuxsink=splitmuxsink,
+    def fragment_location_for_id(
+        self,
+        fragment_id: int,
+        *,
+        now: _dt.datetime | None = None,
+    ) -> str:
+        """Return splitmux path for fragment; rotates Streams day folder at midnight."""
+        now = now or _dt.datetime.now()
+        date_str = now.strftime("%Y-%m-%d")
+        base = self._streams_base or Path("EvilEyeData") / "Streams"
+        out_dir = base / date_str / self._camera_folder
+        out_dir.mkdir(parents=True, exist_ok=True)
+        self._recording_out_dir = out_dir
+        self._recording_out_dirs.add(out_dir)
+
+        day_changed = self._session_date_str != date_str
+        if day_changed or self._session_stem is None:
+            ts = now.strftime("%Y%m%d_%H%M%S")
+            name = self.params.filename_tmpl.format(
+                source_name=self._source_name,
+                start_time=ts,
+                seq=0,
+                ext=self.params.container,
             )
+            self._session_stem = (out_dir / name).with_suffix("")
+            self._session_date_str = date_str
+            if day_changed and fragment_id > 0:
+                try:
+                    location_pattern = str(self._session_stem) + "_%05d." + self.params.container
+                    # Keep original session anchor: fragment_id continues across midnight.
+                    anchor = self._session_start_ts if self._session_start_ts is not None else time.time()
+                    write_session_sidecar(
+                        sidecar_path_from_splitmux_location(location_pattern),
+                        anchor,
+                        None,
+                    )
+                    self.logger.info(
+                        "Rotated recording day folder to %s (fragment=%s, session_start_ts=%s)",
+                        out_dir,
+                        fragment_id,
+                        anchor,
+                    )
+                except Exception:
+                    self.logger.exception("Failed to write day-rotate session sidecar")
 
-            self._start_check_thread()
-            self._segments_attached += 1
-            self._last_stats_ts = time.time()
-            self.logger.info("GstContinuousRecorder branch attached: location=%s", location)
+        return f"{self._session_stem}_{int(fragment_id):05d}.{self.params.container}"
+
+    def _on_format_location(self, _splitmux, fragment_id) -> str:
+        try:
+            return self.fragment_location_for_id(int(fragment_id))
+        except Exception:
+            self.logger.exception("format-location failed for fragment=%s", fragment_id)
+            if self._session_stem is not None:
+                return f"{self._session_stem}_{int(fragment_id):05d}.{self.params.container}"
+            return f"recording_{int(fragment_id):05d}.{self.params.container}"
+
+    def _attach_timestamp_guard(self, Gst, queue_before_mux):
+        # qtmux terminates the entire capture pipeline on a buffer without PTS.
+        # Discard only malformed encoded buffers; do not invent media timestamps.
+        def guard(pad, info):
+            buffer = info.get_buffer()
+            pts = getattr(buffer, 'pts', None)
+            if buffer is not None and (pts is None or pts < 0 or pts == Gst.CLOCK_TIME_NONE):
+                self.invalid_pts_dropped += 1
+                if self.invalid_pts_dropped == 1 or self.invalid_pts_dropped % 100 == 0:
+                    self.logger.warning('Recording dropped encoded buffer without PTS (total=%d)',
+                                        self.invalid_pts_dropped)
+                return Gst.PadProbeReturn.DROP
+            return Gst.PadProbeReturn.OK
+        pad = queue_before_mux.get_static_pad('src')
+        if pad is not None:
+            pad.add_probe(Gst.PadProbeType.BUFFER, guard)
+
+    def _attach_first_mux_probe(self, Gst, *, recording_queue_elem, queue_before_mux, location: str) -> None:
+        sidecar = sidecar_path_from_splitmux_location(location)
+        state = {"written": False}
+
+        def _on_buffer(pad, info):
+            if state["written"]:
+                return Gst.PadProbeReturn.OK
+            buf = info.get_buffer()
+            if buf is None:
+                return Gst.PadProbeReturn.OK
+            pts = getattr(buf, "pts", None)
+            first_pts = None
+            try:
+                clock_none = getattr(Gst, "CLOCK_TIME_NONE", None)
+                if pts is not None and pts >= 0 and (clock_none is None or pts != clock_none):
+                    first_pts = int(pts)
+            except Exception:
+                first_pts = None
+            try:
+                wall = time.time()
+                write_session_sidecar(sidecar, wall, first_pts)
+                if self._session_start_ts is None:
+                    self._session_start_ts = wall
+                self.logger.info("Wrote recording session sidecar %s", sidecar)
+            except Exception:
+                self.logger.exception("Failed to write session sidecar %s", sidecar)
+            state["written"] = True
+            self._session_has_buffer = True
+            for elem in (recording_queue_elem, queue_before_mux):
+                try:
+                    elem.set_property("leaky", 2)
+                except Exception:
+                    pass
+            return Gst.PadProbeReturn.REMOVE
+
+        try:
+            srcpad = queue_before_mux.get_static_pad("src")
+            if srcpad is None:
+                return
+            srcpad.add_probe(Gst.PadProbeType.BUFFER, _on_buffer)
+        except Exception:
+            self.logger.exception("Failed to attach first-mux probe")
 
     def _start_check_thread(self) -> None:
         # Best-effort small/invalid file cleanup, similar to previous in-capture implementation.
@@ -232,8 +396,10 @@ class GstContinuousRecorder(VideoRecorderBase):
                     except Exception:
                         pass
 
-                    out_dir = self._recording_out_dir
-                    if not out_dir or not out_dir.exists():
+                    dirs = list(self._recording_out_dirs) if self._recording_out_dirs else []
+                    if self._recording_out_dir and self._recording_out_dir not in dirs:
+                        dirs.append(self._recording_out_dir)
+                    if not dirs:
                         if self._check_stop.wait(timeout=5.0):
                             break
                         continue
@@ -242,21 +408,24 @@ class GstContinuousRecorder(VideoRecorderBase):
                     validate_integrity = getattr(self.params, "validate_video_integrity", True)
                     validation_timeout = getattr(self.params, "video_validation_timeout", 2.0)
 
-                    for fp in out_dir.glob(f"*.{self._recording_container}"):
-                        if fp in self._recording_checked_files:
+                    for out_dir in dirs:
+                        if not out_dir or not out_dir.exists():
                             continue
-                        check_and_delete_small_files(
-                            fp,
-                            self._recording_min_file_size_kb,
-                            validate_integrity=validate_integrity,
-                            validation_timeout=validation_timeout,
-                        )
-                        try:
-                            stat = fp.stat()
-                            if (time.time() - stat.st_mtime) >= 60.0:
-                                self._recording_checked_files.add(fp)
-                        except Exception:
-                            pass
+                        for fp in out_dir.glob(f"*.{self._recording_container}"):
+                            if fp in self._recording_checked_files:
+                                continue
+                            check_and_delete_small_files(
+                                fp,
+                                self._recording_min_file_size_kb,
+                                validate_integrity=validate_integrity,
+                                validation_timeout=validation_timeout,
+                            )
+                            try:
+                                stat = fp.stat()
+                                if (time.time() - stat.st_mtime) >= 60.0:
+                                    self._recording_checked_files.add(fp)
+                            except Exception:
+                                pass
                 except Exception:
                     pass
                 if self._check_stop.wait(timeout=5.0):
@@ -277,11 +446,22 @@ class GstContinuousRecorder(VideoRecorderBase):
     def stop_with_pipeline(self, *, pipeline, Gst) -> None:
         with self._lock:
             self._check_stop.set()
+            self.is_running = False
             t = self._check_thread
             self._check_thread = None
             refs = self._refs
             self._refs = None
+            output_dirs = set(self._recording_out_dirs)
+            if self._recording_out_dir is not None:
+                output_dirs.add(self._recording_out_dir)
+            container = self._recording_container
             self._recording_out_dir = None
+            self._recording_out_dirs = set()
+            self._session_date_str = None
+            self._session_stem = None
+            self._session_start_ts = None
+            had_media = self._session_has_buffer
+            self._session_has_buffer = False
             self._recording_checked_files = set()
 
         if t and t.is_alive():
@@ -293,6 +473,111 @@ class GstContinuousRecorder(VideoRecorderBase):
         if not refs:
             return
 
+        def _set_null_bounded(elem, *, timeout_sec: float = 1.0) -> None:
+            if elem is None:
+                return
+            done = threading.Event()
+
+            def _worker():
+                try:
+                    elem.set_state(Gst.State.NULL)
+                    try:
+                        elem.get_state(max(1, int(timeout_sec * Gst.SECOND)))
+                    except Exception:
+                        pass
+                except Exception:
+                    pass
+                finally:
+                    done.set()
+
+            threading.Thread(target=_worker, daemon=True).start()
+            if not done.wait(timeout_sec + 0.5):
+                self.logger.warning(
+                    "Recording element set_state(NULL) timed out for %s",
+                    self.source.source_name if self.source else "source",
+                )
+
+        # Unblock a full recording queue so muxer teardown cannot hang forever.
+        try:
+            recording_queue = refs.recording_queue
+            if recording_queue is not None:
+                try:
+                    recording_queue.set_property("leaky", 2)  # downstream
+                except Exception:
+                    pass
+                for pad_name in ("sink", "src"):
+                    try:
+                        pad = recording_queue.get_static_pad(pad_name)
+                        if pad is None:
+                            continue
+                        pad.send_event(Gst.Event.new_flush_start())
+                        pad.send_event(Gst.Event.new_flush_stop(True))
+                    except Exception:
+                        pass
+        except Exception:
+            pass
+
+        # An attached but never-started branch may be blocked in preroll. No
+        # segment exists to finalize until the first muxed buffer has arrived.
+        eos_sent = False
+        if had_media:
+            try:
+                srcpad = refs.queue_before_mux.get_static_pad("src")
+                eos_sent = bool(srcpad and srcpad.push_event(Gst.Event.new_eos()))
+            except Exception as exc:
+                self.logger.warning("Could not send EOS to recording branch: %s", exc)
+
+        if eos_sent:
+            deadline = time.monotonic() + 5.0
+            last_signature = None
+            stable_since = None
+            while time.monotonic() < deadline:
+                try:
+                    queue_level = refs.queue_before_mux.get_property("current-level-buffers")
+                except Exception:
+                    queue_level = 0
+                files = []
+                for out_dir in output_dirs:
+                    try:
+                        files.extend(out_dir.glob(f"*.{container}"))
+                    except Exception:
+                        pass
+                latest = None
+                latest_stat = None
+                for path in files:
+                    try:
+                        stat = path.stat()
+                    except OSError:
+                        continue
+                    if latest_stat is None or stat.st_mtime_ns > latest_stat.st_mtime_ns:
+                        latest = path
+                        latest_stat = stat
+                if latest is None:
+                    signature = None
+                    file_ready = True
+                else:
+                    signature = (str(latest), latest_stat.st_size, latest_stat.st_mtime_ns)
+                    file_ready = latest_stat.st_size > 0
+                if queue_level == 0 and file_ready and signature == last_signature:
+                    if stable_since is None:
+                        stable_since = time.monotonic()
+                    elif time.monotonic() - stable_since >= 0.5:
+                        break
+                else:
+                    stable_since = None
+                last_signature = signature
+                time.sleep(0.05)
+            else:
+                self.logger.warning(
+                    "Timed out waiting for recording branch to finalize for %s",
+                    self.source.source_name if self.source else "source",
+                )
+        elif had_media:
+            self.logger.warning(
+                "Recording branch rejected EOS during shutdown for %s",
+                self.source.source_name if self.source else "source",
+            )
+
         for elem in [
             refs.videoconvert,
             refs.capsfilter,
@@ -300,13 +585,11 @@ class GstContinuousRecorder(VideoRecorderBase):
             refs.h264parse,
             refs.queue_before_mux,
             refs.splitmuxsink,
+            refs.recording_queue,
         ]:
+            _set_null_bounded(elem, timeout_sec=1.0)
             try:
-                elem.set_state(Gst.State.NULL)
-            except Exception:
-                pass
-            try:
-                if pipeline and elem.get_parent() == pipeline:
+                if pipeline and elem is not None and elem.get_parent() == pipeline:
                     pipeline.remove(elem)
             except Exception:
                 pass

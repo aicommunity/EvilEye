@@ -1,11 +1,12 @@
 from __future__ import annotations
 
 import threading
-import multiprocessing as _mp
 from queue import Queue, Full, Empty
 from typing import Any, Dict, List, Tuple
 
 from ..core.base_class import EvilEyeBase
+from ..core.plugins import register_module
+from ..core.dual_mode_processor import DualModeProcessor
 from ..core.frame import Frame
 from ..core.tracking_dto import ensure_tracking_result_list
 
@@ -16,12 +17,17 @@ from ..core.processor_base import (
 )
 
 
-@EvilEyeBase.register("RoiFeeder")
-class RoiFeeder(EvilEyeBase):
-    """Lightweight processor that extracts ROI crops from tracked objects
+@register_module(
+    "RoiFeeder",
+    kind="processor_item",
+    execution_modes=("thread", "process"),
+)
+class RoiFeeder(DualModeProcessor):
+    """Lightweight processor that extracts ROI bbox coords from tracked objects.
 
-    Supports both thread and process execution modes via the
-    ``execution_mode`` configuration parameter
+    ``PipelineSurveillance`` runs this component through the common item
+    runtime. The legacy lifecycle remains available to direct in-process
+    callers; only that legacy path forces execution to a thread.
     """
 
     ResultType = Frame
@@ -58,6 +64,33 @@ class RoiFeeder(EvilEyeBase):
         self.every_n_frames = int(self.params.get('every_n_frames', 1))
         self.execution_mode = self.params.get('execution_mode', DEFAULT_EXECUTION_MODE)
 
+    def create_state(self, config):
+        """Build per-worker cadence state for the common item runtime."""
+        self.set_params(**dict(config or {}))
+        return {
+            "frame_counters": {},
+            "every_n_frames": max(1, int(self.every_n_frames)),
+        }
+
+    def process_item(self, item, state):
+        """Attach ROI bounding boxes while preserving the legacy pair output."""
+        if not isinstance(item, (list, tuple)) or len(item) < 2:
+            return item
+
+        tracking_data, frame = item[0], item[1]
+        tracking_data = ensure_tracking_result_list(tracking_data)
+        source_id = getattr(frame, "source_id", None)
+        if source_id is None:
+            return tracking_data, frame
+
+        state = state if isinstance(state, dict) else {}
+        counters = state.setdefault("frame_counters", {})
+        counters[source_id] = counters.get(source_id, 0) + 1
+        every_n_frames = max(1, int(state.get("every_n_frames", self.every_n_frames)))
+        if counters[source_id] % every_n_frames == 0:
+            self._extract_rois(tracking_data, frame)
+        return tracking_data, frame
+
     def get_params_impl(self):
         params: Dict[str, Any] = dict()
         params['source_ids'] = self.source_ids
@@ -76,8 +109,19 @@ class RoiFeeder(EvilEyeBase):
 
     def init_impl(self, **kwargs):
         if self.execution_mode == EXEC_MODE_PROCESS:
-            self._init_process_mode()
+            self.logger.warning(
+                "RoiFeeder: execution_mode=process ignored (bbox-only stage); using thread"
+            )
+            self.execution_mode = EXEC_MODE_THREAD
+        return self._init_thread_mode(**kwargs)
+
+    def _init_thread_mode(self, **kwargs):
+        self.processing_thread = threading.Thread(target=self._process_impl)
         return True
+
+    def _init_process_mode(self, **kwargs):
+        # Not used — process forced to thread in init_impl.
+        return self._init_thread_mode(**kwargs)
 
     def _init_process_mode(self):
         from ..core.mp_control import MpControl, parse_mp_restart_policy

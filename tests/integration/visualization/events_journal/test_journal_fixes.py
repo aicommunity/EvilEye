@@ -1,6 +1,5 @@
 #!/usr/bin/env python3
 
-import sys
 import os
 def test_journal_fixes(journal_test_logger):
     """Test journal fixes for different event types and bounding boxes"""

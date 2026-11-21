@@ -1,11 +1,6 @@
-import time
 from .db_adapter import DatabaseAdapterBase
 from .constants import EventType, QueryType
-import json
 from ..utils.utils import ObjectResultEncoder
-import copy
-import datetime
-from timeit import default_timer as timer
 from ..utils import threading_events
 from ..utils import utils
 from psycopg2 import sql
@@ -37,7 +32,7 @@ class DatabaseAdapterCamEvents(DatabaseAdapterBase):
         if query_string is None:
             return
 
-        self.db_controller.query(query_string, data)
+        self.db_controller.query_once(query_string, data)
         threading_events.notify(EventType.NEW_EVENT)
 
     def _prepare_for_saving(self, event) -> tuple[list, list]:
@@ -47,8 +42,20 @@ class DatabaseAdapterCamEvents(DatabaseAdapterBase):
             source_names=getattr(event, "source_names", None),
             address=getattr(event, "camera_address", ""),
         )
+        # Capture events use safe display names, but this legacy FK references
+        # camera_information.full_address, populated from the source configuration.
+        address = identity
+        sources = self.cameras_params.values() if isinstance(self.cameras_params, dict) else self.cameras_params
+        from evileye.utils.camera_event_label import media_url_without_credentials
+        for source in sources or []:
+            if not isinstance(source, dict) or not source.get('camera'):
+                continue
+            name = camera_event_identity(source_names=source.get('source_names'), address=source['camera'])
+            if identity == name or media_url_without_credentials(identity) == media_url_without_credentials(source['camera']):
+                address = source['camera']
+                break
         fields_for_saving = {
-            "camera_full_address": identity,
+            "camera_full_address": address,
             "time_stamp": event.timestamp,
             "event_id": event.event_id,
             "connection_status": event.con_status,

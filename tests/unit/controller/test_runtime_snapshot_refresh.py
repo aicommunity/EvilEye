@@ -37,3 +37,37 @@ def test_maybe_publish_runtime_snapshot_respects_interval():
     ctrl._maybe_publish_runtime_snapshot(now_ts=110.0)
     assert len(published) == 1
     assert published[0]["state"] == "running"
+
+
+def test_collect_runtime_telemetry_uses_existing_module_instances_only():
+    from evileye.controller.controller import Controller
+
+    class Pipeline:
+        def get_runtime_stats(self):
+            stats = {"worker_running": True, "degraded": False}
+            return {
+                "modules": {"detectors/evileye/Rule": stats},
+                "module_instances": {"detectors:0:evileye/Rule": stats},
+                "stages": {"detectors": {"degraded": False}},
+            }
+
+    class Alarm:
+        def get_runtime_stats(self):
+            return {"worker_running": True, "degraded": False}
+
+    class Events:
+        def get_all_detectors(self):
+            return {"Alarm": Alarm()}
+
+    ctrl = Controller.__new__(Controller)
+    ctrl.pipeline = Pipeline()
+    ctrl.params = {"events_detectors": {"enabled": ["Alarm"], "Alarm": {}}}
+    ctrl._events_service = Events()
+    ctrl.events_detectors_controller = None
+
+    telemetry = ctrl._collect_runtime_telemetry()
+
+    assert telemetry["module_instances"]["detectors:0:evileye/Rule"]["worker_running"] is True
+    assert telemetry["module_instances"]["events:0:Alarm"]["worker_running"] is True
+    assert telemetry["stages"]["detectors"]["degraded"] is False
+    assert telemetry["degraded"] is False

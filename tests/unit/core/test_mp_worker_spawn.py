@@ -1,6 +1,5 @@
 """Spawn entry must not pickle worker instances with locks."""
 
-import multiprocessing as mp
 
 import pytest
 

@@ -3,6 +3,8 @@ from __future__ import annotations
 from datetime import datetime
 from pathlib import Path
 import re
+import threading
+import time
 from typing import Any, Optional
 
 from evileye.api.core.server_state import iter_log_files
@@ -11,6 +13,11 @@ _RTSP_CRED_RE = re.compile(r"(rtsp[s]?://)([^:/@\s]+):([^@/\s]+)@", re.IGNORECAS
 _PASSWORD_ASSIGN_RE = re.compile(r"(password\s*[=:]\s*)([^\s,&;\"']+)", re.IGNORECASE)
 _LOG_SESSION_RE = re.compile(r"^(\d{8}_\d{6}(?:_\d+)?)_evileye_main\.log$")
 _HEURISTIC_MAX_DELTA_SEC = 120.0
+
+_RESOLVE_CACHE_LOCK = threading.Lock()
+_RESOLVE_CACHE_TTL_SEC = 5.0
+# key: (started_at_bucket_sec, max_delta_bucket) -> (expires_at, resolved_payload)
+_RESOLVE_CACHE: dict[tuple[int, int], tuple[float, dict[str, Any]]] = {}
 
 
 def _logs_dir() -> Path:
@@ -92,6 +99,18 @@ def resolve_run_log_files(
     if not root.exists():
         return {"log_session_id": None, "log_files": empty_files, "log_match": "none"}
 
+    # Heuristic branch can be called very frequently (e.g. hot UI polling).
+    # Cache the expensive glob+delta matching for a short time.
+    started_bucket = int(float(target_ts))
+    max_delta_bucket = int(max_delta_sec * 10)
+    cache_key = (started_bucket, max_delta_bucket)
+    with _RESOLVE_CACHE_LOCK:
+        hit = _RESOLVE_CACHE.get(cache_key)
+        if hit is not None:
+            expires_at, payload = hit
+            if time.time() < expires_at:
+                return payload
+
     best_sid: Optional[str] = None
     best_delta = float("inf")
     for path in root.glob("*_evileye_main.log"):
@@ -110,11 +129,16 @@ def resolve_run_log_files(
     if not best_sid:
         return {"log_session_id": None, "log_files": empty_files, "log_match": "none"}
 
-    return {
+    resolved = {
         "log_session_id": best_sid,
         "log_files": _files_for_session(best_sid, logs_dir=root),
         "log_match": "heuristic",
     }
+
+    with _RESOLVE_CACHE_LOCK:
+        _RESOLVE_CACHE[cache_key] = (time.time() + _RESOLVE_CACHE_TTL_SEC, resolved)
+
+    return resolved
 
 
 def redact_secrets(text: str) -> str:

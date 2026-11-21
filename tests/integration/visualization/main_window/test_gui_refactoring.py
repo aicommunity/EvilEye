@@ -6,10 +6,7 @@
 
 import pytest
 import tempfile
-import json
 import os
-from pathlib import Path
-from unittest.mock import Mock, patch
 
 try:
     from PyQt6.QtWidgets import QApplication, QWidget
@@ -29,7 +26,7 @@ from evileye.visualization_modules.dialogs import SaveConfirmationDialog, SaveAs
 def qapp():
     """Fixture для QApplication."""
     if not QApplication.instance():
-        app = QApplication([])
+        app = QApplication.instance() or QApplication([])
     else:
         app = QApplication.instance()
     yield app

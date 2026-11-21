@@ -42,7 +42,8 @@ class DetectionThreadBase:
 
         self.prev_time = 0  # For time-based stride parameter; time tracking
         self.stride = stride  # Frame stride parameter
-        self.stride_cnt = self.stride  # Counter for frames to skip
+        # 0 => next frame is eligible for inference (see consume_stride_slot).
+        self.stride_cnt = 0
         self.classes = classes
         self.roi = roi  # [[]]
         self.inf_params = inf_params
@@ -72,6 +73,18 @@ class DetectionThreadBase:
                 t.stop()
             except Exception:
                 pass
+
+    def set_rois_for_source(self, source_id: int, rois_xywh: list[list[int]]) -> None:
+        """Update ROI for one source and refresh roi_coords_per_camera."""
+        if source_id not in self.source_ids:
+            return
+        idx = self.source_ids.index(source_id)
+        if not isinstance(self.roi, list):
+            self.roi = []
+        while len(self.roi) <= idx:
+            self.roi.append([])
+        self.roi[idx] = [list(r) for r in rois_xywh]
+        self.roi_coords_per_camera[source_id] = self.roi[idx]
 
     def start(self) -> None:
         """Start the detection thread."""
@@ -146,6 +159,23 @@ class DetectionThreadBase:
                 image, self.roi, self.roi_coords_per_camera
             )
 
+            if not self.consume_stride_slot():
+                # Keep per-frame contract for tracker/OH without paying for YOLO.
+                detection_result_list = self._detection_result_from_predict(
+                    split_image,
+                    [None] * len(split_image) if split_image else None,
+                )
+                if detection_result_list is not None:
+                    try:
+                        self.queue_out.put_nowait([detection_result_list, image])
+                    except Exception:
+                        try:
+                            _ = self.queue_out.get_nowait()
+                            self.queue_out.put_nowait([detection_result_list, image])
+                        except Exception:
+                            pass
+                continue
+
             detection_result_list = self.process_stride(split_image)
             if detection_result_list is not None:
                 try:
@@ -160,6 +190,26 @@ class DetectionThreadBase:
                         self.logger.warning(
                             f"Output queue full, dropping detection result for {image.source_id}:{image.frame_id}"
                         )
+
+    def consume_stride_slot(self) -> bool:
+        """
+        Return True when this frame should run model inference.
+
+        ``vid_stride`` N means roughly 1 of every N frames is predicted; skipped
+        frames still emit empty DetectionResultList so downstream stays in sync.
+        """
+        try:
+            stride = max(1, int(self.stride or 1))
+        except (TypeError, ValueError):
+            stride = 1
+        self.stride = stride
+        if stride <= 1:
+            return True
+        if self.stride_cnt <= 0:
+            self.stride_cnt = stride - 1
+            return True
+        self.stride_cnt -= 1
+        return False
 
     def process_stride(self, split_image: list) -> Optional[DetectionResultList]:
         """
@@ -192,11 +242,13 @@ class DetectionThreadBase:
         if first is None:
             return None
 
+        event_ts = first.time_stamp if getattr(first, "time_stamp", None) is not None else time.time()
+
         # Important contract: emit a result per input frame (even if empty).
         if not predict_results:
             detection_result_list = DetectionResultList()
             detection_result_list.source_id = first.source_id
-            detection_result_list.time_stamp = time.time()
+            detection_result_list.time_stamp = event_ts
             detection_result_list.frame_id = first.frame_id
             return detection_result_list
 
@@ -206,7 +258,7 @@ class DetectionThreadBase:
         if not bboxes_coords:
             detection_result_list = DetectionResultList()
             detection_result_list.source_id = first.source_id
-            detection_result_list.time_stamp = time.time()
+            detection_result_list.time_stamp = event_ts
             detection_result_list.frame_id = first.frame_id
             return detection_result_list
 
@@ -216,7 +268,7 @@ class DetectionThreadBase:
         if not bboxes_coords:
             detection_result_list = DetectionResultList()
             detection_result_list.source_id = first.source_id
-            detection_result_list.time_stamp = time.time()
+            detection_result_list.time_stamp = event_ts
             detection_result_list.frame_id = first.frame_id
             return detection_result_list
 
@@ -283,8 +335,11 @@ class DetectionThreadBase:
         """Create DetectionResultList from processed detections."""
         detection_result_list = DetectionResultList()
         detection_result_list.source_id = split_image[0][0].source_id
-        detection_result_list.time_stamp = time.time()
-        detection_result_list.frame_id = split_image[0][0].frame_id
+        first = split_image[0][0]
+        detection_result_list.time_stamp = (
+            first.time_stamp if getattr(first, "time_stamp", None) is not None else time.time()
+        )
+        detection_result_list.frame_id = first.frame_id
 
         for bbox, class_id, conf in zip(bboxes_coords, class_ids, confidences):
             detection_result = DetectionResult()

@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import time
+import sys
+import pytest
 from unittest.mock import MagicMock, patch
 
 from evileye.core import process_control
@@ -49,6 +51,7 @@ def test_is_zombie_false_for_running():
         assert process_control.is_zombie(42) is False
 
 
+@pytest.mark.skipif(sys.platform.startswith("win"), reason="POSIX process groups are unavailable on Windows")
 def test_terminate_tree_returns_immediately_for_zombie_only_group(monkeypatch):
     """Zombie leader must not block for the full grace period (Ctrl+C hang fix)."""
     monkeypatch.setattr(process_control.sys, "platform", "linux")
@@ -66,6 +69,7 @@ def test_terminate_tree_returns_immediately_for_zombie_only_group(monkeypatch):
     assert elapsed < 0.5, f"terminate_tree blocked for {elapsed:.2f}s on zombie-only group"
 
 
+@pytest.mark.skipif(sys.platform.startswith("win"), reason="POSIX process groups are unavailable on Windows")
 def test_terminate_tree_sigkills_when_live_members_remain(monkeypatch):
     monkeypatch.setattr(process_control.sys, "platform", "linux")
     grace = 0.25
@@ -84,6 +88,83 @@ def test_terminate_tree_sigkills_when_live_members_remain(monkeypatch):
     assert elapsed >= grace
 
 
+@pytest.mark.skipif(sys.platform.startswith("win"), reason="POSIX process groups are unavailable on Windows")
+def test_terminate_tree_gracefully_signals_owner_before_workers(monkeypatch):
+    monkeypatch.setattr(process_control.sys, "platform", "linux")
+    with (
+        patch.object(process_control.os, "getpgid", return_value=3003),
+        patch.object(process_control.os, "kill") as kill,
+        patch.object(process_control.os, "killpg") as killpg,
+        patch.object(process_control, "_process_group_has_live_members", return_value=False),
+    ):
+        process_control.terminate_tree_gracefully(3003, grace_sec=0.1)
+
+    kill.assert_called_once_with(3003, process_control.signal.SIGTERM)
+    killpg.assert_not_called()
+
+
+@pytest.mark.skipif(sys.platform.startswith("win"), reason="POSIX process groups are unavailable on Windows")
+def test_terminate_tree_gracefully_force_kills_group_only_after_grace(monkeypatch):
+    monkeypatch.setattr(process_control.sys, "platform", "linux")
+    with (
+        patch.object(process_control.os, "getpgid", return_value=4004),
+        patch.object(process_control.os, "kill") as kill,
+        patch.object(process_control.os, "killpg") as killpg,
+        patch.object(process_control, "_process_group_has_live_members", return_value=True),
+    ):
+        process_control.terminate_tree_gracefully(4004, grace_sec=0.0)
+
+    kill.assert_called_once_with(4004, process_control.signal.SIGTERM)
+    killpg.assert_called_once_with(4004, process_control.signal.SIGKILL)
+
+
+def test_terminate_tree_gracefully_avoids_callers_process_group(monkeypatch):
+    monkeypatch.setattr(process_control.sys, "platform", "linux")
+    with patch.object(process_control.os, "getpgid", return_value=99), \
+            patch.object(process_control, "_terminate_tree_psutil") as fallback:
+        process_control.terminate_tree_gracefully(123, grace_sec=0.1)
+
+    fallback.assert_called_once_with(123, grace_sec=0.1)
+
+
+def test_terminate_tree_gracefully_signals_owner_before_workers(monkeypatch):
+    monkeypatch.setattr(process_control.sys, "platform", "linux")
+    with (
+        patch.object(process_control.os, "getpgid", return_value=3003),
+        patch.object(process_control.os, "kill") as kill,
+        patch.object(process_control.os, "killpg") as killpg,
+        patch.object(process_control, "_process_group_has_live_members", return_value=False),
+    ):
+        process_control.terminate_tree_gracefully(3003, grace_sec=0.1)
+
+    kill.assert_called_once_with(3003, process_control.signal.SIGTERM)
+    killpg.assert_not_called()
+
+
+def test_terminate_tree_gracefully_force_kills_group_after_grace(monkeypatch):
+    monkeypatch.setattr(process_control.sys, "platform", "linux")
+    with (
+        patch.object(process_control.os, "getpgid", return_value=4004),
+        patch.object(process_control.os, "kill") as kill,
+        patch.object(process_control.os, "killpg") as killpg,
+        patch.object(process_control, "_process_group_has_live_members", return_value=True),
+    ):
+        process_control.terminate_tree_gracefully(4004, grace_sec=0.0)
+
+    kill.assert_called_once_with(4004, process_control.signal.SIGTERM)
+    killpg.assert_called_once_with(4004, process_control.signal.SIGKILL)
+
+
+def test_terminate_tree_gracefully_avoids_callers_process_group(monkeypatch):
+    monkeypatch.setattr(process_control.sys, "platform", "linux")
+    with patch.object(process_control.os, "getpgid", return_value=99), \
+            patch.object(process_control, "_terminate_tree_psutil") as fallback:
+        process_control.terminate_tree_gracefully(123, grace_sec=0.1)
+
+    fallback.assert_called_once_with(123, grace_sec=0.1)
+
+
+@pytest.mark.skipif(sys.platform.startswith("win"), reason="POSIX process groups are unavailable on Windows")
 def test_process_group_has_live_members_skips_zombies(monkeypatch):
     zombie = MagicMock()
     zombie.info = {"pid": 10}

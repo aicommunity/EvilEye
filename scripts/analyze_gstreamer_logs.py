@@ -7,12 +7,10 @@ and generates recommendations.
 """
 
 import os
-import sys
 import re
 import json
 import argparse
-from pathlib import Path
-from typing import List, Dict, Any, Optional
+from typing import List, Dict, Optional
 from datetime import datetime
 from collections import defaultdict, Counter
 

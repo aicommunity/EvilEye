@@ -1,0 +1,33 @@
+{
+  "pipeline_class": "PipelineDeclarative",
+  "stages": [
+    {
+      "name": "sources",
+      "kind": "source",
+      "items": [
+        {
+          "type": "VideoCaptureOpencv",
+          "source": "videos/sample.mp4",
+          "source_ids": [0],
+          "source_names": ["Cam0"],
+          "enable": true
+        }
+      ]
+    },
+    {
+      "name": "identity",
+      "kind": "step",
+      "items": [
+        {
+          "type": "IdentityPass",
+          "source_ids": [0],
+          "execution_mode": "thread"
+        }
+      ]
+    }
+  ],
+  "final_results": "identity",
+  "controller": {
+    "enable": true
+  }
+}

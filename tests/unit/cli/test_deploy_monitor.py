@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+import sys
 from pathlib import Path
 
 from typer.testing import CliRunner
@@ -43,13 +44,36 @@ def test_deploy_creates_monitor_without_starting_services(tmp_path: Path):
     assert (monitor / "INSTALL_HINT.txt").is_file()
 
     hint = (monitor / "INSTALL_HINT.txt").read_text(encoding="utf-8")
-    assert "NOT started automatically" in hint
-    assert "install_timer.sh" in hint
+    if sys.platform.startswith("win"):
+        assert "Linux install_timer.sh does not run on Windows." in hint
+        assert "watchdog-install" in hint
+    else:
+        assert "NOT started automatically" in hint
+        assert "install_timer.sh" in hint
 
     # Deploy must not enable user systemd units.
     assert "systemctl" not in result.output.lower() or "not enabled" in result.output.lower()
     unit_text = (monitor / "systemd" / "evileye-watchdog.service").read_text(encoding="utf-8")
     assert "KillMode=process" in unit_text
+    assert not (tmp_path / "certs").exists()
+    assert "service install" in result.output
+
+
+def test_deploy_help_has_no_tls_flags():
+    result = runner.invoke(app, ["deploy", "--help"])
+    assert result.exit_code == 0, result.output
+    assert "--tls-self-signed" not in result.output
+    assert "--no-tls" not in result.output
+
+
+def test_deploy_does_not_call_ensure_service(tmp_path: Path, monkeypatch):
+    from unittest.mock import patch
+
+    monkeypatch.chdir(tmp_path)
+    with patch("evileye.service_manager.ensure_service") as ensure:
+        result = runner.invoke(app, ["deploy"])
+    assert result.exit_code == 0, result.output
+    ensure.assert_not_called()
 
 
 def test_deploy_updates_monitor_scripts_on_rerun(tmp_path: Path):

@@ -7,12 +7,9 @@ import json
 import os
 import datetime
 import time
-import threading
 import weakref
 import atexit
-from typing import Dict, List, Any, Optional
-from pathlib import Path
-from queue import Queue
+from typing import Dict, List, Any
 from threading import Thread, Lock
 from ..core.logger import get_module_logger
 
@@ -303,54 +300,46 @@ class LabelingManager:
         Args:
             object_data: Dictionary containing object information
         """
+        should_flush = False
         with self.buffer_lock:
             self.found_buffer.append(object_data)
-
-            # Save if buffer is full
-            if len(self.found_buffer) >= self.buffer_size:
-                self._save_found_buffer()
+            should_flush = len(self.found_buffer) >= self.buffer_size
+        # Flush outside the lock: nested acquire on threading.Lock deadlocks.
+        if should_flush:
+            self._save_found_buffer()
 
     def _save_found_buffer(self):
         """Save found objects buffer to file."""
-        if not self.found_buffer:
-            return
-
         with self.buffer_lock:
-            # Load current data with file lock
-            data = self._load_json(self.found_labels_file, self.found_file_lock)
+            if not self.found_buffer:
+                return
+            snapshot = list(self.found_buffer)
+            self.found_buffer.clear()
 
-            # Ensure objects list exists
+        grouped: dict[str, list] = {}
+        for obj in snapshot:
+            grouped.setdefault(self._date_str_from_label(obj, lost=False), []).append(obj)
+        saved_all = True
+        for date_str, batch in grouped.items():
+            found_file, _lost_file = self._metadata_files_for_date(date_str)
+            data = self._load_json(found_file, self.found_file_lock)
             if "objects" not in data:
                 data["objects"] = []
-
-            # Check for duplicates before adding
-            existing_timestamps = {obj.get('timestamp') for obj in data["objects"]}
-            existing_ids = {obj.get('object_id') for obj in data["objects"]}
-            new_objects = []
-
-            for obj in self.found_buffer:
-                if obj.get('timestamp') not in existing_timestamps or obj.get('object_id') not in existing_ids:
-                    new_objects.append(obj)
-            #    else:
-            #        print(f"⚠️ Skipping duplicate found object with timestamp: {obj.get('timestamp')} for object: {obj.get('object_id')}")
-
-            # Add only new objects
+            existing_timestamps = {row.get("timestamp") for row in data["objects"]}
+            existing_ids = {row.get("object_id") for row in data["objects"]}
+            new_objects = [
+                row for row in batch
+                if row.get("timestamp") not in existing_timestamps or row.get("object_id") not in existing_ids
+            ]
             if new_objects:
                 data["objects"].extend(new_objects)
-            #    print(f"💾 Saving {len(new_objects)} new found objects (total: {len(data['objects'])})")
-            # else:
-            #    print(f"ℹ️ No new found objects to save")
-
-            # Update metadata
             self._update_metadata(data, len(data["objects"]))
-
-            # Save updated data with file lock
-            if self._save_json(self.found_labels_file, data, self.found_file_lock):
-                # Clear buffer only if save was successful
-                self.found_buffer.clear()
-            #    print(f"✅ Found objects saved successfully")
-            # else:
-            #    print(f"❌ Failed to save found objects")
+            if not self._save_json(found_file, data, self.found_file_lock):
+                saved_all = False
+        if not saved_all:
+            # Re-queue snapshot so a later flush can retry.
+            with self.buffer_lock:
+                self.found_buffer = snapshot + self.found_buffer
 
     def add_object_lost(self, object_data: Dict[str, Any]):
         """
@@ -359,54 +348,45 @@ class LabelingManager:
         Args:
             object_data: Dictionary containing object information
         """
+        should_flush = False
         with self.buffer_lock:
             self.lost_buffer.append(object_data)
-
-            # Save if buffer is full
-            if len(self.lost_buffer) >= self.buffer_size:
-                self._save_lost_buffer()
+            should_flush = len(self.lost_buffer) >= self.buffer_size
+        if should_flush:
+            self._save_lost_buffer()
 
     def _save_lost_buffer(self):
         """Save lost objects buffer to file."""
-        if not self.lost_buffer:
-            return
-
         with self.buffer_lock:
-            # Load current data with file lock
-            data = self._load_json(self.lost_labels_file, self.lost_file_lock)
+            if not self.lost_buffer:
+                return
+            snapshot = list(self.lost_buffer)
+            self.lost_buffer.clear()
 
-            # Ensure objects list exists
+        grouped: dict[str, list] = {}
+        for obj in snapshot:
+            grouped.setdefault(self._date_str_from_label(obj, lost=True), []).append(obj)
+        saved_all = True
+        for date_str, batch in grouped.items():
+            _found_file, lost_file = self._metadata_files_for_date(date_str)
+            data = self._load_json(lost_file, self.lost_file_lock)
             if "objects" not in data:
                 data["objects"] = []
-
-            # Check for duplicates before adding
-            existing_timestamps = {obj.get('detected_timestamp') for obj in data["objects"]}
-            existing_ids = {obj.get('object_id') for obj in data["objects"]}
-            new_objects = []
-
-            for obj in self.lost_buffer:
-                if obj.get('detected_timestamp') not in existing_timestamps or obj.get('object_id') not in existing_ids:
-                    new_objects.append(obj)
-                # else:
-                #    print(f"⚠️ Skipping duplicate lost object with timestamp: {obj.get('detected_timestamp')} for object: {obj.get('object_id')}")
-
-            # Add only new objects
+            existing_timestamps = {row.get("detected_timestamp") for row in data["objects"]}
+            existing_ids = {row.get("object_id") for row in data["objects"]}
+            new_objects = [
+                row for row in batch
+                if row.get("detected_timestamp") not in existing_timestamps
+                or row.get("object_id") not in existing_ids
+            ]
             if new_objects:
                 data["objects"].extend(new_objects)
-                # print(f"💾 Saving {len(new_objects)} new lost objects (total: {len(data['objects'])})")
-            # else:
-            #    print(f"ℹ️ No new lost objects to save")
-
-            # Update metadata
             self._update_metadata(data, len(data["objects"]))
-
-            # Save updated data with file lock
-            if self._save_json(self.lost_labels_file, data, self.lost_file_lock):
-                # Clear buffer only if save was successful
-                self.lost_buffer.clear()
-            #    print(f"✅ Lost objects saved successfully")
-            # else:
-            #    print(f"❌ Failed to save lost objects")
+            if not self._save_json(lost_file, data, self.lost_file_lock):
+                saved_all = False
+        if not saved_all:
+            with self.buffer_lock:
+                self.lost_buffer = snapshot + self.lost_buffer
 
     def create_found_object_data(self, obj, image_width: int, image_height: int,
                                  image_filename: str, preview_filename: str) -> Dict[str, Any]:
@@ -433,26 +413,22 @@ class LabelingManager:
         }
 
         # Relative path to preview image (relative to image_dir)
-        relative_image_path = os.path.join(
-            'Detections',
-            self.date_str,
-            'Images',
-            'FoundPreviews',
-            preview_filename,
-        )
-
-        # Get source name from cameras params if available
-        source_name = self._get_source_name(obj.source_id)
-
-        # Convert timestamp to datetime if needed
         time_stamp_dt = self._timestamp_to_datetime(obj.time_stamp)
         timestamp_str = time_stamp_dt.isoformat() if time_stamp_dt else datetime.datetime.now().isoformat()
+        date_str = self._date_str_for_obj(obj, lost=False)
+        source_name = self._get_source_name(obj.source_id)
 
         object_data = {
             "object_id": obj.object_id,
             "frame_id": obj.frame_id,
             "timestamp": timestamp_str,
-            "image_filename": relative_image_path,
+            "image_filename": os.path.join(
+                'Detections',
+                date_str,
+                'Images',
+                'FoundPreviews',
+                preview_filename,
+            ),
             "bounding_box": pixel_bbox,
             "confidence": float(obj.track.confidence),
             "class_id": obj.class_id,
@@ -462,6 +438,12 @@ class LabelingManager:
             "track_id": obj.track.track_id,
             "global_id": getattr(obj, 'global_id', None)
         }
+        media_pts = getattr(obj, "media_pts_sec", None)
+        if media_pts is not None:
+            object_data["media_pts_sec"] = float(media_pts)
+        pts_ns = getattr(obj, "pts_ns", None)
+        if pts_ns is not None:
+            object_data["pts_ns"] = int(pts_ns)
 
         # Добавляем атрибуты, если они есть
         if hasattr(obj, 'attributes') and obj.attributes:
@@ -489,13 +471,36 @@ class LabelingManager:
         Returns:
             datetime object or None
         """
-        if timestamp is None:
-            return None
-        if isinstance(timestamp, datetime.datetime):
-            return timestamp
-        if isinstance(timestamp, (int, float)):
-            return datetime.datetime.fromtimestamp(timestamp)
-        return None
+        from evileye.core.event_time import datetime_from_ts
+
+        return datetime_from_ts(timestamp)
+
+    def _date_str_for_obj(self, obj, *, lost: bool = False) -> str:
+        from evileye.core.event_time import date_folder_from_ts
+
+        if lost:
+            ts = getattr(obj, "time_lost", None) or getattr(obj, "time_stamp", None)
+        else:
+            ts = getattr(obj, "time_stamp", None)
+        return date_folder_from_ts(ts)
+
+    def _date_str_from_label(self, object_data: Dict[str, Any], *, lost: bool = False) -> str:
+        from evileye.core.event_time import date_folder_from_ts
+
+        if lost:
+            ts = object_data.get("lost_timestamp") or object_data.get("detected_timestamp")
+        else:
+            ts = object_data.get("timestamp")
+        return date_folder_from_ts(ts)
+
+    def _metadata_files_for_date(self, date_str: str) -> tuple[str, str]:
+        day_dir = os.path.join(self.detections_dir, date_str)
+        metadata_dir = os.path.join(day_dir, "Metadata")
+        os.makedirs(metadata_dir, exist_ok=True)
+        return (
+            os.path.join(metadata_dir, "objects_found.json"),
+            os.path.join(metadata_dir, "objects_lost.json"),
+        )
 
     def create_lost_object_data(self, obj, image_width: int, image_height: int,
                                 image_filename: str, preview_filename: str) -> Dict[str, Any]:
@@ -524,7 +529,7 @@ class LabelingManager:
         # Relative path to preview image (relative to image_dir)
         relative_image_path = os.path.join(
             'Detections',
-            self.date_str,
+            self._date_str_for_obj(obj, lost=True),
             'Images',
             'LostPreviews',
             preview_filename,
@@ -555,6 +560,12 @@ class LabelingManager:
             "global_id": getattr(obj, 'global_id', None),
             "lost_frames": obj.lost_frames
         }
+        media_pts = getattr(obj, "media_pts_sec", None)
+        if media_pts is not None:
+            object_data["media_pts_sec"] = float(media_pts)
+        pts_ns = getattr(obj, "pts_ns", None)
+        if pts_ns is not None:
+            object_data["pts_ns"] = int(pts_ns)
 
         # Добавляем атрибуты, если они есть
         if hasattr(obj, 'attributes') and obj.attributes:
@@ -635,11 +646,29 @@ class LabelingManager:
         """
         found_data = self._load_json(self.found_labels_file, self.found_file_lock)
         lost_data = self._load_json(self.lost_labels_file, self.lost_file_lock)
+        with self.buffer_lock:
+            found_buffered = len(self.found_buffer)
+            lost_buffered = len(self.lost_buffer)
+        save_alive = False
+        try:
+            save_alive = bool(self.save_thread and self.save_thread.is_alive())
+        except Exception:
+            save_alive = False
+        found_mtime_age = None
+        try:
+            if os.path.isfile(self.found_labels_file):
+                found_mtime_age = time.time() - os.path.getmtime(self.found_labels_file)
+        except OSError:
+            found_mtime_age = None
 
         return {
             "found_objects": len(found_data.get("objects", [])),
             "lost_objects": len(lost_data.get("objects", [])),
             "total_objects": len(found_data.get("objects", [])) + len(lost_data.get("objects", [])),
+            "found_buffered": found_buffered,
+            "lost_buffered": lost_buffered,
+            "save_thread_alive": save_alive,
+            "objects_found_mtime_age_sec": found_mtime_age,
             "found_labels_file": self.found_labels_file,
             "lost_labels_file": self.lost_labels_file,
             "date": self.date_str
@@ -686,14 +715,53 @@ class LabelingManager:
         return training_file
 
     def _save_worker(self):
-        """Background worker for periodic saving."""
+        """Background worker for periodic saving + writer-alive heartbeat."""
         while self.running:
             time.sleep(1)  # Check every second
 
             current_time = time.time()
             if current_time - self.last_save_time > self.save_interval:
-                self._save_all_buffers()
+                try:
+                    self._save_all_buffers()
+                except Exception as exc:
+                    self.logger.error("periodic journal flush failed: %s", exc, exc_info=True)
+                try:
+                    self._touch_writer_alive()
+                except Exception as exc:
+                    self.logger.warning("journal writer alive touch failed: %s", exc)
                 self.last_save_time = current_time
+
+    def _writer_alive_path(self, date_str: str | None = None) -> str:
+        day = date_str or self.date_str
+        meta = os.path.join(self.detections_dir, day, "Metadata")
+        os.makedirs(meta, exist_ok=True)
+        return os.path.join(meta, ".journal_writer_alive")
+
+    def _touch_writer_alive(self) -> None:
+        """Touch sidecar so monitors can tell quiet scene vs dead journal writer.
+
+        objects_found.json mtime only moves when detections arrive; Streams keep
+        writing overnight → false detection_stale. Alive sidecar updates every
+        save_interval while LabelingManager.save_thread runs.
+        """
+        # Refresh current calendar day dir in case process crossed midnight.
+        today = datetime.date.today().strftime("%Y-%m-%d")
+        if today != self.date_str:
+            self.current_date = datetime.date.today()
+            self.date_str = today
+            self.current_day_dir = os.path.join(self.detections_dir, self.date_str)
+            metadata_dir = os.path.join(self.current_day_dir, "Metadata")
+            os.makedirs(metadata_dir, exist_ok=True)
+            self.found_labels_file = os.path.join(metadata_dir, "objects_found.json")
+            self.lost_labels_file = os.path.join(metadata_dir, "objects_lost.json")
+        path = self._writer_alive_path()
+        now = time.time()
+        try:
+            os.utime(path, (now, now))
+        except FileNotFoundError:
+            with open(path, "a", encoding="utf-8"):
+                pass
+            os.utime(path, (now, now))
 
     def _save_all_buffers(self):
         """Save all buffers (found and lost objects)."""
@@ -703,6 +771,10 @@ class LabelingManager:
     def flush_buffers(self):
         """Force save all buffered data."""
         self._save_all_buffers()
+        try:
+            self._touch_writer_alive()
+        except Exception:
+            pass
 
     def stop(self):
         """Stop the labeling manager and save any remaining data."""

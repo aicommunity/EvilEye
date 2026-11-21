@@ -22,7 +22,6 @@ tests
 samples
 *.md
 !README.md
-docker/host-cli
 .env
 credentials.json
 models

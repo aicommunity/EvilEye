@@ -33,12 +33,17 @@ def _build_start_script(
     host: str,
     port: int,
     config: Optional[str],
+    ssl_certfile: Optional[str] = None,
+    ssl_keyfile: Optional[str] = None,
 ) -> str:
     config_arg = f' --config "{config}"' if config else ""
+    ssl_arg = ""
+    if ssl_certfile and ssl_keyfile:
+        ssl_arg = f' --ssl-certfile "{ssl_certfile}" --ssl-keyfile "{ssl_keyfile}"'
     return (
         f'@echo off\r\n'
         f'cd /d "{site_dir}"\r\n'
-        f'"{python_exe}" -m evileye.cli_wrapper server --host {host} --port {port} --no-reload{config_arg}\r\n'
+        f'"{python_exe}" -m evileye.cli_wrapper server --host {host} --port {port} --no-reload{config_arg}{ssl_arg}\r\n'
     )
 
 
@@ -50,6 +55,8 @@ def install_windows(
     config: Optional[str] = None,
     service_name: str = "EvilEye",
     dry_run: bool = False,
+    ssl_certfile: Optional[str] = None,
+    ssl_keyfile: Optional[str] = None,
 ) -> WindowsInstallResult:
     """Install via launcher .bat + Scheduled Task (best-effort, no NSSM)."""
     site_dir = site_dir.resolve()
@@ -57,7 +64,13 @@ def install_windows(
     script_path = scripts / "evileye-server.bat"
     python_exe = sys.executable
     script_body = _build_start_script(
-        site_dir, python_exe=python_exe, host=host, port=port, config=config
+        site_dir,
+        python_exe=python_exe,
+        host=host,
+        port=port,
+        config=config,
+        ssl_certfile=ssl_certfile,
+        ssl_keyfile=ssl_keyfile,
     )
     backend = "windows-task"
 
@@ -98,6 +111,38 @@ def install_windows(
         )
     _run(["schtasks", "/Run", "/TN", service_name], check=False)
     return result
+
+
+@dataclass
+class WindowsControlResult:
+    ok: bool
+    message: str
+
+
+def control_windows_service(action: str, *, service_name: str = "EvilEye") -> WindowsControlResult:
+    action_norm = action.strip().lower()
+    if action_norm == "start":
+        proc = _run(["schtasks", "/Run", "/TN", service_name], check=False)
+        ok = proc.returncode == 0
+        msg = (proc.stdout or proc.stderr or "").strip() or f"schtasks /Run exit {proc.returncode}"
+        return WindowsControlResult(ok=ok, message=msg)
+    if action_norm == "stop":
+        proc = _run(["schtasks", "/End", "/TN", service_name], check=False)
+        ok = proc.returncode == 0
+        msg = (proc.stdout or proc.stderr or "").strip() or f"schtasks /End exit {proc.returncode}"
+        return WindowsControlResult(ok=ok, message=msg)
+    if action_norm == "restart":
+        _run(["schtasks", "/End", "/TN", service_name], check=False)
+        proc = _run(["schtasks", "/Run", "/TN", service_name], check=False)
+        ok = proc.returncode == 0
+        msg = (proc.stdout or proc.stderr or "").strip() or f"schtasks restart exit {proc.returncode}"
+        return WindowsControlResult(ok=ok, message=msg)
+    if action_norm == "status":
+        proc = _run(["schtasks", "/Query", "/TN", service_name, "/FO", "LIST"], check=False)
+        ok = proc.returncode == 0
+        msg = (proc.stdout or proc.stderr or "Task not found").strip()
+        return WindowsControlResult(ok=ok, message=msg)
+    raise WindowsServiceError(f"Unsupported Windows service action: {action}")
 
 
 def uninstall_windows(

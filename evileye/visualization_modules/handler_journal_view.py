@@ -1,6 +1,5 @@
 import datetime
 import os
-import time
 from psycopg2 import sql
 from ..utils import threading_events
 

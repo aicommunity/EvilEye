@@ -1,11 +1,9 @@
 import time
+
 from .db_adapter import DatabaseAdapterBase
 from .constants import QueryType, EventType
 from ..utils.utils import ObjectResultEncoder
-import copy
-import datetime
 import os
-from timeit import default_timer as timer
 import cv2
 import numpy as np
 from ..utils import threading_events
@@ -15,6 +13,8 @@ from .event_image_writer import EventImageWriter
 
 
 class DatabaseAdapterZoneEvents(DatabaseAdapterBase):
+    _image_none_warn_ts = 0.0
+
     def __init__(self, db_controller):
         super().__init__(db_controller)
         self.image_dir = self.db_params['image_dir']
@@ -42,6 +42,8 @@ class DatabaseAdapterZoneEvents(DatabaseAdapterBase):
             sql.SQL(', ').join(sql.Placeholder() * len(fields))
         )
         self.queue_in.put((query_type, insert_query, data, preview_path, frame_path, event.img_entered))
+        # Drop event-owned frame copy after queueing (I7); queue holds the ref for IO.
+        event.img_entered = None
 
     def _update_impl(self, event):
         fields, data, preview_path, frame_path = self._prepare_for_updating(event)
@@ -78,73 +80,51 @@ class DatabaseAdapterZoneEvents(DatabaseAdapterBase):
             selected=where_query
         )
         self.queue_in.put((query_type, update_query, data, preview_path, frame_path, event.img_left))
-
-    def _execute_query(self):
-        while self.run_flag:
-            time.sleep(0.01)
-            try:
-                if not self.queue_in.empty():
-                    query_type, query_string, data, preview_path, frame_path, image = self.queue_in.get()
-                    if query_string is not None:
-                        pass
-                else:
-                    query_type = query_string = data = preview_path = frame_path = image = None
-            except ValueError:
-                break
-
-            if query_string is None:
-                continue
-
-            self._process_queue_item((query_type, query_string, data, preview_path, frame_path, image))
+        event.img_left = None
 
     def _process_queue_item(self, item):
         query_type, query_string, data, preview_path, frame_path, image = item
 
+        record = self.db_controller.query_once(query_string, data)
+
+        if query_type == QueryType.UPDATE and not record:
+            self.logger.info('ZoneEvents UPDATE matched no active event')
+            return
+
         try:
-            record = self.db_controller.query(query_string, data)
-        except Exception as e:
-            self.logger.error(f'DB: ZoneEvents query failed: {e}')
-            return
-
-        # Безопасные проверки результата RETURNING
-        if not record:
-            if query_type == QueryType.INSERT:
-                self.logger.warning('DB: ZoneEvents INSERT returned no data; skipping image save')
-            return
-
-        if not isinstance(record, list) or len(record) == 0:
-            if query_type == QueryType.INSERT:
-                self.logger.warning('DB: ZoneEvents INSERT returned empty list; skipping image save')
-            return
-
-        if not record[0] or len(record[0]) < 2:
-            self.logger.warning(f'DB: ZoneEvents query returned incomplete data: {record}; skipping image save')
-            return
-
-        box = record[0][0]
-        zone_coords = record[0][1]
-
-        if box is None or zone_coords is None:
-            self.logger.warning('DB: Missing box/zone_coords in RETURNING; skipping image save')
-            return
-
-        if not isinstance(box, (list, tuple, np.ndarray)):
-            self.logger.warning(
-                f'DB: Invalid box type in RETURNING: {type(box)}, expected list/tuple/array; skipping image save'
+            if not isinstance(record, list) or not record:
+                raise ValueError('ZoneEvents query returned no RETURNING row')
+            returned_row = record[0]
+            if not isinstance(returned_row, (list, tuple)) or len(returned_row) < 2:
+                raise ValueError('ZoneEvents RETURNING row must include box and zone_coords')
+            box, zone_coords = returned_row[0], returned_row[1]
+            if box is None or zone_coords is None:
+                raise ValueError('ZoneEvents RETURNING row has empty box or zone_coords')
+            if not isinstance(box, (list, tuple, np.ndarray)) or len(box) < 4:
+                raise ValueError('ZoneEvents RETURNING box must contain four coordinates')
+        except (TypeError, ValueError, IndexError) as exc:
+            self._record_failure(
+                'process zone event RETURNING row', exc, category='terminal_write'
             )
-            return
+            box = zone_coords = None
 
-        if len(box) < 4:
-            self.logger.warning(
-                f'DB: Invalid box format in RETURNING: {box}, expected [x1, y1, x2, y2]; skipping image save'
-            )
-            return
-
-        if image is None:
-            self.logger.warning('DB: Image is None in RETURNING; skipping image save')
-            return
-
-        self._save_image(preview_path, frame_path, image, box, zone_coords)
+        if box is not None and zone_coords is not None and (
+            image is None or getattr(image, "image", None) is None
+        ):
+            now = time.time()
+            if (now - DatabaseAdapterZoneEvents._image_none_warn_ts) >= 60.0:
+                DatabaseAdapterZoneEvents._image_none_warn_ts = now
+                self.logger.warning(
+                    "DB: ZoneEvents image missing (frame=%s); skipping image save",
+                    None if image is None else type(image).__name__,
+                )
+        elif box is not None and zone_coords is not None:
+            try:
+                self._save_image(preview_path, frame_path, image, box, zone_coords)
+            except Exception as exc:
+                self._record_failure(
+                    'save zone event images', exc, category='terminal_write'
+                )
 
         if query_type == QueryType.INSERT:
             threading_events.notify(EventType.NEW_EVENT)
@@ -165,9 +145,13 @@ class DatabaseAdapterZoneEvents(DatabaseAdapterBase):
                                                                        time_lost=event.time_left),
                                'video_path_left': getattr(event, 'video_path_left', None)}
 
-        if event.box_left is not None and event.img_left is not None and hasattr(event.img_left, 'image'):
-            image_height, image_width, _ = event.img_left.image.shape
-            # Use list() instead of deepcopy for bounding box (list of numbers)
+        if event.box_left is not None:
+            img_left = getattr(event, 'img_left', None)
+            pixels = getattr(img_left, 'image', None) if img_left is not None else None
+            if pixels is not None:
+                image_height, image_width = int(pixels.shape[0]), int(pixels.shape[1])
+            else:
+                image_height, image_width = 1080, 1920
             fields_for_updating['box_left'] = list(fields_for_updating['box_left'])
             fields_for_updating['box_left'][0] /= image_width
             fields_for_updating['box_left'][1] /= image_height
@@ -201,9 +185,13 @@ class DatabaseAdapterZoneEvents(DatabaseAdapterBase):
         coords_rounded = [[round(p[0], 4), round(p[1], 4)] for p in coords]
         fields_for_saving['zone_coords'] = coords_rounded
 
-        image_height, image_width, _ = event.img_entered.image.shape
-        # Use list() instead of deepcopy for bounding box (list of numbers)
-        fields_for_saving['box_entered'] = list(fields_for_saving['box_entered'])
+        img_entered = getattr(event, 'img_entered', None)
+        pixels = getattr(img_entered, 'image', None) if img_entered is not None else None
+        if pixels is not None:
+            image_height, image_width = int(pixels.shape[0]), int(pixels.shape[1])
+        else:
+            image_height, image_width = 1080, 1920
+        fields_for_saving['box_entered'] = list(fields_for_saving['box_entered'] or [0, 0, 0, 0])
         fields_for_saving['box_entered'][0] /= image_width
         fields_for_saving['box_entered'][1] /= image_height
         fields_for_saving['box_entered'][2] /= image_width
@@ -214,8 +202,8 @@ class DatabaseAdapterZoneEvents(DatabaseAdapterBase):
     def _get_img_path(self, image_type, obj_event_type, event, time_stamp=None, time_lost=None):
         save_dir = self.db_params['image_dir']
         events_dir = os.path.join(save_dir, 'Events')
-        cur_date = datetime.date.today()
-        cur_date_str = cur_date.strftime('%Y-%m-%d')
+        from evileye.core.event_time import date_folder_from_ts
+        cur_date_str = date_folder_from_ts(time_lost if obj_event_type != 'zone_entered' else time_stamp)
 
         current_day_path = os.path.join(events_dir, cur_date_str)
         images_dir = os.path.join(current_day_path, 'Images')

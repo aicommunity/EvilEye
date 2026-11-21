@@ -9,9 +9,10 @@ from evileye.core.processor_base import EXEC_MODE_PROCESS
 
 
 @pytest.mark.unit
-def test_worker_capture_params_include_record_after_propagate():
+def test_worker_capture_params_include_record_after_propagate(tmp_path):
     repo_root = Path(__file__).resolve().parents[3]
     cfg = json.loads((repo_root / "configs" / "poly-cameras.json").read_text())
+    cfg.setdefault("database", {})["image_dir"] = str(tmp_path / "recordings")
     pipeline = cfg["pipeline"]
     ConfigurationService().propagate_record_config_to_sources(pipeline, cfg)
 
@@ -22,7 +23,7 @@ def test_worker_capture_params_include_record_after_propagate():
     record = worker_params.get("record") or {}
     assert record.get("enabled") is True
     assert record.get("continuous_recording_enabled") is True
-    assert record.get("out_dir") == "/media/user/Data8/EvilEyeData"
+    assert record.get("out_dir") == str(tmp_path / "recordings")
 
 
 @pytest.mark.unit
