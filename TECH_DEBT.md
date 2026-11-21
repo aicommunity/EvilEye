@@ -22,7 +22,6 @@ Last reviewed: full project audit 2026-11 (see audit/AUDIT_2026-11.md), fix stag
 
 
 
-| TD-AUD-007 | f-string SQL in `journal_data_source_db.py` (source_id interpolated unescaped) | visualization_modules/journal_data_source_db.py | audit 2026-11 | Stage 3 (audit fix plan) | P2 |
 | TD-AUD-008 | mypy strict declared in pyproject but not enforced anywhere; integration/e2e tests never run in CI | .github/workflows/ci.yml | audit 2026-11 | Stage 4 (audit fix plan) | P1 |
 | TD-AUD-009 | ~2670 lines of dead GUI journal code (events_journal.py, handler_journal_view.py, objects_journal_json.py + loaders) | visualization_modules | audit 2026-11 | Stage 5 (audit fix plan) | P2 |
 | TD-AUD-010 | `VideoThread.thread_counter` class counter breaks frame routing after visualizer re-init | visualization_modules/video_thread.py | audit 2026-11 | Stage 5 (audit fix plan) | P2 |
@@ -61,6 +60,11 @@ Last reviewed: full project audit 2026-11 (see audit/AUDIT_2026-11.md), fix stag
 | TD-AUD-S2-4 | audit fix stage 2 (fix/audit-s2) | Objects writer thread: retries OperationalError via execute_with_retry and logs losses at error level (was: silent drop at info) |
 | TD-AUD-S2-5 | audit fix stage 2 (fix/audit-s2) | TD-PS-D8 closed: ScheduleAlarmEvent carries detected/lost frame snapshots; PG and JSON adapters persist previews/frames |
 | TD-AUD-S2-6 | audit fix stage 2 (fix/audit-s2) | DB retention: purge_old_records + daily DatabaseService loop behind database.retention_days (default off); EvilEyeData file retention already existed via storage_monitor |
+| TD-AUD-S3-1 | audit fix stage 3 (sec/audit-s3) | journal_data_source_db fully parameterized: dates, source names, source/object ids and LIMIT/OFFSET travel as %s params (was f-string SQL with manual escaping) (TD-AUD-007 / W1) |
+| TD-AUD-S3-2 | audit fix stage 3 (sec/audit-s3) | /setup/test-database refuses link-local/reserved hosts (cloud-metadata SSRF pivots; loopback/LAN allowed, EVILEYE_SETUP_DB_EXTRA_HOSTS extends); /check-data-dir confined to the site root unless EVILEYE_SETUP_TRUST_DATA_DIR=1 (W3) |
+| TD-AUD-S3-3 | audit fix stage 3 (sec/audit-s3) | /auth/me re-resolves the session against the live user store - deleted/disabled users get 401 (W6) |
+| TD-AUD-S3-4 | audit fix stage 3 (sec/audit-s3) | uvicorn forwarded_allow_ips synced with web_auth.protection.trusted_proxy_ips; CORS uses explicit methods/headers instead of "*" with credentials (W9) |
+| TD-AUD-S3-5 | audit fix stage 3 (sec/audit-s3) | 500 responses no longer leak exception text (configs/extensions); failures logged server-side via logger.exception (W8) |
 | TD-002 | phase 0 | Removed duplicate `DetectionThreadFactory` in `detection_thread_factory.py` |
 | TD-005 | phase 0 | Doc/CLI gaps D1–D6, D8–D10 addressed in README, Makefile, MULTIPROCESSING, launch/process |
 | TD-006 | phase 0 | `tool.coverage.run.source` uses `evileye` package prefix |

@@ -17,6 +17,7 @@ from evileye.api.security import (
     normalize_role,
     permissions_for_role,
     require_authenticated,
+    resolve_session_principal,
     verify_password,
 )
 
@@ -110,8 +111,14 @@ async def auth_me(request: Request, response: Response) -> dict:
     user = request.session.get("user")
     if not isinstance(user, dict):
         raise HTTPException(status_code=401, detail="Authentication required")
-    role = normalize_role(str(user.get("role") or "user"))
-    username = str(user.get("username") or "")
+    # Re-resolve the session against the live user store: a disabled/deleted
+    # user with a still-valid cookie must not be reported as authenticated
+    # (audit W6).
+    principal = resolve_session_principal(user)
+    if principal is None:
+        raise HTTPException(status_code=401, detail="Authentication required")
+    role = normalize_role(str(principal.get("role") or "user"))
+    username = str(principal.get("username") or user.get("username") or "")
     session_user = {"username": username, "role": role}
     camera_fields = _me_camera_fields(request, username, role)
     client_debug = _apply_client_debug_header(response, username)

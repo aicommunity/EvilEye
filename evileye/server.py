@@ -49,6 +49,26 @@ def build_app() -> FastAPI:
     return _create_app()
 
 
+def _uvicorn_forwarded_allow_ips() -> str:
+    """Sync uvicorn's proxy-trust with the app-level web_auth.trust_proxy config.
+
+    Audit W9: uvicorn(proxy_headers=True) trusted X-Forwarded-For from any
+    loopback peer by default, which could disagree with
+    web_auth.protection.trusted_proxy_ips and skew bans/rate limits.
+    """
+    try:
+        from evileye.api.core.rate_guard import load_protection_config
+
+        cfg = load_protection_config()
+        ips = list(getattr(cfg, "trusted_proxy_ips", None) or ["127.0.0.1"])
+        if getattr(cfg, "trust_proxy", False) and ips:
+            return ",".join(str(ip).strip() for ip in ips if str(ip).strip())
+    except Exception:
+        pass
+    return "127.0.0.1"
+
+
+
 def _uvicorn_access_log_enabled() -> bool:
     value = os.getenv("EVILEYE_UVICORN_ACCESS_LOG", "").strip().lower()
     return value in {"1", "true", "yes", "on"}
@@ -102,6 +122,7 @@ def _run_server_in_process(host, port, log_level, frame_queue, demand_queue, ssl
             ssl_certfile=ssl_certfile,
             ssl_keyfile=ssl_keyfile,
             proxy_headers=True,
+            forwarded_allow_ips=_uvicorn_forwarded_allow_ips(),
             timeout_keep_alive=5,
         )
         server = uvicorn.Server(uvicorn_config)
@@ -451,6 +472,7 @@ def run_api_server(host: str = "127.0.0.1", port: int = 8181,
             ssl_certfile=ssl_certfile,
             ssl_keyfile=ssl_keyfile,
             proxy_headers=True,
+            forwarded_allow_ips=_uvicorn_forwarded_allow_ips(),
             timeout_keep_alive=5,
         )
         if reload:

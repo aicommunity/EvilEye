@@ -97,19 +97,23 @@ class DatabaseJournalDataSource(EventJournalDataSource):
         self.date_to = date_to
         self._cache.clear()
 
-    def _append_date_conditions(self, conditions: list, *, initial_load: bool = False) -> None:
+    def _append_date_conditions(self, conditions: list, params: list, *, initial_load: bool = False) -> None:
+        # Stage 3 (audit W1): values always travel as query parameters; the
+        # old f-string interpolation was an SQL-injection footgun.
         if self.date_filter:
-            conditions.append(f"DATE(time_stamp) = '{self.date_filter}'")
+            conditions.append("DATE(time_stamp) = %s")
+            params.append(self.date_filter)
         elif self.date_from and self.date_to:
-            conditions.append(
-                f"DATE(time_stamp) BETWEEN '{self.date_from}' AND '{self.date_to}'"
-            )
+            conditions.append("DATE(time_stamp) BETWEEN %s AND %s")
+            params.extend([self.date_from, self.date_to])
         elif initial_load:
             today = datetime.datetime.now().date()
-            conditions.append(f"DATE(time_stamp) = '{today.strftime('%Y-%m-%d')}'")
+            conditions.append("DATE(time_stamp) = %s")
+            params.append(today.strftime('%Y-%m-%d'))
         else:
             default_start = datetime.datetime.now() - datetime.timedelta(days=self.default_days_back)
-            conditions.append(f"time_stamp >= '{default_start.strftime('%Y-%m-%d %H:%M:%S')}'")
+            conditions.append("time_stamp >= %s")
+            params.append(default_start.strftime('%Y-%m-%d %H:%M:%S'))
 
     def force_refresh(self) -> None:
         """Force refresh of cache (no-op since we use on-demand loading)"""
@@ -288,25 +292,22 @@ class DatabaseJournalDataSource(EventJournalDataSource):
             pass
         return []
 
-    def _append_source_filters(self, conditions: List[str], filters: Dict) -> None:
+    def _append_source_filters(self, conditions: List[str], params: list, filters: Dict) -> None:
         source_names = filters.get('source_names')
         if isinstance(source_names, list) and source_names:
-            escaped = []
-            for name in source_names:
-                if not name:
-                    continue
-                escaped_name = str(name).replace("'", "''")
-                escaped.append(f"'{escaped_name}'")
-            if escaped:
-                conditions.append(f"source_name IN ({', '.join(escaped)})")
+            names = [str(name) for name in source_names if name]
+            if names:
+                placeholders = ', '.join(['%s'] * len(names))
+                conditions.append(f"source_name IN ({placeholders})")
+                params.extend(names)
                 return
         if filters.get('source_name'):
-            source_name_escaped = filters['source_name'].replace("'", "''")
-            conditions.append(f"source_name = '{source_name_escaped}'")
+            conditions.append("source_name = %s")
+            params.append(str(filters['source_name']))
 
     def _build_objects_sql(self, filters: Dict, include_pagination: bool = False, page: int = 0, size: int = 50,
-                           initial_load: bool = False) -> str:
-        """Build SQL query for objects with filters and optional pagination"""
+                           initial_load: bool = False) -> Tuple[str, list]:
+        """Build parameterized SQL for objects (audit W1: values as params)."""
         # Base SELECT
         sql = ('SELECT time_stamp, CAST(\'ObjectEvent\' AS text) AS event_type, '
                '\'Object Id=\' || object_id || \'; class: \' || class_id || \'; conf: \' || ROUND(confidence::numeric, 2) AS information, '
@@ -315,19 +316,22 @@ class DatabaseJournalDataSource(EventJournalDataSource):
                'FROM objects ')
 
         conditions = []
+        params: List[Any] = []
 
-        self._append_date_conditions(conditions, initial_load=initial_load)
+        self._append_date_conditions(conditions, params, initial_load=initial_load)
 
         # Source name filter
-        self._append_source_filters(conditions, filters)
+        self._append_source_filters(conditions, params, filters)
 
         # Source ID filter
         if filters.get('source_id'):
-            conditions.append(f"source_id = {filters['source_id']}")
+            conditions.append("source_id = %s")
+            params.append(int(filters['source_id']))
 
         # Object ID filter
         if filters.get('object_id'):
-            conditions.append(f"object_id = {filters['object_id']}")
+            conditions.append("object_id = %s")
+            params.append(int(filters['object_id']))
 
         # Class name filter (need to check object_data JSON)
         if filters.get('class_name'):
@@ -343,18 +347,20 @@ class DatabaseJournalDataSource(EventJournalDataSource):
         if include_pagination:
             if initial_load:
                 # При начальной загрузке - только 30 записей
-                sql += f' LIMIT {min(size, self.initial_load_limit)}'
+                sql += ' LIMIT %s'
+                params.append(min(size, self.initial_load_limit))
             else:
                 offset = page * size
-                sql += f' LIMIT {size} OFFSET {offset}'
+                sql += ' LIMIT %s OFFSET %s'
+                params.extend([size, offset])
 
-        return sql
+        return sql, params
 
     def _build_events_sql(self, filters: Dict, include_pagination: bool = False, page: int = 0, size: int = 50,
-                          initial_load: bool = False) -> str:
-        """Build SQL query for events with filters and optional pagination"""
+                          initial_load: bool = False) -> Tuple[str, list]:
+        """Build parameterized SQL for events (audit W1: values as params)."""
         if not self.adapters:
-            return ''
+            return '', []
 
         # Build UNION query from all adapters
         query_string = 'SELECT * FROM ('
@@ -365,11 +371,12 @@ class DatabaseJournalDataSource(EventJournalDataSource):
         query_string += ') AS temp '
 
         conditions = []
+        params: List[Any] = []
 
-        self._append_date_conditions(conditions, initial_load=initial_load)
+        self._append_date_conditions(conditions, params, initial_load=initial_load)
 
         # Source name filter
-        self._append_source_filters(conditions, filters)
+        self._append_source_filters(conditions, params, filters)
 
         if conditions:
             query_string += 'WHERE ' + ' AND '.join(conditions) + ' '
@@ -380,12 +387,14 @@ class DatabaseJournalDataSource(EventJournalDataSource):
         if include_pagination:
             if initial_load:
                 # При начальной загрузке - только 30 записей
-                query_string += f' LIMIT {min(size, self.initial_load_limit)}'
+                query_string += ' LIMIT %s'
+                params.append(min(size, self.initial_load_limit))
             else:
                 offset = page * size
-                query_string += f' LIMIT {size} OFFSET {offset}'
+                query_string += ' LIMIT %s OFFSET %s'
+                params.extend([size, offset])
 
-        return query_string
+        return query_string, params
 
     def _convert_row_to_event(self, row_dict: Dict, is_found: bool = True) -> Dict:
         """Convert database row to unified event format"""
@@ -439,12 +448,12 @@ class DatabaseJournalDataSource(EventJournalDataSource):
             'date_folder': date_folder,
         }
 
-    def _execute_query_and_convert(self, sql: str, skip_enrichment: bool = False) -> List[Dict]:
-        """Execute SQL query using DatabaseControllerPg and convert results."""
+    def _execute_query_and_convert(self, sql: str, params: Optional[list] = None, skip_enrichment: bool = False) -> List[Dict]:
+        """Execute parameterized SQL via DatabaseControllerPg and convert results."""
         if not self._ensure_db_controller():
             return []
 
-        records = self.db_controller.query(sql, None) or []
+        records = self.db_controller.query(sql, tuple(params or ())) or []
         results: List[Dict[str, Any]] = []
 
         if self.journal_type == "objects":
@@ -601,11 +610,11 @@ class DatabaseJournalDataSource(EventJournalDataSource):
 
             # Build SQL with filters and pagination
             if self.journal_type == 'objects':
-                sql = self._build_objects_sql(filters, include_pagination=True, page=page, size=size,
-                                              initial_load=initial_load)
+                sql, sql_params = self._build_objects_sql(filters, include_pagination=True, page=page, size=size,
+                                                          initial_load=initial_load)
             else:
-                sql = self._build_events_sql(filters, include_pagination=True, page=page, size=size,
-                                             initial_load=initial_load)
+                sql, sql_params = self._build_events_sql(filters, include_pagination=True, page=page, size=size,
+                                                         initial_load=initial_load)
 
             # Reset initial load flag after first fetch
             if initial_load:
@@ -615,7 +624,7 @@ class DatabaseJournalDataSource(EventJournalDataSource):
                 return []
 
             # Execute query and convert results (skip enrichment during initial load for events)
-            results = self._execute_query_and_convert(sql, skip_enrichment=initial_load)
+            results = self._execute_query_and_convert(sql, sql_params, skip_enrichment=initial_load)
 
             # Apply remaining filters that can't be done in SQL (e.g., event_type for objects)
             if self.journal_type == 'objects' and filters.get('event_type'):
@@ -650,25 +659,28 @@ class DatabaseJournalDataSource(EventJournalDataSource):
             if self.journal_type == 'objects':
                 # Build COUNT query for objects
                 conditions = []
+                params: List[Any] = []
 
-                self._append_date_conditions(conditions, initial_load=False)
+                self._append_date_conditions(conditions, params, initial_load=False)
 
                 # Source name filter
-                self._append_source_filters(conditions, filters)
+                self._append_source_filters(conditions, params, filters)
 
                 # Source ID filter
                 if filters.get('source_id'):
-                    conditions.append(f"source_id = {filters['source_id']}")
+                    conditions.append("source_id = %s")
+                    params.append(int(filters['source_id']))
 
                 # Object ID filter
                 if filters.get('object_id'):
-                    conditions.append(f"object_id = {filters['object_id']}")
+                    conditions.append("object_id = %s")
+                    params.append(int(filters['object_id']))
 
                 sql = 'SELECT COUNT(*) FROM objects'
                 if conditions:
                     sql += ' WHERE ' + ' AND '.join(conditions)
 
-                records = self.db_controller.query(sql, None) or []
+                records = self.db_controller.query(sql, tuple(params)) or []
                 if records:
                     count = records[0][0]
                     # For objects: each row can produce 1-2 events (found and/or lost)
@@ -683,14 +695,14 @@ class DatabaseJournalDataSource(EventJournalDataSource):
                     return base_count
             else:
                 # Build COUNT query for events
-                sql = self._build_events_sql(filters, include_pagination=False)
+                sql, sql_params = self._build_events_sql(filters, include_pagination=False)
                 if not sql:
                     return 0
                 # Wrap in COUNT - remove ORDER BY and LIMIT
                 base_sql = sql.split('ORDER BY')[0]
                 sql = f'SELECT COUNT(*) FROM ({base_sql}) AS count_query'
 
-                records = self.db_controller.query(sql, None) or []
+                records = self.db_controller.query(sql, tuple(sql_params)) or []
                 if records:
                     count = records[0][0]
                     return int(count) if count is not None else 0
