@@ -5,6 +5,55 @@ from __future__ import annotations
 import json
 
 
+class TestSetupHostResolution:
+    def test_comma_and_unresolved_hosts_are_refused(self, monkeypatch):
+        import socket
+
+        from evileye.api.routes.setup import _resolve_db_host
+
+        monkeypatch.setattr(socket, "getaddrinfo", lambda *args, **kwargs: (_ for _ in ()).throw(socket.gaierror()))
+        try:
+            _resolve_db_host("metadata.example", 5432)
+        except ValueError:
+            pass
+        else:
+            raise AssertionError("unresolved host was allowed")
+
+        try:
+            _resolve_db_host("169.254.169.254,127.0.0.1", 80)
+        except ValueError:
+            pass
+        else:
+            raise AssertionError("comma-separated host was allowed")
+
+    def test_link_local_resolution_is_refused(self, monkeypatch):
+        import socket
+
+        from evileye.api.routes.setup import _resolve_db_host
+
+        def _info(*_args, **_kwargs):
+            return [(socket.AF_INET, socket.SOCK_STREAM, 6, "", ("169.254.169.254", 80))]
+
+        monkeypatch.setattr(socket, "getaddrinfo", _info)
+        try:
+            _resolve_db_host("metadata.example", 80)
+        except ValueError:
+            pass
+        else:
+            raise AssertionError("link-local resolution was allowed")
+
+    def test_message_does_not_include_the_address(self, tmp_path, monkeypatch):
+        client_factory = TestSetupGuards()
+        client = client_factory._client(tmp_path, monkeypatch)
+        resp = client.post(
+            "/api/v1/setup/test-database",
+            json={"host_name": "169.254.169.254,127.0.0.1", "port": 80},
+        )
+        body = resp.json()["message"]
+        assert body == "Host is not allowed"
+        assert "169.254" not in body
+
+
 class TestJournalSqlParameterized:
     def _make_source(self, tmp_path):
         from evileye.visualization_modules.journal_data_source_db import (
@@ -36,6 +85,13 @@ class TestJournalSqlParameterized:
         assert "2026-11-21" in params
         assert 3 in params and 9 in params  # int-cast ids
         assert 25 in params and 50 in params  # LIMIT/OFFSET as params
+
+    def test_source_id_zero_is_applied(self, tmp_path):
+        source = self._make_source(tmp_path)
+        sql, params = source._build_objects_sql({"source_id": 0, "object_id": 0})
+        assert "source_id = %s" in sql
+        assert "object_id = %s" in sql
+        assert 0 in params
 
     def test_source_name_in_filter_uses_placeholders(self, tmp_path):
         source = self._make_source(tmp_path)

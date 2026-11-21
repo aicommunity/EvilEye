@@ -52,20 +52,20 @@ def build_app() -> FastAPI:
 def _uvicorn_forwarded_allow_ips() -> str:
     """Sync uvicorn's proxy-trust with the app-level web_auth.trust_proxy config.
 
-    Audit W9: uvicorn(proxy_headers=True) trusted X-Forwarded-For from any
-    loopback peer by default, which could disagree with
-    web_auth.protection.trusted_proxy_ips and skew bans/rate limits.
+    Audit W9: when trust_proxy is off, proxy headers stay disabled. An empty
+    string means uvicorn must not rewrite the client from X-Forwarded-For.
     """
     try:
         from evileye.api.core.rate_guard import load_protection_config
 
         cfg = load_protection_config()
-        ips = list(getattr(cfg, "trusted_proxy_ips", None) or ["127.0.0.1"])
-        if getattr(cfg, "trust_proxy", False) and ips:
-            return ",".join(str(ip).strip() for ip in ips if str(ip).strip())
+        if not getattr(cfg, "trust_proxy", False):
+            return ""
+        ips = list(getattr(cfg, "trusted_proxy_ips", None) or [])
+        return ",".join(str(ip).strip() for ip in ips if str(ip).strip())
     except Exception:
-        pass
-    return "127.0.0.1"
+        return ""
+    return ""
 
 
 
@@ -121,7 +121,7 @@ def _run_server_in_process(host, port, log_level, frame_queue, demand_queue, ssl
             access_log=_uvicorn_access_log_enabled(),
             ssl_certfile=ssl_certfile,
             ssl_keyfile=ssl_keyfile,
-            proxy_headers=True,
+            proxy_headers=bool(_uvicorn_forwarded_allow_ips()),
             forwarded_allow_ips=_uvicorn_forwarded_allow_ips(),
             timeout_keep_alive=5,
         )
@@ -471,7 +471,7 @@ def run_api_server(host: str = "127.0.0.1", port: int = 8181,
             access_log=_uvicorn_access_log_enabled(),
             ssl_certfile=ssl_certfile,
             ssl_keyfile=ssl_keyfile,
-            proxy_headers=True,
+            proxy_headers=bool(_uvicorn_forwarded_allow_ips()),
             forwarded_allow_ips=_uvicorn_forwarded_allow_ips(),
             timeout_keep_alive=5,
         )

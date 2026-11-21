@@ -324,12 +324,12 @@ class DatabaseJournalDataSource(EventJournalDataSource):
         self._append_source_filters(conditions, params, filters)
 
         # Source ID filter
-        if filters.get('source_id'):
+        if filters.get('source_id') is not None:
             conditions.append("source_id = %s")
             params.append(int(filters['source_id']))
 
         # Object ID filter
-        if filters.get('object_id'):
+        if filters.get('object_id') is not None:
             conditions.append("object_id = %s")
             params.append(int(filters['object_id']))
 
@@ -667,12 +667,12 @@ class DatabaseJournalDataSource(EventJournalDataSource):
                 self._append_source_filters(conditions, params, filters)
 
                 # Source ID filter
-                if filters.get('source_id'):
+                if filters.get('source_id') is not None:
                     conditions.append("source_id = %s")
                     params.append(int(filters['source_id']))
 
                 # Object ID filter
-                if filters.get('object_id'):
+                if filters.get('object_id') is not None:
                     conditions.append("object_id = %s")
                     params.append(int(filters['object_id']))
 
