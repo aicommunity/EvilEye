@@ -232,6 +232,66 @@ class TestAdapterUpdatePath:
         assert calls["spool"] == []
 
 
+class TestZoneSpoolRoundtrip:
+    def test_zone_coords_survive_deferred_spool(self, tmp_path):
+        from evileye.database_controller.db_adapter import DatabaseAdapterBase
+        from evileye.events_detectors.event_zone import ZoneEvent
+        from evileye.events_detectors.zone import Zone
+
+        class _Controller:
+            def get_params(self):
+                return {"image_dir": str(tmp_path)}
+
+            def get_cameras_params(self):
+                return {}
+
+            def is_connected(self):
+                return True
+
+        class _Adapter(DatabaseAdapterBase):
+            def _process_queue_item(self, item):
+                return None
+
+            def _insert_impl(self, data):
+                return None
+
+            def _update_impl(self, data):
+                return None
+
+        adapter = _Adapter(_Controller())
+        adapter.event_name = "ZoneEvent"
+        event = object.__new__(ZoneEvent)
+        event.zone = Zone(1, ((0.1, 0.2), (0.3, 0.4)), "rect", True)
+        event.source_id = 1
+        event.object_id = 7
+        record = adapter._deferred_spool_record("update", event)
+        restored = adapter._event_from_spool_record(record)
+        assert list(restored.zone.get_coords()) == [[0.1, 0.2], [0.3, 0.4]]
+        assert restored.source_id == 1
+
+
+class TestConfigHistoryQueryFailure:
+    def test_failed_query_is_not_an_empty_history(self):
+        import logging
+
+        from evileye.database.config_history_manager import ConfigHistoryManager
+
+        manager = ConfigHistoryManager.__new__(ConfigHistoryManager)
+        manager.logger = logging.getLogger("test.config_history")
+
+        class _Db:
+            def query(self, *_args, **_kwargs):
+                return None
+
+        manager.db_controller = _Db()
+        try:
+            manager.get_config_history()
+        except RuntimeError as exc:
+            assert "database query failed" in str(exc)
+        else:
+            raise AssertionError("failed query was returned as an empty history")
+
+
 class TestGetNextEventIdFallback:
     def test_get_last_id_epoch_fallback_when_db_unreadable(self, monkeypatch):
         import time as time_module

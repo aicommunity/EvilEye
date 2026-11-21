@@ -137,6 +137,8 @@ class ConfigHistoryManager:
             self.logger.info(f"Retrieved {len(result)} configuration history records")
             return result
 
+        except RuntimeError:
+            raise
         except Exception as e:
             self.logger.error(f"Error retrieving config history: {e}")
             return []
@@ -200,6 +202,8 @@ class ConfigHistoryManager:
             self.logger.info(f"Retrieved {len(result)} unique configurations")
             return result
 
+        except RuntimeError:
+            raise
         except Exception as e:
             self.logger.error(f"Error retrieving unique configurations: {e}")
             return []
@@ -256,6 +260,8 @@ class ConfigHistoryManager:
             self.logger.info(f"Retrieved configuration for job_id: {job_id}")
             return result
 
+        except RuntimeError:
+            raise
         except Exception as e:
             self.logger.error(f"Error retrieving config for job_id {job_id}: {e}")
             return None
@@ -300,6 +306,8 @@ class ConfigHistoryManager:
             self.logger.info(f"Compared configurations {job_id1} and {job_id2}, found {len(differences)} differences")
             return result
 
+        except RuntimeError:
+            raise
         except Exception as e:
             self.logger.error(f"Error comparing configurations {job_id1} and {job_id2}: {e}")
             return {'error': str(e)}
@@ -357,6 +365,8 @@ class ConfigHistoryManager:
             self.logger.info(f"Successfully restored configuration from job_id {job_id} to {target_path}")
             return result
 
+        except RuntimeError:
+            raise
         except Exception as e:
             self.logger.error(f"Error restoring configuration from job_id {job_id}: {e}")
             return {
@@ -408,6 +418,8 @@ class ConfigHistoryManager:
             self.logger.info(f"Successfully exported {len(history)} configuration records to {output_path}")
             return result
 
+        except RuntimeError:
+            raise
         except Exception as e:
             self.logger.error(f"Error exporting config history: {e}")
             return {
@@ -533,6 +545,8 @@ class ConfigHistoryManager:
             self.logger.info(f"Retrieved {len(projects)} projects")
             return projects
 
+        except RuntimeError:
+            raise
         except Exception as e:
             self.logger.error(f"Error getting projects list: {e}")
             return []
@@ -567,6 +581,8 @@ class ConfigHistoryManager:
                 'message': f"Project '{project_name}' created successfully"
             }
 
+        except RuntimeError:
+            raise
         except Exception as e:
             self.logger.error(f"Error creating project: {e}")
             return {
@@ -611,6 +627,8 @@ class ConfigHistoryManager:
                 'message': f"Project {project_id} updated successfully"
             }
 
+        except RuntimeError:
+            raise
         except Exception as e:
             self.logger.error(f"Error updating project: {e}")
             return {
@@ -655,6 +673,8 @@ class ConfigHistoryManager:
                 'message': f"Project {project_id} deleted, {job_count} jobs updated"
             }
 
+        except RuntimeError:
+            raise
         except Exception as e:
             self.logger.error(f"Error deleting project: {e}")
             return {
@@ -702,6 +722,8 @@ class ConfigHistoryManager:
                 'avg_duration_hours': float(row[4]) if row[4] else 0
             }
 
+        except RuntimeError:
+            raise
         except Exception as e:
             self.logger.error(f"Error getting project info: {e}")
             return None
@@ -800,6 +822,8 @@ class ConfigHistoryManager:
 
             return stats
 
+        except RuntimeError:
+            raise
         except Exception as e:
             self.logger.error(f"Error getting project statistics: {e}")
             return None
@@ -877,6 +901,8 @@ class ConfigHistoryManager:
                 'warning_count': len(warnings)
             }
 
+        except RuntimeError:
+            raise
         except Exception as e:
             self.logger.error(f"Error validating config: {e}")
             return {
@@ -934,6 +960,8 @@ class ConfigHistoryManager:
                 'total_events': row[8] or 0
             }
 
+        except RuntimeError:
+            raise
         except Exception as e:
             self.logger.error(f"Error getting config stats: {e}")
             return None

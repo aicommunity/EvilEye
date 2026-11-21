@@ -26,6 +26,37 @@ class TestSetupHostResolution:
         else:
             raise AssertionError("comma-separated host was allowed")
 
+    def test_ipv6_link_local_and_brackets_are_refused(self, monkeypatch):
+        import socket
+
+        from evileye.api.routes.setup import _resolve_db_host
+
+        def _info(*_args, **_kwargs):
+            return [(socket.AF_INET6, socket.SOCK_STREAM, 6, "", ("fe80::1", 5432, 0, 0))]
+
+        monkeypatch.setattr(socket, "getaddrinfo", _info)
+        try:
+            _resolve_db_host("fe80::1", 5432)
+        except ValueError:
+            pass
+        else:
+            raise AssertionError("IPv6 link-local host was allowed")
+
+        called = {"n": 0}
+
+        def _boom(*_args, **_kwargs):
+            called["n"] += 1
+            return []
+
+        monkeypatch.setattr(socket, "getaddrinfo", _boom)
+        try:
+            _resolve_db_host("[fe80::1]", 5432)
+        except ValueError:
+            pass
+        else:
+            raise AssertionError("bracketed host was allowed")
+        assert called["n"] == 0
+
     def test_link_local_resolution_is_refused(self, monkeypatch):
         import socket
 

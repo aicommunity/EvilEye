@@ -28,7 +28,7 @@ findings closed (TD-AUD-S0-*..TD-AUD-S5-*); remaining open items below.
 
 | TD-AUD-011 | GUI journals fetch data with synchronous psycopg2 in a QTimer slot (UI freezes); regression vs legacy QThread loader | visualization_modules/unified_events_journal.py | audit 2026-11 | Stage 5 (audit fix plan) | P2 |
 | TD-AUD-D1 | event_id is still MAX+1 without a sequence or IntegrityError retry. A dead pool now returns None so ids do not restart at 0 | database_controller_pg.py | audit correction | Backlog | P2 |
-| TD-AUD-D7 | query() still returns None on error. ConfigHistoryManager logs that failure and its list methods still return [] | database/config_history_manager.py | audit correction | Backlog | P3 |
+| TD-AUD-D7 | query() still returns None on error. ConfigHistoryManager now re-raises that failure instead of an empty list; other callers of query() are unchanged | database_controller_pg.py | audit correction | Backlog | P3 |
 | TD-AUD-T8 | Watchdog matches a config argv element. A PID file was not added | watchdog_native.py | audit correction | Backlog | P2 |
 | TD-AUD-JOBS | jobs.finish_time is not written, so completed/error job counters stay wrong | config_history_manager.py | audit correction | Backlog | P3 |
 | TD-AUD-SQL-ID | JSON adapter table_name is still interpolated as an identifier; whitelist not added | jadapter_base.py | audit correction | Backlog | P3 |

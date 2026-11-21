@@ -350,7 +350,7 @@ def _resolve_db_host(host: str, port: int) -> str:
     import socket
 
     raw = str(host or "").strip()
-    if not raw or any(char in raw for char in ",% \t"):
+    if not raw or any(char in raw for char in ",% \t[]"):
         raise ValueError("host is not allowed")
     try:
         infos = socket.getaddrinfo(raw, int(port), type=socket.SOCK_STREAM)

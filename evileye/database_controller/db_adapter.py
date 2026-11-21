@@ -435,6 +435,10 @@ class DatabaseAdapterBase(EvilEyeBase, ABC):
                 if stored:
                     images[name] = stored
                 continue
+            encoded = self._encode_spool_object(value)
+            if encoded is not None:
+                fields[name] = encoded
+                continue
             if not _spool_value_supported(value):
                 continue
             fields[name] = self._json_ready(value)
@@ -466,6 +470,23 @@ class DatabaseAdapterBase(EvilEyeBase, ABC):
         path.write_bytes(encoded.tobytes())
         return f"blobs/{filename}"
 
+    def _encode_spool_object(self, value: Any) -> Optional[dict[str, Any]]:
+        from evileye.events_detectors.zone import Zone
+        from evileye.events_detectors.zone import ZoneForm
+
+        if not isinstance(value, Zone):
+            return None
+        form = value.zone_form.value if isinstance(value.zone_form, ZoneForm) else None
+        return {
+            "__zone": {
+                "source_id": value.source_id,
+                "coords": self._json_ready(value.get_coords()),
+                "zone_form": form,
+                "is_active": bool(value.is_active),
+                "id": value.id,
+            }
+        }
+
     def _json_ready(self, value: Any) -> Any:
         if isinstance(value, (str, int, float, bool)) or value is None:
             return value
@@ -483,6 +504,20 @@ class DatabaseAdapterBase(EvilEyeBase, ABC):
         return None
 
     def _restore_json(self, value: Any) -> Any:
+        if isinstance(value, dict) and set(value) == {"__zone"}:
+            from evileye.events_detectors.zone import Zone
+
+            spec = value["__zone"]
+            coords = self._restore_json(spec.get("coords"))
+            zone = Zone(
+                spec.get("source_id"),
+                coords,
+                spec.get("zone_form"),
+                bool(spec.get("is_active")),
+            )
+            if spec.get("id") is not None:
+                zone.id = spec.get("id")
+            return zone
         if isinstance(value, dict) and set(value) == {"__dt"}:
             return datetime.datetime.fromisoformat(value["__dt"])
         if isinstance(value, dict) and set(value) == {"__date"}:

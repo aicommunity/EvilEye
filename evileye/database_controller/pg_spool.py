@@ -46,11 +46,15 @@ class PgSpool:
         self.quarantine = Path(image_dir) / _SPOOL_DIR_NAME / "quarantine"
         self.max_bytes = max(0, int(max_bytes))
         self.logger = logger or get_module_logger("db.pg_spool")
-        self._lock = threading.Lock()
+        self._lock = threading.RLock()
         self.last_reject: Optional[str] = None
 
     def append(self, record: dict[str, Any]) -> bool:
         """Persist one JSON record. False when the spool refuses it."""
+        with self._lock:
+            return self._append_locked(record)
+
+    def _append_locked(self, record: dict[str, Any]) -> bool:
         self.last_reject = None
         if not isinstance(record, dict):
             self.last_reject = "encode"
@@ -89,15 +93,14 @@ class PgSpool:
         if self.max_bytes <= 0:
             return True
         try:
-            with self._lock:
-                files = self._files_oldest_first()
-                total = sum(path.stat().st_size for path in files)
-                for path in files:
-                    if total <= self.max_bytes:
-                        break
-                    total -= path.stat().st_size
-                    path.unlink(missing_ok=True)
-                    self.logger.warning("pg_spool: budget exceeded, dropped oldest %s", path.name)
+            files = self._files_oldest_first()
+            total = sum(path.stat().st_size for path in files)
+            for path in files:
+                if total <= self.max_bytes:
+                    break
+                total -= path.stat().st_size
+                path.unlink(missing_ok=True)
+                self.logger.warning("pg_spool: budget exceeded, dropped oldest %s", path.name)
             return newest.exists()
         except OSError:
             return newest.exists()
@@ -118,7 +121,8 @@ class PgSpool:
             return []
 
     def pending_count(self) -> int:
-        return len(self._files_oldest_first()) + len(self._legacy_pickles())
+        with self._lock:
+            return len(self._files_oldest_first()) + len(self._legacy_pickles())
 
     def _quarantine(self, path: Path) -> None:
         try:
@@ -141,6 +145,15 @@ class PgSpool:
         pickles, and data errors are quarantined so one bad file cannot block
         the rest.
         """
+        with self._lock:
+            return self._replay_locked(processor, max_items=max_items)
+
+    def _replay_locked(
+        self,
+        processor: Callable[[Any], None],
+        *,
+        max_items: int,
+    ) -> int:
         replayed = 0
         for path in self._legacy_pickles():
             self._quarantine(path)
