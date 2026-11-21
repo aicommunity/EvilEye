@@ -53,7 +53,6 @@ from .roi_editor_window import ROIEditorWindow
 from .dialogs.class_mapping_dialog import ClassMappingDialog
 from .stream_player_window import StreamPlayerWindow
 
-sys.path.append(str(Path(__file__).parent.parent.parent))
 
 
 # Собственный класс для label, чтобы переопределить двойной клик мышкой

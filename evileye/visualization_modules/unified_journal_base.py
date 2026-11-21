@@ -2,8 +2,6 @@
 Базовый класс для унифицированных журналов объектов и событий
 """
 
-import sys
-from pathlib import Path
 from typing import Optional
 
 try:
@@ -16,7 +14,6 @@ except ImportError:
     pyqt_version = 5
 
 # Add parent directory to path for imports
-sys.path.append(str(Path(__file__).parent.parent.parent))
 
 from .journal_data_source import EventJournalDataSource
 from .journal_path_resolver import JournalPathResolver

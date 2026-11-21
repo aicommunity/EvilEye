@@ -70,6 +70,9 @@ def _diag_client(tmp_path: Path, monkeypatch) -> TestClient:
 
 
 def _diag_client_with_auth_guard(tmp_path: Path, monkeypatch) -> TestClient:
+    # Stage-0 gate reads the live user store via creds_path()/site_root();
+    # isolate it from the developer's real <repo>/credentials.json.
+    monkeypatch.setenv("EVILEYE_SITE_DIR", str(tmp_path))
     monkeypatch.setattr(diagnostics_mod, "append_client_diag_events", lambda **kw: append_client_diag_events(**{**kw, "logs_dir": tmp_path}))
     diagnostics_mod._rate_by_user.clear()
     from evileye.api.core import camera_access

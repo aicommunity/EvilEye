@@ -22,14 +22,7 @@ Last reviewed: full project audit 2026-11 (see audit/AUDIT_2026-11.md), fix stag
 
 
 
-| TD-AUD-008 | mypy strict declared in pyproject but not enforced anywhere; integration/e2e tests never run in CI | .github/workflows/ci.yml | audit 2026-11 | Stage 4 (audit fix plan) | P1 |
-| TD-AUD-009 | ~2670 lines of dead GUI journal code (events_journal.py, handler_journal_view.py, objects_journal_json.py + loaders) | visualization_modules | audit 2026-11 | Stage 5 (audit fix plan) | P2 |
-| TD-AUD-010 | `VideoThread.thread_counter` class counter breaks frame routing after visualizer re-init | visualization_modules/video_thread.py | audit 2026-11 | Stage 5 (audit fix plan) | P2 |
 | TD-AUD-011 | GUI journals fetch data with synchronous psycopg2 in a QTimer slot (UI freezes); regression vs legacy QThread loader | visualization_modules/unified_events_journal.py | audit 2026-11 | Stage 5 (audit fix plan) | P2 |
-| TD-AUD-012 | Controller is a 2731-line god object (~60 fields in `__init__`, hardcoded COCO list) | controller/controller.py | audit 2026-11 | Stage 5 (audit fix plan) | P2 |
-| TD-AUD-013 | Pre-commit runs the full test suite; `make test` diverges from CI; no pytest-xdist/coverage gate | .pre-commit-config.yaml, Makefile | audit 2026-11 | Stage 4 (audit fix plan) | P2 |
-| TD-AUD-014 | Docker: root containers, import-based HEALTHCHECK, postgres port published externally with default password | docker/ | audit 2026-11 | Stage 4 (audit fix plan) | P2 |
-| TD-AUD-015 | Triple dependency management (pyproject + requirements.txt mirror + docker/install_pypi_deps.py) and shadow entry-point fixer | packaging | audit 2026-11 | Stage 4 (audit fix plan) | P2 |
 
 ## In progress
 
@@ -65,6 +58,17 @@ Last reviewed: full project audit 2026-11 (see audit/AUDIT_2026-11.md), fix stag
 | TD-AUD-S3-3 | audit fix stage 3 (sec/audit-s3) | /auth/me re-resolves the session against the live user store - deleted/disabled users get 401 (W6) |
 | TD-AUD-S3-4 | audit fix stage 3 (sec/audit-s3) | uvicorn forwarded_allow_ips synced with web_auth.protection.trusted_proxy_ips; CORS uses explicit methods/headers instead of "*" with credentials (W9) |
 | TD-AUD-S3-5 | audit fix stage 3 (sec/audit-s3) | 500 responses no longer leak exception text (configs/extensions); failures logged server-side via logger.exception (W8) |
+| TD-AUD-S4-1 | audit fix stage 4 (ci/audit-s4) | CI: mypy ratchet job (scripts/check_mypy_ratchet.py + mypy_baseline.json, 6 seeded modules), integration job with postgres service (continue-on-error until consistently green), pytest-xdist + coverage --cov-fail-under=25 in the 3.12 unit job, develop branch added to push triggers (TD-AUD-008) |
+| TD-AUD-S4-2 | audit fix stage 4 (ci/audit-s4) | pre-commit pytest hook reduced to the fast unit subset (tests/unit -x -q); `make test` = unit (matches CI), new test-integration target; lint targets use the ratchet scripts (TD-AUD-013) |
+| TD-AUD-S4-3 | audit fix stage 4 (ci/audit-s4) | Docker: HEALTHCHECK hits /ready over HTTP instead of import-checking; postgres published on 127.0.0.1 only and POSTGRES_PASSWORD is required (:? syntax, no default) (TD-AUD-014; non-root USER deliberately deferred - host-mounted data dirs assume root today) |
+| TD-AUD-S4-4 | audit fix stage 4 (ci/audit-s4) | SQLAlchemy removed from pyproject/requirements (declared, never imported); scripts/setup/fix_entry_points.py removed along with its Makefile/install.py/README call sites - pip console-scripts are the single mechanism (TD-AUD-015) |
+| TD-AUD-S4-5 | audit fix stage 4 (ci/audit-s4) | site_runtime_guard works on Windows (psutil environ/cwd with /proc fallback); watchdog matches the config stem as a whole word (?<!\w)/(?!\w) - short config names no longer match unrelated cmdlines |
+| TD-AUD-S5-1 | audit fix stage 5 (refactor/audit-s5) | Dead GUI journal generation removed: events_journal.py, handler_journal_view.py, objects_journal_json.py, both data loaders, table_data_thread.py, table_updater_view.py (~2700 lines) + their 22 integration tests (TD-AUD-009) |
+| TD-AUD-S5-2 | audit fix stage 5 (refactor/audit-s5) | VideoThread label index comes from the stable source_index_map instead of the never-resetting class counter - frames no longer silently dropped after visualizer re-init (TD-AUD-010) |
+| TD-AUD-S5-3 | audit fix stage 5 (refactor/audit-s5) | Hardcoded 80-entry COCO dict moved from Controller.__init__ to ClassManager.DEFAULT_COCO_CLASS_MAPPING (TD-AUD-012, partial: full ControllerBootstrap decomposition still open) |
+| TD-AUD-S5-4 | audit fix stage 5 (refactor/audit-s5) | PipelineSurveillance: five ProcessorStep _init_* copy-pastes replaced by _init_step_processors (detectors/trackers/mc_trackers/attributes_roi/classifier) |
+| TD-AUD-S5-5 | audit fix stage 5 (refactor/audit-s5) | sys.path.append repo-root hacks removed from 9 visualization modules (+pruned unused sys/Path imports) |
+| TD-AUD-S5-6 | audit fix stage 5 (refactor/audit-s5) | Legacy MP detector deprecation notice added to docs/PLUGINS.md (TD-PS-D3 window opened) |
 | TD-002 | phase 0 | Removed duplicate `DetectionThreadFactory` in `detection_thread_factory.py` |
 | TD-005 | phase 0 | Doc/CLI gaps D1–D6, D8–D10 addressed in README, Makefile, MULTIPROCESSING, launch/process |
 | TD-006 | phase 0 | `tool.coverage.run.source` uses `evileye` package prefix |

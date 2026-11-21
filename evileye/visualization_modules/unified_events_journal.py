@@ -3,8 +3,6 @@
 """
 
 import os
-import sys
-from pathlib import Path
 from typing import Optional, Dict, List, Tuple
 
 try:
@@ -21,7 +19,6 @@ except ImportError:
     pyqt_version = 5
 
 # Add parent directory to path for imports
-sys.path.append(str(Path(__file__).parent.parent.parent))
 
 from .journal_data_source import EventJournalDataSource
 from .unified_journal_components import UnifiedImageDelegate, UnifiedDateTimeDelegate, UnifiedImageWindow

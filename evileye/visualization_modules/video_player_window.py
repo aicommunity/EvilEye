@@ -3,8 +3,6 @@
 """
 
 import os
-import sys
-from pathlib import Path
 from typing import Optional
 
 try:
@@ -49,7 +47,6 @@ except ImportError:
     cv2 = None
 
 # Add parent directory to path for imports
-sys.path.append(str(Path(__file__).parent.parent.parent))
 
 from ..core.logger import get_module_logger
 from .metadata_overlay_widget import MetadataOverlayWidget

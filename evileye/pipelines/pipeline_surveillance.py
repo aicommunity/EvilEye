@@ -176,6 +176,39 @@ class PipelineSurveillance(PipelineProcessors):
         return normalized
 
     # Surveillance-specific processor initialization methods
+    def _init_step_processors(
+        self,
+        params: List[Dict],
+        *,
+        stage_name: str,
+        default_class: str,
+        order: int,
+        init_kwargs: Dict | None = None,
+        post_init=None,
+    ) -> Any:
+        """Shared initializer for ProcessorStep stages (audit 2026-11: the
+        seven _init_* methods were copy-pasted variants of this template)."""
+        if not params:
+            return None
+        class_name = ProcessorBase.configured_module_id(params[0], default_class)
+        class_names = [ProcessorBase.configured_module_id(p, default_class) for p in params]
+        if not any(param.get("module_id") or param.get("type") for param in params):
+            self.logger.warning(
+                f"Warning: 'type' parameter not found in {stage_name} configuration. Using default: {class_name}")
+        proc = ProcessorStep(
+            processor_name=stage_name,
+            class_name=class_name,
+            num_processors=len(params),
+            order=order,
+            class_names=class_names,
+        )
+        proc.set_params(params)
+        proc.init(**(init_kwargs or {}))
+        if post_init is not None:
+            post_init(proc)
+        self._add_processor(proc)
+        return proc
+
     def _init_sources(self, params: List[Dict], credentials: Dict | None):
         """Initialize source processors for surveillance"""
         if not params:
@@ -244,32 +277,23 @@ class PipelineSurveillance(PipelineProcessors):
         fanout_max_pending: int | None = None,
     ):
         """Initialize detector processors for surveillance"""
-        if not params:
-            return
 
-        num_det = len(params)
-        # Get class_name from config, default to ObjectDetectorYolo
-        class_name = ProcessorBase.configured_module_id(params[0], "ObjectDetectorYolo") if params else "ObjectDetectorYolo"
-        class_names = [ProcessorBase.configured_module_id(p, class_name) for p in params]
-        if not any(param.get("module_id") or param.get("type") for param in params):
-            self.logger.warning(
-                f"Warning: 'type' parameter not found in detectors configuration. Using default: {class_name}")
+        def configure_fanout(proc):
+            proc.set_detector_fanout_policy(fanout_policy)
+            proc.set_detector_fanout_limits(
+                timeout_sec=fanout_timeout_sec,
+                max_pending=fanout_max_pending,
+            )
 
-        detectors_proc = ProcessorStep(
-            processor_name="detectors",
-            class_name=class_name,
-            num_processors=num_det,
+        detectors_proc = self._init_step_processors(
+            params,
+            stage_name="detectors",
+            default_class="ObjectDetectorYolo",
             order=2,
-            class_names=class_names,
+            post_init=configure_fanout,
         )
-        detectors_proc.set_detector_fanout_policy(fanout_policy)
-        detectors_proc.set_detector_fanout_limits(
-            timeout_sec=fanout_timeout_sec,
-            max_pending=fanout_max_pending,
-        )
-        detectors_proc.set_params(params)
-        detectors_proc.init()
-        self._add_processor(detectors_proc)
+        if detectors_proc is None:
+            return
         # Keep one authoritative detector list for controller and UI access.
         self.detectors = list(detectors_proc.processors)
         self.logger.info(
@@ -279,93 +303,46 @@ class PipelineSurveillance(PipelineProcessors):
 
     def _init_trackers(self, params: List[Dict]):
         """Initialize tracker processors for surveillance"""
-        if not params:
-            return
-
-        num_trackers = len(params)
-        # Get class_name from config, default to ObjectTrackingBotsort
-        class_name = ProcessorBase.configured_module_id(params[0], "ObjectTrackingBotsort") if params else "ObjectTrackingBotsort"
-        class_names = [ProcessorBase.configured_module_id(p, class_name) for p in params]
-        if not any(param.get("module_id") or param.get("type") for param in params):
-            self.logger.warning(
-                f"Warning: 'type' parameter not found in trackers configuration. Using default: {class_name}")
-
-        trackers_proc = ProcessorStep(
-            processor_name="trackers",
-            class_name=class_name,
-            num_processors=num_trackers,
+        self._init_step_processors(
+            params,
+            stage_name="trackers",
+            default_class="ObjectTrackingBotsort",
             order=3,
-            class_names=class_names,
+            init_kwargs={"encoders": self.encoders},
         )
-        trackers_proc.set_params(params)
-        trackers_proc.init(encoders=self.encoders)
-        self._add_processor(trackers_proc)
 
     def _init_mc_trackers(self, params: List[Dict]):
         """Initialize multi-camera tracker processors for surveillance"""
-        if not params:
-            return
-
         # Skip entries explicitly disabled (e.g. enable: false placeholders in config).
         active_params = [p for p in params if isinstance(p, dict) and p.get("enable", True)]
-        if not active_params:
+        if params and not active_params:
             self.logger.info("mc_trackers: all entries disabled; skipping init")
             return
-
-        num_trackers = len(active_params)
-        # Get class_name from config, default to ObjectMultiCameraTracking
-        class_name = ProcessorBase.configured_module_id(active_params[0], "ObjectMultiCameraTracking")
-        class_names = [ProcessorBase.configured_module_id(p, class_name) for p in active_params]
-        if not any(param.get("module_id") or param.get("type") for param in active_params):
-            self.logger.warning(
-                f"Warning: 'type' parameter not found in mc_trackers configuration. Using default: {class_name}")
-
-        mc_trackers_proc = ProcessorStep(processor_name="mc_trackers", class_name=class_name,
-                                         num_processors=num_trackers, order=4, class_names=class_names)
-        mc_trackers_proc.set_params(active_params)
-        mc_trackers_proc.init(encoders=self.encoders)
-        self._add_processor(mc_trackers_proc)
+        self._init_step_processors(
+            active_params,
+            stage_name="mc_trackers",
+            default_class="ObjectMultiCameraTracking",
+            order=4,
+            init_kwargs={"encoders": self.encoders},
+        )
 
     def _init_attributes_roi(self, params: List[Dict]):
         """Initialize ROI feeder for attributes if configured"""
-        if not params:
-            return
-        num = len(params)
-        # Get class_name from config, default to RoiFeeder
-        class_name = ProcessorBase.configured_module_id(params[0], "RoiFeeder") if params else "RoiFeeder"
-        class_names = [ProcessorBase.configured_module_id(p, class_name) for p in params]
-        if not any(param.get("module_id") or param.get("type") for param in params):
-            self.logger.warning(
-                f"Warning: 'type' parameter not found in attributes_roi configuration. Using default: {class_name}")
-
-        roi_proc = ProcessorStep(
-            processor_name="attributes_roi",
-            class_name=class_name,
-            num_processors=num,
+        self._init_step_processors(
+            params,
+            stage_name="attributes_roi",
+            default_class="RoiFeeder",
             order=4,
-            class_names=class_names,
         )
-        roi_proc.set_params(params)
-        roi_proc.init()
-        self._add_processor(roi_proc)
 
     def _init_attribute_classifier(self, params: List[Dict]):
         """Initialize AttributeClassifier as ProcessorFrame if configured"""
-        if not params:
-            return
-        num = len(params)
-        # Get class_name from config, default to AttributeClassifier
-        class_name = ProcessorBase.configured_module_id(params[0], "AttributeClassifier") if params else "AttributeClassifier"
-        class_names = [ProcessorBase.configured_module_id(p, class_name) for p in params]
-        if not any(param.get("module_id") or param.get("type") for param in params):
-            self.logger.warning(
-                f"Warning: 'type' parameter not found in attributes_classifier configuration. Using default: {class_name}")
-
-        cls_proc = ProcessorStep(processor_name="attributes_classifier", class_name=class_name, num_processors=num,
-                                 order=5, class_names=class_names)
-        cls_proc.set_params(params)
-        cls_proc.init()
-        self._add_processor(cls_proc)
+        self._init_step_processors(
+            params,
+            stage_name="attributes_classifier",
+            default_class="AttributeClassifier",
+            order=5,
+        )
 
     def _init_encoders(self, tracker_params_list: List[Dict]):
         """Initialize encoders for tracking in surveillance pipeline"""

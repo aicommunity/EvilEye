@@ -522,3 +522,14 @@ restart.
 
 Plugin names for the Web workshop must not be Python standard library modules or already importable packages
 (`torch`, `numpy`, ...), because the plugin becomes a top-level package.
+
+## Deprecation: legacy MP detector path
+
+The built-in multiprocessing detector stack (`ObjectDetectorYoloMp`,
+`detection_thread_factory.py`, `mp_queue_config.py`) is **deprecated** and will
+be removed after one minor release. It remains registered only for
+compatibility with older configs; the plugin runtime
+(`execution_mode: "thread" | "process"`) is the supported way to run detector
+modules in workers. `scripts/validate_config.py` warns when a config still uses
+the legacy path - migrate to `ObjectDetectorYolo` with `execution_mode:
+"process"` (TD-PS-D3).
