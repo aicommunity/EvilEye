@@ -243,7 +243,7 @@ def get_extension_catalog(request: Request) -> dict[str, Any]:
     try:
         return extension_catalog()
     except Exception as exc:
-        raise HTTPException(status_code=500, detail=f"Extension catalog failed: {exc}") from exc
+        raise HTTPException(status_code=500, detail="Extension catalog failed: failed (see server logs)") from exc
 
 
 @router.post("/preview")
@@ -265,7 +265,7 @@ def save_pipeline_config(payload: PipelineSaveRequest, request: Request) -> dict
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     except Exception as exc:
-        raise HTTPException(status_code=500, detail=f"Pipeline configuration save failed: {exc}") from exc
+        raise HTTPException(status_code=500, detail="Pipeline configuration save failed: failed (see server logs)") from exc
 
 
 @router.post("/plugins")
@@ -279,7 +279,7 @@ def create_plugin(payload: PluginCreateRequest, request: Request) -> dict[str, A
     except (ValueError, OSError) as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     except Exception as exc:
-        raise HTTPException(status_code=500, detail=f"Plugin creation failed: {exc}") from exc
+        raise HTTPException(status_code=500, detail="Plugin creation failed: failed (see server logs)") from exc
 
 
 @router.post("/plugins/{name}/disabled")
@@ -308,7 +308,7 @@ def list_extension_operations(request: Request) -> list[dict[str, Any]]:
     try:
         return list_plugin_operations()
     except Exception as exc:
-        raise HTTPException(status_code=500, detail=f"Extension operation history failed: {exc}") from exc
+        raise HTTPException(status_code=500, detail="Extension operation history failed: failed (see server logs)") from exc
 
 
 @router.get("/operations/{operation_id}/archive")

@@ -385,8 +385,14 @@ def create_app() -> FastAPI:
         CORSMiddleware,
         allow_origins=allow_origins,
         allow_credentials=True,
-        allow_methods=["*"],
-        allow_headers=["*"],
+        # Audit W9: explicit methods/headers instead of "*" with credentials.
+        allow_methods=["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
+        allow_headers=[
+            "Authorization",
+            "Content-Type",
+            "X-EvilEye-Internal-Token",
+            "X-Requested-With",
+        ],
         expose_headers=["X-Export-Truncated", "X-Playback-Cache"],
     )
     app.add_middleware(SecurityHeadersMiddleware)

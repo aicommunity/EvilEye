@@ -335,6 +335,23 @@ async def setup_basic_put(payload: BasicSetupModel) -> dict:
     return {"ok": True, "status": status, "basic": projected}
 
 
+def _is_private_address(host: str) -> bool:
+    """True for link-local / loopback-adjacent targets an SSRF probe must not reach.
+
+    Loopback and same-host addresses are ALLOWED here on purpose: the database
+    usually runs next to the web service. The block list covers cloud-metadata
+    endpoints and link-local ranges (audit W3).
+    """
+    import ipaddress
+    import socket
+
+    try:
+        addr = ipaddress.ip_address(socket.gethostbyname(host))
+    except (socket.gaierror, ValueError):
+        return False  # unresolvable hosts fail at connect() anyway
+    return addr.is_link_local or addr.is_reserved or addr.is_multicast or addr.is_unspecified
+
+
 @router.post("/check-data-dir")
 async def setup_check_data_dir(payload: DataDirPayload) -> dict:
     raw = payload.path.strip()
@@ -342,6 +359,25 @@ async def setup_check_data_dir(payload: DataDirPayload) -> dict:
         raise HTTPException(status_code=400, detail="path is required")
     path = Path(raw).expanduser()
     created = False
+    # Audit W3: without a trust flag the endpoint must not create/write
+    # arbitrary filesystem paths (it used to mkdir anywhere as admin).
+    import os
+
+    if not str(os.getenv("EVILEYE_SETUP_TRUST_DATA_DIR", "")).strip().lower() in {"1", "true", "yes", "on"}:
+        from evileye.core.paths import site_root
+
+        root = site_root()
+        try:
+            resolved = path.resolve()
+            resolved.relative_to(root)
+        except ValueError:
+            return {
+                "ok": False,
+                "writable": False,
+                "free_bytes": 0,
+                "message": "Path must stay under the site root (set EVILEYE_SETUP_TRUST_DATA_DIR=1 to allow arbitrary paths)",
+                "created": False,
+            }
     try:
         if not path.exists():
             path.mkdir(parents=True, exist_ok=True)
@@ -366,6 +402,18 @@ async def setup_check_data_dir(payload: DataDirPayload) -> dict:
 
 @router.post("/test-database")
 async def setup_test_database(payload: TestDbPayload) -> dict:
+    # Audit W3: this admin endpoint dials an arbitrary host:port. Refuse
+    # link-local / reserved targets (cloud metadata, SSRF pivots); operators
+    # can extend the allow-list via EVILEYE_SETUP_DB_EXTRA_HOSTS.
+    host = str(payload.host_name or "").strip()
+    extra_hosts = {
+        item.strip().lower()
+        for item in str(__import__("os").getenv("EVILEYE_SETUP_DB_EXTRA_HOSTS", "")).split(",")
+        if item.strip()
+    }
+    if host.lower() not in extra_hosts and _is_private_address(host):
+        return {"ok": False, "message": "Host is not allowed (link-local/reserved address)"}
+
     try:
         import psycopg2
     except Exception:
