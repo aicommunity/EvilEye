@@ -38,43 +38,57 @@ class TestPgSpool:
         assert spool.pending_count() == 0
 
     def test_replay_stops_on_failure_and_keeps_items(self, tmp_path):
+        import psycopg2
+
         spool = PgSpool(tmp_path)
-        spool.append("first")
-        spool.append("second")
+        spool.append({"n": "first"})
+        spool.append({"n": "second"})
 
         def failing(item):
-            if item == "first":
-                raise RuntimeError("db still down")
+            if item["n"] == "first":
+                raise psycopg2.OperationalError("db still down")
 
         assert spool.replay(failing) == 0
-        assert spool.pending_count() == 2  # nothing lost
+        assert spool.pending_count() == 2
 
-    def test_replay_drops_corrupt_entries(self, tmp_path):
+    def test_replay_quarantines_corrupt_entries(self, tmp_path):
         spool = PgSpool(tmp_path)
-        spool.append("good")
-        # Plant a corrupt file that sorts before the good one.
-        corrupt = spool.root / "0.pkl"
-        corrupt.write_bytes(b"not-a-pickle")
+        spool.append({"n": "good"})
+        corrupt = spool.root / "0-corrupt.json"
+        corrupt.write_text("not-json", encoding="utf-8")
         processed = []
         assert spool.replay(processed.append) == 1
-        assert processed == ["good"]
+        assert processed == [{"n": "good"}]
         assert spool.pending_count() == 0
+        assert any(spool.quarantine.iterdir())
 
-    def test_budget_drops_oldest(self, tmp_path):
+    def test_budget_rejects_oversized_record(self, tmp_path):
         spool = PgSpool(tmp_path, max_bytes=1)
-        spool.append("big-item-1" * 100)
-        spool.append("big-item-2" * 100)
-        assert spool.pending_count() <= 1
-
-    def test_unpicklable_item_returns_false(self, tmp_path):
-        spool = PgSpool(tmp_path)
-
-        class Bad:
-            def __getstate__(self):
-                raise TypeError("nope")
-
-        assert spool.append(Bad()) is False
+        assert spool.append({"n": "big-item"}) is False
         assert spool.pending_count() == 0
+        assert spool.last_reject == "budget"
+
+    def test_non_dict_record_returns_false(self, tmp_path):
+        spool = PgSpool(tmp_path)
+        assert spool.append("not-a-record") is False
+        assert spool.pending_count() == 0
+
+    def test_namespaces_do_not_share_files(self, tmp_path):
+        left = PgSpool(tmp_path, namespace="ZoneEvent")
+        right = PgSpool(tmp_path, namespace="AlarmEvent")
+        assert left.append({"n": 1})
+        assert right.pending_count() == 0
+        assert left.pending_count() == 1
+
+    def test_legacy_pickle_is_quarantined_not_loaded(self, tmp_path):
+        spool = PgSpool(tmp_path)
+        (spool.root).mkdir(parents=True, exist_ok=True)
+        (spool.root / "1.pkl").write_bytes(b"pickle-bytes")
+        processed = []
+        assert spool.replay(processed.append) == 0
+        assert processed == []
+        assert spool.pending_count() == 0
+        assert list(spool.quarantine.glob("*.pkl"))
 
 
 class TestAdapterBackendFilter:
@@ -198,7 +212,11 @@ class TestAdapterUpdatePath:
         adapter, calls = self._adapter(connected=False, backend="postgres", tmp_path=tmp_path)
         adapter.update({"id": 2})
         assert calls["update"] == []
-        assert calls["spool"] == [("deferred", "update", {"id": 2})]
+        assert len(calls["spool"]) == 1
+        record = calls["spool"][0]
+        assert record["kind"] == "deferred"
+        assert record["op"] == "update"
+        assert record["fields"] == {"id": 2}
         assert adapter._spooled_items == 1
 
     def test_json_update_ignores_postgres_outage(self, tmp_path):
