@@ -581,24 +581,29 @@ class PipelineSurveillance(PipelineProcessors):
         pending = 0
         put_dropped = 0
         pending_evict = 0
+
+        def collect(target) -> None:
+            nonlocal pending, put_dropped, pending_evict
+            if isinstance(target, MpPendingReporter):
+                pending += target.mp_pending_depth()
+                put_dropped += target.mp_diag_put_dropped()
+                pending_evict += target.mp_diag_pending_evict()
+
         try:
             for det in self.get_detectors() or []:
-                for th in det.detection_threads:
-                    if isinstance(th, MpPendingReporter):
-                        pending += th.mp_pending_depth()
-                        put_dropped += th.mp_diag_put_dropped()
-                        pending_evict += th.mp_diag_pending_evict()
+                # Plugin-runtime modules are their own adapters; legacy
+                # detectors keep per-thread reporters.
+                collect(det)
+                for th in getattr(det, "detection_threads", None) or []:
+                    collect(th)
         except Exception:
             pass
         try:
             for proc in self.processors or []:
-                if proc.processor_name != "trackers":
+                if proc.processor_name not in ("trackers", "attributes_roi", "attributes_classifier"):
                     continue
                 for trk in proc.processors:
-                    if isinstance(trk, MpPendingReporter):
-                        pending += trk.mp_pending_depth()
-                        put_dropped += trk.mp_diag_put_dropped()
-                        pending_evict += trk.mp_diag_pending_evict()
+                    collect(trk)
         except Exception:
             pass
         return {
