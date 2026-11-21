@@ -38,7 +38,21 @@ def test_brief_teardown_pending_during_reconnect_is_not_stalled():
     stats = {'components': {'events_controller': {}, 'events_processor': {},
              'pipeline': {'module_instances': {'source/2': {
                  'capture_health': {'teardown_pending_since': 100}}}}}}
-    assert event_health(stats, now=120) == []
+    assert event_health(stats, now=110) == []
+
+
+def test_source_down_requires_two_minutes_without_frames():
+    def health(down_since, working=False):
+        return {'components': {'events_controller': {}, 'events_processor': {},
+                'pipeline': {'module_instances': {'sources:2:VideoCaptureGStreamer': {
+                    'capture_health': {
+                        'working': working,
+                        'teardown_pending_since': None,
+                        'capture_down_since': down_since,
+                    }}}}}}
+    assert event_health(health(1000), now=1030) == []
+    assert event_health(health(1000), now=1130) == ['sources:2:VideoCaptureGStreamer:source_down']
+    assert event_health(health(1000, working=True), now=1130) == []
 
 
 def test_secrets_are_redacted_and_effective_config_changes_identity_hash():

@@ -883,9 +883,12 @@ class VideoCaptureBase(EvilEyeBase):
             pipeline_abandoned = bool(getattr(self, '_pipeline_null_abandoned', False))
             # A source is not healthy while native teardown is still running or was abandoned mid-NULL.
             working = bool(self.is_working) and teardown_pending_since is None and not pipeline_abandoned
+            last_sample = float(getattr(self, "_last_sample_wall_ts", 0.0) or 0.0)
             return {
                 "working": working,
                 "teardown_pending_since": teardown_pending_since,
+                "last_sample_wall_ts": last_sample or None,
+                "capture_down_since": getattr(self, "_capture_down_since", None),
                 "disconnect_count": self._disconnect_count,
                 "reconnect_count": self._reconnect_count,
                 "backend_connection_generation": (

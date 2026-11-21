@@ -70,6 +70,69 @@ def test_release_releases_lifecycle_lock_when_teardown_fails():
     capture._release_lock.release()
 
 
+def test_release_drops_lifecycle_lock_before_native_teardown():
+    capture = _capture()
+    started = Event()
+
+    def slow_teardown(*_args, **_kwargs):
+        started.set()
+        time.sleep(0.3)
+
+    capture._teardown_pipeline = slow_teardown
+    worker = Thread(target=VideoCaptureGStreamer.release, args=(capture,))
+    worker.start()
+    assert started.wait(timeout=1.0)
+    assert capture._release_lock.acquire(timeout=0.1)
+    capture._release_lock.release()
+    worker.join(timeout=1.0)
+    assert not worker.is_alive()
+
+
+def test_reconnect_skips_an_abandoned_release_event():
+    from evileye.capture.video_capture_base import CaptureDeviceType
+
+    class _Stop:
+        def is_set(self):
+            return False
+
+        def wait(self, _timeout):
+            return True
+
+    class _Frames(GStreamerCaptureFramesMixin):
+        pass
+
+    capture = _Frames()
+    capture.run_flag = True
+    capture.stop_event = _Stop()
+    capture._reconnecting = False
+    capture.is_inited = False
+    capture.is_working = False
+    capture.source_type = CaptureDeviceType.IpCamera
+    capture.source_names = ["Cam4", "Cam5"]
+    capture.logger = Mock()
+    capture.params = {"reconnect": {"max_attempts": 1, "initial_delay_sec": 0, "backoff_step_sec": 0, "max_delay_sec": 0, "min_first_backoff_sec": 0}}
+    capture._reconnect_release_done = Event()
+    capture._reconnect_release_started_at = time.time()
+    capture.release = Mock()
+    capture._note_capture_down = Mock()
+    capture._abandon_stalled_teardown = Mock()
+    capture.pipeline_lock = RLock()
+    capture.pipeline = None
+    capture.init = Mock(return_value=False)
+    capture._last_init_error = None
+    capture._noframes_restart_last_ts = 0.0
+    capture.subscribers = []
+    capture._reconnect_init_thread = None
+
+    started = time.monotonic()
+    capture._reconnect_loop()
+    elapsed = time.monotonic() - started
+
+    assert elapsed < 5.0
+    capture.release.assert_not_called()
+    assert capture._reconnect_release_done.is_set()
+
+
 def test_set_gst_state_null_bounded_returns_after_timeout_and_marks_abandoned():
     class _Pipeline(GStreamerCapturePipelineMixin):
         pass
@@ -126,7 +189,7 @@ def test_reconnect_abandons_stalled_release_and_bumps_generation():
     assert capture.pipeline is None
     assert capture.appsink is None
     assert capture.is_working is False
-    capture._record_disconnect.assert_called_once()
+    capture._record_disconnect.assert_not_called()
 
 
 def test_capture_health_is_not_working_while_teardown_pending():
