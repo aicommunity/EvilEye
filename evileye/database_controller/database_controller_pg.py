@@ -682,6 +682,15 @@ class DatabaseControllerPg(DatabaseControllerBase):
         if not table_names:
             return None
 
+        # TD-AUD-D1: a sequence is race-free across concurrent instances;
+        # the per-table MAX fallback below covers pre-migration databases.
+        try:
+            record = self.query("SELECT nextval('event_id_seq')", None)
+            if record and record[0] and record[0][0] is not None:
+                return int(record[0][0])
+        except Exception as exc:
+            self.logger.debug("event_id_seq unavailable (%s); using MAX+1", exc)
+
         max_id = 0
         queried = 0
         for table in table_names:
