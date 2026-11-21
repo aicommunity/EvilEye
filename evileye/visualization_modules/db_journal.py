@@ -19,8 +19,6 @@ except ImportError:
 
     pyqt_version = 5
 
-import sys
-from pathlib import Path
 from ..database_controller import database_controller_pg
 from .journal_adapters.jadapter_fov_events import JournalAdapterFieldOfViewEvents
 from .journal_adapters.jadapter_cam_events import JournalAdapterCamEvents
@@ -33,7 +31,6 @@ from .unified_events_journal import UnifiedEventsJournal
 from ..core.logger import get_module_logger
 import logging
 
-sys.path.append(str(Path(__file__).parent.parent.parent))
 
 
 class DatabaseJournalWindow(QWidget):
