@@ -71,13 +71,17 @@ repos:
 
   - repo: local
     hooks:
+      # Audit 2026-11 (TD-AUD-013): the hook used to run the FULL suite
+      # (1824 tests incl. integration/GUI) on every commit, making pre-commit
+      # unusable. Fast unit subset only; CI owns the full matrix.
       - id: pytest
-        name: pytest
+        name: pytest (fast unit subset)
         entry: pytest
         language: system
         pass_filenames: false
         always_run: true
-        args: [tests/, -v, --tb=short]
+        args: [tests/unit, -x, -q, --tb=short, -p, no:cacheprovider]
+        stages: [pre-commit]
 
       - id: validate-configs
         name: Validate JSON configs

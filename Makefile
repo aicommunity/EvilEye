@@ -4,7 +4,7 @@ VERSION ?= $(shell python3 -c "import re; print(re.search(r'^version\s*=\s*\"([^
 EVILEYE_IMAGE_GPU ?= evileye/app
 EVILEYE_IMAGE_CPU ?= evileye/app
 
-.PHONY: install install-dev uninstall clean test lint format docs fix-entry-points \
+.PHONY: install install-dev uninstall clean test test-unit test-integration lint format docs \
 	docker-build docker-build-cpu docker-up docker-bootstrap-site docker-push \
 	install-docker-cli uninstall-docker-cli prepare-docker-host
 
@@ -13,13 +13,11 @@ all: install
 install:
 	@echo "Installing EvilEye package..."
 	pip install -e .
-	python scripts/setup/fix_entry_points.py
 	@echo "✅ Installation complete"
 
 install-dev:
 	@echo "Installing EvilEye package with development dependencies..."
 	pip install -e ".[dev]"
-	python scripts/setup/fix_entry_points.py
 	@echo "✅ Development installation complete"
 
 install-full: install-dev
@@ -32,12 +30,20 @@ clean:
 	find . -type d -name "__pycache__" -exec rm -rf {} +
 	find . -type f -name "*.pyc" -delete
 
-test:
-	pytest tests/ -v
+# Audit 2026-11 (TD-AUD-013): `make test` used to run the full suite
+# (integration + GUI) while CI runs unit only - developer and CI checked
+# different things. Aligned with CI; integration is a separate opt-in target.
+test: test-unit
+
+test-unit:
+	pytest tests/unit -p no:cacheprovider -n auto -q
+
+test-integration:
+	pytest tests/integration -p no:cacheprovider -n auto -q
 
 lint:
-	flake8 evileye/ tests/
-	mypy evileye/
+	python scripts/check_undefined_names.py
+	python scripts/check_mypy_ratchet.py
 
 format:
 	black evileye/ tests/
@@ -45,9 +51,6 @@ format:
 
 docs:
 	cd docs && make html
-
-fix-entry-points:
-	python scripts/setup/fix_entry_points.py
 
 reinstall: uninstall install
 reinstall-dev: uninstall install-dev

@@ -1,0 +1,6 @@
+{
+  "evileye/core/frame_transport.py": 3,
+  "evileye/database_controller/pg_spool.py": 1,
+  "evileye/events_detectors/event_cameras.py": 4,
+  "evileye/events_detectors/event_schedule_alarm.py": 6
+}

@@ -34,17 +34,6 @@ def install_package(extra_deps=None):
     return run_command(cmd, description)
 
 
-def fix_entry_points():
-    """Fix entry points after installation"""
-    fix_script_py = Path("scripts/setup/fix_entry_points.py")
-    if not fix_script_py.is_file():
-        fix_script_py = Path("fix_entry_points.py")
-
-    if fix_script_py.exists():
-        return run_command(f"python {fix_script_py}", "Fixing entry points with Python script")
-    print("⚠️  fix_entry_points.py not found, skipping entry point fix")
-    return True
-
 
 def main():
     """Main installation function"""
@@ -74,8 +63,6 @@ def main():
         print("❌ Installation failed!")
         sys.exit(1)
 
-    if not fix_entry_points():
-        print("⚠️  Entry point fix failed, but installation completed")
 
     print("\n🎉 Installation completed successfully!")
     print("\nYou can now use:")

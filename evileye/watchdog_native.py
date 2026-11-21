@@ -242,8 +242,12 @@ def stop_evileye_run_scope(
 
 def find_cli_and_child(config: str, root: Optional[Path] = None) -> tuple[Optional[int], Optional[int]]:
     stem = re.escape(_config_stem(config))
-    cli_pids = find_pids_by_cmdline_regex([rf"evileye(\.exe)?\s+run.*{stem}", rf"cli_wrapper.*run.*{stem}"])
-    child_pids = find_pids_by_cmdline_regex([rf"process\.py.*{stem}", rf"process_wrapper.*{stem}"])
+    # Audit 2026-11 (T8): the config stem must appear as a whole argv token,
+    # not as a substring of a longer token - a short config name must not
+    # match unrelated commands with a similar word in their cmdline.
+    token = rf"(?<!\w){stem}(?!\w)"
+    cli_pids = find_pids_by_cmdline_regex([rf"evileye(\.exe)?\s+run.*{token}", rf"cli_wrapper.*run.*{token}"])
+    child_pids = find_pids_by_cmdline_regex([rf"process\.py.*{token}", rf"process_wrapper.*{token}"])
     cli = cli_pids[0] if cli_pids else None
     child = child_pids[0] if child_pids else None
     return cli, child
