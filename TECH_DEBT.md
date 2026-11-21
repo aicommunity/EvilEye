@@ -1,6 +1,10 @@
 # Technical debt ledger
 
-Last reviewed: full project audit 2026-11 (see audit/AUDIT_2026-11.md), fix stages 0-5
+Last reviewed: full project audit 2026-11 (see audit/AUDIT_2026-11.md).
+Audit fix plan executed 2026-11: stages 0-5 merged into `develop` via
+`docs/audit-2026-11`, `fix/audit-s0`, `perf/audit-s1`, `fix/audit-s2`,
+`sec/audit-s3`, `ci/audit-s4`, `refactor/audit-s5` (all --no-ff). 29 audit
+findings closed (TD-AUD-S0-*..TD-AUD-S5-*); remaining open items below.
 
 ## Open
 
@@ -189,3 +193,23 @@ before this can be called finished).
 ## Remaining known items (post stage-2)
 
 - JSON event journal rewrites the whole daily file per event (O(n^2) on heavy days) - switch to NDJSON append with readers support (deferred; needs a coordinated reader update).
+
+## Known environment-dependent test failures (Windows dev host, pre-existing)
+
+Verified failing on the clean baseline before the audit fixes; not regressions:
+- `tests/unit/core/test_process_control.py` (3) - POSIX process groups unavailable
+- `tests/unit/capture/test_gstreamer_release_lifecycle.py`, `test_recording_queue_start_not_leaky.py` - GStreamer env assumptions
+- `tests/unit/controller/test_runtime_diagnostics.py::test_runtime_stats_control_command_round_trips_over_control_ipc` - IPC on Windows
+- `tests/integration/visualization/configurer/test_configurer_simple.py` - cross-drive relpath (C:/E:)
+
+## Post-stage-5 notes
+
+- Some test still calls `create_app()`/bootstrap without chdir and can add a
+  `web_auth` section to a real `<cwd>/credentials.json` during full-suite runs;
+  the diagnostics guard test is now isolated via `EVILEYE_SITE_DIR`. Hunting the
+  polluter is a follow-up (small, P3).
+- TD-PS-D7: root causes fixed in stage 1; the A/B re-measurement on the
+  2688x1520 clip (acceptance: tracker >= 92%, tied to TD-PS-D6) still has to run
+  on the GPU host.
+- Docker non-root `USER` deliberately deferred: existing host-mounted data dirs
+  assume root ownership (documented in TD-AUD-S4-3).
