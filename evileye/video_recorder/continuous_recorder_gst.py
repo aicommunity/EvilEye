@@ -415,12 +415,17 @@ class GstContinuousRecorder(VideoRecorderBase):
                         for fp in out_dir.glob(f"*.{self._recording_container}"):
                             if fp in self._recording_checked_files:
                                 continue
-                            check_and_delete_small_files(
+                            deleted = check_and_delete_small_files(
                                 fp,
                                 self._recording_min_file_size_kb,
                                 validate_integrity=validate_integrity,
                                 validation_timeout=validation_timeout,
                             )
+                            if deleted:
+                                self.logger.info(
+                                    "GstContinuousRecorder deleted recording file: %s",
+                                    fp,
+                                )
                             try:
                                 stat = fp.stat()
                                 if (time.time() - stat.st_mtime) >= 60.0:

@@ -79,13 +79,11 @@ class FileValidator:
             if file_size_kb < min_size_kb:
                 return True, f"size < {min_size_kb} KB"
 
-            # An open splitmux part is large and has no moov yet. Deleting it
-            # punches a hole of up to one segment after a restart.
-            if (
-                file_size_kb >= min_size_kb
-                and _SPLITMUX_INDEX.search(file_path.name)
-                and not _file_contains_moov(file_path)
-            ):
+            # splitmuxsink parts (`_*00000.mp4`): never integrity-delete.
+            # Open fragments have no playable index yet; substring "moov" inside
+            # mdat is a false positive that previously made OpenCV mark them
+            # corrupt and unlink hundreds of MB mid-write (archive holes).
+            if _SPLITMUX_INDEX.search(file_path.name):
                 return False, None
 
             if validate_integrity and file_age >= min_age_seconds:
@@ -98,6 +96,7 @@ class FileValidator:
 
 
 def _file_contains_moov(file_path: Path) -> bool:
+    """Return True only when an ISO BMFF ``moov`` box header is present."""
     try:
         size = file_path.stat().st_size
     except OSError:
@@ -106,12 +105,35 @@ def _file_contains_moov(file_path: Path) -> bool:
         return False
     try:
         with file_path.open("rb") as handle:
-            if b"moov" in handle.read(min(size, 4 * 1024 * 1024)):
+            # Fast-start: moov near the beginning. Finalized splitmux: moov near EOF.
+            if _scan_region_for_moov_box(handle, 0, min(size, 4 * 1024 * 1024)):
                 return True
-            tail = min(size, 512 * 1024)
-            if size > tail:
-                handle.seek(size - tail)
-                return b"moov" in handle.read(tail)
+            tail = min(size, 1024 * 1024)
+            if size > tail and _scan_region_for_moov_box(handle, size - tail, tail):
+                return True
     except OSError:
         return False
     return False
+
+
+def _scan_region_for_moov_box(handle, start: int, length: int) -> bool:
+    """Look for a plausible ``moov`` box type field, not a raw ``b'moov'`` substring."""
+    if length < 8:
+        return False
+    handle.seek(start)
+    data = handle.read(length)
+    needle = b"moov"
+    idx = 0
+    while True:
+        found = data.find(needle, idx)
+        if found < 0:
+            return False
+        # ISO box type sits at offset +4 from the size field.
+        type_at = found
+        size_at = type_at - 4
+        if size_at >= 0:
+            box_size = int.from_bytes(data[size_at:size_at + 4], "big")
+            # Reject accidental media bytes: real moov boxes are reasonably sized.
+            if 8 <= box_size <= max(length - size_at, 8) or box_size == 1:
+                return True
+        idx = found + 1

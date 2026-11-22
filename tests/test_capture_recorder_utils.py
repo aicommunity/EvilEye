@@ -76,6 +76,28 @@ def test_large_unfinalized_splitmux_fragment_is_kept(tmp_path: Path):
     assert reason is None
 
 
+def test_splitmux_with_accidental_moov_bytes_is_kept(tmp_path: Path, monkeypatch):
+    """Regression: substring 'moov' in mdat made OpenCV integrity delete live parts."""
+    fragment = tmp_path / "Cam4_20261123_000150_0_00000.mp4"
+    # Payload contains the letters moov but not as an ISO box type at +4.
+    fragment.write_bytes(b"\x00\x00\x00\x18ftypmp42" + b"\x00" * 8 + b"XXXX" + b"moov" + b"YYYY" + b"\x00" * (64 * 1024))
+    old = time.time() - 120
+    os.utime(fragment, (old, old))
+    monkeypatch.setattr(
+        FileValidator,
+        "is_file_valid",
+        staticmethod(lambda *_a, **_k: False),
+    )
+    should_delete, reason = FileValidator.should_delete_file(
+        fragment,
+        min_size_kb=1,
+        min_age_seconds=30,
+        validate_integrity=True,
+    )
+    assert should_delete is False
+    assert reason is None
+
+
 def test_file_validator_delete_small_file(tmp_path: Path):
     small_file = tmp_path / "small.mp4"
     small_file.write_bytes(b"0" * 512)  # 0.5 KB

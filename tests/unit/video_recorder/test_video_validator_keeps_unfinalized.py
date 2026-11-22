@@ -14,8 +14,8 @@ def test_video_validator_keeps_large_unfinalized_splitmux(tmp_path: Path, monkey
     day = tmp_path / "2026-11-22" / "Cam4-Cam5"
     day.mkdir(parents=True)
     fragment = day / "Cam4_20261122_230557_0_00000.mp4"
-    # Large enough to pass min_size, but no moov atom (open splitmux part).
-    fragment.write_bytes(b"\x00" * (64 * 1024))
+    # Large enough to pass min_size; includes accidental moov bytes in payload.
+    fragment.write_bytes(b"XXXX" + b"moov" + b"YYYY" + b"\x00" * (64 * 1024))
     old = time.time() - 600
     os.utime(fragment, (old, old))
 
