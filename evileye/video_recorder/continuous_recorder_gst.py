@@ -4,6 +4,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Optional
 import datetime as _dt
+import os
 import threading
 import time
 import atexit
@@ -528,7 +529,11 @@ class GstContinuousRecorder(VideoRecorderBase):
                 self.logger.warning("Could not send EOS to recording branch: %s", exc)
 
         if eos_sent:
-            deadline = time.monotonic() + 5.0
+            try:
+                finalize_sec = float(os.environ.get("EVILEYE_RECORDING_FINALIZE_SEC", "20"))
+            except ValueError:
+                finalize_sec = 20.0
+            deadline = time.monotonic() + max(5.0, finalize_sec)
             last_signature = None
             stable_since = None
             while time.monotonic() < deadline:

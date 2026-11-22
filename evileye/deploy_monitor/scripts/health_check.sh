@@ -23,6 +23,27 @@ REASONS=()
 INCIDENT=false
 DO_RESTART=false
 
+# One camera's source_down must not stop recording on the others.
+# Restart only when every capture is down, or today's Streams have stopped growing.
+capture_health_requires_pipeline_restart() {
+    python3 -c '
+import sys
+from evileye.core.runtime_identity import capture_outage_restarts_pipeline
+raise SystemExit(0 if capture_outage_restarts_pipeline([sys.argv[1]]) else 1)
+' "$1"
+}
+
+streams_recently_grew() {
+    local data_root today mt now limit
+    data_root="$(resolve_data_root | head -1 | tr -d '\r')"
+    [[ -n "$data_root" && -d "$data_root/Streams" ]] || return 1
+    today="$(date +%F)"
+    mt="$(newest_mtime_under "$data_root/Streams/$today")"
+    now="$(date +%s)"
+    limit="${STREAMS_GROWTH_SEC:-180}"
+    (( mt > 0 && now - mt <= limit ))
+}
+
 scan_log_tail() {
     local log_file="$1"
     local lines=300
@@ -164,20 +185,27 @@ if [[ -n "$CHILD_PID" ]]; then
     EVENT_HEALTH_REASON=""
     if ! EVENT_HEALTH_REASON="$(python3 -m evileye.deploy_monitor.event_health "$DEPLOY_DIR" "$CHILD_PID")"; then
         INCIDENT=true
-        DO_RESTART=true
         STATUS="incident"
         REASONS+=("${EVENT_HEALTH_REASON:-event_health_check_failed}")
+        if capture_health_requires_pipeline_restart "$EVENT_HEALTH_REASON"; then
+            DO_RESTART=true
+        elif ! streams_recently_grew; then
+            DO_RESTART=true
+            REASONS+=("streams_stale_during_source_down")
+            log_msg "Restarting: capture outage and Streams are not growing: $EVENT_HEALTH_REASON"
+        else
+            log_msg "Capture outage left to GStreamer reconnect (Streams still growing): $EVENT_HEALTH_REASON"
+        fi
     fi
 fi
 
-# After child-healthy override: recording can stay up while detection journal freezes.
+# A stale detection journal must not stop a recorder that is still writing.
 DETECTION_STALE_REASON=""
 if DETECTION_STALE_REASON="$(check_detection_journal_stale)"; then
     INCIDENT=true
-    DO_RESTART=true
     STATUS="incident"
-    REASONS=("$DETECTION_STALE_REASON")
-    log_msg "Detection journal stale while Streams fresh: $DETECTION_STALE_REASON"
+    REASONS+=("$DETECTION_STALE_REASON")
+    log_msg "Detection journal stale while Streams fresh (recording left running): $DETECTION_STALE_REASON"
 fi
 
 # Memory telemetry + high-water (before journal entry so reason is recorded).
