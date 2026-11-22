@@ -383,3 +383,36 @@ class TestEventIdSequence:
         setvals = [item for item in executed if isinstance(item[0], str) and "setval" in item[0]]
         assert len(setvals) == 1
         assert setvals[0][1] == (7, True)
+
+
+class TestFinishJob:
+    def test_finish_job_writes_finish_time(self):
+        from evileye.database_controller.database_controller_pg import DatabaseControllerPg
+
+        controller = object.__new__(DatabaseControllerPg)
+        controller.conn_pool = object()
+        controller._job_created = True
+        controller._job_id = 77
+        controller.logger = __import__("logging").getLogger("test-finish-job")
+        executed = []
+
+        def query_checked(q, data=None):
+            executed.append((q, data))
+            return [(1,)]
+
+        controller.query_checked = query_checked
+        assert controller.finish_job(terminated=True) is True
+        query, data = executed[0]
+        text = query.as_string(None) if hasattr(query, "as_string") else str(query)
+        assert "finish_time" in text and "is_terminated" in text and "job_id" in text
+        assert data[1] is True and data[2] == 77
+
+    def test_finish_job_noop_without_job(self):
+        from evileye.database_controller.database_controller_pg import DatabaseControllerPg
+
+        controller = object.__new__(DatabaseControllerPg)
+        controller.conn_pool = object()
+        controller._job_created = False
+        controller._job_id = None
+        controller.logger = __import__("logging").getLogger("test-finish-job")
+        assert controller.finish_job() is False

@@ -266,11 +266,17 @@ class DatabaseControllerPg(DatabaseControllerBase):
         return self.conn_pool is not None
 
     def query_impl(self, query_string, data=None):
+        """Legacy tolerant entry: returns None on failure (NOT the same as empty).
+
+        Prefer ``query_checked`` (raises) in new code. Failure is logged at
+        error level so a swallowed query cannot pass unnoticed (TD-AUD-D7).
+        """
         try:
             return self.query_checked(query_string, data)
         except Exception as error:
-            self.logger.warning(
-                f'Transaction ({query_string}) failed: {error}'
+            self.logger.error(
+                f'Transaction ({query_string}) failed: {error}',
+                exc_info=True,
             )
             return None
 
@@ -546,6 +552,29 @@ class DatabaseControllerPg(DatabaseControllerBase):
         query = sql.SQL('INSERT INTO projects (creation_time) VALUES (%s) RETURNING project_id')
         project_id = self.query(query, (cur_time,))[0][0]
         return project_id
+
+    def finish_job(self, terminated: bool = False) -> bool:
+        """TD-AUD-JOBS: write jobs.finish_time/is_terminated when a job ends.
+
+        Without this every job stayed open forever and the completed/error job
+        counters in project statistics were always zero.
+        """
+        if self.conn_pool is None or not self._job_created or not self._job_id:
+            return False
+        import datetime
+
+        update = sql.SQL(
+            'UPDATE jobs SET finish_time = %s, is_terminated = %s,'
+            ' last_record = GREATEST(COALESCE((SELECT max(record_id) FROM objects), first_record - 1), first_record - 1)'
+            ' WHERE job_id = %s'
+        )
+        try:
+            rows = self.query_checked(update, (datetime.datetime.now(), bool(terminated), self._job_id))
+            self.logger.info("Job %s finished (terminated=%s)", self._job_id, bool(terminated))
+            return True
+        except Exception as exc:
+            self.logger.error("Failed to finish job %s: %s", self._job_id, exc)
+            return False
 
     def _create_new_job(self, project_id):
         cur_time = datetime.datetime.now()

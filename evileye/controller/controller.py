@@ -1454,6 +1454,14 @@ class Controller(ControllerProcessingMixin):
             self.logger.info("Controller shutdown: stopping database adapters")
             self._database_service.stop_adapters()
             if self.db_controller is not None:
+                # TD-AUD-JOBS: close the job row before disconnecting so
+                # finish_time/is_terminated reflect the real run end.
+                try:
+                    self.db_controller.finish_job(
+                        terminated=bool(getattr(self, "restart_flag", False))
+                    )
+                except Exception as exc:
+                    self.logger.warning("Error finishing job: %s", exc)
                 try:
                     self.db_controller.disconnect()
                 except Exception as exc:
