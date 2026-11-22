@@ -88,6 +88,66 @@ def test_stop_with_pipeline_sends_eos_before_disabling_recording_branch(tmp_path
     assert recorder._refs is None
 
 
+def test_native_teardown_with_recorder_skips_pipeline_null():
+    """Capture teardown must orphan pipelines that own splitmux, not NULL them."""
+    from threading import Event, Lock, RLock
+    from types import SimpleNamespace
+    from unittest.mock import Mock
+
+    from evileye.capture.gstreamer_capture_pipeline import GStreamerCapturePipelineMixin
+    from evileye.capture.gstreamer_capture_frames import GStreamerCaptureFramesMixin
+
+    class _Capture(GStreamerCapturePipelineMixin, GStreamerCaptureFramesMixin):
+        pass
+
+    null_calls = []
+    orphan_calls = []
+
+    capture = _Capture()
+    capture.logger = Mock()
+    capture.source_names = ["Cam4", "Cam5"]
+    capture.pipeline_lock = RLock()
+    capture.frame_lock = Lock()
+    capture.frame_buffer = SimpleNamespace(empty=lambda: True)
+    capture.last_frame = None
+    capture._fps_times = []
+    capture._pipeline_generation = 1
+    capture._pipeline_null_abandoned = False
+    capture._teardown_cancel = Event()
+    capture._gst_continuous_recorder = object()
+    capture._set_gst_state_null_bounded = lambda *a, **k: null_calls.append((a, k)) or True
+    capture._orphan_gst_native = lambda *objs: orphan_calls.extend([o for o in objs if o is not None])
+    capture._flush_recording_queue = Mock()
+    capture._cleanup_recording_branch = Mock()
+    capture._stop_notify_worker = Mock()
+    capture._maybe_schedule_malloc_trim = Mock()
+    capture._generation_is_current = lambda generation: generation == capture._pipeline_generation
+
+    recorder = Mock()
+    pipeline = object()
+    state = {
+        "pipeline": pipeline,
+        "bus": object(),
+        "appsink": object(),
+        "generation": 1,
+        "reason": "release",
+        "recorder": recorder,
+        "loop": None,
+        "main_loop_thread": None,
+        "bus_handler_id": None,
+        "appsink_handler_id": None,
+    }
+
+    capture._native_teardown_body(state, join_main_loop=False)
+
+    recorder.stop_with_pipeline.assert_called_once()
+    kwargs = recorder.stop_with_pipeline.call_args.kwargs
+    assert kwargs.get("finalize") is False
+    assert null_calls == []
+    assert pipeline in orphan_calls
+    assert capture._pipeline_null_abandoned is True
+
+
 def test_stop_with_pipeline_abandon_skips_splitmux_null(tmp_path):
     """Abandon must not set_state(NULL) on splitmux — that truncates open fragments to 0B."""
     operations = []

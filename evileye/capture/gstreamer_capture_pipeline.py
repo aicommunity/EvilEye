@@ -1228,22 +1228,23 @@ class GStreamerCapturePipelineMixin:
         except Exception:
             abandoned = not self._generation_is_current(generation)
 
+        # Capture-pipeline teardowns must not finalize/NULL an open splitmux:
+        # qtmux/mp4mux rewrites incomplete fragments to 0B even when the source
+        # has already gone quiet and finalize looks "stable" before abandon.
+        had_recorder = state.get("recorder") is not None
         try:
             recorder = state.get("recorder")
             if recorder is not None and pipeline is not None:
                 try:
-                    # finalize=False keeps open splitmux bytes: set_state(NULL) on
-                    # an incomplete qtmux/mp4mux fragment truncates the file to 0.
                     recorder.stop_with_pipeline(
                         pipeline=pipeline,
                         Gst=Gst,
-                        finalize=not abandoned,
+                        finalize=False,
                         cancel_event=getattr(self, "_teardown_cancel", None),
                     )
                 except Exception:
                     pass
-            if self._generation_is_current(generation) and not abandoned:
-                self._cleanup_recording_branch(pipeline=pipeline)
+            # Do not run a second finalize via _cleanup_recording_branch here.
         except Exception:
             pass
 
@@ -1285,12 +1286,17 @@ class GStreamerCapturePipelineMixin:
                 pass
 
         if pipeline is not None:
-            # After abandon, skip pipeline NULL: it races the recording branch and
-            # still truncates open fragments held by splitmuxsink.
-            if abandoned or (
-                getattr(self, "_teardown_cancel", None) is not None
-                and self._teardown_cancel.is_set()
-            ):
+            # Pipeline NULL also NULLs splitmuxsink children and truncates open
+            # fragments. When a recorder branch was attached, always orphan.
+            skip_null = bool(
+                had_recorder
+                or abandoned
+                or (
+                    getattr(self, "_teardown_cancel", None) is not None
+                    and self._teardown_cancel.is_set()
+                )
+            )
+            if skip_null:
                 self._orphan_gst_native(
                     pipeline,
                     bus,
@@ -1300,12 +1306,18 @@ class GStreamerCapturePipelineMixin:
                 )
                 try:
                     self.logger.error(
-                        "Skipping pipeline NULL after abandon for %s "
-                        "(reason=%s, generation=%s); orphaning native refs",
+                        "Skipping pipeline NULL to preserve recording for %s "
+                        "(reason=%s, generation=%s, had_recorder=%s, abandoned=%s)",
                         self.source_names,
                         reason,
                         generation,
+                        had_recorder,
+                        abandoned,
                     )
+                except Exception:
+                    pass
+                try:
+                    self._pipeline_null_abandoned = True
                 except Exception:
                     pass
             else:
