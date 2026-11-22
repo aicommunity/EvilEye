@@ -884,11 +884,16 @@ class VideoCaptureBase(EvilEyeBase):
             # A source is not healthy while native teardown is still running or was abandoned mid-NULL.
             working = bool(self.is_working) and teardown_pending_since is None and not pipeline_abandoned
             last_sample = float(getattr(self, "_last_sample_wall_ts", 0.0) or 0.0)
+            # Time spent inside the teardown budget is not an outage. The down
+            # clock starts when that budget is abandoned, not at the first RTSP error.
+            down_since = getattr(self, "_capture_down_since", None)
+            if teardown_pending_since is not None:
+                down_since = None
             return {
                 "working": working,
                 "teardown_pending_since": teardown_pending_since,
                 "last_sample_wall_ts": last_sample or None,
-                "capture_down_since": getattr(self, "_capture_down_since", None),
+                "capture_down_since": down_since,
                 "disconnect_count": self._disconnect_count,
                 "reconnect_count": self._reconnect_count,
                 "backend_connection_generation": (

@@ -265,8 +265,28 @@ class VideoCaptureGStreamer(
 
         # Drop any previous pipeline before building. Native teardown must not run
         # while this thread holds `_release_lock` (a stuck GI call would block every later init).
-        if self.pipeline is not None or self.bus is not None or self.appsink is not None:
+        if self._reconnect_teardown_still_running():
+            self.logger.error(
+                "GStreamer init skipped for %s: previous teardown is still running",
+                self.source_names,
+            )
+            self.is_inited = False
+            self.is_working = False
+            return False
+        if getattr(self, "_pipeline_null_abandoned", False):
+            self.pipeline = None
+            self.bus = None
+            self.appsink = None
+        elif self.pipeline is not None or self.bus is not None or self.appsink is not None:
             self._teardown_pipeline("reinit_before_init", join_main_loop=True)
+            if self._reconnect_teardown_still_running():
+                self.logger.error(
+                    "GStreamer init skipped for %s: reinit teardown is still running",
+                    self.source_names,
+                )
+                self.is_inited = False
+                self.is_working = False
+                return False
         if not self._release_lock.acquire(timeout=2.0):
             self.logger.error(
                 "GStreamer init could not acquire lifecycle lock for %s after 2.0s",

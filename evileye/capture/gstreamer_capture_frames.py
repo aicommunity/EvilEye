@@ -642,6 +642,14 @@ class GStreamerCaptureFramesMixin:
             self._abandon_stalled_teardown()
             release_done.set()
 
+    def _reconnect_teardown_still_running(self) -> bool:
+        """True while a previous release() or teardown worker is still inside set_state(NULL)."""
+        for attr in ("_reconnect_release_thread", "_gst_teardown_thread"):
+            thread = getattr(self, attr, None)
+            if thread is not None and thread.is_alive():
+                return True
+        return False
+
     def _abandon_stalled_teardown(self) -> None:
         """Stop waiting on a hung release() and invalidate the old pipeline generation."""
         try:
@@ -656,6 +664,9 @@ class GStreamerCaptureFramesMixin:
             self._pipeline_generation = int(getattr(self, "_pipeline_generation", 0)) + 1
         except Exception:
             self._pipeline_generation = 1
+        # The outage clock restarts when the old pipeline is abandoned. Counting
+        # the hung NULL toward source_down makes the watchdog kill every camera.
+        self._capture_down_since = time.time()
         try:
             with self.pipeline_lock:
                 orphan = getattr(self, "_orphan_gst_native", None)

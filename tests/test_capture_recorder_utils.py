@@ -1,3 +1,5 @@
+import os
+import time
 from pathlib import Path
 
 import pytest
@@ -57,6 +59,21 @@ def test_path_generator_creates_expected_structure(tmp_path: Path):
     # Filename should contain source name and sequence suffix
     assert "CamX" in path.name
     assert "_1." in path.name
+
+
+def test_large_unfinalized_splitmux_fragment_is_kept(tmp_path: Path):
+    fragment = tmp_path / "Cam1_20261122_205841_0_00001.mp4"
+    fragment.write_bytes(b"\x00" * 4096)
+    old = time.time() - 3600
+    os.utime(fragment, (old, old))
+    should_delete, reason = FileValidator.should_delete_file(
+        fragment,
+        min_size_kb=1,
+        min_age_seconds=0,
+        validate_integrity=True,
+    )
+    assert should_delete is False
+    assert reason is None
 
 
 def test_file_validator_delete_small_file(tmp_path: Path):

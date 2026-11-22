@@ -355,8 +355,22 @@ class GStreamerCapturePipelineMixin:
         pipeline_str = None
         # Tear down outside pipeline_lock. Holding that lock across disconnect/NULL
         # blocks grab's get_state for as long as the native call is stuck.
-        if self.pipeline is not None or self.bus is not None or self.appsink is not None:
+        if self._reconnect_teardown_still_running():
+            self.logger.error(
+                "Skipping pipeline rebuild for %s: previous GStreamer teardown is still running",
+                self.source_names,
+            )
+            raise RuntimeError("GStreamer teardown still running")
+        if getattr(self, "_pipeline_null_abandoned", False):
+            # The previous NULL is orphaned. Drop the Python pointers and build
+            # the next pipeline without another reinit_before_init teardown.
+            self.pipeline = None
+            self.bus = None
+            self.appsink = None
+        elif self.pipeline is not None or self.bus is not None or self.appsink is not None:
             self._teardown_pipeline("reinit_before_init", join_main_loop=True)
+            if self._reconnect_teardown_still_running():
+                raise RuntimeError("GStreamer teardown still running")
         try:
             with self.pipeline_lock:
                 # For IP cameras, try multiple pipeline candidates
@@ -1326,6 +1340,7 @@ class GStreamerCapturePipelineMixin:
             name=f"gst-teardown-{reason}"[:40],
             daemon=True,
         )
+        self._gst_teardown_thread = worker
         worker.start()
         budget = float(getattr(CaptureConstants, "TEARDOWN_BUDGET_SEC", 15.0))
         if done.wait(budget):

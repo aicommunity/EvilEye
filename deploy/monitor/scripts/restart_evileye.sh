@@ -63,7 +63,18 @@ done
 for pid in $(pgrep -f "$CLI_PATTERN" 2>/dev/null || true); do
     kill -TERM "$pid" 2>/dev/null || true
 done
-sleep 5
+# splitmux needs longer than 5s to write moov on the open fragment.
+GRACEFUL_STOP_SEC="${GRACEFUL_STOP_SEC:-25}"
+grace_deadline=$(($(date +%s) + GRACEFUL_STOP_SEC))
+if (( grace_deadline > stop_deadline )); then
+    grace_deadline=$stop_deadline
+fi
+while (( $(date +%s) < grace_deadline )); do
+    if [[ -z "$(find_child_pid)" ]] && ! pgrep -f "$CLI_PATTERN" >/dev/null 2>&1; then
+        break
+    fi
+    sleep 1
+done
 for pid in $(pgrep -f "$CHILD_PATTERN" 2>/dev/null || true); do
     kill -KILL "$pid" 2>/dev/null || true
 done

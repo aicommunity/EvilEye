@@ -2,6 +2,7 @@
 File validation utilities for video recorder module.
 """
 
+import re
 import time
 from pathlib import Path
 from typing import Optional
@@ -9,6 +10,8 @@ from typing import Optional
 import cv2
 
 from evileye.video_recorder.constants import RecorderConstants
+
+_SPLITMUX_INDEX = re.compile(r"_\d{5}\.(mp4|mkv)$", re.IGNORECASE)
 
 
 class FileValidator:
@@ -76,6 +79,15 @@ class FileValidator:
             if file_size_kb < min_size_kb:
                 return True, f"size < {min_size_kb} KB"
 
+            # An open splitmux part is large and has no moov yet. Deleting it
+            # punches a hole of up to one segment after a restart.
+            if (
+                file_size_kb >= min_size_kb
+                and _SPLITMUX_INDEX.search(file_path.name)
+                and not _file_contains_moov(file_path)
+            ):
+                return False, None
+
             if validate_integrity and file_age >= min_age_seconds:
                 if not FileValidator.is_file_valid(file_path, validation_timeout):
                     return True, "corrupted/invalid video file"
@@ -83,3 +95,23 @@ class FileValidator:
             pass
 
         return False, None
+
+
+def _file_contains_moov(file_path: Path) -> bool:
+    try:
+        size = file_path.stat().st_size
+    except OSError:
+        return False
+    if size < 12:
+        return False
+    try:
+        with file_path.open("rb") as handle:
+            if b"moov" in handle.read(min(size, 4 * 1024 * 1024)):
+                return True
+            tail = min(size, 512 * 1024)
+            if size > tail:
+                handle.seek(size - tail)
+                return b"moov" in handle.read(tail)
+    except OSError:
+        return False
+    return False
