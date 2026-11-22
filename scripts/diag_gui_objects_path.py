@@ -14,7 +14,6 @@ os.environ["EVILEYE_PIPELINE_TIMELINE"] = "1"
 
 from evileye.core.logging_config import setup_evileye_logging
 from evileye.core.mp_context import ensure_spawn_start_method
-from evileye.core.frame import Frame
 from evileye.pipelines.pipeline_surveillance import PipelineSurveillance
 from evileye.controller.controller_processing_mixin import ControllerProcessingMixin
 

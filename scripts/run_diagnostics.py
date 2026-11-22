@@ -20,7 +20,7 @@ sys.path.insert(0, str(project_root))
 from evileye.controller.controller import Controller
 from evileye.core.system_diagnostics import SystemDiagnostics
 from evileye.core.memory_monitor import MemoryMonitor
-from evileye.core.logging_config import setup_evileye_logging, get_logger
+from evileye.core.logging_config import setup_evileye_logging
 from evileye.core.logger import get_module_logger
 
 
