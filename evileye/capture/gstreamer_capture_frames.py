@@ -671,6 +671,14 @@ class GStreamerCaptureFramesMixin:
             self._pipeline_null_abandoned = True
         except Exception:
             pass
+        # Cancel in-flight recording finalize/NULL so splitmux cannot truncate
+        # the open fragment after we have already moved on to reconnect.
+        try:
+            cancel = getattr(self, "_teardown_cancel", None)
+            if cancel is not None:
+                cancel.set()
+        except Exception:
+            pass
         try:
             self._pipeline_generation = int(getattr(self, "_pipeline_generation", 0)) + 1
         except Exception:

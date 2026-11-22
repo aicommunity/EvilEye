@@ -88,6 +88,188 @@ def test_stop_with_pipeline_sends_eos_before_disabling_recording_branch(tmp_path
     assert recorder._refs is None
 
 
+def test_stop_with_pipeline_abandon_skips_splitmux_null(tmp_path):
+    """Abandon must not set_state(NULL) on splitmux — that truncates open fragments to 0B."""
+    operations = []
+
+    class FakePad:
+        def push_event(self, event):
+            operations.append(("eos", event))
+            return True
+
+        def send_event(self, event):
+            operations.append(("flush", event))
+
+    class FakeElement:
+        def __init__(self, name, parent):
+            self.name = name
+            self.parent = parent
+
+        def get_static_pad(self, name):
+            return FakePad()
+
+        def set_property(self, *_args):
+            return None
+
+        def set_state(self, state):
+            operations.append(("state", self.name, state))
+
+        def get_parent(self):
+            return self.parent
+
+    class FakePipeline:
+        def remove(self, element):
+            operations.append(("remove", element.name))
+
+    class FakeEvent:
+        @staticmethod
+        def new_eos():
+            return "eos-event"
+
+        @staticmethod
+        def new_flush_start():
+            return "flush-start"
+
+        @staticmethod
+        def new_flush_stop(_):
+            return "flush-stop"
+
+    class FakeState:
+        NULL = "NULL"
+
+    class FakeGst:
+        Event = FakeEvent
+        State = FakeState
+        SECOND = 1
+
+    pipeline = FakePipeline()
+    elements = {
+        name: FakeElement(name, pipeline)
+        for name in (
+            "recording_queue",
+            "videoconvert",
+            "capsfilter",
+            "x264enc",
+            "h264parse",
+            "queue_before_mux",
+            "splitmuxsink",
+        )
+    }
+    recorder = GstContinuousRecorder()
+    recorder.start(
+        SourceMeta("Cam4", None, "test", source_names=["Cam4", "Cam5"]),
+        RecordingParams(
+            enabled=True,
+            continuous_recording_enabled=True,
+            out_dir=str(tmp_path),
+            min_file_size_kb=0,
+        ),
+    )
+    recorder._session_has_buffer = True
+    recorder._refs = GstBranchRefs(**elements)
+
+    recorder.stop_with_pipeline(pipeline=pipeline, Gst=FakeGst, finalize=False)
+
+    assert ("eos", "eos-event") not in operations
+    assert ("state", "splitmuxsink", "NULL") not in operations
+    assert ("state", "videoconvert", "NULL") not in operations
+    assert recorder._refs is None
+
+
+def test_stop_with_pipeline_cancel_during_finalize_skips_null(tmp_path, monkeypatch):
+    import threading
+
+    operations = []
+    cancel = threading.Event()
+
+    class FakePad:
+        def push_event(self, event):
+            operations.append(("eos", event))
+            cancel.set()  # abandon mid-finalize
+            return True
+
+        def send_event(self, event):
+            return None
+
+    class FakeElement:
+        def __init__(self, name, parent):
+            self.name = name
+            self.parent = parent
+
+        def get_static_pad(self, _name):
+            return FakePad()
+
+        def get_property(self, name):
+            assert name == "current-level-buffers"
+            return 1  # keep finalize loop running until cancel is seen
+
+        def set_property(self, *_args):
+            return None
+
+        def set_state(self, state):
+            operations.append(("state", self.name, state))
+
+        def get_parent(self):
+            return self.parent
+
+    class FakePipeline:
+        def remove(self, element):
+            operations.append(("remove", element.name))
+
+    class FakeEvent:
+        @staticmethod
+        def new_eos():
+            return "eos-event"
+
+        @staticmethod
+        def new_flush_start():
+            return "flush-start"
+
+        @staticmethod
+        def new_flush_stop(_):
+            return "flush-stop"
+
+    class FakeState:
+        NULL = "NULL"
+
+    class FakeGst:
+        Event = FakeEvent
+        State = FakeState
+        SECOND = 1
+
+    pipeline = FakePipeline()
+    elements = {
+        name: FakeElement(name, pipeline)
+        for name in (
+            "recording_queue",
+            "videoconvert",
+            "capsfilter",
+            "x264enc",
+            "h264parse",
+            "queue_before_mux",
+            "splitmuxsink",
+        )
+    }
+    recorder = GstContinuousRecorder()
+    recorder.start(
+        SourceMeta("Cam4", None, "test", source_names=["Cam4"]),
+        RecordingParams(enabled=True, continuous_recording_enabled=True, out_dir=str(tmp_path)),
+    )
+    recorder._session_has_buffer = True
+    recorder._recording_out_dirs = {tmp_path}
+    recorder._recording_container = "mp4"
+    recorder._refs = GstBranchRefs(**elements)
+    monkeypatch.setenv("EVILEYE_RECORDING_FINALIZE_SEC", "2")
+
+    recorder.stop_with_pipeline(
+        pipeline=pipeline, Gst=FakeGst, finalize=True, cancel_event=cancel
+    )
+
+    assert ("eos", "eos-event") in operations
+    assert ("state", "splitmuxsink", "NULL") not in operations
+    assert recorder._refs is None
+
+
 def test_stop_without_any_muxed_buffer_skips_blocking_eos(tmp_path):
     operations = []
 

@@ -87,6 +87,10 @@ class VideoCaptureGStreamer(
         self._init_singleflight = threading.Lock()
         self._pipeline_generation = 0
         self._pipeline_null_abandoned = False
+        # Set when a teardown budget is exceeded / reconnect abandons. In-flight
+        # recorder.stop_with_pipeline must skip splitmux NULL to avoid truncating
+        # the open fragment to 0 bytes.
+        self._teardown_cancel = threading.Event()
         self._capture_down_since = None
         self._reconnect_init_thread = None
         self.gstreamer_available = GSTREAMER_AVAILABLE
@@ -330,6 +334,12 @@ class VideoCaptureGStreamer(
             # still take the orphan path instead of tearing down the new pipeline.
             if ok:
                 self._pipeline_null_abandoned = False
+                try:
+                    cancel = getattr(self, "_teardown_cancel", None)
+                    if cancel is not None:
+                        cancel.clear()
+                except Exception:
+                    pass
             return ok
         finally:
             if init_gate is not None:

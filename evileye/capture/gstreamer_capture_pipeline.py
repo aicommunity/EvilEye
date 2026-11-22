@@ -1219,14 +1219,30 @@ class GStreamerCapturePipelineMixin:
         except Exception:
             pass
 
+        abandoned = False
+        try:
+            cancel = getattr(self, "_teardown_cancel", None)
+            abandoned = bool(cancel is not None and cancel.is_set()) or (
+                not self._generation_is_current(generation)
+            )
+        except Exception:
+            abandoned = not self._generation_is_current(generation)
+
         try:
             recorder = state.get("recorder")
             if recorder is not None and pipeline is not None:
                 try:
-                    recorder.stop_with_pipeline(pipeline=pipeline, Gst=Gst)
+                    # finalize=False keeps open splitmux bytes: set_state(NULL) on
+                    # an incomplete qtmux/mp4mux fragment truncates the file to 0.
+                    recorder.stop_with_pipeline(
+                        pipeline=pipeline,
+                        Gst=Gst,
+                        finalize=not abandoned,
+                        cancel_event=getattr(self, "_teardown_cancel", None),
+                    )
                 except Exception:
                     pass
-            if self._generation_is_current(generation):
+            if self._generation_is_current(generation) and not abandoned:
                 self._cleanup_recording_branch(pipeline=pipeline)
         except Exception:
             pass
@@ -1269,14 +1285,12 @@ class GStreamerCapturePipelineMixin:
                 pass
 
         if pipeline is not None:
-            null_ok = self._set_gst_state_null_bounded(
-                pipeline,
-                timeout_sec=CaptureConstants.TEARDOWN_NULL_TIMEOUT_SEC,
-                label=f"pipeline:{self.source_names}:gen={generation}",
-                generation=generation,
-            )
-            if not null_ok:
-                # Do not let Python drop the last refs to a non-NULL pipeline.
+            # After abandon, skip pipeline NULL: it races the recording branch and
+            # still truncates open fragments held by splitmuxsink.
+            if abandoned or (
+                getattr(self, "_teardown_cancel", None) is not None
+                and self._teardown_cancel.is_set()
+            ):
                 self._orphan_gst_native(
                     pipeline,
                     bus,
@@ -1286,13 +1300,39 @@ class GStreamerCapturePipelineMixin:
                 )
                 try:
                     self.logger.error(
-                        "Abandoned GStreamer pipeline for %s after NULL timeout (reason=%s, generation=%s)",
+                        "Skipping pipeline NULL after abandon for %s "
+                        "(reason=%s, generation=%s); orphaning native refs",
                         self.source_names,
                         reason,
                         generation,
                     )
                 except Exception:
                     pass
+            else:
+                null_ok = self._set_gst_state_null_bounded(
+                    pipeline,
+                    timeout_sec=CaptureConstants.TEARDOWN_NULL_TIMEOUT_SEC,
+                    label=f"pipeline:{self.source_names}:gen={generation}",
+                    generation=generation,
+                )
+                if not null_ok:
+                    # Do not let Python drop the last refs to a non-NULL pipeline.
+                    self._orphan_gst_native(
+                        pipeline,
+                        bus,
+                        appsink,
+                        state.get("loop"),
+                        state.get("recorder"),
+                    )
+                    try:
+                        self.logger.error(
+                            "Abandoned GStreamer pipeline for %s after NULL timeout (reason=%s, generation=%s)",
+                            self.source_names,
+                            reason,
+                            generation,
+                        )
+                    except Exception:
+                        pass
         try:
             if self._generation_is_current(generation):
                 self._maybe_schedule_malloc_trim(reason=reason)
@@ -1355,6 +1395,13 @@ class GStreamerCapturePipelineMixin:
                 reason,
                 state.get("generation"),
             )
+        except Exception:
+            pass
+        # Signal in-flight stop_with_pipeline to skip splitmux NULL (preserves bytes).
+        try:
+            cancel = getattr(self, "_teardown_cancel", None)
+            if cancel is not None:
+                cancel.set()
         except Exception:
             pass
         # Worker is still running (or about to drop locals). Pin native objects now

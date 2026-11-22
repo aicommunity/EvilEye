@@ -470,7 +470,39 @@ class GstContinuousRecorder(VideoRecorderBase):
         # splitmuxsink rotates based on max-size-time.
         return
 
-    def stop_with_pipeline(self, *, pipeline, Gst) -> None:
+    def _orphan_recording_branch_refs(self, refs: GstBranchRefs) -> None:
+        """Pin recording elements without set_state(NULL) so open fragments stay intact."""
+        try:
+            from evileye.capture.gstreamer_capture_pipeline import GStreamerCapturePipelineMixin
+
+            orphan = GStreamerCapturePipelineMixin._orphan_gst_native
+        except Exception:
+            orphan = None
+        for elem in (
+            refs.videoconvert,
+            refs.capsfilter,
+            refs.x264enc,
+            refs.h264parse,
+            refs.queue_before_mux,
+            refs.splitmuxsink,
+            refs.recording_queue,
+        ):
+            if elem is None:
+                continue
+            if callable(orphan):
+                try:
+                    orphan(elem)
+                except Exception:
+                    pass
+
+    def stop_with_pipeline(
+        self,
+        *,
+        pipeline,
+        Gst,
+        finalize: bool = True,
+        cancel_event: Optional[threading.Event] = None,
+    ) -> None:
         with self._lock:
             self._check_stop.set()
             self.is_running = False
@@ -484,6 +516,7 @@ class GstContinuousRecorder(VideoRecorderBase):
             container = self._recording_container
             self._recording_out_dir = None
             self._recording_out_dirs = set()
+            self._active_splitmux_prefix = None
             self._session_date_str = None
             self._session_stem = None
             self._session_start_ts = None
@@ -499,6 +532,9 @@ class GstContinuousRecorder(VideoRecorderBase):
 
         if not refs:
             return
+
+        def _cancelled() -> bool:
+            return bool(cancel_event is not None and cancel_event.is_set())
 
         def _set_null_bounded(elem, *, timeout_sec: float = 1.0) -> None:
             if elem is None:
@@ -524,6 +560,18 @@ class GstContinuousRecorder(VideoRecorderBase):
                     self.source.source_name if self.source else "source",
                 )
 
+        # Abandon / cancel: never EOS+NULL the muxer. Incomplete qtmux/mp4mux
+        # finalize via set_state(NULL) rewrites the open fragment to 0 bytes.
+        if (not finalize) or _cancelled():
+            self.logger.warning(
+                "Preserving open splitmux fragment for %s (finalize=%s, cancelled=%s); orphaning muxer",
+                self.source.source_name if self.source else "source",
+                finalize,
+                _cancelled(),
+            )
+            self._orphan_recording_branch_refs(refs)
+            return
+
         # Unblock a full recording queue so muxer teardown cannot hang forever.
         try:
             recording_queue = refs.recording_queue
@@ -544,6 +592,14 @@ class GstContinuousRecorder(VideoRecorderBase):
         except Exception:
             pass
 
+        if _cancelled():
+            self.logger.warning(
+                "Recording finalize cancelled before EOS for %s; orphaning muxer",
+                self.source.source_name if self.source else "source",
+            )
+            self._orphan_recording_branch_refs(refs)
+            return
+
         # An attached but never-started branch may be blocked in preroll. No
         # segment exists to finalize until the first muxed buffer has arrived.
         eos_sent = False
@@ -563,6 +619,13 @@ class GstContinuousRecorder(VideoRecorderBase):
             last_signature = None
             stable_since = None
             while time.monotonic() < deadline:
+                if _cancelled():
+                    self.logger.warning(
+                        "Recording finalize cancelled for %s; orphaning muxer to preserve fragment",
+                        self.source.source_name if self.source else "source",
+                    )
+                    self._orphan_recording_branch_refs(refs)
+                    return
                 try:
                     queue_level = refs.queue_before_mux.get_property("current-level-buffers")
                 except Exception:
@@ -603,11 +666,24 @@ class GstContinuousRecorder(VideoRecorderBase):
                     "Timed out waiting for recording branch to finalize for %s",
                     self.source.source_name if self.source else "source",
                 )
+                # Incomplete finalize + NULL truncates the open fragment to 0B.
+                # On abandon/cancel preserve bytes; clean shutdown still tries NULL.
+                if _cancelled():
+                    self.logger.warning(
+                        "Skipping splitmux NULL after cancelled finalize for %s",
+                        self.source.source_name if self.source else "source",
+                    )
+                    self._orphan_recording_branch_refs(refs)
+                    return
         elif had_media:
             self.logger.warning(
                 "Recording branch rejected EOS during shutdown for %s",
                 self.source.source_name if self.source else "source",
             )
+
+        if _cancelled():
+            self._orphan_recording_branch_refs(refs)
+            return
 
         for elem in [
             refs.videoconvert,
@@ -618,6 +694,9 @@ class GstContinuousRecorder(VideoRecorderBase):
             refs.splitmuxsink,
             refs.recording_queue,
         ]:
+            if _cancelled():
+                self._orphan_recording_branch_refs(refs)
+                return
             _set_null_bounded(elem, timeout_sec=1.0)
             try:
                 if pipeline and elem is not None and elem.get_parent() == pipeline:

@@ -31,8 +31,8 @@ class _Recorder:
             raise self.setup_error
         self._refs = object()
 
-    def stop_with_pipeline(self, *, pipeline, Gst):
-        self.stopped = (pipeline, Gst)
+    def stop_with_pipeline(self, *, pipeline, Gst, finalize=True, cancel_event=None):
+        self.stopped = (pipeline, Gst, finalize, cancel_event)
         self._refs = None
 
 
