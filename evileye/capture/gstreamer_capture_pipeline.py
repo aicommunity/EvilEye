@@ -1366,3 +1366,10 @@ class GStreamerCapturePipelineMixin:
         )
         if self._generation_is_current(state.get("generation", 0)):
             self._pipeline_null_abandoned = True
+        # Forget the hung worker so init/rebuild can proceed with orphaned refs.
+        # Leaving `_gst_teardown_thread` alive forever blocked Cam4/Cam5 reconnect.
+        detach = getattr(self, "_detach_abandoned_teardown_workers", None)
+        if callable(detach):
+            detach()
+        else:
+            self._gst_teardown_thread = None

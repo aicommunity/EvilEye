@@ -223,7 +223,19 @@ def test_reconnect_abandons_stalled_release_and_bumps_generation():
     capture._reconnect_release_started_at = time.time()
     capture._last_sample_wall_ts = 1.0
     capture._record_disconnect = Mock()
+    hung = Event()
 
+    def _hang():
+        hung.wait(5.0)
+
+    hung_release = Thread(target=_hang, daemon=True)
+    hung_teardown = Thread(target=_hang, daemon=True)
+    hung_release.start()
+    hung_teardown.start()
+    capture._reconnect_release_thread = hung_release
+    capture._gst_teardown_thread = hung_teardown
+
+    assert capture._reconnect_teardown_still_running() is True
     capture._abandon_stalled_teardown()
 
     assert capture._reconnect_release_started_at is None
@@ -232,10 +244,85 @@ def test_reconnect_abandons_stalled_release_and_bumps_generation():
     assert capture.pipeline is None
     assert capture.appsink is None
     assert capture.is_working is False
+    assert capture._reconnect_release_thread is None
+    assert capture._gst_teardown_thread is None
+    # Hung workers may still be alive, but abandon must unblock init/rebuild.
+    assert capture._reconnect_teardown_still_running() is False
     assert pipeline in gst_pipeline._ORPHANED_GST_NATIVE
     assert bus in gst_pipeline._ORPHANED_GST_NATIVE
     assert appsink in gst_pipeline._ORPHANED_GST_NATIVE
     capture._record_disconnect.assert_not_called()
+    hung.set()
+    hung_release.join(timeout=1.0)
+    hung_teardown.join(timeout=1.0)
+
+
+def test_abandoned_teardown_does_not_block_init_gate():
+    """Regression: Cam4/Cam5 stayed dark because init() saw a forever-hung teardown thread."""
+
+    class _Frames(GStreamerCaptureFramesMixin):
+        pass
+
+    capture = _Frames()
+    capture._pipeline_null_abandoned = False
+    capture._reconnect_release_thread = SimpleNamespace(is_alive=lambda: True)
+    capture._gst_teardown_thread = SimpleNamespace(is_alive=lambda: True)
+    assert capture._reconnect_teardown_still_running() is True
+
+    capture._pipeline_null_abandoned = True
+    assert capture._reconnect_teardown_still_running() is False
+
+    capture._detach_abandoned_teardown_workers()
+    assert capture._reconnect_release_thread is None
+    assert capture._gst_teardown_thread is None
+    capture._pipeline_null_abandoned = False
+    assert capture._reconnect_teardown_still_running() is False
+
+
+def test_teardown_budget_exceeded_detaches_worker_for_rebuild():
+    class _Pipeline(GStreamerCapturePipelineMixin, GStreamerCaptureFramesMixin):
+        pass
+
+    capture = _Pipeline()
+    capture.logger = Mock()
+    capture.source_names = ["Cam4", "Cam5"]
+    capture.gstreamer_available = True
+    capture.pipeline_lock = RLock()
+    capture.frame_lock = Lock()
+    capture._pipeline_generation = 1
+    capture._pipeline_null_abandoned = False
+    capture._generation_is_current = lambda generation: generation == capture._pipeline_generation
+    capture._orphan_gst_native = Mock()
+    capture._detach_pipeline_state = Mock(
+        return_value={
+            "pipeline": object(),
+            "bus": object(),
+            "appsink": object(),
+            "generation": 1,
+            "reason": "release",
+            "loop": None,
+            "recorder": None,
+            "bus_handler_id": None,
+            "appsink_handler_id": None,
+            "main_loop_thread": None,
+        }
+    )
+
+    def _slow_body(*_args, **_kwargs):
+        time.sleep(0.4)
+
+    capture._native_teardown_body = _slow_body
+    original_budget = CaptureConstants.TEARDOWN_BUDGET_SEC
+    CaptureConstants.TEARDOWN_BUDGET_SEC = 0.05
+    try:
+        capture._teardown_pipeline("release", join_main_loop=True)
+    finally:
+        CaptureConstants.TEARDOWN_BUDGET_SEC = original_budget
+
+    assert capture._pipeline_null_abandoned is True
+    assert capture._gst_teardown_thread is None
+    assert capture._reconnect_teardown_still_running() is False
+    capture._orphan_gst_native.assert_called()
 
 
 def test_capture_health_is_not_working_while_teardown_pending():

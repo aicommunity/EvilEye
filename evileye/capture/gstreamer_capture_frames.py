@@ -643,12 +643,23 @@ class GStreamerCaptureFramesMixin:
             release_done.set()
 
     def _reconnect_teardown_still_running(self) -> bool:
-        """True while a previous release() or teardown worker is still inside set_state(NULL)."""
+        """True while a previous release()/teardown worker is still inside set_state(NULL).
+
+        After abandon the hung worker may still be alive, but its native objects are
+        orphaned and init must be allowed to build a new pipeline.
+        """
+        if getattr(self, "_pipeline_null_abandoned", False):
+            return False
         for attr in ("_reconnect_release_thread", "_gst_teardown_thread"):
             thread = getattr(self, attr, None)
             if thread is not None and thread.is_alive():
                 return True
         return False
+
+    def _detach_abandoned_teardown_workers(self) -> None:
+        """Forget hung teardown workers after abandon; Gst refs stay orphaned."""
+        self._reconnect_release_thread = None
+        self._gst_teardown_thread = None
 
     def _abandon_stalled_teardown(self) -> None:
         """Stop waiting on a hung release() and invalidate the old pipeline generation."""
@@ -681,6 +692,12 @@ class GStreamerCaptureFramesMixin:
         except Exception:
             self.is_inited = False
             self.is_working = False
+        # Drop thread attrs so later init() is not blocked by a forever-hung NULL.
+        try:
+            self._detach_abandoned_teardown_workers()
+        except Exception:
+            self._reconnect_release_thread = None
+            self._gst_teardown_thread = None
 
     def _on_new_sample(self, appsink: Any) -> Any:
         """
