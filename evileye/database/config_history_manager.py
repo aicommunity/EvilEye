@@ -140,8 +140,9 @@ class ConfigHistoryManager:
         except RuntimeError:
             raise
         except Exception as e:
-            self.logger.error(f"Error retrieving config history: {e}")
-            return []
+            self.logger.error(f"Error retrieving records: {e}")
+            # TD-AUD-D7: a failure must not masquerade as an empty list.
+            raise RuntimeError("config history query failed") from e
 
     def get_unique_configurations(self, limit: int = 50) -> List[Dict[str, Any]]:
         """
@@ -205,8 +206,9 @@ class ConfigHistoryManager:
         except RuntimeError:
             raise
         except Exception as e:
-            self.logger.error(f"Error retrieving unique configurations: {e}")
-            return []
+            self.logger.error(f"Error retrieving records: {e}")
+            # TD-AUD-D7: a failure must not masquerade as an empty list.
+            raise RuntimeError("config history query failed") from e
 
     def get_config_by_job_id(self, job_id: int) -> Optional[Dict[str, Any]]:
         """
@@ -549,7 +551,8 @@ class ConfigHistoryManager:
             raise
         except Exception as e:
             self.logger.error(f"Error getting projects list: {e}")
-            return []
+            # TD-AUD-D7: a failure must not masquerade as an empty list.
+            raise RuntimeError("projects list query failed") from e
 
     def create_project(self, project_name: str, project_description: str = "") -> Dict[str, Any]:
         """

@@ -1454,6 +1454,14 @@ class Controller(ControllerProcessingMixin):
             self.logger.info("Controller shutdown: stopping database adapters")
             self._database_service.stop_adapters()
             if self.db_controller is not None:
+                # TD-AUD-JOBS: close the job row before disconnecting so
+                # finish_time/is_terminated reflect the real run end.
+                try:
+                    self.db_controller.finish_job(
+                        terminated=bool(getattr(self, "restart_flag", False))
+                    )
+                except Exception as exc:
+                    self.logger.warning("Error finishing job: %s", exc)
                 try:
                     self.db_controller.disconnect()
                 except Exception as exc:
@@ -2410,6 +2418,24 @@ class Controller(ControllerProcessingMixin):
             return
 
         detectors = self._get_pipeline_detectors()
+
+        # TD-PS-D1: with several detectors (fanout) every detector must expose
+        # its model class mapping. Without it the raw class ids cannot be
+        # remapped into the global class space and events/journals would
+        # silently mix class ids from different models.
+        if len(detectors) > 1:
+            unmapped = [
+                str(getattr(d, "module_id", None) or d.__class__.__name__)
+                for d in detectors
+                if not self._get_detector_class_mapping(d)
+            ]
+            if unmapped:
+                raise RuntimeError(
+                    "Multi-detector configuration rejected: detector(s) "
+                    f"{', '.join(unmapped)} do not provide a model class mapping "
+                    "(model_class_mapping capability / get_model_class_mapping()); "
+                    "their class ids cannot be remapped to the global class space"
+                )
 
         # Collect class mappings from all detectors using ClassManager
         for detector in detectors:

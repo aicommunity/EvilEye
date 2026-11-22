@@ -331,3 +331,88 @@ class TestGetNextEventIdFallback:
         assert "camera_events" in RETENTION_PREDICATES
         assert "cam_events" not in RETENTION_PREDICATES
         assert "alarm_events" in RETENTION_PREDICATES
+
+
+class TestEventIdSequence:
+    def _controller(self, responses):
+        from evileye.database_controller.database_controller_pg import DatabaseControllerPg
+
+        controller = object.__new__(DatabaseControllerPg)
+        controller.conn_pool = object()
+        controller.tables = {"zone_events": {}, "alarm_events": {}}
+        controller.logger = __import__("logging").getLogger("test-seq")
+        calls = []
+
+        def query(q, data=None):
+            calls.append(q if isinstance(q, str) else str(q))
+            return responses.pop(0) if responses else None
+
+        controller.query = query
+        return controller, calls
+
+    def test_nextval_is_preferred(self):
+        controller, calls = self._controller([[(41,)]])
+        assert controller.get_next_event_id(["zone_events"]) == 41
+        assert any("nextval" in c for c in calls)
+
+    def test_falls_back_to_max_when_sequence_missing(self):
+        controller, calls = self._controller([None, [[7], [3]]])
+        # First call (nextval) errors -> per-table MAX path.
+        assert controller.get_next_event_id(["zone_events", "alarm_events"]) == 8
+        assert not any("nextval" in c for c in calls[1:])
+
+    def test_alignment_setval_uses_greatest_max(self):
+        from evileye.database_controller import migrations as migrations_module
+        from evileye.database_controller.database_controller_pg import DatabaseControllerPg
+
+        controller = object.__new__(DatabaseControllerPg)
+        controller.tables = {"zone_events": {}, "alarm_events": {}}
+        controller.logger = __import__("logging").getLogger("test-seq")
+        executed = []
+
+        def query(q, data=None):
+            executed.append((q if isinstance(q, str) else "MAX", data))
+            if isinstance(q, str) and "setval" in q:
+                return [(None,)]
+            if isinstance(q, str) and "nextval" in q:
+                return [(1,)]
+            return [[7]] if len(executed) == 1 else [[3]]
+
+        controller.query = query
+        migrations_module._align_event_id_sequence(controller)
+        setvals = [item for item in executed if isinstance(item[0], str) and "setval" in item[0]]
+        assert len(setvals) == 1
+        assert setvals[0][1] == (7, True)
+
+
+class TestFinishJob:
+    def test_finish_job_writes_finish_time(self):
+        from evileye.database_controller.database_controller_pg import DatabaseControllerPg
+
+        controller = object.__new__(DatabaseControllerPg)
+        controller.conn_pool = object()
+        controller._job_created = True
+        controller._job_id = 77
+        controller.logger = __import__("logging").getLogger("test-finish-job")
+        executed = []
+
+        def query_checked(q, data=None):
+            executed.append((q, data))
+            return [(1,)]
+
+        controller.query_checked = query_checked
+        assert controller.finish_job(terminated=True) is True
+        query, data = executed[0]
+        text = query.as_string(None) if hasattr(query, "as_string") else str(query)
+        assert "finish_time" in text and "is_terminated" in text and "job_id" in text
+        assert data[1] is True and data[2] == 77
+
+    def test_finish_job_noop_without_job(self):
+        from evileye.database_controller.database_controller_pg import DatabaseControllerPg
+
+        controller = object.__new__(DatabaseControllerPg)
+        controller.conn_pool = object()
+        controller._job_created = False
+        controller._job_id = None
+        controller.logger = __import__("logging").getLogger("test-finish-job")
+        assert controller.finish_job() is False

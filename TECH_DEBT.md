@@ -15,23 +15,23 @@ findings closed (TD-AUD-S0-*..TD-AUD-S5-*); remaining open items below.
 | TD-DOC-001 | `DualModeProcessor` adoption by all modules (S1) | core/dual_mode_processor.py | doc audit | Backlog | P3 |
 | TD-DOC-001b | RoiFeeder adopts DualModeProcessor (reference) | attributes_detection/roi_feeder.py | audit 2026-09-26 | Done | P3 |
 | TD-DOC-002 | `validate_config` JSON `stage_kind` (S6) | scripts/validate_config.py | doc audit | Backlog | P3 |
-| TD-PS-D1 | Detector in a multi-detector fanout without `model_class_mapping` is not remapped and does not fail start (B5 follow-up) | pipeline / controller | plugin_support audit | Backlog | P2 |
+| TD-PS-D1 | ~~Detector in a multi-detector fanout without model_class_mapping~~ Closed in backlog fix: update_class_mapping_from_detectors raises when >1 detector and any lacks a mapping | pipeline / controller | audit | Done | P2 |
 | TD-PS-D2 | ~~Shared-memory descriptor is re-allocated per `process` stage~~ Segment pool implemented (stage 1); remaining: change-marker on `Frame.image` to skip re-copy for multi-stage fanout of one frame | core/plugin_runtime | plugin_support audit | Stage 1 (audit fix plan) | P2 |
 | TD-PS-D3 | Legacy MP detector path is still wired in (`DetectionThreadYoloMp`, `object_detection_yolo_mp.py`, `detection_thread_factory.py`, `mp_queue_config.py`, `validate_config.py`, MP tests). `LegacyProcessorModuleAdapter` has no built-in consumer (only `legacy_processor_protocol` in `base_class.py` for third-party plugins and tests): remove it after a deprecation notice in PLUGINS.md | object_detector, core/plugin_runtime/legacy.py | plugin_support audit | After deprecation window | P2 |
 | TD-PS-D4 | Ruff: 805 `F401` left (all non-stdlib: many may register modules or Qt widgets, so they need a manual review per file), 0 `B904`; 43 known `F821` in `scripts/ruff_baseline.json` (optional Qt imports, dialogs). Stdlib `F401` and all `B904` were fixed | repo-wide | plugin_support audit | Gradual | P3 |
 | TD-PS-D5 | Merged remote branches (`autorefactor_*`, `*-hotfix`, `experiments`; 45+ on origin) are not cleaned up | git remote | plugin_support audit | Needs owner decision | P3 |
-| TD-PS-D6 | Open acceptance criteria: target FPS/p95/loss budget (the old-vs-new comparison, browser alarm smoke and RTSP disconnect check were run on 2026-10-19, see docs/RUNTIME_VERIFICATION_2026-10-19.md) | docs/PLUGIN_MIGRATION_COMPLETION_PLAN.md | plugin_support audit | Before release | P1 |
-| TD-PS-D7 | Frame loss vs `main` (82.9% vs 92.5%): all four root causes fixed in stage 1 (crops-only IPC, MpPendingReporter + backlog stats, SHM segment pool, continuous output drainer + queue_size 16 default); A/B re-measurement on the 2688x1520 clip still pending (acceptance criterion: tracker >= 92%, ties into TD-PS-D6) | core/plugin_runtime, core/processor_step | live comparison 2026-10-19 | Verification pending | P1 |
+| TD-PS-D6 | Acceptance budget gated: `make acceptance-gate VIDEO=...` (scripts/tdps7_acceptance_gate.py, default budget TrackersOut/DetectorsIn >= 0.92, logs to docs/TDPS7_ACCEPTANCE_LOG.md). One run on the GPU host remains | docs | audit | Verification run pending | P1 |
+| TD-PS-D7 | Root causes fixed (stage 1) + corrections; acceptance gate prepared with TD-PS-D6. GPU-host measurement remains the closing step | core | audit | Verification run pending | P1 |
 | TD-PS-D8 | ~~Schedule-alarm events carry no frames~~ Fixed in stage 2 (TD-AUD-S2-5) | events_detectors | live alarm check 2026-10-19 | Done | P3 |
 
 
 
-| TD-AUD-011 | GUI journals fetch data with synchronous psycopg2 in a QTimer slot (UI freezes); regression vs legacy QThread loader | visualization_modules/unified_events_journal.py | audit 2026-11 | Stage 5 (audit fix plan) | P2 |
-| TD-AUD-D1 | event_id is still MAX+1 without a sequence or IntegrityError retry. A dead pool now returns None so ids do not restart at 0 | database_controller_pg.py | audit correction | Backlog | P2 |
-| TD-AUD-D7 | query() still returns None on error. ConfigHistoryManager now re-raises that failure instead of an empty list; other callers of query() are unchanged | database_controller_pg.py | audit correction | Backlog | P3 |
-| TD-AUD-T8 | Watchdog matches a config argv element. A PID file was not added | watchdog_native.py | audit correction | Backlog | P2 |
-| TD-AUD-JOBS | jobs.finish_time is not written, so completed/error job counters stay wrong | config_history_manager.py | audit correction | Backlog | P3 |
-| TD-AUD-SQL-ID | JSON adapter table_name is still interpolated as an identifier; whitelist not added | jadapter_base.py | audit correction | Backlog | P3 |
+| TD-AUD-011 | ~~Sync psycopg2 in QTimer slot~~ Closed in backlog fix: JournalFetchThread (QThread) fetches off the UI thread, result applied via signal | visualization_modules/unified_events_journal.py | audit | Done | P2 |
+| TD-AUD-D1 | ~~event_id MAX+1 race~~ Closed in backlog fix: event_id_seq sequence (migration aligns it past MAX; get_next_event_id prefers nextval, MAX+1 fallback kept for pre-migration DBs) | database_controller_pg.py | audit | Done | P2 |
+| TD-AUD-D7 | ~~query() None-on-error~~ Closed in backlog fix: error-level logging + documented contract; ConfigHistoryManager raises instead of [] | database_controller_pg.py | audit | Done | P3 |
+| TD-AUD-T8 | ~~Watchdog PID file~~ Closed in backlog fix: monitor/pids/<config>.json written at spawn (stack_control) + by the child (run_config, atexit cleanup); find_cli_and_child prefers the live record | watchdog_native.py | audit | Done | P2 |
+| TD-AUD-JOBS | ~~jobs.finish_time never written~~ Closed in backlog fix: finish_job() wired into Controller.stop() | config_history_manager.py | audit | Done | P3 |
+| TD-AUD-SQL-ID | ~~JSON adapter table_name identifier~~ Closed in backlog fix: KNOWN_EVENT_TABLES whitelist in JournalAdapterBase.set_params_impl | jadapter_base.py | audit | Done | P3 |
 
 ## In progress
 
@@ -223,3 +223,7 @@ Verified failing on the clean baseline before the audit fixes; not regressions:
   on the GPU host.
 - Docker non-root `USER` deliberately deferred: existing host-mounted data dirs
   assume root ownership (documented in TD-AUD-S4-3).
+
+## Backlog branch fix/audit-backlog (2026-11-22)
+
+Closed TD-PS-D1, TD-AUD-D1, TD-AUD-T8, TD-AUD-011, TD-AUD-D7, TD-AUD-JOBS, TD-AUD-SQL-ID; TD-PS-D6/D7 gate prepared (`make acceptance-gate`). Still open by design: TD-PS-D2 change-marker (needs cross-process handle refcounting - design spike), TD-PS-D3 legacy MP removal (deprecation window), TD-MP-401 (live capture spike), TD-PS-D4/TD-DOC/TD-MP-501 (gradual), TD-PS-D5 (owner decision).

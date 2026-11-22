@@ -588,6 +588,7 @@ def spawn_managed_pipeline(
         if proc.returncode != 0 and not started:
             raise RuntimeError((proc.stderr or proc.stdout or "systemd-run managed spawn failed").strip())
         pid = _poll_cli_or_child_pid(str(config_path), root=root, timeout=8.0)
+        _write_spawn_pid_record(config_path, pid, root=root)
         return SpawnResult(pid=int(pid or 0), mode="managed", config_path=str(config_path))
 
     # Fallback when systemd-run is unavailable: fully detach so the CLI does not
@@ -609,6 +610,18 @@ def spawn_managed_pipeline(
     except Exception:
         pass
     return SpawnResult(pid=pid, mode="managed", config_path=str(config_path))
+
+
+def _write_spawn_pid_record(config_path, cli_pid: int, *, root) -> None:
+    """TD-AUD-T8: persist the spawned CLI pid so the watchdog needs no argv guessing."""
+    try:
+        from evileye.watchdog_native import clear_pid_record, write_pid_record
+
+        clear_pid_record(str(config_path), root=root)  # a fresh spawn replaces any stale record
+        if int(cli_pid or 0) > 0:
+            write_pid_record(str(config_path), cli_pid=int(cli_pid), root=root)
+    except Exception:
+        pass
 
 
 def _pipeline_scope_memory_props() -> list[str]:
@@ -711,6 +724,7 @@ def spawn_direct_pipeline(
         if proc.returncode != 0:
             raise RuntimeError((proc.stderr or proc.stdout or "systemd-run failed").strip())
         pid = _poll_cli_or_child_pid(str(config_path), root=root, timeout=5.0)
+        _write_spawn_pid_record(config_path, pid, root=root)
         return SpawnResult(pid=int(pid or 0), mode="direct-detach", config_path=str(config_path))
 
     log_fh = open(log_path, "a", encoding="utf-8")
@@ -727,6 +741,7 @@ def spawn_direct_pipeline(
         )
     finally:
         log_fh.close()
+    _write_spawn_pid_record(config_path, proc.pid, root=root)
     return SpawnResult(pid=proc.pid, mode="direct-detach", config_path=str(config_path))
 
 

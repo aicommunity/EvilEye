@@ -4,7 +4,7 @@ VERSION ?= $(shell python3 -c "import re; print(re.search(r'^version\s*=\s*\"([^
 EVILEYE_IMAGE_GPU ?= evileye/app
 EVILEYE_IMAGE_CPU ?= evileye/app
 
-.PHONY: install install-dev uninstall clean test test-unit test-integration lint format docs \
+.PHONY: install install-dev uninstall clean test test-unit test-integration lint format docs acceptance-gate \
 	docker-build docker-build-cpu docker-up docker-bootstrap-site docker-push \
 	install-docker-cli uninstall-docker-cli prepare-docker-host
 
@@ -44,6 +44,11 @@ test-integration:
 lint:
 	python scripts/check_undefined_names.py
 	python scripts/check_mypy_ratchet.py
+
+# TD-PS-D6/D7 acceptance gate (GPU/Linux host): frame-delivery budget.
+# make acceptance-gate VIDEO=/path/to/clip.mp4 [MIN_RATIO=0.92] [RUNS=3]
+acceptance-gate:
+	python scripts/tdps7_acceptance_gate.py --video $(VIDEO) 		--min-tracker-ratio $(or $(MIN_RATIO),0.92) --runs $(or $(RUNS),3) 		--report docs/TDPS7_ACCEPTANCE_LOG.md
 
 format:
 	black evileye/ tests/
