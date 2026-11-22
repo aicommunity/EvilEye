@@ -138,13 +138,13 @@ evileye/
 |--------|-------------|--------|
 | Новый detector/tracker того же слота | Plugin package + `module_id`; legacy `@EvilEyeBase.register` и `type` остаются совместимы | [PLUGINS.md](PLUGINS.md) |
 | Новая стадия в графе | `PipelineDeclarative` + `stages[]` **или** форк Surveillance | [examples/custom_pipeline_stage](../examples/custom_pipeline_stage/) |
-| Dual-mode (thread/process) | `DualModeProcessor` + `MpWorker` | [developing_dual_mode_modules.md](developing_dual_mode_modules.md); RoiFeeder adopted |
+| Dual-mode (thread/process) | Plugin runtime for detectors and trackers. `DualModeProcessor` is inherited only by `RoiFeeder` and the example `IdentityPass` | [PLUGINS.md](PLUGINS.md); [developing_dual_mode_modules.md](developing_dual_mode_modules.md) |
 | Event detector / alarm | Plugin package + `AlarmEvent` + `events_detectors.enabled` | [PLUGINS.md](PLUGINS.md) |
 | Custom pipeline | `PipelineSpec` через `evileye.plugins` entry point | [PLUGINS.md](PLUGINS.md) |
 
 **Текущее состояние миграции:** встроенные источники OpenCV/GStreamer используют `SourceModuleAdapter`; YOLO/RT-DETR, BoT-SORT, предобработка и атрибутные компоненты используют общий `processor_item` runtime; `ObjectMultiCameraTracking` использует `batch_processor` и остаётся thread-only. Встроенные модули не используют `LegacyProcessorModuleAdapter`; он сохранён только как явный мост для сторонних реализаций старого `put/get` API. Новые модули подключаются через Plugin SPI из [PLUGINS.md](PLUGINS.md).
 
-**DI / DualMode:** `DIContainer` — roadmap (не product path). `DualModeProcessor` используется внутренними реализациями; публичный путь пользовательских обработчиков — Plugin SPI из [PLUGINS.md](PLUGINS.md).
+**DI / DualMode:** `DIContainer` — roadmap (не product path). `DualModeProcessor` наследуют только `RoiFeeder` и пример `IdentityPass`. Детекторы и трекеры на него не переводятся: их рабочий путь — plugin runtime (`execution_mode: thread | process`). Публичный путь пользовательских обработчиков — Plugin SPI из [PLUGINS.md](PLUGINS.md).
 
 ## Создание новых pipeline
 
