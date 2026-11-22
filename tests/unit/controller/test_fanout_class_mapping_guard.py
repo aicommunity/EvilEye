@@ -58,6 +58,16 @@ def test_fanout_with_all_mappings_is_allowed():
     controller.update_class_mapping_from_detectors()
 
 
+def test_fanout_before_any_mapping_is_published_is_allowed():
+    controller = _controller_with(
+        [
+            _Detector("det-a", None),
+            _Detector("det-b", None),
+        ]
+    )
+    controller.update_class_mapping_from_detectors()
+
+
 def test_fanout_without_mapping_fails_start():
     controller = _controller_with(
         [
