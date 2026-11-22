@@ -216,9 +216,13 @@ Verified failing on the clean baseline before the audit fixes; not regressions:
 - `create_app()` writes `credentials.json` under `EVILEYE_SITE_DIR` (cwd when
   unset). `tests/conftest.py` now points that variable at a per-test temp site,
   so a full-suite run no longer adds `web_auth` to a real `<cwd>/credentials.json`.
-- TD-PS-D7: root causes fixed in stage 1; the A/B re-measurement on the
-  2688x1520 clip (acceptance: tracker >= 92%, tied to TD-PS-D6) still has to run
-  on the GPU host.
+- TD-PS-D7: root causes fixed in stage 1. A 2026-11-22 attempt on this GPU
+  host (GTX 1660 SUPER, ffmpeg present) did not produce a ratio: the reference
+  clip and `models/yolo11m.pt` are absent, and `configs/hardhat_1cam.json` still
+  requires `models/y8mhardhats.pt`, which is also absent, so the pipeline exits
+  before any frame (`DetectorsIn=0`, gate exit 2). TD-PS-D6/D7 stay open.
+  See `docs/TDPS7_ACCEPTANCE_LOG.md`. The gate now writes its config under
+  `configs/` and scores `detector_in`/`tracker_out` from the run.
 - Docker non-root `USER` deliberately deferred: existing host-mounted data dirs
   assume root ownership (documented in TD-AUD-S4-3).
 

@@ -16,6 +16,7 @@ Exit code 0 = budget met, 1 = budget missed, 2 = measurement error.
 from __future__ import annotations
 
 import argparse
+import json
 import statistics
 import sys
 from pathlib import Path
@@ -24,13 +25,12 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from runtime_compare import (  # noqa: E402
     build_config,
-    frames_seen,
     make_clip,
     run_once,
 )
 
 
-def main() -> int:
+def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
         description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
     )
@@ -42,21 +42,32 @@ def main() -> int:
     parser.add_argument("--model", default="models/yolo11m.pt")
     parser.add_argument("--timeout", type=float, default=600)
     parser.add_argument("--report", help="append a markdown row to this file")
-    args = parser.parse_args()
+    args = parser.parse_args(argv)
 
     tree = Path(__file__).resolve().parents[1]
     ratios = []
+    # A file inside configs/ makes the pipeline chdir to the repo root, so
+    # relative model paths resolve to <repo>/models. See run_config_helper.
+    config_path = tree / "configs" / "_tdps7_acceptance.json"
+    clip_dir = tree / "logs" / "tdps7_gate"
     for run in range(1, args.runs + 1):
         try:
-            clip = make_clip(args.video, args.seconds, tree / "logs" / "tdps7_gate")
-            config = build_config(tree, clip, args.model, tracker=True)
-            result = run_once(tree, config, args.timeout)
-            seen = frames_seen(result.get("log") or "")
+            clip = make_clip(args.video, args.seconds, clip_dir)
+            config_path.write_text(
+                json.dumps(build_config(tree, clip, args.model, tracker=True)),
+                encoding="utf-8",
+            )
+            result = run_once(tree, config_path, args.timeout)
         except Exception as exc:
             print(f"run {run}: measurement error: {exc}")
             return 2
-        into_detector = seen.get("DetectorsIn", 0)
-        tracker_out = seen.get("TrackersOut", 0)
+        finally:
+            config_path.unlink(missing_ok=True)
+        if result.get("timed_out"):
+            print(f"run {run}: timed out after {args.timeout}s")
+            return 2
+        into_detector = int(result.get("detector_in") or 0)
+        tracker_out = int(result.get("tracker_out") or 0)
         if into_detector <= 0:
             print(f"run {run}: detector saw no frames (DetectorsIn=0); aborting")
             return 2
