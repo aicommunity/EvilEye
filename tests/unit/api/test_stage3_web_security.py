@@ -153,7 +153,6 @@ class TestSetupGuards:
         (tmp_path / "credentials.json").write_text(
             json.dumps({"web_auth": {"enabled": True, "users": []}}), encoding="utf-8"
         )
-        import os
 
         monkeypatch.setenv("EVILEYE_BOOTSTRAP_ADMIN_PASSWORD", "admin")
         from evileye.api.core.web_auth_bootstrap import ensure_default_admin_credentials

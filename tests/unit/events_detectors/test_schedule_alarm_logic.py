@@ -1,6 +1,5 @@
 from datetime import datetime, time
 
-import pytest
 
 from evileye.events_detectors.schedule_alarm_logic import (
     TimePeriod,

@@ -5,7 +5,6 @@ from __future__ import annotations
 import queue
 from unittest.mock import MagicMock
 
-import pytest
 
 from evileye.core.mp_async_bridge import MpAsyncBridge
 from evileye.core.mp_pending_jobs import DetectorPendingJob
