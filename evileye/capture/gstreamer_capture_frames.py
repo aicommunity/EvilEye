@@ -658,6 +658,9 @@ class GStreamerCaptureFramesMixin:
             self._pipeline_generation = 1
         try:
             with self.pipeline_lock:
+                orphan = getattr(self, "_orphan_gst_native", None)
+                if callable(orphan):
+                    orphan(self.pipeline, self.bus, self.appsink)
                 self.pipeline = None
                 self.bus = None
                 self.appsink = None

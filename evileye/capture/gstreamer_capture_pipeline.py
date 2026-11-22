@@ -17,8 +17,30 @@ from .gstreamer_capture_common import (
 )
 from .gstreamer_capture_recording import _RecordingFilesystemError
 
+# Keep strong refs to Gst objects that timed out while leaving PLAYING/PAUSED.
+# Dropping the last Python ref in that state aborts the process (g_mutex_clear).
+_ORPHANED_GST_NATIVE: list = []
+
 
 class GStreamerCapturePipelineMixin:
+    @staticmethod
+    def _orphan_gst_native(*objects) -> None:
+        """Pin native objects so Python GC cannot dispose a non-NULL Gst element."""
+        for obj in objects:
+            if obj is None:
+                continue
+            if obj not in _ORPHANED_GST_NATIVE:
+                _ORPHANED_GST_NATIVE.append(obj)
+
+    def _gst_element_is_null(self, element) -> bool:
+        """Best-effort check that an element reached NULL after set_state."""
+        if element is None or Gst is None:
+            return True
+        try:
+            _ret, state, _pending = element.get_state(0)
+            return state == Gst.State.NULL
+        except Exception:
+            return False
     def _build_pipeline(self) -> str:
         """
         Build GStreamer pipeline based on source type and parameters.
@@ -1011,15 +1033,18 @@ class GStreamerCapturePipelineMixin:
             return True
         done = threading.Event()
         error: list[BaseException] = []
+        reached_null = {"ok": False}
 
         def _worker():
             try:
                 element.set_state(Gst.State.NULL)
                 try:
                     # Prefer a bounded wait when the state change is asynchronous.
-                    element.get_state(max(1, int(timeout_sec * Gst.SECOND)))
+                    _ret, state, _pending = element.get_state(max(1, int(timeout_sec * Gst.SECOND)))
+                    reached_null["ok"] = state == Gst.State.NULL
                 except Exception:
-                    pass
+                    # Fall back to a zero-timeout probe if the typed get_state failed.
+                    reached_null["ok"] = self._gst_element_is_null(element)
             except BaseException as exc:  # noqa: BLE001 - must always unblock waiter
                 error.append(exc)
             finally:
@@ -1033,7 +1058,29 @@ class GStreamerCapturePipelineMixin:
                     self.logger.debug("GStreamer set_state(NULL) error for %s: %s", label, error[0])
                 except Exception:
                     pass
-            return True
+                self._orphan_gst_native(element)
+                try:
+                    if generation is None or int(getattr(self, "_pipeline_generation", 0)) == int(generation):
+                        self._pipeline_null_abandoned = True
+                except Exception:
+                    pass
+                return False
+            if reached_null["ok"] or self._gst_element_is_null(element):
+                return True
+            try:
+                self.logger.error(
+                    "GStreamer set_state(NULL) finished without NULL for %s; orphaning native element",
+                    label,
+                )
+            except Exception:
+                pass
+            self._orphan_gst_native(element)
+            try:
+                if generation is None or int(getattr(self, "_pipeline_generation", 0)) == int(generation):
+                    self._pipeline_null_abandoned = True
+            except Exception:
+                pass
+            return False
         try:
             self.logger.error(
                 "GStreamer set_state(NULL) timed out after %.1fs for %s; abandoning native element",
@@ -1042,6 +1089,9 @@ class GStreamerCapturePipelineMixin:
             )
         except Exception:
             pass
+        # Pin the element: the hung set_state thread may still hold a ref, but
+        # callers must not assume they can drop theirs without aborting the process.
+        self._orphan_gst_native(element)
         try:
             if generation is None or int(getattr(self, "_pipeline_generation", 0)) == int(generation):
                 self._pipeline_null_abandoned = True
@@ -1210,6 +1260,14 @@ class GStreamerCapturePipelineMixin:
                 generation=generation,
             )
             if not null_ok:
+                # Do not let Python drop the last refs to a non-NULL pipeline.
+                self._orphan_gst_native(
+                    pipeline,
+                    bus,
+                    appsink,
+                    state.get("loop"),
+                    state.get("recorder"),
+                )
                 try:
                     self.logger.error(
                         "Abandoned GStreamer pipeline for %s after NULL timeout (reason=%s, generation=%s)",
@@ -1282,5 +1340,14 @@ class GStreamerCapturePipelineMixin:
             )
         except Exception:
             pass
+        # Worker is still running (or about to drop locals). Pin native objects now
+        # so a late return from set_state(NULL) cannot dispose a PLAYING pipeline.
+        self._orphan_gst_native(
+            state.get("pipeline"),
+            state.get("bus"),
+            state.get("appsink"),
+            state.get("loop"),
+            state.get("recorder"),
+        )
         if self._generation_is_current(state.get("generation", 0)):
             self._pipeline_null_abandoned = True

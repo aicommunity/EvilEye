@@ -138,6 +138,8 @@ def test_reconnect_skips_an_abandoned_release_event():
 
 
 def test_set_gst_state_null_bounded_returns_after_timeout_and_marks_abandoned():
+    from evileye.capture import gstreamer_capture_pipeline as gst_pipeline
+
     class _Pipeline(GStreamerCapturePipelineMixin):
         pass
 
@@ -155,28 +157,65 @@ def test_set_gst_state_null_bounded_returns_after_timeout_and_marks_abandoned():
     capture.logger = Mock()
     capture.source_names = ["Cam4", "Cam5"]
     capture._pipeline_null_abandoned = False
+    element = _Element()
+    before = len(gst_pipeline._ORPHANED_GST_NATIVE)
 
     started = time.monotonic()
-    ok = capture._set_gst_state_null_bounded(_Element(), timeout_sec=0.2, label="unit-test")
+    ok = capture._set_gst_state_null_bounded(element, timeout_sec=0.2, label="unit-test")
     elapsed = time.monotonic() - started
 
     assert ok is False
     assert elapsed < 2.0
     assert capture._pipeline_null_abandoned is True
+    assert element in gst_pipeline._ORPHANED_GST_NATIVE
+    assert len(gst_pipeline._ORPHANED_GST_NATIVE) >= before + 1
     hung.set()
 
 
+def test_set_gst_state_null_bounded_orphans_when_finished_not_null():
+    from evileye.capture import gstreamer_capture_pipeline as gst_pipeline
+
+    class _Pipeline(GStreamerCapturePipelineMixin):
+        pass
+
+    class _Element:
+        def set_state(self, _state):
+            return None
+
+        def get_state(self, _timeout):
+            # Pretend the element is still PLAYING after the NULL request.
+            return (None, object(), None)
+
+    capture = _Pipeline()
+    capture.logger = Mock()
+    capture.source_names = ["Cam4", "Cam5"]
+    capture._pipeline_null_abandoned = False
+    capture._gst_element_is_null = lambda _element: False
+    element = _Element()
+
+    ok = capture._set_gst_state_null_bounded(element, timeout_sec=0.2, label="unit-not-null")
+
+    assert ok is False
+    assert capture._pipeline_null_abandoned is True
+    assert element in gst_pipeline._ORPHANED_GST_NATIVE
+
+
 def test_reconnect_abandons_stalled_release_and_bumps_generation():
-    class _Frames(GStreamerCaptureFramesMixin):
+    from evileye.capture import gstreamer_capture_pipeline as gst_pipeline
+
+    class _Frames(GStreamerCaptureFramesMixin, GStreamerCapturePipelineMixin):
         pass
 
     capture = _Frames()
     capture.pipeline_lock = RLock()
     capture.logger = Mock()
     capture.source_names = ["Cam4", "Cam5"]
-    capture.pipeline = object()
-    capture.bus = object()
-    capture.appsink = object()
+    pipeline = object()
+    bus = object()
+    appsink = object()
+    capture.pipeline = pipeline
+    capture.bus = bus
+    capture.appsink = appsink
     capture.is_inited = True
     capture.is_working = True
     capture._pipeline_generation = 3
@@ -193,6 +232,9 @@ def test_reconnect_abandons_stalled_release_and_bumps_generation():
     assert capture.pipeline is None
     assert capture.appsink is None
     assert capture.is_working is False
+    assert pipeline in gst_pipeline._ORPHANED_GST_NATIVE
+    assert bus in gst_pipeline._ORPHANED_GST_NATIVE
+    assert appsink in gst_pipeline._ORPHANED_GST_NATIVE
     capture._record_disconnect.assert_not_called()
 
 
