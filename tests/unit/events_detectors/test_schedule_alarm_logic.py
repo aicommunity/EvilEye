@@ -13,7 +13,6 @@ from evileye.events_detectors.schedule_alarm_logic import (
     find_first_schedule_hit_in_history,
     matches_class,
     LEGACY_DETECTOR_CONFIG_KEY,
-    DETECTOR_CONFIG_KEY,
 )
 
 
