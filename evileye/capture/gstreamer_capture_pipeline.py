@@ -1214,11 +1214,6 @@ class GStreamerCapturePipelineMixin:
         except Exception:
             pass
 
-        try:
-            self._flush_recording_queue(pipeline, generation)
-        except Exception:
-            pass
-
         abandoned = False
         try:
             cancel = getattr(self, "_teardown_cancel", None)
@@ -1229,9 +1224,16 @@ class GStreamerCapturePipelineMixin:
             abandoned = not self._generation_is_current(generation)
 
         # Capture-pipeline teardowns must not finalize/NULL an open splitmux:
-        # qtmux/mp4mux rewrites incomplete fragments to 0B even when the source
-        # has already gone quiet and finalize looks "stable" before abandon.
+        # qtmux/mp4mux rewrites incomplete fragments to 0B. Live evidence:
+        # _flush_recording_queue's set_state(NULL) on recording_queue alone
+        # zeroed a 96MB Cam4 fragment within ~10ms of teardown start.
         had_recorder = state.get("recorder") is not None
+        if not had_recorder:
+            try:
+                self._flush_recording_queue(pipeline, generation)
+            except Exception:
+                pass
+
         try:
             recorder = state.get("recorder")
             if recorder is not None and pipeline is not None:

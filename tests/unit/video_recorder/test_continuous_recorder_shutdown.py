@@ -117,7 +117,8 @@ def test_native_teardown_with_recorder_skips_pipeline_null():
     capture._gst_continuous_recorder = object()
     capture._set_gst_state_null_bounded = lambda *a, **k: null_calls.append((a, k)) or True
     capture._orphan_gst_native = lambda *objs: orphan_calls.extend([o for o in objs if o is not None])
-    capture._flush_recording_queue = Mock()
+    flush_calls = []
+    capture._flush_recording_queue = lambda *a, **k: flush_calls.append((a, k))
     capture._cleanup_recording_branch = Mock()
     capture._stop_notify_worker = Mock()
     capture._maybe_schedule_malloc_trim = Mock()
@@ -143,6 +144,7 @@ def test_native_teardown_with_recorder_skips_pipeline_null():
     recorder.stop_with_pipeline.assert_called_once()
     kwargs = recorder.stop_with_pipeline.call_args.kwargs
     assert kwargs.get("finalize") is False
+    assert flush_calls == [], "recording_queue flush/NULL truncates open splitmux"
     assert null_calls == []
     assert pipeline in orphan_calls
     assert capture._pipeline_null_abandoned is True
