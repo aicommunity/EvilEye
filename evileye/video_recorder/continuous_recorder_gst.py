@@ -53,6 +53,8 @@ class GstContinuousRecorder(VideoRecorderBase):
         self._recording_checked_files: set[Path] = set()
         self._recording_min_file_size_kb: int = 0
         self._recording_container: str = "mp4"
+        # Basename prefix of the live splitmux location (without _%05d.ext).
+        self._active_splitmux_prefix: Optional[str] = None
         self._lock = threading.RLock()
         self._segments_attached: int = 0
         self._last_stats_ts: float = 0.0
@@ -172,6 +174,12 @@ class GstContinuousRecorder(VideoRecorderBase):
             self._recording_min_file_size_kb = self.params.min_file_size_kb
             self._recording_container = self.params.container
             self._recording_checked_files = set()
+            try:
+                self._active_splitmux_prefix = (
+                    self._session_stem.name if self._session_stem is not None else None
+                )
+            except Exception:
+                self._active_splitmux_prefix = None
 
             # Attach as one transaction. A partial branch must not remain in
             # the capture pipeline when a link or element setup fails.
@@ -277,6 +285,10 @@ class GstContinuousRecorder(VideoRecorderBase):
             )
             self._session_stem = (out_dir / name).with_suffix("")
             self._session_date_str = date_str
+            try:
+                self._active_splitmux_prefix = self._session_stem.name
+            except Exception:
+                pass
             if day_changed and fragment_id > 0:
                 try:
                     location_pattern = str(self._session_stem) + "_%05d." + self.params.container
@@ -409,11 +421,16 @@ class GstContinuousRecorder(VideoRecorderBase):
                     validate_integrity = getattr(self.params, "validate_video_integrity", True)
                     validation_timeout = getattr(self.params, "video_validation_timeout", 2.0)
 
+                    active_prefix = self._active_splitmux_prefix
                     for out_dir in dirs:
                         if not out_dir or not out_dir.exists():
                             continue
                         for fp in out_dir.glob(f"*.{self._recording_container}"):
                             if fp in self._recording_checked_files:
+                                continue
+                            # Never touch the live splitmux location, even if
+                            # truncated to 0 during an abandoned teardown.
+                            if active_prefix and fp.name.startswith(active_prefix + "_"):
                                 continue
                             deleted = check_and_delete_small_files(
                                 fp,
@@ -422,9 +439,13 @@ class GstContinuousRecorder(VideoRecorderBase):
                                 validation_timeout=validation_timeout,
                             )
                             if deleted:
+                                reason = getattr(
+                                    check_and_delete_small_files, "last_reason", None
+                                )
                                 self.logger.info(
-                                    "GstContinuousRecorder deleted recording file: %s",
+                                    "GstContinuousRecorder deleted recording file: %s (%s)",
                                     fp,
+                                    reason or "unknown",
                                 )
                             try:
                                 stat = fp.stat()

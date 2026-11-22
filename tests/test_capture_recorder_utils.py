@@ -98,6 +98,55 @@ def test_splitmux_with_accidental_moov_bytes_is_kept(tmp_path: Path, monkeypatch
     assert reason is None
 
 
+def test_splitmux_truncated_after_abandon_not_deleted_by_min_size(tmp_path: Path):
+    """Regression for Cam4_..._000611: post-abandon 0-byte part vs min_file_size_kb=500."""
+    fragment = tmp_path / "Cam4_20261123_000611_0_00000.mp4"
+    fragment.write_bytes(b"")  # truncated during hung teardown
+    # mtime older than default MIN_FILE_AGE (30s) but younger than stub age (300s)
+    old = time.time() - 60
+    os.utime(fragment, (old, old))
+    should_delete, reason = FileValidator.should_delete_file(
+        fragment,
+        min_size_kb=500,
+        min_age_seconds=30,
+        validate_integrity=True,
+    )
+    assert should_delete is False
+    assert reason is None
+
+
+def test_splitmux_growing_under_min_size_is_kept(tmp_path: Path):
+    """New reconnect fragment can stay <500KB for >30s while muxing starts."""
+    fragment = tmp_path / "Cam4_20261123_001740_0_00000.mp4"
+    fragment.write_bytes(b"\x00" * (100 * 1024))  # 100KB < 500KB min
+    old = time.time() - 90
+    os.utime(fragment, (old, old))
+    should_delete, reason = FileValidator.should_delete_file(
+        fragment,
+        min_size_kb=500,
+        min_age_seconds=30,
+        validate_integrity=True,
+    )
+    assert should_delete is False
+    assert reason is None
+
+
+def test_splitmux_ancient_empty_stub_can_be_deleted(tmp_path: Path):
+    fragment = tmp_path / "Cam4_20261123_000000_0_00099.mp4"
+    fragment.write_bytes(b"")
+    old = time.time() - 600
+    os.utime(fragment, (old, old))
+    should_delete, reason = FileValidator.should_delete_file(
+        fragment,
+        min_size_kb=500,
+        min_age_seconds=30,
+        validate_integrity=True,
+    )
+    assert should_delete is True
+    assert reason is not None
+    assert "splitmux stub" in reason
+
+
 def test_file_validator_delete_small_file(tmp_path: Path):
     small_file = tmp_path / "small.mp4"
     small_file.write_bytes(b"0" * 512)  # 0.5 KB

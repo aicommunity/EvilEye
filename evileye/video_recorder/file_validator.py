@@ -12,6 +12,10 @@ import cv2
 from evileye.video_recorder.constants import RecorderConstants
 
 _SPLITMUX_INDEX = re.compile(r"_\d{5}\.(mp4|mkv)$", re.IGNORECASE)
+# Hard cap for "tiny leftover" deletes. Configured min_file_size_kb is often 500,
+# which wrongly matches mid-start or post-abandon truncated fragments.
+_SPLITMUX_STUB_MAX_KB = 32.0
+_SPLITMUX_STUB_MIN_AGE_SEC = 300
 
 
 class FileValidator:
@@ -76,15 +80,22 @@ class FileValidator:
             if file_age < min_age_seconds:
                 return False, None
 
+            # splitmuxsink parts (`_*00000.mp4`) must be handled before the
+            # generic min_file_size_kb check: after abandon a fragment can be
+            # truncated to 0 while still open, and a new part stays <500KB for
+            # tens of seconds. Integrity checks also false-positive on mdat.
+            if _SPLITMUX_INDEX.search(file_path.name):
+                stub_kb = min(float(max(min_size_kb, 0)), _SPLITMUX_STUB_MAX_KB)
+                stub_age = max(int(min_age_seconds), _SPLITMUX_STUB_MIN_AGE_SEC)
+                if file_size_kb < stub_kb and file_age >= stub_age:
+                    return True, (
+                        f"splitmux stub size < {stub_kb:g} KB "
+                        f"(age>={stub_age}s)"
+                    )
+                return False, None
+
             if file_size_kb < min_size_kb:
                 return True, f"size < {min_size_kb} KB"
-
-            # splitmuxsink parts (`_*00000.mp4`): never integrity-delete.
-            # Open fragments have no playable index yet; substring "moov" inside
-            # mdat is a false positive that previously made OpenCV mark them
-            # corrupt and unlink hundreds of MB mid-write (archive holes).
-            if _SPLITMUX_INDEX.search(file_path.name):
-                return False, None
 
             if validate_integrity and file_age >= min_age_seconds:
                 if not FileValidator.is_file_valid(file_path, validation_timeout):

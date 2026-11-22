@@ -104,8 +104,13 @@ def check_and_delete_small_files(file_path: Path, min_size_kb: int,
     if should_delete:
         try:
             file_path.unlink(missing_ok=True)
+            # Stash reason for callers that log deletions.
+            check_and_delete_small_files.last_reason = reason  # type: ignore[attr-defined]
             return True
         except Exception:
             return False
 
     return False
+
+
+check_and_delete_small_files.last_reason = None  # type: ignore[attr-defined]
