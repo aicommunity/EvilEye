@@ -82,6 +82,9 @@ class VideoCaptureGStreamer(
         # Serializes init()/release() so reconnect cannot build a second pipeline
         # over a teardown that is still holding native GStreamer objects.
         self._release_lock = threading.Lock()
+        # Only one init() may run at a time. Competing callers were starting
+        # reinit_before_init teardowns of each other's brand-new pipelines.
+        self._init_singleflight = threading.Lock()
         self._pipeline_generation = 0
         self._pipeline_null_abandoned = False
         self._capture_down_since = None
@@ -263,44 +266,74 @@ class VideoCaptureGStreamer(
                 "VideoCaptureGStreamer was selected but GStreamer is unavailable"
             )
 
-        # Drop any previous pipeline before building. Native teardown must not run
-        # while this thread holds `_release_lock` (a stuck GI call would block every later init).
-        if self._reconnect_teardown_still_running():
-            self.logger.error(
-                "GStreamer init skipped for %s: previous teardown is still running",
+        # While reconnect owns recovery, only its init worker may rebuild.
+        reconnecting = bool(getattr(self, "_reconnecting", False))
+        reconnect_init = getattr(self, "_reconnect_init_thread", None)
+        if reconnecting and reconnect_init is not None and threading.current_thread() is not reconnect_init:
+            self.logger.debug(
+                "GStreamer init skipped for %s: reconnect owns recovery",
                 self.source_names,
             )
             self.is_inited = False
             self.is_working = False
             return False
-        if getattr(self, "_pipeline_null_abandoned", False):
-            self.pipeline = None
-            self.bus = None
-            self.appsink = None
-        elif self.pipeline is not None or self.bus is not None or self.appsink is not None:
-            self._teardown_pipeline("reinit_before_init", join_main_loop=True)
-            if self._reconnect_teardown_still_running():
-                self.logger.error(
-                    "GStreamer init skipped for %s: reinit teardown is still running",
-                    self.source_names,
-                )
-                self.is_inited = False
-                self.is_working = False
-                return False
-        if not self._release_lock.acquire(timeout=2.0):
+
+        init_gate = getattr(self, "_init_singleflight", None)
+        if init_gate is not None and not init_gate.acquire(timeout=2.0):
             self.logger.error(
-                "GStreamer init could not acquire lifecycle lock for %s after 2.0s",
+                "GStreamer init skipped for %s: another init is already in progress",
                 self.source_names,
             )
             self.is_inited = False
             self.is_working = False
             return False
         try:
-            self._pipeline_generation = int(getattr(self, "_pipeline_generation", 0)) + 1
-            self._pipeline_null_abandoned = False
+            # Drop any previous pipeline before building. Native teardown must not run
+            # while this thread holds `_release_lock` (a stuck GI call would block every later init).
+            # Orphan/abandon path first: a hung NULL worker must not block rebuild.
+            if getattr(self, "_pipeline_null_abandoned", False):
+                self.pipeline = None
+                self.bus = None
+                self.appsink = None
+            elif self._reconnect_teardown_still_running():
+                self.logger.error(
+                    "GStreamer init skipped for %s: previous teardown is still running",
+                    self.source_names,
+                )
+                self.is_inited = False
+                self.is_working = False
+                return False
+            elif self.pipeline is not None or self.bus is not None or self.appsink is not None:
+                self._teardown_pipeline("reinit_before_init", join_main_loop=True)
+                if self._reconnect_teardown_still_running():
+                    self.logger.error(
+                        "GStreamer init skipped for %s: reinit teardown is still running",
+                        self.source_names,
+                    )
+                    self.is_inited = False
+                    self.is_working = False
+                    return False
+            if not self._release_lock.acquire(timeout=2.0):
+                self.logger.error(
+                    "GStreamer init could not acquire lifecycle lock for %s after 2.0s",
+                    self.source_names,
+                )
+                self.is_inited = False
+                self.is_working = False
+                return False
+            try:
+                self._pipeline_generation = int(getattr(self, "_pipeline_generation", 0)) + 1
+            finally:
+                self._release_lock.release()
+            ok = self._init_locked()
+            # Clear abandon only after a successful rebuild so concurrent callers
+            # still take the orphan path instead of tearing down the new pipeline.
+            if ok:
+                self._pipeline_null_abandoned = False
+            return ok
         finally:
-            self._release_lock.release()
-        return self._init_locked()
+            if init_gate is not None:
+                init_gate.release()
 
     def _init_locked(self) -> bool:
         """Build a pipeline. Caller already released `_release_lock`."""

@@ -6,8 +6,9 @@ from pathlib import Path
 from typing import Optional
 
 from evileye.core.logger import get_module_logger
+from evileye.video_recorder.file_validator import FileValidator
 from evileye.video_recorder.recording_params import RecordingParams
-from evileye.video_recorder.utils import iter_segments, validate_video_file
+from evileye.video_recorder.utils import iter_segments
 
 
 class VideoValidator:
@@ -90,6 +91,7 @@ class VideoValidator:
 
             validate_integrity = getattr(self.params, 'validate_video_integrity', True)
             validation_timeout = getattr(self.params, 'video_validation_timeout', 2.0)
+            min_size_kb = int(getattr(self.params, 'min_file_size_kb', 1) or 1)
 
             corrupted_count = 0
             checked_count = 0
@@ -126,16 +128,26 @@ class VideoValidator:
 
                         checked_count += 1
 
-                        # Проверить файл на целостность (размер уже проверен в других местах)
-                        if validate_integrity:
-                            if not validate_video_file(p, validation_timeout):
-                                # Файл поврежден, удалить его
-                                try:
-                                    p.unlink(missing_ok=True)
-                                    corrupted_count += 1
-                                    self.logger.info(f"VideoValidator: deleted corrupted file: {p}")
-                                except Exception as e:
-                                    self.logger.warning(f"VideoValidator: failed to delete corrupted file {p}: {e}")
+                        # Use FileValidator so large unfinalized splitmux parts
+                        # (no moov yet) are kept instead of deleted as "corrupt".
+                        should_delete, reason = FileValidator.should_delete_file(
+                            p,
+                            min_size_kb=min_size_kb,
+                            min_age_seconds=int(self.min_file_age_seconds),
+                            validate_integrity=validate_integrity,
+                            validation_timeout=validation_timeout,
+                        )
+                        if should_delete:
+                            try:
+                                p.unlink(missing_ok=True)
+                                corrupted_count += 1
+                                self.logger.info(
+                                    "VideoValidator: deleted %s (%s)", p, reason or "invalid"
+                                )
+                            except Exception as e:
+                                self.logger.warning(
+                                    "VideoValidator: failed to delete corrupted file %s: %s", p, e
+                                )
 
             if checked_count > 0:
                 self.logger.debug(f"VideoValidator: checked {checked_count} files, "

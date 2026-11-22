@@ -172,6 +172,12 @@ class VideoCaptureBase(EvilEyeBase):
                     return None
                 continue
             if not self.get_init_flag():
+                # Reconnect loop owns recovery for IP cameras; competing init()
+                # calls tear down brand-new pipelines and orphan Gst memory.
+                if getattr(self, "_reconnecting", False):
+                    if self.stop_event.wait(1.0):
+                        return None
+                    continue
                 try:
                     initialized = self.init()
                 except CaptureConnectionError as exc:

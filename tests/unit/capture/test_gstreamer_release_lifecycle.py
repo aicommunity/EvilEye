@@ -279,6 +279,67 @@ def test_abandoned_teardown_does_not_block_init_gate():
     assert capture._reconnect_teardown_still_running() is False
 
 
+def test_init_singleflight_blocks_competing_reinit_teardown():
+    """Competing init() must not tear down a pipeline another init just built."""
+    capture = _capture()
+    capture.gstreamer_available = True
+    capture.execution_mode = "thread"
+    capture._init_singleflight = Lock()
+    capture._reconnecting = False
+    capture._reconnect_init_thread = None
+    capture._pipeline_null_abandoned = True
+    capture._reconnect_teardown_still_running = lambda: False
+    capture.pipeline = None
+    capture.bus = None
+    capture.appsink = None
+    capture._pipeline_generation = 3
+    started = Event()
+    release_build = Event()
+    calls = []
+
+    def _slow_locked():
+        calls.append("build")
+        started.set()
+        assert release_build.wait(timeout=5.0)
+        return True
+
+    capture._init_locked = _slow_locked
+    worker = Thread(target=lambda: VideoCaptureGStreamer.init(capture))
+    worker.start()
+    assert started.wait(timeout=1.0)
+    assert capture._init_singleflight.locked()
+
+    competing = VideoCaptureGStreamer.init(capture)
+    assert competing is False
+    capture.logger.error.assert_called()
+    assert any("another init" in str(c) for c in capture.logger.error.call_args_list)
+    release_build.set()
+    worker.join(timeout=2.0)
+    assert not worker.is_alive()
+    assert capture._pipeline_null_abandoned is False
+    assert calls == ["build"]
+
+
+def test_init_keeps_abandoned_flag_until_rebuild_succeeds():
+    capture = _capture()
+    capture.gstreamer_available = True
+    capture.execution_mode = "thread"
+    capture._init_singleflight = Lock()
+    capture._reconnecting = False
+    capture._reconnect_init_thread = None
+    capture._pipeline_null_abandoned = True
+    capture._reconnect_teardown_still_running = lambda: False
+    capture.pipeline = object()
+    capture.bus = object()
+    capture.appsink = object()
+    capture._pipeline_generation = 1
+    capture._init_locked = lambda: False
+
+    assert VideoCaptureGStreamer.init(capture) is False
+    assert capture._pipeline_null_abandoned is True
+    assert capture.pipeline is None
+
+
 def test_teardown_budget_exceeded_detaches_worker_for_rebuild():
     class _Pipeline(GStreamerCapturePipelineMixin, GStreamerCaptureFramesMixin):
         pass
