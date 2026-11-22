@@ -68,6 +68,15 @@ def ensure_test_videos(project_root_path):
     return videos_dir
 
 @pytest.fixture(autouse=True)
+def isolate_site_dir(tmp_path, monkeypatch):
+    """Keep credentials.json and other site files out of the repository root."""
+    site = tmp_path / "evileye-site"
+    site.mkdir()
+    monkeypatch.setenv("EVILEYE_SITE_DIR", str(site))
+    return site
+
+
+@pytest.fixture(autouse=True)
 def setup_logging():
     """Настраивает логирование для тестов."""
     try:
