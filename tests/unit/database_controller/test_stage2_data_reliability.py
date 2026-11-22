@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-import json
-from pathlib import Path
 
 from evileye.database_controller.pg_spool import PgSpool
 from evileye.events_detectors.event_schedule_alarm import ScheduleAlarmEvent

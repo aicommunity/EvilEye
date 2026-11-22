@@ -8,7 +8,6 @@ from unittest.mock import Mock, patch
 
 from PyQt6.QtWidgets import QApplication, QMainWindow
 from PyQt6.QtCore import Qt, QTimer
-import cv2
 import numpy as np
 
 # Импортируем модули

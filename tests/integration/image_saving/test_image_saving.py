@@ -17,7 +17,6 @@ def test_image_saving():
         from evileye.objects_handler.objects_handler import ObjectsHandler
         from evileye.object_tracker.tracking_results import TrackingResult, TrackingResultList
         from evileye.capture.video_capture_base import CaptureImage
-        import cv2
         import numpy as np
         import datetime
         
