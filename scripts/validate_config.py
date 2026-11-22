@@ -49,15 +49,12 @@ def validate(data: dict) -> list[str]:
     for i, block in enumerate(mc):
         if not isinstance(block, dict):
             continue
-        if block.get("execution_mode") == "process":
+        mode = block.get("execution_mode", None)
+        if mode not in (None, ""):
             warnings.append(
-                f"mc_trackers[{i}]: execution_mode=process is ignored; "
-                "mc_trackers is sync_batch in parent only (see thread_vs_mp_contracts §7)"
+                f"mc_trackers[{i}]: execution_mode={mode} is ignored; "
+                "mc_trackers runs in the parent process only"
             )
-        if block.get("stage_kind") == "sync_batch":
-            continue
-        if block.get("enable", True) is False:
-            continue
     return warnings
 
 

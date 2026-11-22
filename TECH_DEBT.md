@@ -208,16 +208,14 @@ before this can be called finished).
 Verified failing on the clean baseline before the audit fixes; not regressions:
 - `tests/unit/core/test_process_control.py` (3) - POSIX process groups unavailable
 - `tests/unit/capture/test_gstreamer_release_lifecycle.py::test_set_gst_state_null_bounded_returns_after_timeout_and_marks_abandoned` - no GStreamer on the Windows host (`Gst is None` -> `_set_gst_state_null_bounded` short-circuits to True before the hung-element path; runs properly on CI/hosts with GStreamer)
-- `tests/unit/capture/test_recording_queue_start_not_leaky.py` - stale source-content assertion (asserts `leaky=no` in gstreamer_capture_frames.py, but the recording-queue code now lives in gstreamer_capture_pipeline.py)
 - `tests/unit/controller/test_runtime_diagnostics.py::test_runtime_stats_control_command_round_trips_over_control_ipc` - IPC on Windows
 - `tests/integration/visualization/configurer/test_configurer_simple.py` - cross-drive relpath (C:/E:)
 
 ## Post-stage-5 notes
 
-- Some test still calls `create_app()`/bootstrap without chdir and can add a
-  `web_auth` section to a real `<cwd>/credentials.json` during full-suite runs;
-  the diagnostics guard test is now isolated via `EVILEYE_SITE_DIR`. Hunting the
-  polluter is a follow-up (small, P3).
+- `create_app()` writes `credentials.json` under `EVILEYE_SITE_DIR` (cwd when
+  unset). `tests/conftest.py` now points that variable at a per-test temp site,
+  so a full-suite run no longer adds `web_auth` to a real `<cwd>/credentials.json`.
 - TD-PS-D7: root causes fixed in stage 1; the A/B re-measurement on the
   2688x1520 clip (acceptance: tracker >= 92%, tied to TD-PS-D6) still has to run
   on the GPU host.
