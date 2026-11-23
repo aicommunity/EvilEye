@@ -200,6 +200,63 @@ def test_set_gst_state_null_bounded_orphans_when_finished_not_null():
     assert element in gst_pipeline._ORPHANED_GST_NATIVE
 
 
+def test_orphan_reaper_drops_null_elements_and_keeps_splitmux():
+    from evileye.capture import gstreamer_capture_pipeline as gst_pipeline
+
+    class _NullElem:
+        def get_name(self):
+            return "queue0"
+
+        def get_state(self, _timeout):
+            return (None, gst_pipeline.Gst.State.NULL if gst_pipeline.Gst else "NULL", None)
+
+        def set_state(self, _state):
+            return None
+
+    class _MuxElem:
+        def __init__(self):
+            self.null_calls = 0
+
+        def get_name(self):
+            return "recording_splitmuxsink"
+
+        def get_state(self, _timeout):
+            return (None, object(), None)  # still PLAYING
+
+        def set_state(self, _state):
+            self.null_calls += 1
+
+    # Avoid depending on a real Gst.State when Gst import failed in unit env.
+    class _FakeState:
+        NULL = "NULL"
+
+    class _FakeGst:
+        State = _FakeState
+
+    previous_gst = gst_pipeline.Gst
+    gst_pipeline.Gst = _FakeGst
+    try:
+        null_elem = _NullElem()
+        mux_elem = _MuxElem()
+        with gst_pipeline._ORPHANED_GST_NATIVE_LOCK:
+            gst_pipeline._ORPHANED_GST_NATIVE[:] = [null_elem, mux_elem]
+            gst_pipeline._ORPHANED_GST_NATIVE_SINCE.clear()
+            gst_pipeline._ORPHANED_GST_NATIVE_SINCE[id(null_elem)] = time.monotonic() - 60
+            gst_pipeline._ORPHANED_GST_NATIVE_SINCE[id(mux_elem)] = time.monotonic() - 60
+
+        remaining = GStreamerCapturePipelineMixin._reap_orphaned_gst_native()
+
+        assert remaining == 1
+        assert mux_elem in gst_pipeline._ORPHANED_GST_NATIVE
+        assert null_elem not in gst_pipeline._ORPHANED_GST_NATIVE
+        assert mux_elem.null_calls == 0, "reaper must not NULL open splitmux"
+    finally:
+        with gst_pipeline._ORPHANED_GST_NATIVE_LOCK:
+            gst_pipeline._ORPHANED_GST_NATIVE.clear()
+            gst_pipeline._ORPHANED_GST_NATIVE_SINCE.clear()
+        gst_pipeline.Gst = previous_gst
+
+
 def test_reconnect_abandons_stalled_release_and_bumps_generation():
     from evileye.capture import gstreamer_capture_pipeline as gst_pipeline
 

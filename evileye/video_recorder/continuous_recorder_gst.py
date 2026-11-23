@@ -485,7 +485,7 @@ class GstContinuousRecorder(VideoRecorderBase):
             refs.h264parse,
             refs.queue_before_mux,
             refs.splitmuxsink,
-            refs.recording_queue,
+            # recording_queue stays in the capture pipeline and is NULLed with it.
         ):
             if elem is None:
                 continue
@@ -494,6 +494,71 @@ class GstContinuousRecorder(VideoRecorderBase):
                     orphan(elem)
                 except Exception:
                     pass
+
+    def _detach_recording_branch_preserving_splitmux(self, *, pipeline, refs: GstBranchRefs) -> bool:
+        """Unlink/remove the recording branch so capture pipeline NULL cannot truncate.
+
+        Leaves splitmux (and upstream encode elements) PLAYING but detached, with
+        strong orphan refs. Returns True when splitmux is no longer a pipeline child.
+        """
+        branch = [
+            refs.videoconvert,
+            refs.capsfilter,
+            refs.x264enc,
+            refs.h264parse,
+            refs.queue_before_mux,
+            refs.splitmuxsink,
+        ]
+        # Stop new buffers from reaching the muxer before remove().
+        try:
+            queue = refs.recording_queue
+            if queue is not None:
+                try:
+                    queue.set_property("leaky", 2)  # downstream
+                except Exception:
+                    pass
+                src_pad = None
+                try:
+                    src_pad = queue.get_static_pad("src")
+                except Exception:
+                    src_pad = None
+                if src_pad is not None:
+                    try:
+                        peer = src_pad.get_peer()
+                    except Exception:
+                        peer = None
+                    if peer is not None:
+                        try:
+                            src_pad.unlink(peer)
+                        except Exception:
+                            pass
+        except Exception:
+            pass
+
+        for elem in branch:
+            if elem is None or pipeline is None:
+                continue
+            try:
+                parent = elem.get_parent()
+            except Exception:
+                parent = None
+            if parent is not pipeline:
+                continue
+            try:
+                pipeline.remove(elem)
+            except Exception:
+                pass
+
+        self._orphan_recording_branch_refs(refs)
+
+        try:
+            splitmux = refs.splitmuxsink
+            if splitmux is None:
+                return True
+            parent = splitmux.get_parent()
+            return parent is not pipeline
+        except Exception:
+            return False
 
     def stop_with_pipeline(
         self,
@@ -562,14 +627,19 @@ class GstContinuousRecorder(VideoRecorderBase):
 
         # Abandon / cancel: never EOS+NULL the muxer. Incomplete qtmux/mp4mux
         # finalize via set_state(NULL) rewrites the open fragment to 0 bytes.
+        # Detach the branch first so the capture/RTSP pipeline can still be NULLed.
         if (not finalize) or _cancelled():
+            detached = self._detach_recording_branch_preserving_splitmux(
+                pipeline=pipeline, refs=refs
+            )
             self.logger.warning(
-                "Preserving open splitmux fragment for %s (finalize=%s, cancelled=%s); orphaning muxer",
+                "Preserving open splitmux fragment for %s "
+                "(finalize=%s, cancelled=%s, detached=%s); orphaning muxer",
                 self.source.source_name if self.source else "source",
                 finalize,
                 _cancelled(),
+                detached,
             )
-            self._orphan_recording_branch_refs(refs)
             return
 
         # Unblock a full recording queue so muxer teardown cannot hang forever.
@@ -597,7 +667,7 @@ class GstContinuousRecorder(VideoRecorderBase):
                 "Recording finalize cancelled before EOS for %s; orphaning muxer",
                 self.source.source_name if self.source else "source",
             )
-            self._orphan_recording_branch_refs(refs)
+            self._detach_recording_branch_preserving_splitmux(pipeline=pipeline, refs=refs)
             return
 
         # An attached but never-started branch may be blocked in preroll. No
@@ -624,7 +694,9 @@ class GstContinuousRecorder(VideoRecorderBase):
                         "Recording finalize cancelled for %s; orphaning muxer to preserve fragment",
                         self.source.source_name if self.source else "source",
                     )
-                    self._orphan_recording_branch_refs(refs)
+                    self._detach_recording_branch_preserving_splitmux(
+                        pipeline=pipeline, refs=refs
+                    )
                     return
                 try:
                     queue_level = refs.queue_before_mux.get_property("current-level-buffers")
@@ -673,7 +745,9 @@ class GstContinuousRecorder(VideoRecorderBase):
                         "Skipping splitmux NULL after cancelled finalize for %s",
                         self.source.source_name if self.source else "source",
                     )
-                    self._orphan_recording_branch_refs(refs)
+                    self._detach_recording_branch_preserving_splitmux(
+                        pipeline=pipeline, refs=refs
+                    )
                     return
         elif had_media:
             self.logger.warning(
@@ -682,7 +756,7 @@ class GstContinuousRecorder(VideoRecorderBase):
             )
 
         if _cancelled():
-            self._orphan_recording_branch_refs(refs)
+            self._detach_recording_branch_preserving_splitmux(pipeline=pipeline, refs=refs)
             return
 
         for elem in [
@@ -695,7 +769,9 @@ class GstContinuousRecorder(VideoRecorderBase):
             refs.recording_queue,
         ]:
             if _cancelled():
-                self._orphan_recording_branch_refs(refs)
+                self._detach_recording_branch_preserving_splitmux(
+                    pipeline=pipeline, refs=refs
+                )
                 return
             _set_null_bounded(elem, timeout_sec=1.0)
             try:

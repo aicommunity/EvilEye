@@ -19,18 +19,163 @@ from .gstreamer_capture_recording import _RecordingFilesystemError
 
 # Keep strong refs to Gst objects that timed out while leaving PLAYING/PAUSED.
 # Dropping the last Python ref in that state aborts the process (g_mutex_clear).
+# A reaper drops refs that reached NULL and caps the list so preserve-splitmux
+# storms cannot pin full RTSP pipelines forever.
 _ORPHANED_GST_NATIVE: list = []
+_ORPHANED_GST_NATIVE_SINCE: dict = {}
+_ORPHANED_GST_NATIVE_LOCK = threading.Lock()
+_ORPHANED_GST_NATIVE_MAX = 64
+_ORPHAN_REAP_INTERVAL_SEC = 30.0
+_orphan_reaper_stop = threading.Event()
+_orphan_reaper_thread: threading.Thread | None = None
 
 
 class GStreamerCapturePipelineMixin:
     @staticmethod
     def _orphan_gst_native(*objects) -> None:
         """Pin native objects so Python GC cannot dispose a non-NULL Gst element."""
-        for obj in objects:
-            if obj is None:
+        now = time.monotonic()
+        with _ORPHANED_GST_NATIVE_LOCK:
+            for obj in objects:
+                if obj is None:
+                    continue
+                if obj not in _ORPHANED_GST_NATIVE:
+                    _ORPHANED_GST_NATIVE.append(obj)
+                _ORPHANED_GST_NATIVE_SINCE.setdefault(id(obj), now)
+            GStreamerCapturePipelineMixin._enforce_orphan_cap_locked()
+        GStreamerCapturePipelineMixin._ensure_orphan_reaper()
+
+    @staticmethod
+    def _gst_object_is_null(obj) -> bool:
+        if obj is None or Gst is None:
+            return True
+        try:
+            if not hasattr(obj, "get_state"):
+                # Non-elements (loops, recorders): keep pinned until explicitly dropped.
+                return False
+            _ret, state, _pending = obj.get_state(0)
+            return state == Gst.State.NULL
+        except Exception:
+            return False
+
+    @staticmethod
+    def _orphan_element_name(obj) -> str:
+        try:
+            if hasattr(obj, "get_name"):
+                return str(obj.get_name() or "")
+        except Exception:
+            pass
+        return ""
+
+    @staticmethod
+    def _orphan_is_muxer(obj) -> bool:
+        name = GStreamerCapturePipelineMixin._orphan_element_name(obj)
+        return ("splitmux" in name) or name.startswith("muxer")
+
+    @staticmethod
+    def _enforce_orphan_cap_locked() -> None:
+        """Keep the orphan list bounded. Prefer dropping objects that already reached NULL."""
+        if len(_ORPHANED_GST_NATIVE) <= _ORPHANED_GST_NATIVE_MAX:
+            return
+        survivors: list = []
+        overflow: list = []
+        for obj in _ORPHANED_GST_NATIVE:
+            if GStreamerCapturePipelineMixin._gst_object_is_null(obj):
+                _ORPHANED_GST_NATIVE_SINCE.pop(id(obj), None)
                 continue
-            if obj not in _ORPHANED_GST_NATIVE:
-                _ORPHANED_GST_NATIVE.append(obj)
+            if len(survivors) < _ORPHANED_GST_NATIVE_MAX:
+                survivors.append(obj)
+            else:
+                overflow.append(obj)
+        _ORPHANED_GST_NATIVE[:] = survivors
+        for obj in overflow:
+            # Best-effort NULL for non-muxer leftovers; muxers stay pinned (0B risk).
+            if not GStreamerCapturePipelineMixin._orphan_is_muxer(obj):
+                try:
+                    if Gst is not None and hasattr(obj, "set_state"):
+                        obj.set_state(Gst.State.NULL)
+                except Exception:
+                    pass
+            if GStreamerCapturePipelineMixin._gst_object_is_null(obj):
+                _ORPHANED_GST_NATIVE_SINCE.pop(id(obj), None)
+                continue
+            _ORPHANED_GST_NATIVE.append(obj)
+
+    @staticmethod
+    def _reap_orphaned_gst_native() -> int:
+        """Drop orphan refs that reached NULL; soft-NULL aged non-muxer objects.
+
+        Returns the number of refs still pinned.
+        """
+        now = time.monotonic()
+        kept: list = []
+        with _ORPHANED_GST_NATIVE_LOCK:
+            snapshot = list(_ORPHANED_GST_NATIVE)
+            since_map = dict(_ORPHANED_GST_NATIVE_SINCE)
+        for obj in snapshot:
+            if GStreamerCapturePipelineMixin._gst_object_is_null(obj):
+                continue
+            orphaned_at = float(since_map.get(id(obj), now))
+            age = now - orphaned_at
+            is_mux = GStreamerCapturePipelineMixin._orphan_is_muxer(obj)
+            # Detached non-muxer leftovers can be NULLed once aged; muxers stay
+            # pinned (NULL without a clean EOS truncates open fragments to 0B).
+            if (not is_mux) and age >= 15.0 and Gst is not None and hasattr(obj, "set_state"):
+                try:
+                    obj.set_state(Gst.State.NULL)
+                except Exception:
+                    pass
+                if GStreamerCapturePipelineMixin._gst_object_is_null(obj):
+                    continue
+            kept.append(obj)
+        with _ORPHANED_GST_NATIVE_LOCK:
+            kept_ids = {id(obj) for obj in kept}
+            _ORPHANED_GST_NATIVE[:] = kept
+            for key in list(_ORPHANED_GST_NATIVE_SINCE):
+                if key not in kept_ids:
+                    _ORPHANED_GST_NATIVE_SINCE.pop(key, None)
+            GStreamerCapturePipelineMixin._enforce_orphan_cap_locked()
+            return len(_ORPHANED_GST_NATIVE)
+
+    @staticmethod
+    def _ensure_orphan_reaper() -> None:
+        global _orphan_reaper_thread
+        if _orphan_reaper_thread is not None and _orphan_reaper_thread.is_alive():
+            return
+        stop = _orphan_reaper_stop
+
+        def _worker():
+            while not stop.wait(_ORPHAN_REAP_INTERVAL_SEC):
+                try:
+                    remaining = GStreamerCapturePipelineMixin._reap_orphaned_gst_native()
+                    if remaining <= 0:
+                        break
+                except Exception:
+                    pass
+
+        thread = threading.Thread(
+            target=_worker,
+            name="gst-orphan-reaper",
+            daemon=True,
+        )
+        _orphan_reaper_thread = thread
+        thread.start()
+
+    @staticmethod
+    def _pipeline_has_attached_splitmux(pipeline) -> bool:
+        """True when an open splitmuxsink is still a child of the capture pipeline."""
+        if pipeline is None:
+            return False
+        try:
+            splitmux = pipeline.get_by_name("recording_splitmuxsink")
+        except Exception:
+            splitmux = None
+        if splitmux is None:
+            return False
+        try:
+            return splitmux.get_parent() == pipeline
+        except Exception:
+            return True
 
     def _gst_element_is_null(self, element) -> bool:
         """Best-effort check that an element reached NULL after set_state."""
@@ -1227,6 +1372,8 @@ class GStreamerCapturePipelineMixin:
         # qtmux/mp4mux rewrites incomplete fragments to 0B. Live evidence:
         # _flush_recording_queue's set_state(NULL) on recording_queue alone
         # zeroed a 96MB Cam4 fragment within ~10ms of teardown start.
+        # Strategy: detach (not NULL) the recording branch first, then NULL the
+        # capture/RTSP pipeline so orphan storms cannot keep UDP/decode alive.
         had_recorder = state.get("recorder") is not None
         if not had_recorder:
             try:
@@ -1249,6 +1396,10 @@ class GStreamerCapturePipelineMixin:
             # Do not run a second finalize via _cleanup_recording_branch here.
         except Exception:
             pass
+
+        splitmux_attached = bool(
+            had_recorder and self._pipeline_has_attached_splitmux(pipeline)
+        )
 
         if self._generation_is_current(generation):
             try:
@@ -1288,16 +1439,10 @@ class GStreamerCapturePipelineMixin:
                 pass
 
         if pipeline is not None:
-            # Pipeline NULL also NULLs splitmuxsink children and truncates open
-            # fragments. When a recorder branch was attached, always orphan.
-            skip_null = bool(
-                had_recorder
-                or abandoned
-                or (
-                    getattr(self, "_teardown_cancel", None) is not None
-                    and self._teardown_cancel.is_set()
-                )
-            )
+            # Only skip pipeline NULL while splitmux is still a child. After a
+            # successful detach, NULLing the capture pipeline frees RTSP/decode
+            # without cascading into the preserved muxer.
+            skip_null = bool(splitmux_attached)
             if skip_null:
                 self._orphan_gst_native(
                     pipeline,
@@ -1309,12 +1454,14 @@ class GStreamerCapturePipelineMixin:
                 try:
                     self.logger.error(
                         "Skipping pipeline NULL to preserve recording for %s "
-                        "(reason=%s, generation=%s, had_recorder=%s, abandoned=%s)",
+                        "(reason=%s, generation=%s, had_recorder=%s, "
+                        "abandoned=%s, splitmux_attached=%s)",
                         self.source_names,
                         reason,
                         generation,
                         had_recorder,
                         abandoned,
+                        splitmux_attached,
                     )
                 except Exception:
                     pass
