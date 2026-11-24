@@ -321,5 +321,23 @@ class EventsProcessor(EvilEyeBase):
                         self.logger.exception("Event processing failed")
             now = datetime.datetime.now()
             for name, events in self.finished_events.items():
-                self.finished_events[name] = [event for event in events if
-                    (now - event.get_time_finished()).total_seconds() <= self.lost_store_time_secs]
+                kept = []
+                for event in events:
+                    finished_at = event.get_time_finished()
+                    if finished_at is None:
+                        continue
+                    if (now - finished_at).total_seconds() <= self.lost_store_time_secs:
+                        kept.append(event)
+                        continue
+                    # Drop frame snapshots once the finished-event TTL expires.
+                    for attr in (
+                        "img_found",
+                        "img_finished",
+                        "img_entered",
+                        "img_left",
+                        "img_detected",
+                        "img_lost",
+                    ):
+                        if hasattr(event, attr):
+                            setattr(event, attr, None)
+                self.finished_events[name] = kept

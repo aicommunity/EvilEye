@@ -1,5 +1,6 @@
 from evileye.core.contracts import EventFrameSnapshot
 from .event import Event
+from .event_zone import _copy_frame_image
 
 
 class AttributeEvent(Event):
@@ -25,34 +26,24 @@ class AttributeEvent(Event):
 
         if obj is not None:
             if not is_finished:
-                # Use .copy() for numpy arrays in CaptureImage instead of deepcopy
-                if isinstance(obj.last_image, EventFrameSnapshot):
-                    # Process snapshots keep their bounded JPEG payload lazy through IPC.
-                    self.img_found = obj.last_image
-                elif obj.last_image and hasattr(obj.last_image, 'image') and obj.last_image.image is not None:
-                    # Create shallow copy of CaptureImage and copy only numpy array
-                    import copy as cp
-                    self.img_found = cp.copy(obj.last_image)
-                    if hasattr(self.img_found, 'image'):
-                        self.img_found.image = obj.last_image.image.copy()
-                else:
-                    self.img_found = obj.last_image
+                self.img_found = self._snapshot_obj_image(obj)
                 self.box_found = obj.track.bounding_box if hasattr(obj, 'track') else None
                 self.time_found = timestamp
                 self.class_id = getattr(obj, 'class_id', None)
             else:
-                # Use .copy() for numpy arrays in CaptureImage instead of deepcopy
-                if isinstance(obj.last_image, EventFrameSnapshot):
-                    self.img_finished = obj.last_image
-                elif obj.last_image and hasattr(obj.last_image, 'image') and obj.last_image.image is not None:
-                    import copy as cp
-                    self.img_finished = cp.copy(obj.last_image)
-                    if hasattr(self.img_finished, 'image'):
-                        self.img_finished.image = obj.last_image.image.copy()
-                else:
-                    self.img_finished = obj.last_image
+                self.img_finished = self._snapshot_obj_image(obj)
                 self.box_finished = obj.track.bounding_box if hasattr(obj, 'track') else None
                 self.class_id = getattr(obj, 'class_id', None)
+
+    @staticmethod
+    def _snapshot_obj_image(obj):
+        """Compact JPEG snapshot (same path as zone events) instead of full BGR copies."""
+        last_image = getattr(obj, "last_image", None)
+        if isinstance(last_image, EventFrameSnapshot):
+            return last_image
+        if last_image is not None and getattr(last_image, "image", None) is not None:
+            return _copy_frame_image(last_image)
+        return last_image
 
     def __str__(self):
         return f'Id: {self.event_id}, Source: {self.source_id}, Obj_id: {self.object_id}, Event: {self.matched_event_name}, Attrs: {self.matched_attrs}'

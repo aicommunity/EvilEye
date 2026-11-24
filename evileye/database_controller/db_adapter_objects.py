@@ -27,6 +27,23 @@ class DatabaseAdapterObjects(DatabaseAdapterBase):
             logger=self.logger,
         )
 
+    @staticmethod
+    def _snapshot_queued_image(last_image):
+        """Queue a compact JPEG proxy instead of a live full-res CaptureImage.
+
+        Object storms used to enqueue hundreds of live Frame refs (each ~tens of
+        MB). The worker then held them until disk IO caught up, pinning RSS.
+        Zone adapters already snapshot; keep objects on the same path.
+        """
+        if last_image is None:
+            return None
+        try:
+            from evileye.events_detectors.event_zone import _copy_frame_image
+
+            return _copy_frame_image(last_image)
+        except Exception:
+            return last_image
+
     def _insert_impl(self, obj):
         fields, data, preview_path, frame_path = self._prepare_for_saving(obj)
         query_type = QueryType.INSERT
@@ -35,7 +52,8 @@ class DatabaseAdapterObjects(DatabaseAdapterBase):
             sql.SQL(",").join(map(sql.Identifier, fields)),
             sql.SQL(', ').join(sql.Placeholder() * len(fields))
         )
-        self.queue_in.put((query_type, insert_query, data, preview_path, frame_path, obj.last_image))
+        queued_image = self._snapshot_queued_image(getattr(obj, "last_image", None))
+        self.queue_in.put((query_type, insert_query, data, preview_path, frame_path, queued_image))
 
     def _update_impl(self, obj):
         fields, data, preview_path, frame_path = self._prepare_for_updating(obj)
@@ -57,7 +75,8 @@ class DatabaseAdapterObjects(DatabaseAdapterBase):
                 sql.Composed([sql.Identifier(field), sql.SQL(" = "), sql.Placeholder()]) for field in fields),
             selected=sql.Composed(last_obj_query),
             fields=sql.SQL(",").join(map(sql.Identifier, fields)))
-        self.queue_in.put((query_type, update_query, data, preview_path, frame_path, obj.last_image))
+        queued_image = self._snapshot_queued_image(getattr(obj, "last_image", None))
+        self.queue_in.put((query_type, update_query, data, preview_path, frame_path, queued_image))
 
     def _process_queue_item(self, item):
         query_type, query_string, data, preview_path, frame_path, image = item
@@ -100,6 +119,16 @@ class DatabaseAdapterObjects(DatabaseAdapterBase):
                 self._record_failure(
                     'save object event images', exc, category='terminal_write'
                 )
+        # Release queued snapshot ASAP so pending queue depth cannot pin RSS.
+        try:
+            if hasattr(image, "image"):
+                image.image = None
+            if hasattr(image, "_decoded"):
+                image._decoded = None
+            if hasattr(image, "_jpeg"):
+                image._jpeg = None
+        except Exception:
+            pass
         if query_type == QueryType.INSERT:
             threading_events.notify(EventType.HANDLER_NEW_OBJECT)
         elif query_type == QueryType.UPDATE:
