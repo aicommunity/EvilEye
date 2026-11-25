@@ -254,6 +254,123 @@ def test_orphan_reaper_drops_null_elements_and_keeps_splitmux():
         with gst_pipeline._ORPHANED_GST_NATIVE_LOCK:
             gst_pipeline._ORPHANED_GST_NATIVE.clear()
             gst_pipeline._ORPHANED_GST_NATIVE_SINCE.clear()
+            gst_pipeline._DEFERRED_SPLITMUX_RELEASES.clear()
+        gst_pipeline.Gst = previous_gst
+
+
+def test_deferred_splitmux_release_nulls_after_stable_file_and_eos():
+    """Detached splitmux is NULLed only after EOS and a stable non-empty fragment."""
+    from evileye.capture import gstreamer_capture_pipeline as gst_pipeline
+
+    class _FakeState:
+        NULL = "NULL"
+
+    class _FakeGst:
+        State = _FakeState
+
+    class _Elem:
+        def __init__(self, name):
+            self.name = name
+            self.null_calls = 0
+            self.state = "PLAYING"
+
+        def get_name(self):
+            return self.name
+
+        def get_state(self, _timeout):
+            return (None, self.state, None)
+
+        def set_state(self, state):
+            self.null_calls += 1
+            self.state = state
+
+    eos_calls = []
+    signature = ("/tmp/Cam4_frag.mp4", 4096, 10)
+    mux = _Elem("recording_splitmuxsink")
+    encoder = _Elem("x264enc")
+    previous_gst = gst_pipeline.Gst
+    gst_pipeline.Gst = _FakeGst
+    try:
+        gst_pipeline.GStreamerCapturePipelineMixin._register_deferred_splitmux_release(
+            elements=[encoder, mux],
+            send_eos=lambda: eos_calls.append(1) or True,
+            signature=lambda: signature,
+            label="Cam4",
+            orphaned_at=time.monotonic() - 120,
+        )
+        with gst_pipeline._ORPHANED_GST_NATIVE_LOCK:
+            gst_pipeline._ORPHANED_GST_NATIVE[:] = [encoder, mux]
+            gst_pipeline._ORPHANED_GST_NATIVE_SINCE[id(encoder)] = time.monotonic() - 120
+            gst_pipeline._ORPHANED_GST_NATIVE_SINCE[id(mux)] = time.monotonic() - 120
+
+        GStreamerCapturePipelineMixin._reap_orphaned_gst_native()
+        assert eos_calls == []
+        assert mux.null_calls == 0
+        assert encoder.null_calls == 0, "held encoder must stay until the fragment is finalized"
+
+        GStreamerCapturePipelineMixin._reap_orphaned_gst_native()
+        assert eos_calls == [1]
+        assert mux.null_calls == 0
+
+        GStreamerCapturePipelineMixin._reap_orphaned_gst_native()
+        assert mux.null_calls == 0, "size change after EOS must settle before NULL"
+
+        GStreamerCapturePipelineMixin._reap_orphaned_gst_native()
+        assert mux.state == "NULL"
+        assert encoder.state == "NULL"
+        assert mux not in gst_pipeline._ORPHANED_GST_NATIVE
+        assert encoder not in gst_pipeline._ORPHANED_GST_NATIVE
+        assert gst_pipeline._DEFERRED_SPLITMUX_RELEASES == []
+    finally:
+        with gst_pipeline._ORPHANED_GST_NATIVE_LOCK:
+            gst_pipeline._ORPHANED_GST_NATIVE.clear()
+            gst_pipeline._ORPHANED_GST_NATIVE_SINCE.clear()
+            gst_pipeline._DEFERRED_SPLITMUX_RELEASES.clear()
+        gst_pipeline.Gst = previous_gst
+
+
+def test_deferred_splitmux_release_keeps_muxer_when_fragment_empty():
+    from evileye.capture import gstreamer_capture_pipeline as gst_pipeline
+
+    class _FakeState:
+        NULL = "NULL"
+
+    class _FakeGst:
+        State = _FakeState
+
+    class _Mux:
+        def __init__(self):
+            self.null_calls = 0
+
+        def get_name(self):
+            return "recording_splitmuxsink"
+
+        def get_state(self, _timeout):
+            return (None, "PLAYING", None)
+
+        def set_state(self, _state):
+            self.null_calls += 1
+
+    previous_gst = gst_pipeline.Gst
+    gst_pipeline.Gst = _FakeGst
+    mux = _Mux()
+    try:
+        gst_pipeline.GStreamerCapturePipelineMixin._register_deferred_splitmux_release(
+            elements=[mux],
+            send_eos=lambda: True,
+            signature=lambda: ("/tmp/Cam4_frag.mp4", 0, 1),
+            label="Cam4",
+            orphaned_at=time.monotonic() - 120,
+        )
+        GStreamerCapturePipelineMixin._reap_orphaned_gst_native()
+        GStreamerCapturePipelineMixin._reap_orphaned_gst_native()
+        assert mux.null_calls == 0
+        assert gst_pipeline._DEFERRED_SPLITMUX_RELEASES
+    finally:
+        with gst_pipeline._ORPHANED_GST_NATIVE_LOCK:
+            gst_pipeline._ORPHANED_GST_NATIVE.clear()
+            gst_pipeline._ORPHANED_GST_NATIVE_SINCE.clear()
+            gst_pipeline._DEFERRED_SPLITMUX_RELEASES.clear()
         gst_pipeline.Gst = previous_gst
 
 

@@ -470,6 +470,69 @@ class GstContinuousRecorder(VideoRecorderBase):
         # splitmuxsink rotates based on max-size-time.
         return
 
+    def _schedule_deferred_splitmux_release(self, refs: GstBranchRefs) -> None:
+        """After detach, EOS the branch once its fragment is stable, then drop it."""
+        prefix = getattr(self, "_deferred_fragment_prefix", None)
+        output_dirs = set(getattr(self, "_deferred_output_dirs", set()) or ())
+        container = getattr(self, "_deferred_container", None) or "mp4"
+        if not prefix or not output_dirs or refs.splitmuxsink is None:
+            return
+        try:
+            from evileye.capture.gstreamer_capture_pipeline import GStreamerCapturePipelineMixin
+        except Exception:
+            return
+        elements = [
+            refs.videoconvert,
+            refs.capsfilter,
+            refs.x264enc,
+            refs.h264parse,
+            refs.queue_before_mux,
+            refs.splitmuxsink,
+        ]
+        queue = refs.queue_before_mux
+        label = self.source.source_name if self.source else prefix
+
+        def send_eos() -> bool:
+            try:
+                from evileye.capture.gstreamer_capture_common import Gst as _Gst
+
+                if queue is None or _Gst is None:
+                    return False
+                pad = queue.get_static_pad("src")
+                if pad is None:
+                    return False
+                return bool(pad.push_event(_Gst.Event.new_eos()))
+            except Exception:
+                return False
+
+        def signature():
+            latest = None
+            latest_stat = None
+            pattern = f"{prefix}*.{container}"
+            for out_dir in output_dirs:
+                try:
+                    candidates = list(Path(out_dir).glob(pattern))
+                except Exception:
+                    continue
+                for path in candidates:
+                    try:
+                        stat = path.stat()
+                    except OSError:
+                        continue
+                    if latest_stat is None or stat.st_mtime_ns >= latest_stat.st_mtime_ns:
+                        latest = path
+                        latest_stat = stat
+            if latest is None or latest_stat is None:
+                return ("", 0, 0)
+            return (str(latest), int(latest_stat.st_size), int(latest_stat.st_mtime_ns))
+
+        GStreamerCapturePipelineMixin._register_deferred_splitmux_release(
+            elements=elements,
+            send_eos=send_eos,
+            signature=signature,
+            label=str(label),
+        )
+
     def _orphan_recording_branch_refs(self, refs: GstBranchRefs) -> None:
         """Pin recording elements without set_state(NULL) so open fragments stay intact."""
         try:
@@ -550,6 +613,7 @@ class GstContinuousRecorder(VideoRecorderBase):
                 pass
 
         self._orphan_recording_branch_refs(refs)
+        self._schedule_deferred_splitmux_release(refs)
 
         try:
             splitmux = refs.splitmuxsink
@@ -579,6 +643,9 @@ class GstContinuousRecorder(VideoRecorderBase):
             if self._recording_out_dir is not None:
                 output_dirs.add(self._recording_out_dir)
             container = self._recording_container
+            self._deferred_fragment_prefix = self._active_splitmux_prefix
+            self._deferred_output_dirs = set(output_dirs)
+            self._deferred_container = container
             self._recording_out_dir = None
             self._recording_out_dirs = set()
             self._active_splitmux_prefix = None

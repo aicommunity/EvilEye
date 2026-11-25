@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import logging
+
 from .gstreamer_capture_common import (
     CaptureConstants,
     CaptureDeviceType,
@@ -26,8 +28,13 @@ _ORPHANED_GST_NATIVE_SINCE: dict = {}
 _ORPHANED_GST_NATIVE_LOCK = threading.Lock()
 _ORPHANED_GST_NATIVE_MAX = 64
 _ORPHAN_REAP_INTERVAL_SEC = 30.0
+# Detached splitmux branches waiting for EOS finalize before NULL.
+# NULL before a stable non-empty fragment truncates the open mp4 to 0 bytes.
+_DEFERRED_SPLITMUX_RELEASES: list = []
+_DEFERRED_SPLITMUX_MIN_AGE_SEC = 20.0
 _orphan_reaper_stop = threading.Event()
 _orphan_reaper_thread: threading.Thread | None = None
+_orphan_log = logging.getLogger(__name__)
 
 
 class GStreamerCapturePipelineMixin:
@@ -44,6 +51,141 @@ class GStreamerCapturePipelineMixin:
                 _ORPHANED_GST_NATIVE_SINCE.setdefault(id(obj), now)
             GStreamerCapturePipelineMixin._enforce_orphan_cap_locked()
         GStreamerCapturePipelineMixin._ensure_orphan_reaper()
+
+    @staticmethod
+    def _register_deferred_splitmux_release(
+        *,
+        elements,
+        send_eos,
+        signature,
+        label: str = "",
+        orphaned_at: float | None = None,
+    ) -> None:
+        """Hold a detached recording branch until EOS leaves a stable non-empty file.
+
+        ``signature`` returns ``(path, size, mtime_ns)``. Size ``<= 0`` never releases.
+        ``send_eos`` must return True only when EOS was accepted by the detached branch.
+        """
+        pinned = [elem for elem in elements if elem is not None]
+        if not pinned or not callable(send_eos) or not callable(signature):
+            return
+        now = time.monotonic()
+        job = {
+            "elements": pinned,
+            "hold_ids": {id(elem) for elem in pinned},
+            "send_eos": send_eos,
+            "signature": signature,
+            "label": label or "splitmux",
+            "since": float(orphaned_at if orphaned_at is not None else now),
+            "last_signature": None,
+            "eos_sent": False,
+            "null_requested": False,
+        }
+        with _ORPHANED_GST_NATIVE_LOCK:
+            _DEFERRED_SPLITMUX_RELEASES.append(job)
+        GStreamerCapturePipelineMixin._ensure_orphan_reaper()
+
+    @staticmethod
+    def _deferred_splitmux_hold_ids() -> set:
+        held: set = set()
+        for job in _DEFERRED_SPLITMUX_RELEASES:
+            if not job.get("null_requested"):
+                held.update(job.get("hold_ids") or ())
+        return held
+
+    @staticmethod
+    def _advance_deferred_splitmux_releases() -> None:
+        """EOS a quiet detached branch, then NULL it once the fragment stays non-empty."""
+        with _ORPHANED_GST_NATIVE_LOCK:
+            jobs = list(_DEFERRED_SPLITMUX_RELEASES)
+        finished: list = []
+        for job in jobs:
+            try:
+                if GStreamerCapturePipelineMixin._advance_one_deferred_splitmux(job):
+                    finished.append(job)
+            except Exception:
+                _orphan_log.exception(
+                    "Deferred splitmux release failed for %s", job.get("label")
+                )
+        if not finished:
+            return
+        with _ORPHANED_GST_NATIVE_LOCK:
+            finished_ids = {id(job) for job in finished}
+            _DEFERRED_SPLITMUX_RELEASES[:] = [
+                job for job in _DEFERRED_SPLITMUX_RELEASES if id(job) not in finished_ids
+            ]
+            drop_ids = {id(elem) for job in finished for elem in job["elements"]}
+            kept = []
+            for obj in _ORPHANED_GST_NATIVE:
+                if id(obj) in drop_ids and GStreamerCapturePipelineMixin._gst_object_is_null(obj):
+                    _ORPHANED_GST_NATIVE_SINCE.pop(id(obj), None)
+                    continue
+                kept.append(obj)
+            _ORPHANED_GST_NATIVE[:] = kept
+
+    @staticmethod
+    def _advance_one_deferred_splitmux(job: dict) -> bool:
+        """Return True when every element reached NULL and the job can be dropped."""
+        if job.get("null_requested"):
+            return all(
+                GStreamerCapturePipelineMixin._gst_object_is_null(elem)
+                for elem in job["elements"]
+            )
+        try:
+            signature = job["signature"]()
+        except Exception:
+            return False
+        size = int(signature[1]) if signature and len(signature) > 1 else 0
+        if size <= 0:
+            job["last_signature"] = signature
+            return False
+        if signature != job.get("last_signature"):
+            job["last_signature"] = signature
+            return False
+        if not job.get("eos_sent"):
+            age = time.monotonic() - float(job.get("since") or time.monotonic())
+            if age < _DEFERRED_SPLITMUX_MIN_AGE_SEC:
+                return False
+            try:
+                accepted = bool(job["send_eos"]())
+            except Exception:
+                accepted = False
+            if not accepted:
+                _orphan_log.warning(
+                    "Deferred splitmux EOS was not accepted for %s; keeping muxer",
+                    job.get("label"),
+                )
+                return False
+            job["eos_sent"] = True
+            # Finalize rewrites the mp4; wait until that size is stable before NULL.
+            job["last_signature"] = None
+            _orphan_log.info(
+                "Sent EOS to detached splitmux for %s; waiting for a stable fragment",
+                job.get("label"),
+            )
+            return False
+        if Gst is None:
+            return False
+        for elem in job["elements"]:
+            try:
+                if hasattr(elem, "set_state"):
+                    elem.set_state(Gst.State.NULL)
+            except Exception:
+                _orphan_log.exception(
+                    "Failed to NULL detached splitmux element for %s", job.get("label")
+                )
+        job["null_requested"] = True
+        released = all(
+            GStreamerCapturePipelineMixin._gst_object_is_null(elem)
+            for elem in job["elements"]
+        )
+        if released:
+            _orphan_log.info(
+                "Released detached splitmux for %s after a stable fragment (%s bytes)",
+                job.get("label"),
+                size,
+            )
+        return released
 
     @staticmethod
     def _gst_object_is_null(obj) -> bool:
@@ -107,13 +249,18 @@ class GStreamerCapturePipelineMixin:
 
         Returns the number of refs still pinned.
         """
+        GStreamerCapturePipelineMixin._advance_deferred_splitmux_releases()
         now = time.monotonic()
         kept: list = []
         with _ORPHANED_GST_NATIVE_LOCK:
             snapshot = list(_ORPHANED_GST_NATIVE)
             since_map = dict(_ORPHANED_GST_NATIVE_SINCE)
+            hold_ids = GStreamerCapturePipelineMixin._deferred_splitmux_hold_ids()
         for obj in snapshot:
             if GStreamerCapturePipelineMixin._gst_object_is_null(obj):
+                continue
+            if id(obj) in hold_ids:
+                kept.append(obj)
                 continue
             orphaned_at = float(since_map.get(id(obj), now))
             age = now - orphaned_at
