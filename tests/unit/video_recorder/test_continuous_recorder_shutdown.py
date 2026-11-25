@@ -208,6 +208,49 @@ def test_native_teardown_skips_null_while_splitmux_still_attached():
     assert capture._pipeline_null_abandoned is True
 
 
+def test_detached_branch_eos_uses_muxer_when_queue_pad_is_unlinked():
+    """bin.remove() unlinks pads, so queue.push_event(EOS) fails; the muxer still can."""
+    from evileye.video_recorder.continuous_recorder_gst import push_eos_to_detached_branch
+
+    class _Pad:
+        def __init__(self):
+            self.peer = None
+
+        def get_peer(self):
+            return self.peer
+
+        def push_event(self, _event):
+            return False
+
+        def link(self, _sink):
+            raise AssertionError("unlinked queue pad must not be required")
+
+    class _Queue:
+        def get_static_pad(self, _name):
+            return _Pad()
+
+    class _Mux:
+        def __init__(self):
+            self.events = []
+
+        def send_event(self, event):
+            self.events.append(event)
+            return True
+
+        def get_static_pad(self, _name):
+            return None
+
+    class _Gst:
+        class Event:
+            @staticmethod
+            def new_eos():
+                return "eos"
+
+    mux = _Mux()
+    assert push_eos_to_detached_branch(_Queue(), mux, gst=_Gst) is True
+    assert mux.events == ["eos"]
+
+
 def test_stop_with_pipeline_abandon_skips_splitmux_null(tmp_path):
     """Abandon must detach splitmux without set_state(NULL) — NULL truncates to 0B."""
     operations = []

@@ -151,10 +151,14 @@ class GStreamerCapturePipelineMixin:
             except Exception:
                 accepted = False
             if not accepted:
-                _orphan_log.warning(
-                    "Deferred splitmux EOS was not accepted for %s; keeping muxer",
-                    job.get("label"),
-                )
+                failures = int(job.get("eos_failures") or 0) + 1
+                job["eos_failures"] = failures
+                if failures == 1 or failures % 20 == 0:
+                    _orphan_log.warning(
+                        "Deferred splitmux EOS was not accepted for %s; keeping muxer (attempt %s)",
+                        job.get("label"),
+                        failures,
+                    )
                 return False
             job["eos_sent"] = True
             # Finalize rewrites the mp4; wait until that size is stable before NULL.

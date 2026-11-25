@@ -31,6 +31,58 @@ class GstBranchRefs:
     splitmuxsink: object
 
 
+def push_eos_to_detached_branch(queue, splitmux, gst=None) -> bool:
+    """Deliver EOS after the branch has been removed from the capture bin.
+
+    ``bin.remove()`` unlinks pads, so ``queue.src.push_event(EOS)`` is rejected.
+    The muxer element can still take the event directly.
+    """
+    if gst is None:
+        from evileye.capture.gstreamer_capture_common import Gst as gst
+    if gst is None:
+        return False
+    try:
+        event = gst.Event.new_eos()
+    except Exception:
+        return False
+    if splitmux is not None and hasattr(splitmux, "send_event"):
+        try:
+            if splitmux.send_event(event):
+                return True
+        except Exception:
+            pass
+    if queue is None or not hasattr(queue, "get_static_pad"):
+        return False
+    try:
+        pad = queue.get_static_pad("src")
+    except Exception:
+        pad = None
+    if pad is None:
+        return False
+    try:
+        peer = pad.get_peer() if hasattr(pad, "get_peer") else None
+    except Exception:
+        peer = None
+    if peer is None and splitmux is not None and hasattr(splitmux, "get_static_pad"):
+        sink = None
+        for pad_name in ("video", "sink"):
+            try:
+                sink = splitmux.get_static_pad(pad_name)
+            except Exception:
+                sink = None
+            if sink is not None:
+                break
+        if sink is not None and hasattr(pad, "link"):
+            try:
+                pad.link(sink)
+            except Exception:
+                pass
+    try:
+        return bool(pad.push_event(gst.Event.new_eos()))
+    except Exception:
+        return False
+
+
 class GstContinuousRecorder(VideoRecorderBase):
     """
 
@@ -493,17 +545,7 @@ class GstContinuousRecorder(VideoRecorderBase):
         label = self.source.source_name if self.source else prefix
 
         def send_eos() -> bool:
-            try:
-                from evileye.capture.gstreamer_capture_common import Gst as _Gst
-
-                if queue is None or _Gst is None:
-                    return False
-                pad = queue.get_static_pad("src")
-                if pad is None:
-                    return False
-                return bool(pad.push_event(_Gst.Event.new_eos()))
-            except Exception:
-                return False
+            return push_eos_to_detached_branch(queue, refs.splitmuxsink)
 
         def signature():
             latest = None
