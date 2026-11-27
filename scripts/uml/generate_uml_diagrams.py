@@ -9,7 +9,6 @@ import importlib
 from typing import Dict, Optional
 from pathlib import Path
 import graphviz
-import plantuml
 
 class UMLGenerator:
     """Generates UML diagrams from Python code."""

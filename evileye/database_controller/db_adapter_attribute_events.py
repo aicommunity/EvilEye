@@ -34,6 +34,8 @@ class DatabaseAdapterAttributeEvents(DatabaseAdapterBase):
         )
         self.queue_in.put((query_type, insert_query, data, preview_path, frame_path, getattr(event, 'img_found', None),
                            getattr(event, 'box_found', None)))
+        # Queue holds the snapshot for IO; drop event-owned ref (same as zone adapter).
+        event.img_found = None
 
     def _update_impl(self, event):
         fields, data, preview_path, frame_path = self._prepare_for_updating(event)
@@ -49,6 +51,7 @@ class DatabaseAdapterAttributeEvents(DatabaseAdapterBase):
         self.queue_in.put(
             (query_type, update_query, data, preview_path, frame_path, getattr(event, 'img_finished', None),
              getattr(event, 'box_finished', None)))
+        event.img_finished = None
 
     def _process_queue_item(self, item):
         query_type, query_string, data, preview_path, frame_path, image, box = item

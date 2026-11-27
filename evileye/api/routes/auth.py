@@ -10,17 +10,33 @@ from evileye.api.core.user_prefs import (
     normalize_allowed_cameras,
     prefs_from_record,
 )
-from evileye.api.core.web_auth_bootstrap import user_must_change_password
+from evileye.api.core.web_auth_bootstrap import resolve_must_change_password, user_must_change_password
 from evileye.api.security import (
     authenticate_user,
+    csrf_origin_violation,
     load_web_auth_config,
     normalize_role,
     permissions_for_role,
     require_authenticated,
+    resolve_session_principal,
     verify_password,
 )
 
 router = APIRouter(prefix="/api/v1/auth", tags=["auth"])
+
+
+def _guard_authenticated_mutation(request: Request, *, allow_password_change: bool) -> None:
+    """CSRF and must-change gate for auth routes that sit outside AuthGuardMiddleware."""
+    violation = csrf_origin_violation(request, getattr(request.app.state, "allowed_origins", ()))
+    if violation:
+        raise HTTPException(status_code=403, detail="Cross-origin request rejected")
+    user = require_authenticated(request)
+    username = str(user.get("username") or "")
+    if resolve_must_change_password(username) and not allow_password_change:
+        raise HTTPException(
+            status_code=403,
+            detail="Password change required",
+        )
 
 
 class LoginPayload(BaseModel):
@@ -45,19 +61,9 @@ class PrefsPayload(BaseModel):
 
 
 def _must_change_for_username(username: str) -> bool:
-    from evileye.api.core.credentials_users import get_credentials_user, list_credentials_users
-    from evileye.api.core.user_store import get_user_store
+    from evileye.api.core.web_auth_bootstrap import resolve_must_change_password
 
-    cred = get_credentials_user(username)
-    if cred is None:
-        for item in list_credentials_users():
-            if str(item.get("username") or "").lower() == username.lower():
-                cred = item
-                break
-    if cred is not None:
-        return user_must_change_password(cred)
-    record = get_user_store().get_user_record(username)
-    return user_must_change_password(record)
+    return resolve_must_change_password(username)
 
 
 def _me_camera_fields(request: Request, username: str, role: str) -> dict[str, Any]:
@@ -120,8 +126,14 @@ async def auth_me(request: Request, response: Response) -> dict:
     user = request.session.get("user")
     if not isinstance(user, dict):
         raise HTTPException(status_code=401, detail="Authentication required")
-    role = normalize_role(str(user.get("role") or "user"))
-    username = str(user.get("username") or "")
+    # Re-resolve the session against the live user store: a disabled/deleted
+    # user with a still-valid cookie must not be reported as authenticated
+    # (audit W6).
+    principal = resolve_session_principal(user)
+    if principal is None:
+        raise HTTPException(status_code=401, detail="Authentication required")
+    role = normalize_role(str(principal.get("role") or "user"))
+    username = str(principal.get("username") or user.get("username") or "")
     session_user = {"username": username, "role": role}
     camera_fields = _me_camera_fields(request, username, role)
     client_debug = _apply_client_debug_header(response, username)
@@ -138,6 +150,7 @@ async def auth_me(request: Request, response: Response) -> dict:
 
 @router.put("/prefs")
 async def auth_put_prefs(payload: PrefsPayload, request: Request) -> dict:
+    _guard_authenticated_mutation(request, allow_password_change=False)
     from evileye.api.core.credentials_users import (
         get_credentials_user,
         list_credentials_users,
@@ -240,12 +253,14 @@ async def auth_login(payload: LoginPayload, request: Request, response: Response
 
 @router.post("/logout")
 async def auth_logout(request: Request) -> dict:
+    _guard_authenticated_mutation(request, allow_password_change=True)
     request.session.clear()
     return {"ok": True}
 
 
 @router.post("/change-password")
 async def auth_change_password(payload: ChangePasswordPayload, request: Request) -> dict:
+    _guard_authenticated_mutation(request, allow_password_change=True)
     from evileye.api.core.credentials_users import (
         get_credentials_user,
         list_credentials_users,
@@ -294,4 +309,9 @@ async def auth_change_password(payload: ChangePasswordPayload, request: Request)
             raise HTTPException(status_code=400, detail=str(exc)) from exc
 
     request.app.state.web_auth = load_web_auth_config()
+    # The one-time bootstrap password note is no longer needed once the
+    # password has actually been changed.
+    from evileye.api.core.web_auth_bootstrap import clear_bootstrap_password_file
+
+    clear_bootstrap_password_file()
     return {"ok": True, "must_change_password": False}

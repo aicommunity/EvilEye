@@ -578,6 +578,89 @@ class GStreamerCaptureFramesMixin:
             except Exception:
                 pass
 
+    def _note_capture_down(self) -> None:
+        """Record a single disconnect for one outage, not for every reconnect attempt."""
+        if getattr(self, "_capture_down_since", None) is not None:
+            return
+        self._capture_down_since = time.time()
+        try:
+            self._record_disconnect(datetime.datetime.now())
+        except Exception:
+            pass
+
+    def _note_capture_up(self) -> None:
+        self._capture_down_since = None
+        self._pipeline_null_abandoned = False
+
+    def _begin_reconnect_release(self, release_budget: float) -> None:
+        """Start at most one background release(); a live one is not replaced."""
+        import threading as _thr_rel
+
+        release_done = getattr(self, "_reconnect_release_done", None)
+        release_thread = getattr(self, "_reconnect_release_thread", None)
+        if release_thread is not None and release_thread.is_alive():
+            self.logger.error(
+                "GStreamer release is still running for %s; not starting another",
+                self.source_names,
+            )
+            if release_done is not None and not release_done.is_set():
+                if not release_done.wait(release_budget):
+                    self._abandon_stalled_teardown()
+                    release_done.set()
+            return
+        if release_done is not None and not release_done.is_set():
+            self.logger.error(
+                "Skipping wait on abandoned GStreamer teardown for %s",
+                self.source_names,
+            )
+            release_done.set()
+            self._reconnect_release_started_at = None
+            return
+
+        release_done = _thr_rel.Event()
+        self._reconnect_release_done = release_done
+        self._reconnect_release_started_at = time.time()
+
+        def _release_worker(done=release_done):
+            try:
+                self.release()
+            except Exception as e:
+                self.logger.debug(f"Error in release during reconnect: {e}")
+            finally:
+                self._reconnect_release_started_at = None
+                done.set()
+
+        release_thread = _thr_rel.Thread(target=_release_worker, daemon=True)
+        self._reconnect_release_thread = release_thread
+        release_thread.start()
+        if not release_done.wait(release_budget):
+            self.logger.error(
+                "Abandoning stalled GStreamer teardown for %s after %.1fs; forcing reconnect",
+                self.source_names,
+                release_budget,
+            )
+            self._abandon_stalled_teardown()
+            release_done.set()
+
+    def _reconnect_teardown_still_running(self) -> bool:
+        """True while a previous release()/teardown worker is still inside set_state(NULL).
+
+        After abandon the hung worker may still be alive, but its native objects are
+        orphaned and init must be allowed to build a new pipeline.
+        """
+        if getattr(self, "_pipeline_null_abandoned", False):
+            return False
+        for attr in ("_reconnect_release_thread", "_gst_teardown_thread"):
+            thread = getattr(self, attr, None)
+            if thread is not None and thread.is_alive():
+                return True
+        return False
+
+    def _detach_abandoned_teardown_workers(self) -> None:
+        """Forget hung teardown workers after abandon; Gst refs stay orphaned."""
+        self._reconnect_release_thread = None
+        self._gst_teardown_thread = None
+
     def _abandon_stalled_teardown(self) -> None:
         """Stop waiting on a hung release() and invalidate the old pipeline generation."""
         try:
@@ -588,12 +671,26 @@ class GStreamerCaptureFramesMixin:
             self._pipeline_null_abandoned = True
         except Exception:
             pass
+        # Cancel in-flight recording finalize/NULL so splitmux cannot truncate
+        # the open fragment after we have already moved on to reconnect.
+        try:
+            cancel = getattr(self, "_teardown_cancel", None)
+            if cancel is not None:
+                cancel.set()
+        except Exception:
+            pass
         try:
             self._pipeline_generation = int(getattr(self, "_pipeline_generation", 0)) + 1
         except Exception:
             self._pipeline_generation = 1
+        # The outage clock restarts when the old pipeline is abandoned. Counting
+        # the hung NULL toward source_down makes the watchdog kill every camera.
+        self._capture_down_since = time.time()
         try:
             with self.pipeline_lock:
+                orphan = getattr(self, "_orphan_gst_native", None)
+                if callable(orphan):
+                    orphan(self.pipeline, self.bus, self.appsink)
                 self.pipeline = None
                 self.bus = None
                 self.appsink = None
@@ -603,11 +700,12 @@ class GStreamerCaptureFramesMixin:
         except Exception:
             self.is_inited = False
             self.is_working = False
+        # Drop thread attrs so later init() is not blocked by a forever-hung NULL.
         try:
-            # Force a new connection generation so downstream drops stale frames.
-            self._record_disconnect(datetime.datetime.now())
+            self._detach_abandoned_teardown_workers()
         except Exception:
-            pass
+            self._reconnect_release_thread = None
+            self._gst_teardown_thread = None
 
     def _on_new_sample(self, appsink: Any) -> Any:
         """
@@ -712,7 +810,7 @@ class GStreamerCaptureFramesMixin:
                                 f"{(now - self._init_time):.1f}" if self._init_time else "?",
                             )
                             self.is_working = True
-                            self._pipeline_null_abandoned = False
+                            self._note_capture_up()
                             try:
                                 self._noframes_restart_consecutive = 0
                             except Exception:
@@ -724,7 +822,7 @@ class GStreamerCaptureFramesMixin:
                                 self.source_names,
                             )
                             self.is_working = True
-                            self._pipeline_null_abandoned = False
+                            self._note_capture_up()
                             try:
                                 self._noframes_restart_consecutive = 0
                             except Exception:
@@ -797,7 +895,7 @@ class GStreamerCaptureFramesMixin:
                             f"{(now - self._init_time):.1f}" if self._init_time else "?",
                         )
                         self.is_working = True
-                        self._pipeline_null_abandoned = False
+                        self._note_capture_up()
                         try:
                             self._noframes_restart_consecutive = 0
                         except Exception:
@@ -882,6 +980,7 @@ class GStreamerCaptureFramesMixin:
             # Prevent races with monitor thread and force not working state
             self.is_inited = False
             self.is_working = False
+            self._note_capture_down()
             # Read reconnect settings from params if provided
             try:
                 cfg = (self.params or {}).get('reconnect', {})
@@ -920,7 +1019,6 @@ class GStreamerCaptureFramesMixin:
                             f"Reconnecting to source {self.source_names} (attempt {attempt}/{total_str}), backoff={wait_time:.1f}s")
                         # Reconnect must not reuse a pipeline while its native teardown is active.
                         try:
-                            import threading as _thr_rel
                             release_budget = float(
                                 getattr(
                                     CaptureConstants,
@@ -928,41 +1026,7 @@ class GStreamerCaptureFramesMixin:
                                     15.0,
                                 )
                             )
-                            release_done = getattr(self, '_reconnect_release_done', None)
-                            if release_done is None or release_done.is_set():
-                                release_done = _thr_rel.Event()
-                                self._reconnect_release_done = release_done
-                                self._reconnect_release_started_at = time.time()
-
-                                def _release_worker(done=release_done):
-                                    try:
-                                        self.release()
-                                    except Exception as e:
-                                        self.logger.debug(f"Error in release during reconnect: {e}")
-                                    finally:
-                                        self._reconnect_release_started_at = None
-                                        done.set()
-
-                                release_thread = _thr_rel.Thread(target=_release_worker, daemon=True)
-                                release_thread.start()
-                            release_deadline = time.monotonic() + release_budget
-                            if not release_done.wait(min(2.0, release_budget)):
-                                self.logger.error(
-                                    "GStreamer teardown is still running for %s; reconnect is waiting",
-                                    self.source_names,
-                                )
-                                while not release_done.wait(0.25):
-                                    if not self.run_flag or self.stop_event.is_set():
-                                        break
-                                    if time.monotonic() >= release_deadline:
-                                        break
-                            if not release_done.is_set():
-                                self.logger.error(
-                                    "Abandoning stalled GStreamer teardown for %s after %.1fs; forcing reconnect",
-                                    self.source_names,
-                                    release_budget,
-                                )
-                                self._abandon_stalled_teardown()
+                            self._begin_reconnect_release(release_budget)
                         except Exception as e:
                             self.logger.error("Cannot release GStreamer source before reconnect: %s", e)
                             break
@@ -998,33 +1062,51 @@ class GStreamerCaptureFramesMixin:
                             finally:
                                 done_evt.set()
 
-                        init_thread = _thr.Thread(target=_try_init, daemon=True)
-                        init_thread.start()
-                        # Wait up to 8s for init (init() itself has 6s timeout, so total ~8s to allow for thread overhead)
-                        if not done_evt.wait(8.0):
+                        previous_init = getattr(self, "_reconnect_init_thread", None)
+                        if previous_init is not None and previous_init.is_alive():
+                            previous_init.join(release_budget)
+                        if previous_init is not None and previous_init.is_alive():
                             self.logger.warning(
-                                f"Reconnect init timeout after 8s for {self.source_names}; forcing cleanup and retry")
+                                "Previous init() is still running for %s; not starting another",
+                                self.source_names,
+                            )
+                            continue
+                        init_thread = _thr.Thread(target=_try_init, daemon=True)
+                        self._reconnect_init_thread = init_thread
+                        init_thread.start()
+                        # Join at least as long as init's own lock wait so the thread cannot outlive this attempt.
+                        if not done_evt.wait(release_budget):
+                            self.logger.warning(
+                                "Reconnect init timeout after %.1fs for %s; forcing cleanup and retry",
+                                release_budget,
+                                self.source_names,
+                            )
                             # Force aggressive cleanup (don't call release() here - it's already called at the start of the attempt)
                             try:
+                                generation = int(getattr(self, "_pipeline_generation", 0))
+                                pipeline = None
                                 with self.pipeline_lock:
-                                    if self.pipeline is not None:
-                                        try:
-                                            self.logger.debug(f"Force setting pipeline to NULL for {self.source_names}")
-                                            self._set_gst_state_null_bounded(
-                                                self.pipeline,
-                                                timeout_sec=CaptureConstants.TEARDOWN_NULL_TIMEOUT_SEC,
-                                                label=f"reconnect-timeout:{self.source_names}",
-                                            )
-                                        except Exception as e:
-                                            self.logger.debug(f"Error setting pipeline to NULL: {e}")
+                                    if self._generation_is_current(generation):
+                                        pipeline = self.pipeline
                                         self.pipeline = None
-                                    self.bus = None
-                                    self.appsink = None
+                                        self.bus = None
+                                        self.appsink = None
+                                if pipeline is not None:
+                                    try:
+                                        self.logger.debug(f"Force setting pipeline to NULL for {self.source_names}")
+                                        self._set_gst_state_null_bounded(
+                                            pipeline,
+                                            timeout_sec=CaptureConstants.TEARDOWN_NULL_TIMEOUT_SEC,
+                                            label=f"reconnect-timeout:{self.source_names}",
+                                            generation=generation,
+                                        )
+                                    except Exception as e:
+                                        self.logger.debug(f"Error setting pipeline to NULL: {e}")
+                                if self._generation_is_current(generation):
+                                    self.is_inited = False
+                                    self.is_working = False
                             except Exception as e:
                                 self.logger.debug(f"Error in aggressive cleanup: {e}")
-                            # Mark as not initialized
-                            self.is_inited = False
-                            self.is_working = False
                             init_ok = False
                             # Log current state for debugging
                             self.logger.debug(
@@ -1049,6 +1131,7 @@ class GStreamerCaptureFramesMixin:
                         if init_ok:
                             timestamp = datetime.datetime.now()
                             self.logger.info(f"Reconnected to source: {self.source_names}")
+                            # capture_down clears on the first real sample, not on init().
                             self._record_reconnect(timestamp)
                             try:
                                 self._noframes_restart_last_ts = time.time()
@@ -1133,7 +1216,10 @@ class GStreamerCaptureFramesMixin:
                 # Free old frame memory (safe now because get_frames_impl creates copies)
                 if old_last_frame is not None:
                     old_last_frame.image = None
-            self.frame_id_counter += 1
+            # frame_id_counter is incremented once in _on_new_sample, where the
+            # frame_id for this frame is allocated. The second increment here
+            # made frame_ids skip values (0,2,4...) and distorted per-frame
+            # metrics and tracker frame_rewound detection.
 
     def get_frames_impl(self) -> List[CaptureImage]:
         """
@@ -1170,6 +1256,7 @@ class GStreamerCaptureFramesMixin:
             # For single stream, create a copy of last_frame (like OpenCV does)
             # This prevents race condition when old frame memory is freed in _store_frame
             last_frame_ref = None
+            image_ref = None
             frame_id = None
             timestamp = None
             source_id = None
@@ -1184,33 +1271,42 @@ class GStreamerCaptureFramesMixin:
                 # Get reference to last_frame with minimal lock time
                 with self.frame_lock:
                     if self.last_frame:
-                        # Track if we're returning the same frame multiple times (indicates pipeline is faster than GStreamer)
+                        # Freshness check (audit 2026-11, B3): never hand the same
+                        # physical frame to the pipeline twice; a duplicate
+                        # frame_id double-updates tracker state and inflates
+                        # update counters. Keyed with connection_generation so
+                        # a reconnect that resets the counter cannot suppress
+                        # fresh frames.
                         current_frame_id = self.last_frame.frame_id
-                        if current_frame_id == self._last_returned_frame_id:
-                            # Same frame returned again - pipeline is calling get() faster than GStreamer produces frames
+                        current_generation = self.last_frame.connection_generation
+                        novelty_key = (current_generation, current_frame_id)
+                        if novelty_key == self._last_returned_frame_id:
+                            # Same frame again - pipeline is calling get() faster
+                            # than GStreamer produces frames; skip it.
                             self._same_frame_count += 1
+                            last_frame_ref = None
+                            image_ref = None
                         else:
-                            self._last_returned_frame_id = current_frame_id
+                            self._last_returned_frame_id = novelty_key
                             if self._same_frame_count > 0:
-                                # Log if we had repeated frames
                                 source_label = ",".join(
                                     str(name) for name in self.source_names) if self.source_names else str(
                                     self.source_address)
                                 self.logger.debug(
-                                    f"Capture get() [{source_label}]: returned same frame {self._same_frame_count} times before new frame")
+                                    f"Capture get() [{source_label}]: skipped duplicate frame {self._same_frame_count} times before new frame")
                                 self._same_frame_count = 0
-                        # Only copy reference and metadata while holding lock (very fast)
-                        last_frame_ref = self.last_frame
-                        frame_id = last_frame_ref.frame_id
-                        timestamp = last_frame_ref.time_stamp
-                        source_id = last_frame_ref.source_id
-                        current_video_frame = last_frame_ref.current_video_frame
-                        current_video_position = last_frame_ref.current_video_position
-                        connection_generation = last_frame_ref.connection_generation
-                        pts_ns = last_frame_ref.pts_ns
-                        media_pts_sec = last_frame_ref.media_pts_sec
-                        # Get reference to image (don't copy yet - do it outside lock)
-                        image_ref = last_frame_ref.image
+                            # Only copy reference and metadata while holding lock (very fast)
+                            last_frame_ref = self.last_frame
+                            frame_id = last_frame_ref.frame_id
+                            timestamp = last_frame_ref.time_stamp
+                            source_id = last_frame_ref.source_id
+                            current_video_frame = last_frame_ref.current_video_frame
+                            current_video_position = last_frame_ref.current_video_position
+                            connection_generation = last_frame_ref.connection_generation
+                            pts_ns = last_frame_ref.pts_ns
+                            media_pts_sec = last_frame_ref.media_pts_sec
+                            # Get reference to image (don't copy yet - do it outside lock)
+                            image_ref = last_frame_ref.image
                     else:
                         last_frame_ref = None
                         image_ref = None

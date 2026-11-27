@@ -97,20 +97,34 @@ def test_alarm_database_adapter_retries_and_drains_before_stop():
     assert adapter.get_runtime_stats()["worker_alive"] is False
 
 
-def test_alarm_database_adapter_rejects_disconnected_writes_explicitly():
+def test_alarm_database_adapter_defers_disconnected_writes_to_spool(tmp_path, monkeypatch):
+    # Audit A5 (stage 2): a disconnected database no longer rejects and loses
+    # the event - it is deferred to the local pg_spool and replayed later.
+    monkeypatch.chdir(tmp_path)
     adapter = _make_adapter(_FakeDatabase(connected=False))
     alarm = AlarmEvent("ppe_violation", alarm_id="offline-db-alarm")
 
-    with pytest.raises(ConnectionError, match="is disconnected"):
-        adapter.insert(alarm)
+    adapter.insert(alarm)
 
     stats = adapter.get_runtime_stats()
     assert stats["degraded"] is True
-    assert stats["queue_failures"] == 1
+    assert stats["spooled_items"] == 1
     assert "disconnected" in stats["last_error"]
     processor_stats = EventsProcessor([adapter], None).get_runtime_stats()
     assert processor_stats["degraded"] is True
-    assert processor_stats["adapters"][0]["queue_failures"] == 1
+
+
+def test_alarm_database_adapter_still_rejects_when_spool_unavailable(tmp_path, monkeypatch):
+    # Without a spool (e.g. unpicklable payload / unwritable disk) the old
+    # explicit rejection contract still holds.
+    monkeypatch.chdir(tmp_path)
+    adapter = _make_adapter(_FakeDatabase(connected=False))
+    monkeypatch.setattr(adapter, "_ensure_spool", lambda: None)
+
+    with pytest.raises(ConnectionError, match="is disconnected"):
+        adapter.insert(AlarmEvent("ppe_violation", alarm_id="offline-db-alarm"))
+
+    assert adapter.get_runtime_stats()["queue_failures"] == 1
 
 
 def test_postgres_checked_query_retries_operational_failure():
@@ -211,8 +225,10 @@ def test_alarm_database_adapter_reports_queue_overflow():
     assert stats["degraded"] is True
 
 
-def test_alarm_adapter_bounds_queue_and_recovers_fifo_after_sustained_outage():
+def test_alarm_adapter_bounds_queue_and_recovers_fifo_after_sustained_outage(tmp_path, monkeypatch):
     import time
+
+    monkeypatch.chdir(tmp_path)
 
     class _OutageDatabase(_FakeDatabase):
         def __init__(self):
@@ -256,17 +272,31 @@ def test_alarm_adapter_bounds_queue_and_recovers_fifo_after_sustained_outage():
         assert adapter.get_runtime_stats()["queue_failures"] >= 2
         assert db.outage_attempts == 3
 
-        # The finite retry policy reports the lost first alarm; after service
-        # recovery, already accepted queue entries still persist in FIFO order.
+        # Stage 2 (audit A5): the spooled first alarm is replayed after the
+        # connection recovers - wait for the replay before shutting down so
+        # the assertion does not race the worker.
+        deadline = time.monotonic() + 3
+        while (
+            adapter.get_runtime_stats().get("replayed_items", 0) < 1
+            and time.monotonic() < deadline
+        ):
+            time.sleep(0.01)
+
         adapter.stop()
     finally:
         if adapter.get_runtime_stats()["worker_alive"]:
             adapter.stop()
 
     stats = adapter.get_runtime_stats()
-    assert db.persisted_alarm_ids == ["recovery-1", "recovery-2"]
+    # Stage 2 (audit A5): the first alarm is no longer lost - after the retry
+    # budget it is spooled and replayed once the connection recovers, so all
+    # three alarms persist (the replayed alarm lands between the recovery
+    # writes depending on timing).
+    assert sorted(db.persisted_alarm_ids) == ["outage-alarm", "recovery-1", "recovery-2"]
     assert stats["queue_size"] == 0
     assert stats["queue_failures"] == 2  # compatibility aggregate
+    assert stats["spooled_items"] == 1
+    assert stats["replayed_items"] == 1
     assert stats["enqueue_rejections"] == 1
     assert stats["terminal_write_failures"] == 1
     assert stats["degraded"] is True

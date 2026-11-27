@@ -5,6 +5,8 @@ from .json_event_io import append_json_record
 
 
 class JsonAdapterCamEvents(DatabaseAdapterBase):
+    storage_backend = "json"  # journal adapter, never spills to pg_spool
+
     """Persist camera connection events to JSON files."""
 
     def __init__(self, db_controller=None):

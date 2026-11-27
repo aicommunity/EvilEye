@@ -129,6 +129,7 @@ def format_memory_attribution_line(attrs: dict[str, Any]) -> str:
         f"active={oh.get('active_objects')} lost={oh.get('lost_objects')} "
         f"hist={oh.get('history_items')} "
         f"last_img_mb={(oh.get('active_last_image_bytes') or 0) / (1024 * 1024):.1f} "
+        f"last_img_uniq_mb={(oh.get('active_last_image_unique_bytes') or 0) / (1024 * 1024):.1f} "
         f"sticky={oh.get('zone_sticky_count')} "
         f"sticky_jpeg_kb={(oh.get('zone_sticky_jpeg_bytes') or 0) / 1024:.1f}"
     )

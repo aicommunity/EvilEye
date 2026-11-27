@@ -82,8 +82,17 @@ class VideoCaptureGStreamer(
         # Serializes init()/release() so reconnect cannot build a second pipeline
         # over a teardown that is still holding native GStreamer objects.
         self._release_lock = threading.Lock()
+        # Only one init() may run at a time. Competing callers were starting
+        # reinit_before_init teardowns of each other's brand-new pipelines.
+        self._init_singleflight = threading.Lock()
         self._pipeline_generation = 0
         self._pipeline_null_abandoned = False
+        # Set when a teardown budget is exceeded / reconnect abandons. In-flight
+        # recorder.stop_with_pipeline must skip splitmux NULL to avoid truncating
+        # the open fragment to 0 bytes.
+        self._teardown_cancel = threading.Event()
+        self._capture_down_since = None
+        self._reconnect_init_thread = None
         self.gstreamer_available = GSTREAMER_AVAILABLE
 
         # Initialize GStreamer if available
@@ -129,7 +138,7 @@ class VideoCaptureGStreamer(
         # Диагностические счетчики (явная инициализация вместо hasattr)
         self._get_call_count = 0
         self._get_call_last_log = now
-        self._last_returned_frame_id = -1
+        self._last_returned_frame_id = None
         self._same_frame_count = 0
 
         # Reconnect backoff for video file branch in _grab_frames (same scheme as OpenCV)
@@ -261,41 +270,83 @@ class VideoCaptureGStreamer(
                 "VideoCaptureGStreamer was selected but GStreamer is unavailable"
             )
 
-        # Serialize with release()/teardown so reconnect cannot race a stuck NULL.
-        # Timed acquire: a hung release must not block reconnect forever.
-        lock_wait = float(CaptureConstants.RECONNECT_RELEASE_WAIT_SEC) + float(
-            CaptureConstants.TEARDOWN_NULL_TIMEOUT_SEC
-        )
-        acquired = self._release_lock.acquire(timeout=lock_wait)
-        if not acquired:
-            self.logger.error(
-                "GStreamer init could not acquire lifecycle lock for %s after %.1fs; abandoning stalled release",
+        # While reconnect owns recovery, only its init worker may rebuild.
+        reconnecting = bool(getattr(self, "_reconnecting", False))
+        reconnect_init = getattr(self, "_reconnect_init_thread", None)
+        if reconnecting and reconnect_init is not None and threading.current_thread() is not reconnect_init:
+            self.logger.debug(
+                "GStreamer init skipped for %s: reconnect owns recovery",
                 self.source_names,
-                lock_wait,
             )
-            try:
-                self._abandon_stalled_teardown()
-            except Exception:
-                pass
-            acquired = self._release_lock.acquire(timeout=1.0)
-            if not acquired:
+            self.is_inited = False
+            self.is_working = False
+            return False
+
+        init_gate = getattr(self, "_init_singleflight", None)
+        if init_gate is not None and not init_gate.acquire(timeout=2.0):
+            self.logger.error(
+                "GStreamer init skipped for %s: another init is already in progress",
+                self.source_names,
+            )
+            self.is_inited = False
+            self.is_working = False
+            return False
+        try:
+            # Drop any previous pipeline before building. Native teardown must not run
+            # while this thread holds `_release_lock` (a stuck GI call would block every later init).
+            # Orphan/abandon path first: a hung NULL worker must not block rebuild.
+            if getattr(self, "_pipeline_null_abandoned", False):
+                self.pipeline = None
+                self.bus = None
+                self.appsink = None
+            elif self._reconnect_teardown_still_running():
                 self.logger.error(
-                    "GStreamer init still blocked on lifecycle lock for %s; init failed",
+                    "GStreamer init skipped for %s: previous teardown is still running",
                     self.source_names,
                 )
                 self.is_inited = False
                 self.is_working = False
                 return False
-        try:
-            return self._init_locked()
+            elif self.pipeline is not None or self.bus is not None or self.appsink is not None:
+                self._teardown_pipeline("reinit_before_init", join_main_loop=True)
+                if self._reconnect_teardown_still_running():
+                    self.logger.error(
+                        "GStreamer init skipped for %s: reinit teardown is still running",
+                        self.source_names,
+                    )
+                    self.is_inited = False
+                    self.is_working = False
+                    return False
+            if not self._release_lock.acquire(timeout=2.0):
+                self.logger.error(
+                    "GStreamer init could not acquire lifecycle lock for %s after 2.0s",
+                    self.source_names,
+                )
+                self.is_inited = False
+                self.is_working = False
+                return False
+            try:
+                self._pipeline_generation = int(getattr(self, "_pipeline_generation", 0)) + 1
+            finally:
+                self._release_lock.release()
+            ok = self._init_locked()
+            # Clear abandon only after a successful rebuild so concurrent callers
+            # still take the orphan path instead of tearing down the new pipeline.
+            if ok:
+                self._pipeline_null_abandoned = False
+                try:
+                    cancel = getattr(self, "_teardown_cancel", None)
+                    if cancel is not None:
+                        cancel.clear()
+                except Exception:
+                    pass
+            return ok
         finally:
-            self._release_lock.release()
+            if init_gate is not None:
+                init_gate.release()
 
     def _init_locked(self) -> bool:
-        """Initialize while holding `_release_lock`."""
-        self._pipeline_generation = int(getattr(self, "_pipeline_generation", 0)) + 1
-        self._pipeline_null_abandoned = False
-
+        """Build a pipeline. Caller already released `_release_lock`."""
         # RTSP negotiation is asynchronous and must not block initialization.
         if self.source_type == CaptureDeviceType.IpCamera:
             try:
@@ -401,19 +452,30 @@ class VideoCaptureGStreamer(
         return self.is_working and self.pipeline is not None
 
     def release(self) -> None:
-        """Release resources through the shared, idempotent pipeline teardown."""
-        # Serialize callers: returning early while another teardown is still
-        # stopping a native pipeline would let reconnect initialize it too soon.
-        self._release_lock.acquire()
+        """Release resources. The lifecycle lock covers only the generation snapshot, not native teardown."""
+        if not self._release_lock.acquire(timeout=2.0):
+            self.logger.error(
+                "GStreamer release could not acquire lifecycle lock for %s after 2.0s",
+                self.source_names,
+            )
+            return
         try:
-            self._teardown_pipeline("release", join_main_loop=True)
-            self.is_inited = False
-            self.is_working = False
+            generation = int(getattr(self, "_pipeline_generation", 0))
+        finally:
+            self._release_lock.release()
+        try:
+            self._teardown_pipeline(
+                "release",
+                join_main_loop=True,
+                expected_generation=generation,
+            )
+            still_current = getattr(self, "_generation_is_current", None)
+            if still_current is None or still_current(generation):
+                self.is_inited = False
+                self.is_working = False
             self.logger.info("GStreamer video capture released")
         except Exception as e:
             self.logger.error("Error releasing GStreamer capture: %s", e)
-        finally:
-            self._release_lock.release()
 
     def release_impl(self):
         """

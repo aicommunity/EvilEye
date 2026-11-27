@@ -31,6 +31,61 @@ def user_must_change_password(user_record: dict[str, Any] | None) -> bool:
     return False
 
 
+BOOTSTRAP_PASSWORD_FILE_NAME = "web_admin_bootstrap_password.txt"
+
+
+def bootstrap_password_file_path(path: Path | None = None) -> Path:
+    """Location of the one-time bootstrap admin password note (next to credentials)."""
+    creds_file = path or creds_path()
+    return creds_file.parent / BOOTSTRAP_PASSWORD_FILE_NAME
+
+
+def clear_bootstrap_password_file(path: Path | None = None) -> bool:
+    """Remove the one-time bootstrap password note; call after the password is changed."""
+    note = bootstrap_password_file_path(path)
+    try:
+        if note.exists():
+            note.unlink()
+            logger.info("Removed one-time bootstrap admin password note %s", note)
+            return True
+    except OSError:
+        logger.warning("Failed to remove bootstrap admin password note %s", note, exc_info=True)
+    return False
+
+
+def _write_bootstrap_password_note(note: Path, password: str) -> None:
+    """Store the generated password in a 0600 file instead of the log."""
+    note.parent.mkdir(parents=True, exist_ok=True)
+    payload = (
+        f"EvilEye bootstrap admin password\nUsername: {DEFAULT_ADMIN_USER}\n"
+        f"Password: {password}\n\nDelete this file or change the password immediately.\n"
+    ).encode("utf-8")
+    fd = os.open(note, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    try:
+        os.write(fd, payload)
+    finally:
+        os.close(fd)
+
+
+def resolve_must_change_password(username: str) -> bool:
+    """Resolve the must-change-password flag from live user stores (not the session)."""
+    if not username:
+        return False
+    from evileye.api.core.credentials_users import get_credentials_user, list_credentials_users
+    from evileye.api.core.user_store import get_user_store
+
+    cred = get_credentials_user(username)
+    if cred is None:
+        for item in list_credentials_users():
+            if str(item.get("username") or "").lower() == username.lower():
+                cred = item
+                break
+    if cred is not None:
+        return user_must_change_password(cred)
+    record = get_user_store().get_user_record(username)
+    return user_must_change_password(record)
+
+
 def _load_json(path: Path) -> dict[str, Any]:
     if not path.exists():
         return {}
@@ -108,9 +163,8 @@ def ensure_default_admin_credentials(path: Path | None = None) -> bool:
     if isinstance(users, list) and users:
         return False
 
-    bootstrap_password = (os.getenv("EVILEYE_BOOTSTRAP_ADMIN_PASSWORD") or "").strip()
-    if not bootstrap_password:
-        bootstrap_password = secrets.token_urlsafe(12)
+    env_provided_password = (os.getenv("EVILEYE_BOOTSTRAP_ADMIN_PASSWORD") or "").strip()
+    bootstrap_password = env_provided_password or secrets.token_urlsafe(12)
 
     password_hash = hash_password(bootstrap_password)
     web_auth["enabled"] = True
@@ -128,11 +182,34 @@ def ensure_default_admin_credentials(path: Path | None = None) -> bool:
         }
     ]
     _atomic_write(creds_file, creds)
-    logger.warning(
-        "Created default web admin credentials in %s (username=%s password=%s). "
-        "Change the password immediately; this password is shown only once.",
-        creds_file,
-        DEFAULT_ADMIN_USER,
-        bootstrap_password,
-    )
+    # Never log the password itself: log files are copied into incident reports
+    # and kept forever. A random password is stored once in a 0600 note next to
+    # the credentials file and removed after the first password change; a
+    # password supplied via EVILEYE_BOOTSTRAP_ADMIN_PASSWORD is not echoed at all.
+    if env_provided_password:
+        logger.warning(
+            "Created default web admin user %r in %s with the password from "
+            "EVILEYE_BOOTSTRAP_ADMIN_PASSWORD. Change the password after first login.",
+            DEFAULT_ADMIN_USER,
+            creds_file,
+        )
+    else:
+        try:
+            _write_bootstrap_password_note(bootstrap_password_file_path(creds_file), bootstrap_password)
+        except OSError:
+            logger.error(
+                "Created default web admin user %r in %s but failed to write the "
+                "one-time password note; use EVILEYE_BOOTSTRAP_ADMIN_PASSWORD to reset.",
+                DEFAULT_ADMIN_USER,
+                creds_file,
+            )
+            return True
+        logger.warning(
+            "Created default web admin credentials in %s (username=%s). The one-time "
+            "password is stored in %s (0600) and is NOT logged. Change the password "
+            "immediately; the note is removed automatically afterwards.",
+            creds_file,
+            DEFAULT_ADMIN_USER,
+            bootstrap_password_file_path(creds_file),
+        )
     return True

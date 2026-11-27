@@ -2,7 +2,6 @@
 Тест подключения к PostgreSQL базе данных.
 """
 
-import pytest
 from evileye.database_controller import DatabaseControllerPg
 
 

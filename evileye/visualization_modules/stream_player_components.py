@@ -3,11 +3,9 @@
 """
 
 import os
-import sys
 import datetime
 import glob
 import time
-from pathlib import Path
 from typing import Optional, List, Dict, Tuple
 
 try:
@@ -32,7 +30,6 @@ except ImportError:
     pyqt_version = 5
 
 # Add parent directory to path for imports
-sys.path.append(str(Path(__file__).parent.parent.parent))
 
 from ..core.logger import get_module_logger
 from .video_player_window import VideoPlayerWidget

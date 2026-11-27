@@ -18,12 +18,16 @@ services:
     restart: unless-stopped
     environment:
       POSTGRES_USER: postgres
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-postgres}
+      # Audit 2026-11 (TD-AUD-014): no default password - CI/local boots must
+      # set POSTGRES_PASSWORD explicitly (docker compose --env-file / export).
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD before starting the stack}
       POSTGRES_DB: evil_eye_db
     volumes:
       - ${EVILEYE_PG_DATA:-../postgres_data}:/var/lib/postgresql/data
     ports:
-      - "${EVILEYE_PG_PORT:-5432}:5432"
+      # Loopback-only publication: PostgreSQL is an internal service of the
+      # stack; expose it further deliberately if you need external access.
+      - "127.0.0.1:${EVILEYE_PG_PORT:-5432}:5432"
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U postgres -d evil_eye_db"]
       interval: 5s
@@ -72,4 +76,7 @@ services:
       db:
         condition: service_healthy
     gpus: all
+    # The image HEALTHCHECK probes the web port. This service runs the pipeline.
+    healthcheck:
+      disable: true
     command: ["evileye", "run", "configs/single_video.json", "--no-gui"]

@@ -57,6 +57,13 @@ class ObjectsHandler(EvilEyeBase):
         self.lost_thresh = 5  # Порог перевода (в кадрах) в потерянные объекты
         self.max_active_objects = 100
         self.max_lost_objects = 100
+        # Global retention caps (MemoryAttr hist/last_img under event storms).
+        # Track lines only need ~max_history_segments (default 8); keep a hard
+        # ceiling so active*history_len cannot retain unbounded metadata/refs.
+        self.max_history_items_total = 240
+        # Unique full-res last_image bytes across active objects (MB). Shared
+        # Frame refs count once. 0 disables the budget.
+        self.max_active_last_image_mb = 96.0
 
         self.db_controller = db_controller
         self.db_adapter = db_adapter
@@ -233,18 +240,25 @@ class ObjectsHandler(EvilEyeBase):
     def get_runtime_stats(self) -> dict:
         active_with_last_image = 0
         active_last_image_bytes = 0
+        active_last_image_unique_bytes = 0
         active_history_items = 0
         lost_with_last_image = 0
         lost_last_image_bytes = 0
+        seen_active_images: set[int] = set()
         for obj in self.active_objs.objects:
             active_history_items += len(getattr(obj, "history", []) or [])
             img = getattr(getattr(obj, "last_image", None), "image", None)
             if img is not None:
                 active_with_last_image += 1
                 try:
-                    active_last_image_bytes += int(img.nbytes)
+                    nbytes = int(img.nbytes)
                 except Exception:
-                    pass
+                    nbytes = 0
+                active_last_image_bytes += nbytes
+                img_id = id(img)
+                if img_id not in seen_active_images:
+                    seen_active_images.add(img_id)
+                    active_last_image_unique_bytes += nbytes
         for obj in self.lost_objs.objects:
             img = getattr(getattr(obj, "last_image", None), "image", None)
             if img is not None:
@@ -295,8 +309,11 @@ class ObjectsHandler(EvilEyeBase):
             "history_items": active_history_items,
             "active_with_last_image": active_with_last_image,
             "active_last_image_bytes": active_last_image_bytes,
+            "active_last_image_unique_bytes": active_last_image_unique_bytes,
             "lost_with_last_image": lost_with_last_image,
             "lost_last_image_bytes": lost_last_image_bytes,
+            "max_history_items_total": self.max_history_items_total,
+            "max_active_last_image_mb": self.max_active_last_image_mb,
             "zone_sticky_count": sticky_count,
             "zone_sticky_jpeg_bytes": sticky_jpeg_bytes,
             "zone_sticky_decoded_bytes": sticky_decoded_bytes,
@@ -313,6 +330,18 @@ class ObjectsHandler(EvilEyeBase):
         self.lost_thresh = self.params.get('lost_thresh', 5)
         self.max_active_objects = self.params.get('max_active_objects', 100)
         self.max_lost_objects = self.params.get('max_lost_objects', 100)
+        try:
+            self.max_history_items_total = int(
+                self.params.get('max_history_items_total', self.max_history_items_total)
+            )
+        except Exception:
+            pass
+        try:
+            self.max_active_last_image_mb = float(
+                self.params.get('max_active_last_image_mb', self.max_active_last_image_mb)
+            )
+        except Exception:
+            pass
         # Saving/IO settings (can be tuned to prevent UI lag)
         self.save_object_images = bool(self.params.get('save_object_images', self.save_object_images))
         self.save_labeling_data = bool(self.params.get('save_labeling_data', self.save_labeling_data))
@@ -359,6 +388,9 @@ class ObjectsHandler(EvilEyeBase):
         params['lost_thresh'] = self.lost_thresh
         params['max_active_objects'] = self.max_active_objects
         params['max_lost_objects'] = self.max_lost_objects
+        params['max_history_items_total'] = self.max_history_items_total
+        params['max_active_last_image_mb'] = self.max_active_last_image_mb
+        return params
 
     def stop(self):
         # self.objects_file.close()
@@ -646,12 +678,117 @@ class ObjectsHandler(EvilEyeBase):
         except Exception:
             pass
 
-    def _release_object_to_pool(self, obj: ObjectResult) -> None:
-        obj.last_image = None
+    def _clear_object_history(self, obj: ObjectResult) -> None:
+        """Drop history entries (metadata-only) and return them to the pool."""
+        history = getattr(obj, "history", None)
+        if not history:
+            return
         if self._use_object_pool and self._object_history_pool:
-            for hist_elem in obj.history:
+            for hist_elem in history:
                 if isinstance(hist_elem, ObjectResultHistory):
                     self._object_history_pool.release(hist_elem)
+        history.clear()
+
+    def _trim_object_history(self, obj: ObjectResult, keep: int) -> None:
+        keep = max(0, int(keep))
+        history = getattr(obj, "history", None)
+        if not history:
+            return
+        while len(history) > keep:
+            old_hist = history.pop(0)
+            if self._use_object_pool and self._object_history_pool and isinstance(
+                    old_hist, ObjectResultHistory):
+                self._object_history_pool.release(old_hist)
+
+    def _enforce_history_budget(self) -> None:
+        """Cap total active history items; drop oldest entries under pressure."""
+        max_total = int(self.max_history_items_total or 0)
+        if max_total <= 0:
+            return
+        objs = self.active_objs.objects
+        if not objs:
+            return
+        total = sum(len(getattr(obj, "history", []) or []) for obj in objs)
+        if total <= max_total:
+            return
+        per_obj = max(1, max_total // max(1, len(objs)))
+        # First pass: clamp each object to a fair share.
+        for obj in objs:
+            self._trim_object_history(obj, min(self.history_len, per_obj))
+        total = sum(len(getattr(obj, "history", []) or []) for obj in objs)
+        if total <= max_total:
+            return
+        # Second pass: peel oldest entries from the longest histories.
+        while total > max_total:
+            longest = None
+            longest_len = 0
+            for obj in objs:
+                hist_len = len(getattr(obj, "history", []) or [])
+                if hist_len > longest_len:
+                    longest = obj
+                    longest_len = hist_len
+            if longest is None or longest_len <= 0:
+                break
+            self._trim_object_history(longest, longest_len - 1)
+            total -= 1
+
+    def _enforce_last_image_budget(self) -> None:
+        """Drop active last_image refs when unique pixel bytes exceed the cap.
+
+        Prefer dropping images that already have a zone sticky JPEG, then
+        freshly updated objects (next frame will refresh). Protect objects that
+        are about to be finalized so lost-image save still sees pixels.
+        """
+        try:
+            budget_mb = float(self.max_active_last_image_mb or 0.0)
+        except Exception:
+            budget_mb = 0.0
+        if budget_mb <= 0:
+            return
+        budget = int(budget_mb * 1024 * 1024)
+        unique_nbytes: dict[int, int] = {}
+        holders: list[tuple[int, int, ObjectResult, int]] = []
+        for index, obj in enumerate(self.active_objs.objects):
+            img = getattr(getattr(obj, "last_image", None), "image", None)
+            if img is None:
+                continue
+            img_id = id(img)
+            try:
+                nbytes = int(img.nbytes)
+            except Exception:
+                nbytes = 0
+            unique_nbytes[img_id] = nbytes
+            # Higher score = drop sooner.
+            score = 0
+            if getattr(obj, "_zone_event_sticky_image", None) is not None:
+                score += 100
+            if getattr(obj, "lost_frames", 0):
+                score -= 200  # keep for imminent lost save / zone exit
+            elif getattr(obj, "last_update", False):
+                score += 40
+            holders.append((score, index, obj, img_id))
+        total = sum(unique_nbytes.values())
+        if total <= budget:
+            return
+        holders.sort(key=lambda item: (-item[0], item[1]))
+        for _score, _index, obj, img_id in holders:
+            if total <= budget:
+                break
+            obj.last_image = None
+            still_held = any(
+                id(getattr(getattr(other, "last_image", None), "image", None)) == img_id
+                for other in self.active_objs.objects
+            )
+            if not still_held:
+                total -= unique_nbytes.pop(img_id, 0)
+
+    def _release_object_to_pool(self, obj: ObjectResult) -> None:
+        obj.last_image = None
+        try:
+            obj._zone_event_sticky_image = None
+        except Exception:
+            pass
+        self._clear_object_history(obj)
         if self._use_object_pool and self._object_result_pool:
             self._object_result_pool.release(obj)
 
@@ -709,6 +846,8 @@ class ObjectsHandler(EvilEyeBase):
         # Drop full-res last_image after persist; zone sticky keeps its own
         # compact JPEG snapshot if an enter event is still open (audit A6).
         active_obj.last_image = None
+        # History is only useful while the track is active (track lines / matching).
+        self._clear_object_history(active_obj)
         self.lost_objs.objects.append(active_obj)
 
     def _expire_stale_source_objects(self, now: float, *, exclude_source_id: int | None = None) -> None:
@@ -995,13 +1134,19 @@ class ObjectsHandler(EvilEyeBase):
             self.lost_objs.objects = self.lost_objs.objects[start_index_for_remove:]
 
         if len(self.active_objs.objects) > self.max_active_objects:
-            for obj in self.active_objs.objects[:-self.max_active_objects]:
-                self._release_object_to_pool(obj)
-            self.active_objs.objects = self.active_objs.objects[-self.max_active_objects:]
+            overflow = self.active_objs.objects[:-self.max_active_objects]
+            kept = self.active_objs.objects[-self.max_active_objects:]
+            self.active_objs.objects = kept
+            for obj in overflow:
+                # Finalize so DB/lost paths run; avoids silently dropping tracks.
+                self._finalize_lost_object(obj, tracking_results)
         if len(self.lost_objs.objects) > self.max_lost_objects:
             for obj in self.lost_objs.objects[:-self.max_lost_objects]:
                 self._release_object_to_pool(obj)
             self.lost_objs.objects = self.lost_objs.objects[-self.max_lost_objects:]
+
+        self._enforce_history_budget()
+        self._enforce_last_image_budget()
 
     def _prepare_for_saving(self, obj: ObjectResult, image_width, image_height) -> tuple[list, list, str, str]:
         fields_for_saving = {'source_id': obj.source_id,

@@ -25,8 +25,6 @@ from poly_mode_compare_lib import (
 
 # Reuse resource sampling from multiprocessing benchmark runner.
 from run_multiprocessing_benchmark import (  # noqa: E402
-    _gpu_stats,
-    _process_tree_stats,
     _sample_resources,
     _terminate_process_tree,
 )

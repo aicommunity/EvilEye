@@ -181,6 +181,7 @@ class ProcessorBase(ABC):
 
     def stop(self):
         stop_timeout_sec = float(os.getenv("EVILEYE_PROCESSOR_STOP_TIMEOUT_SEC", "8.0") or "8.0")
+        failures: list[tuple[str, Exception]] = []
         for processor in self.processors:
             stop_done = threading.Event()
             stop_error: list[Exception] = []
@@ -213,7 +214,24 @@ class ProcessorBase(ABC):
                     pass
                 continue
             if stop_error:
-                raise stop_error[0]
+                # Keep stopping the remaining processors; re-raise aggregated at
+                # the end (audit 2026-11, B3).
+                failures.append((processor.__class__.__name__, stop_error[0]))
+                try:
+                    self.logger.error(
+                        "Inner processor failed to stop: container=%s class=%s processor=%s",
+                        self.processor_name,
+                        self.class_name,
+                        processor.__class__.__name__,
+                        exc_info=stop_error[0],
+                    )
+                except Exception:
+                    pass
+        if failures:
+            raise RuntimeError(
+                f"Processor container '{self.processor_name}' stop failed: "
+                + ", ".join(f"{name}: {exc}" for name, exc in failures)
+            ) from failures[0][1]
 
     def insert_debug_info_by_id(self, section_name: str, debug_info: dict):
         for processor in self.processors:

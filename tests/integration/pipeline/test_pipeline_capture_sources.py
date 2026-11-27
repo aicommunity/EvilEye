@@ -19,7 +19,6 @@ def test_pipeline_capture_sources():
     try:
         from evileye.pipelines.pipeline_capture import PipelineCapture
         from unittest.mock import Mock, patch
-        import cv2
         
         # Create pipeline
         pipeline = PipelineCapture()

@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import threading
+import time
 from typing import Any, Dict, Optional
 
 from evileye.core.interfaces import IDatabaseAdapter
@@ -16,6 +18,10 @@ from evileye.database_controller.db_adapter_system_events import DatabaseAdapter
 from evileye.database_controller.db_adapter_attribute_events import DatabaseAdapterAttributeEvents
 from evileye.database_controller.migrations import apply_startup_migrations
 
+# Audit 2026-11 (D4): daily purge of append-only tables. Disabled unless
+# database.retention_days is set to a positive number of days.
+RETENTION_PURGE_INTERVAL_SEC = 24 * 3600
+
 
 class DatabaseService:
     """Сервис для управления подключением к БД и адаптерами."""
@@ -25,6 +31,9 @@ class DatabaseService:
         self.logger = get_module_logger("database_service")
         self._db_controller: Optional[DatabaseControllerPg] = None
         self._adapters: Dict[str, IDatabaseAdapter] = {}
+        self._retention_days = 0
+        self._retention_thread: Optional[threading.Thread] = None
+        self._retention_stop = threading.Event()
 
     def initialize_database(
             self,
@@ -64,11 +73,55 @@ class DatabaseService:
                 self.logger.warning(f"Failed to apply startup migrations: {e}")
 
             self.logger.info("Database connected successfully")
+            self._start_retention_loop(db_config)
             return True
         except Exception as e:
             self.logger.warning(f"Database initialization failed: {e}")
             self._db_controller = None
             return False
+
+    # -- Retention (audit 2026-11, D4) -----------------------------------
+
+    def _start_retention_loop(self, db_config: Dict[str, Any]) -> None:
+        try:
+            retention_days = int(db_config.get("retention_days", 0) or 0)
+        except (TypeError, ValueError):
+            retention_days = 0
+        self._retention_days = retention_days
+        if retention_days <= 0:
+            return
+        self.logger.info(
+            "Database retention enabled: purging rows older than %d days daily",
+            retention_days,
+        )
+        self._retention_stop.clear()
+        self._retention_thread = threading.Thread(
+            target=self._retention_loop,
+            name="DatabaseRetention",
+            daemon=True,
+        )
+        self._retention_thread.start()
+
+    def _retention_loop(self) -> None:
+        # First purge shortly after startup, then once a day.
+        while not self._retention_stop.wait(30.0):
+            controller = self._db_controller
+            if controller is None:
+                return
+            try:
+                if controller.is_connected():
+                    controller.purge_old_records(self._retention_days)
+            except Exception:
+                self.logger.exception("Database retention purge failed")
+            if self._retention_stop.wait(RETENTION_PURGE_INTERVAL_SEC):
+                return
+
+    def _stop_retention_loop(self) -> None:
+        self._retention_stop.set()
+        thread = self._retention_thread
+        if thread is not None and thread.is_alive():
+            thread.join(timeout=2.0)
+        self._retention_thread = None
 
     def initialize_adapters(self, adapters_config: Dict[str, Dict[str, Any]]) -> None:
         """Инициализировать адаптеры БД.
@@ -170,6 +223,7 @@ class DatabaseService:
 
     def release(self) -> None:
         """Освободить ресурсы БД и адаптеров."""
+        self._stop_retention_loop()
         self.stop_adapters()
         if self._db_controller:
             self._db_controller = None

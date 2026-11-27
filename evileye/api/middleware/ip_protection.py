@@ -1,6 +1,7 @@
 """Early IP ban + global rate limiting middleware."""
 from __future__ import annotations
 
+import hmac
 import json
 
 from starlette.middleware.base import BaseHTTPMiddleware
@@ -54,7 +55,7 @@ class ProtectionMiddleware(BaseHTTPMiddleware):
             auth = getattr(request.app.state, "web_auth", None)
             token = getattr(auth, "internal_token", "") if auth else ""
             supplied = request.headers.get("X-EvilEye-Internal-Token", "")
-            if token and supplied == token:
+            if token and supplied and len(supplied) == len(token) and hmac.compare_digest(supplied, token):
                 skip_global = True
 
         if not skip_global:

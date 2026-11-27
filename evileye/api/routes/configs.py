@@ -13,6 +13,9 @@ from evileye.core.pipeline_configuration import mask_config_secrets as _mask_con
 from evileye.core.pipeline_configuration import merge_preserving_secrets as _merge_preserving_secrets
 from evileye.core.pipeline_configuration import write_config_with_backup
 
+import logging
+logger = logging.getLogger("evileye.api.configs")
+
 router = APIRouter(prefix="/api/v1/configs", tags=["configs"])
 
 
@@ -110,7 +113,8 @@ async def start_config_run(rid: int, request: Request) -> Dict:
     except KeyError as exc:
         raise HTTPException(status_code=404, detail="Config run not found") from exc
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e)) from e
+        logger.exception("Config route failed")
+        raise HTTPException(status_code=500, detail="Operation failed (see server logs)") from e
 
 
 @router.post("/runs/{rid}/stop")
@@ -122,7 +126,8 @@ async def stop_config_run(rid: int) -> Dict:
     except RuntimeError as e:
         raise HTTPException(status_code=409, detail=str(e)) from e
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e)) from e
+        logger.exception("Config route failed")
+        raise HTTPException(status_code=500, detail="Operation failed (see server logs)") from e
 
 
 @router.delete("/runs/{rid}")
@@ -153,7 +158,8 @@ async def get_config(name: str) -> dict:
             payload = json.load(f)
         return _mask_secrets(payload)
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Failed to read config: {e}") from e
+        logger.exception("Config route failed")
+        raise HTTPException(status_code=500, detail="Failed to read config: failed (see server logs)") from e
 
 
 @router.post("")
@@ -170,7 +176,8 @@ async def create_config(payload: ConfigCreate):
         write_config_with_backup(path, content, create_only=True)
         return {"name": name, "status": "created"}
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Failed to create config: {e}") from e
+        logger.exception("Config route failed")
+        raise HTTPException(status_code=500, detail="Failed to create config: failed (see server logs)") from e
 
 
 @router.put("/{name}")
@@ -191,7 +198,8 @@ async def update_config(name: str, payload: ConfigUpdate):
         write_config_with_backup(target, content)
         return {"name": target.name, "status": "updated"}
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Failed to update config: {e}") from e
+        logger.exception("Config route failed")
+        raise HTTPException(status_code=500, detail="Failed to update config: failed (see server logs)") from e
 
 
 @router.delete("/{name}")
@@ -206,4 +214,5 @@ async def delete_config(name: str):
         target.unlink()
         return {"name": target.name, "status": "deleted"}
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Failed to delete config: {e}") from e
+        logger.exception("Config route failed")
+        raise HTTPException(status_code=500, detail="Failed to delete config: failed (see server logs)") from e

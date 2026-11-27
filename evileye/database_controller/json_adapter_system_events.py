@@ -5,6 +5,8 @@ from .json_event_io import append_json_record
 
 
 class JsonAdapterSystemEvents(DatabaseAdapterBase):
+    storage_backend = "json"  # journal adapter, never spills to pg_spool
+
     """Persist system events (start/stop) to JSON files."""
 
     def __init__(self, db_controller=None):

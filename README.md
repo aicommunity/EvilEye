@@ -39,9 +39,6 @@ cd EvilEye
 # Install in development mode
 pip install -e "."
 
-# Fix entry points
-python scripts/setup/fix_entry_points.py
-
 # Check / prepare Web UI (SPA static + API packages)
 evileye web check
 ```

@@ -83,6 +83,9 @@ class MpControl:
         else:
             self.output_queue = self._mp_ctx.Queue()
         self.processes: list[mp.Process] = []
+        # Serializes queue replacement (pool restart) with bounded put/get so a
+        # producer can never write into a closed/replaced queue (audit A3).
+        self._queues_lock = threading.RLock()
 
         # Cross-process logging
         self._log_queue = self._mp_ctx.Queue()
@@ -167,13 +170,23 @@ class MpControl:
 
     def put(self, data, block=True, timeout=None):
         started = timer()
-        self.input_queue.put(data, block=block, timeout=timeout)
+        if block and timeout is None:
+            # Unbounded blocking put: do not hold the swap lock forever. A pool
+            # restart during such a put may close the queue under it; callers in
+            # the hot path use bounded/drop-oldest variants.
+            queue = self.input_queue
+            queue.put(data, block=True, timeout=None)
+        else:
+            with self._queues_lock:
+                queue = self.input_queue
+            queue.put(data, block=block, timeout=timeout)
         with self._stats_lock:
             self._stats["put_calls_total"] += 1
             self._stats["put_wait_ms_total"] += (timer() - started) * 1000.0
 
     def put_nowait(self, data):
-        self.input_queue.put_nowait(data)
+        with self._queues_lock:
+            self.input_queue.put_nowait(data)
 
     def put_drop_oldest(self, data) -> tuple[bool, object | None]:
         """Enqueue the latest item, evicting one queued item when full."""
@@ -185,7 +198,8 @@ class MpControl:
 
         dropped_item = None
         try:
-            dropped_item = self.input_queue.get_nowait()
+            with self._queues_lock:
+                dropped_item = self.input_queue.get_nowait()
         except queue.Empty:
             # A worker may have freed a slot between put and get.
             pass
@@ -207,16 +221,24 @@ class MpControl:
         return dropped_item is not None, dropped_item
 
     def get(self, block=True, timeout=None):
-        result = self.output_queue.get(block=block, timeout=timeout)
+        if block and timeout is None:
+            queue = self.output_queue
+            result = queue.get(block=True, timeout=None)
+        else:
+            with self._queues_lock:
+                queue = self.output_queue
+            result = queue.get(block=block, timeout=timeout)
         with self._stats_lock:
             self._stats["get_calls_total"] += 1
         return result
 
     def get_nowait(self):
-        return self.output_queue.get_nowait()
+        with self._queues_lock:
+            return self.output_queue.get_nowait()
 
     def output_empty(self):
-        return self.output_queue.empty()
+        with self._queues_lock:
+            return self.output_queue.empty()
 
     @staticmethod
     def _drain_queue(q) -> int:
@@ -232,8 +254,9 @@ class MpControl:
 
     def drain_ipc_queues(self) -> tuple[int, int]:
         """Clear input/output queues (used before worker restart to reset FIFO)."""
-        inn = self._drain_queue(self.input_queue)
-        out = self._drain_queue(self.output_queue)
+        with self._queues_lock:
+            inn = self._drain_queue(self.input_queue)
+            out = self._drain_queue(self.output_queue)
         if inn or out:
             self.logger.warning(
                 "Drained IPC queues before restart: input=%s output=%s", inn, out
@@ -457,21 +480,22 @@ class MpControl:
                 # SIGKILL on purpose: SIGTERM exits (-15) are "do not restart" codes.
                 peer.kill()
                 peer.join(timeout=1.0)
-        old_queues = (self.input_queue, self.output_queue)
-        self.input_queue = (
-            self._mp_ctx.Queue(maxsize=self._max_input_size)
-            if self._max_input_size else self._mp_ctx.Queue()
-        )
-        self.output_queue = (
-            self._mp_ctx.Queue(maxsize=self._max_output_size)
-            if self._max_output_size else self._mp_ctx.Queue()
-        )
-        for old in old_queues:
-            try:
-                old.cancel_join_thread()
-                old.close()
-            except Exception:
-                pass
+        with self._queues_lock:
+            old_queues = (self.input_queue, self.output_queue)
+            self.input_queue = (
+                self._mp_ctx.Queue(maxsize=self._max_input_size)
+                if self._max_input_size else self._mp_ctx.Queue()
+            )
+            self.output_queue = (
+                self._mp_ctx.Queue(maxsize=self._max_output_size)
+                if self._max_output_size else self._mp_ctx.Queue()
+            )
+            for old in old_queues:
+                try:
+                    old.cancel_join_thread()
+                    old.close()
+                except Exception:
+                    pass
         for index, worker in enumerate(self.workers_list):
             if hasattr(worker, "_stop_event") and worker._stop_event.is_set():
                 worker._stop_event.clear()
@@ -496,7 +520,8 @@ class MpControl:
 
     def _health_monitor_loop(self):
         while not self._monitor_stop.is_set():
-            for i, p in enumerate(self.processes):
+            # Snapshot: a restart can replace entries while we iterate.
+            for i, p in enumerate(list(self.processes)):
                 if not p.is_alive() and not self._monitor_stop.is_set() and not self._stopping.is_set():
                     if p.pid in self._suppressed_restart_pids:
                         continue

@@ -26,7 +26,9 @@ def test_release_uses_shared_pipeline_teardown_and_resets_health():
 
     VideoCaptureGStreamer.release(capture)
 
-    capture._teardown_pipeline.assert_called_once_with("release", join_main_loop=True)
+    capture._teardown_pipeline.assert_called_once_with(
+        "release", join_main_loop=True, expected_generation=0
+    )
     assert capture.is_inited is False
     assert capture.is_working is False
     assert capture._release_lock.acquire(blocking=False)
@@ -56,7 +58,9 @@ def test_release_waits_for_concurrent_teardown_to_finish():
     worker.join(timeout=1.0)
     assert not worker.is_alive()
     assert finished.is_set()
-    capture._teardown_pipeline.assert_called_once_with("release", join_main_loop=True)
+    capture._teardown_pipeline.assert_called_once_with(
+        "release", join_main_loop=True, expected_generation=0
+    )
 
 
 def test_release_releases_lifecycle_lock_when_teardown_fails():
@@ -70,7 +74,72 @@ def test_release_releases_lifecycle_lock_when_teardown_fails():
     capture._release_lock.release()
 
 
+def test_release_drops_lifecycle_lock_before_native_teardown():
+    capture = _capture()
+    started = Event()
+
+    def slow_teardown(*_args, **_kwargs):
+        started.set()
+        time.sleep(0.3)
+
+    capture._teardown_pipeline = slow_teardown
+    worker = Thread(target=VideoCaptureGStreamer.release, args=(capture,))
+    worker.start()
+    assert started.wait(timeout=1.0)
+    assert capture._release_lock.acquire(timeout=0.1)
+    capture._release_lock.release()
+    worker.join(timeout=1.0)
+    assert not worker.is_alive()
+
+
+def test_reconnect_skips_an_abandoned_release_event():
+    from evileye.capture.video_capture_base import CaptureDeviceType
+
+    class _Stop:
+        def is_set(self):
+            return False
+
+        def wait(self, _timeout):
+            return True
+
+    class _Frames(GStreamerCaptureFramesMixin):
+        pass
+
+    capture = _Frames()
+    capture.run_flag = True
+    capture.stop_event = _Stop()
+    capture._reconnecting = False
+    capture.is_inited = False
+    capture.is_working = False
+    capture.source_type = CaptureDeviceType.IpCamera
+    capture.source_names = ["Cam4", "Cam5"]
+    capture.logger = Mock()
+    capture.params = {"reconnect": {"max_attempts": 1, "initial_delay_sec": 0, "backoff_step_sec": 0, "max_delay_sec": 0, "min_first_backoff_sec": 0}}
+    capture._reconnect_release_done = Event()
+    capture._reconnect_release_started_at = time.time()
+    capture.release = Mock()
+    capture._note_capture_down = Mock()
+    capture._abandon_stalled_teardown = Mock()
+    capture.pipeline_lock = RLock()
+    capture.pipeline = None
+    capture.init = Mock(return_value=False)
+    capture._last_init_error = None
+    capture._noframes_restart_last_ts = 0.0
+    capture.subscribers = []
+    capture._reconnect_init_thread = None
+
+    started = time.monotonic()
+    capture._reconnect_loop()
+    elapsed = time.monotonic() - started
+
+    assert elapsed < 5.0
+    capture.release.assert_not_called()
+    assert capture._reconnect_release_done.is_set()
+
+
 def test_set_gst_state_null_bounded_returns_after_timeout_and_marks_abandoned():
+    from evileye.capture import gstreamer_capture_pipeline as gst_pipeline
+
     class _Pipeline(GStreamerCapturePipelineMixin):
         pass
 
@@ -88,28 +157,239 @@ def test_set_gst_state_null_bounded_returns_after_timeout_and_marks_abandoned():
     capture.logger = Mock()
     capture.source_names = ["Cam4", "Cam5"]
     capture._pipeline_null_abandoned = False
+    element = _Element()
+    before = len(gst_pipeline._ORPHANED_GST_NATIVE)
 
     started = time.monotonic()
-    ok = capture._set_gst_state_null_bounded(_Element(), timeout_sec=0.2, label="unit-test")
+    ok = capture._set_gst_state_null_bounded(element, timeout_sec=0.2, label="unit-test")
     elapsed = time.monotonic() - started
 
     assert ok is False
     assert elapsed < 2.0
     assert capture._pipeline_null_abandoned is True
+    assert element in gst_pipeline._ORPHANED_GST_NATIVE
+    assert len(gst_pipeline._ORPHANED_GST_NATIVE) >= before + 1
     hung.set()
 
 
+def test_set_gst_state_null_bounded_orphans_when_finished_not_null():
+    from evileye.capture import gstreamer_capture_pipeline as gst_pipeline
+
+    class _Pipeline(GStreamerCapturePipelineMixin):
+        pass
+
+    class _Element:
+        def set_state(self, _state):
+            return None
+
+        def get_state(self, _timeout):
+            # Pretend the element is still PLAYING after the NULL request.
+            return (None, object(), None)
+
+    capture = _Pipeline()
+    capture.logger = Mock()
+    capture.source_names = ["Cam4", "Cam5"]
+    capture._pipeline_null_abandoned = False
+    capture._gst_element_is_null = lambda _element: False
+    element = _Element()
+
+    ok = capture._set_gst_state_null_bounded(element, timeout_sec=0.2, label="unit-not-null")
+
+    assert ok is False
+    assert capture._pipeline_null_abandoned is True
+    assert element in gst_pipeline._ORPHANED_GST_NATIVE
+
+
+def test_orphan_reaper_drops_null_elements_and_keeps_splitmux():
+    from evileye.capture import gstreamer_capture_pipeline as gst_pipeline
+
+    class _NullElem:
+        def get_name(self):
+            return "queue0"
+
+        def get_state(self, _timeout):
+            return (None, gst_pipeline.Gst.State.NULL if gst_pipeline.Gst else "NULL", None)
+
+        def set_state(self, _state):
+            return None
+
+    class _MuxElem:
+        def __init__(self):
+            self.null_calls = 0
+
+        def get_name(self):
+            return "recording_splitmuxsink"
+
+        def get_state(self, _timeout):
+            return (None, object(), None)  # still PLAYING
+
+        def set_state(self, _state):
+            self.null_calls += 1
+
+    # Avoid depending on a real Gst.State when Gst import failed in unit env.
+    class _FakeState:
+        NULL = "NULL"
+
+    class _FakeGst:
+        State = _FakeState
+
+    previous_gst = gst_pipeline.Gst
+    gst_pipeline.Gst = _FakeGst
+    try:
+        null_elem = _NullElem()
+        mux_elem = _MuxElem()
+        with gst_pipeline._ORPHANED_GST_NATIVE_LOCK:
+            gst_pipeline._ORPHANED_GST_NATIVE[:] = [null_elem, mux_elem]
+            gst_pipeline._ORPHANED_GST_NATIVE_SINCE.clear()
+            gst_pipeline._ORPHANED_GST_NATIVE_SINCE[id(null_elem)] = time.monotonic() - 60
+            gst_pipeline._ORPHANED_GST_NATIVE_SINCE[id(mux_elem)] = time.monotonic() - 60
+
+        remaining = GStreamerCapturePipelineMixin._reap_orphaned_gst_native()
+
+        assert remaining == 1
+        assert mux_elem in gst_pipeline._ORPHANED_GST_NATIVE
+        assert null_elem not in gst_pipeline._ORPHANED_GST_NATIVE
+        assert mux_elem.null_calls == 0, "reaper must not NULL open splitmux"
+    finally:
+        with gst_pipeline._ORPHANED_GST_NATIVE_LOCK:
+            gst_pipeline._ORPHANED_GST_NATIVE.clear()
+            gst_pipeline._ORPHANED_GST_NATIVE_SINCE.clear()
+            gst_pipeline._DEFERRED_SPLITMUX_RELEASES.clear()
+        gst_pipeline.Gst = previous_gst
+
+
+def test_deferred_splitmux_release_nulls_after_stable_file_and_eos():
+    """Detached splitmux is NULLed only after EOS and a stable non-empty fragment."""
+    from evileye.capture import gstreamer_capture_pipeline as gst_pipeline
+
+    class _FakeState:
+        NULL = "NULL"
+
+    class _FakeGst:
+        State = _FakeState
+
+    class _Elem:
+        def __init__(self, name):
+            self.name = name
+            self.null_calls = 0
+            self.state = "PLAYING"
+
+        def get_name(self):
+            return self.name
+
+        def get_state(self, _timeout):
+            return (None, self.state, None)
+
+        def set_state(self, state):
+            self.null_calls += 1
+            self.state = state
+
+    eos_calls = []
+    signature = ("/tmp/Cam4_frag.mp4", 4096, 10)
+    mux = _Elem("recording_splitmuxsink")
+    encoder = _Elem("x264enc")
+    previous_gst = gst_pipeline.Gst
+    gst_pipeline.Gst = _FakeGst
+    try:
+        gst_pipeline.GStreamerCapturePipelineMixin._register_deferred_splitmux_release(
+            elements=[encoder, mux],
+            send_eos=lambda: eos_calls.append(1) or True,
+            signature=lambda: signature,
+            label="Cam4",
+            orphaned_at=time.monotonic() - 120,
+        )
+        with gst_pipeline._ORPHANED_GST_NATIVE_LOCK:
+            gst_pipeline._ORPHANED_GST_NATIVE[:] = [encoder, mux]
+            gst_pipeline._ORPHANED_GST_NATIVE_SINCE[id(encoder)] = time.monotonic() - 120
+            gst_pipeline._ORPHANED_GST_NATIVE_SINCE[id(mux)] = time.monotonic() - 120
+
+        GStreamerCapturePipelineMixin._reap_orphaned_gst_native()
+        assert eos_calls == []
+        assert mux.null_calls == 0
+        assert encoder.null_calls == 0, "held encoder must stay until the fragment is finalized"
+
+        GStreamerCapturePipelineMixin._reap_orphaned_gst_native()
+        assert eos_calls == [1]
+        assert mux.null_calls == 0
+
+        GStreamerCapturePipelineMixin._reap_orphaned_gst_native()
+        assert mux.null_calls == 0, "size change after EOS must settle before NULL"
+
+        GStreamerCapturePipelineMixin._reap_orphaned_gst_native()
+        assert mux.state == "NULL"
+        assert encoder.state == "NULL"
+        assert mux not in gst_pipeline._ORPHANED_GST_NATIVE
+        assert encoder not in gst_pipeline._ORPHANED_GST_NATIVE
+        assert gst_pipeline._DEFERRED_SPLITMUX_RELEASES == []
+    finally:
+        with gst_pipeline._ORPHANED_GST_NATIVE_LOCK:
+            gst_pipeline._ORPHANED_GST_NATIVE.clear()
+            gst_pipeline._ORPHANED_GST_NATIVE_SINCE.clear()
+            gst_pipeline._DEFERRED_SPLITMUX_RELEASES.clear()
+        gst_pipeline.Gst = previous_gst
+
+
+def test_deferred_splitmux_release_keeps_muxer_when_fragment_empty():
+    from evileye.capture import gstreamer_capture_pipeline as gst_pipeline
+
+    class _FakeState:
+        NULL = "NULL"
+
+    class _FakeGst:
+        State = _FakeState
+
+    class _Mux:
+        def __init__(self):
+            self.null_calls = 0
+
+        def get_name(self):
+            return "recording_splitmuxsink"
+
+        def get_state(self, _timeout):
+            return (None, "PLAYING", None)
+
+        def set_state(self, _state):
+            self.null_calls += 1
+
+    previous_gst = gst_pipeline.Gst
+    gst_pipeline.Gst = _FakeGst
+    mux = _Mux()
+    try:
+        gst_pipeline.GStreamerCapturePipelineMixin._register_deferred_splitmux_release(
+            elements=[mux],
+            send_eos=lambda: True,
+            signature=lambda: ("/tmp/Cam4_frag.mp4", 0, 1),
+            label="Cam4",
+            orphaned_at=time.monotonic() - 120,
+        )
+        GStreamerCapturePipelineMixin._reap_orphaned_gst_native()
+        GStreamerCapturePipelineMixin._reap_orphaned_gst_native()
+        assert mux.null_calls == 0
+        assert gst_pipeline._DEFERRED_SPLITMUX_RELEASES
+    finally:
+        with gst_pipeline._ORPHANED_GST_NATIVE_LOCK:
+            gst_pipeline._ORPHANED_GST_NATIVE.clear()
+            gst_pipeline._ORPHANED_GST_NATIVE_SINCE.clear()
+            gst_pipeline._DEFERRED_SPLITMUX_RELEASES.clear()
+        gst_pipeline.Gst = previous_gst
+
+
 def test_reconnect_abandons_stalled_release_and_bumps_generation():
-    class _Frames(GStreamerCaptureFramesMixin):
+    from evileye.capture import gstreamer_capture_pipeline as gst_pipeline
+
+    class _Frames(GStreamerCaptureFramesMixin, GStreamerCapturePipelineMixin):
         pass
 
     capture = _Frames()
     capture.pipeline_lock = RLock()
     capture.logger = Mock()
     capture.source_names = ["Cam4", "Cam5"]
-    capture.pipeline = object()
-    capture.bus = object()
-    capture.appsink = object()
+    pipeline = object()
+    bus = object()
+    appsink = object()
+    capture.pipeline = pipeline
+    capture.bus = bus
+    capture.appsink = appsink
     capture.is_inited = True
     capture.is_working = True
     capture._pipeline_generation = 3
@@ -117,7 +397,19 @@ def test_reconnect_abandons_stalled_release_and_bumps_generation():
     capture._reconnect_release_started_at = time.time()
     capture._last_sample_wall_ts = 1.0
     capture._record_disconnect = Mock()
+    hung = Event()
 
+    def _hang():
+        hung.wait(5.0)
+
+    hung_release = Thread(target=_hang, daemon=True)
+    hung_teardown = Thread(target=_hang, daemon=True)
+    hung_release.start()
+    hung_teardown.start()
+    capture._reconnect_release_thread = hung_release
+    capture._gst_teardown_thread = hung_teardown
+
+    assert capture._reconnect_teardown_still_running() is True
     capture._abandon_stalled_teardown()
 
     assert capture._reconnect_release_started_at is None
@@ -126,7 +418,146 @@ def test_reconnect_abandons_stalled_release_and_bumps_generation():
     assert capture.pipeline is None
     assert capture.appsink is None
     assert capture.is_working is False
-    capture._record_disconnect.assert_called_once()
+    assert capture._reconnect_release_thread is None
+    assert capture._gst_teardown_thread is None
+    # Hung workers may still be alive, but abandon must unblock init/rebuild.
+    assert capture._reconnect_teardown_still_running() is False
+    assert pipeline in gst_pipeline._ORPHANED_GST_NATIVE
+    assert bus in gst_pipeline._ORPHANED_GST_NATIVE
+    assert appsink in gst_pipeline._ORPHANED_GST_NATIVE
+    capture._record_disconnect.assert_not_called()
+    hung.set()
+    hung_release.join(timeout=1.0)
+    hung_teardown.join(timeout=1.0)
+
+
+def test_abandoned_teardown_does_not_block_init_gate():
+    """Regression: Cam4/Cam5 stayed dark because init() saw a forever-hung teardown thread."""
+
+    class _Frames(GStreamerCaptureFramesMixin):
+        pass
+
+    capture = _Frames()
+    capture._pipeline_null_abandoned = False
+    capture._reconnect_release_thread = SimpleNamespace(is_alive=lambda: True)
+    capture._gst_teardown_thread = SimpleNamespace(is_alive=lambda: True)
+    assert capture._reconnect_teardown_still_running() is True
+
+    capture._pipeline_null_abandoned = True
+    assert capture._reconnect_teardown_still_running() is False
+
+    capture._detach_abandoned_teardown_workers()
+    assert capture._reconnect_release_thread is None
+    assert capture._gst_teardown_thread is None
+    capture._pipeline_null_abandoned = False
+    assert capture._reconnect_teardown_still_running() is False
+
+
+def test_init_singleflight_blocks_competing_reinit_teardown():
+    """Competing init() must not tear down a pipeline another init just built."""
+    capture = _capture()
+    capture.gstreamer_available = True
+    capture.execution_mode = "thread"
+    capture._init_singleflight = Lock()
+    capture._reconnecting = False
+    capture._reconnect_init_thread = None
+    capture._pipeline_null_abandoned = True
+    capture._reconnect_teardown_still_running = lambda: False
+    capture.pipeline = None
+    capture.bus = None
+    capture.appsink = None
+    capture._pipeline_generation = 3
+    started = Event()
+    release_build = Event()
+    calls = []
+
+    def _slow_locked():
+        calls.append("build")
+        started.set()
+        assert release_build.wait(timeout=5.0)
+        return True
+
+    capture._init_locked = _slow_locked
+    worker = Thread(target=lambda: VideoCaptureGStreamer.init(capture))
+    worker.start()
+    assert started.wait(timeout=1.0)
+    assert capture._init_singleflight.locked()
+
+    competing = VideoCaptureGStreamer.init(capture)
+    assert competing is False
+    capture.logger.error.assert_called()
+    assert any("another init" in str(c) for c in capture.logger.error.call_args_list)
+    release_build.set()
+    worker.join(timeout=2.0)
+    assert not worker.is_alive()
+    assert capture._pipeline_null_abandoned is False
+    assert calls == ["build"]
+
+
+def test_init_keeps_abandoned_flag_until_rebuild_succeeds():
+    capture = _capture()
+    capture.gstreamer_available = True
+    capture.execution_mode = "thread"
+    capture._init_singleflight = Lock()
+    capture._reconnecting = False
+    capture._reconnect_init_thread = None
+    capture._pipeline_null_abandoned = True
+    capture._reconnect_teardown_still_running = lambda: False
+    capture.pipeline = object()
+    capture.bus = object()
+    capture.appsink = object()
+    capture._pipeline_generation = 1
+    capture._init_locked = lambda: False
+
+    assert VideoCaptureGStreamer.init(capture) is False
+    assert capture._pipeline_null_abandoned is True
+    assert capture.pipeline is None
+
+
+def test_teardown_budget_exceeded_detaches_worker_for_rebuild():
+    class _Pipeline(GStreamerCapturePipelineMixin, GStreamerCaptureFramesMixin):
+        pass
+
+    capture = _Pipeline()
+    capture.logger = Mock()
+    capture.source_names = ["Cam4", "Cam5"]
+    capture.gstreamer_available = True
+    capture.pipeline_lock = RLock()
+    capture.frame_lock = Lock()
+    capture._pipeline_generation = 1
+    capture._pipeline_null_abandoned = False
+    capture._generation_is_current = lambda generation: generation == capture._pipeline_generation
+    capture._orphan_gst_native = Mock()
+    capture._detach_pipeline_state = Mock(
+        return_value={
+            "pipeline": object(),
+            "bus": object(),
+            "appsink": object(),
+            "generation": 1,
+            "reason": "release",
+            "loop": None,
+            "recorder": None,
+            "bus_handler_id": None,
+            "appsink_handler_id": None,
+            "main_loop_thread": None,
+        }
+    )
+
+    def _slow_body(*_args, **_kwargs):
+        time.sleep(0.4)
+
+    capture._native_teardown_body = _slow_body
+    original_budget = CaptureConstants.TEARDOWN_BUDGET_SEC
+    CaptureConstants.TEARDOWN_BUDGET_SEC = 0.05
+    try:
+        capture._teardown_pipeline("release", join_main_loop=True)
+    finally:
+        CaptureConstants.TEARDOWN_BUDGET_SEC = original_budget
+
+    assert capture._pipeline_null_abandoned is True
+    assert capture._gst_teardown_thread is None
+    assert capture._reconnect_teardown_still_running() is False
+    capture._orphan_gst_native.assert_called()
 
 
 def test_capture_health_is_not_working_while_teardown_pending():
@@ -193,6 +624,91 @@ def test_recording_queue_pipeline_uses_leaky_downstream():
     assert candidates
     assert "leaky=downstream" in candidates[0]
     assert "leaky=no" not in candidates[0]
+
+
+def test_get_frames_impl_skips_duplicate_single_stream():
+    import numpy as np
+
+    image = np.zeros((2, 2, 3), dtype=np.uint8)
+    frame = SimpleNamespace(
+        frame_id=7,
+        connection_generation=1,
+        time_stamp=0,
+        source_id=0,
+        current_video_frame=0,
+        current_video_position=0,
+        pts_ns=0,
+        media_pts_sec=0,
+        image=image,
+    )
+    created = []
+
+    def _create_capture_image(**kwargs):
+        created.append(kwargs["frame_id"])
+        return SimpleNamespace(**kwargs)
+
+    capture = SimpleNamespace(
+        is_working=True,
+        _get_call_count=0,
+        _get_call_last_log=time.time(),
+        split_stream=False,
+        frame_lock=Lock(),
+        last_frame=frame,
+        _last_returned_frame_id=None,
+        _same_frame_count=0,
+        source_names=["cam"],
+        source_address="rtsp://example",
+        logger=Mock(),
+        subscribers=[],
+        _create_capture_image=_create_capture_image,
+    )
+
+    first = GStreamerCaptureFramesMixin.get_frames_impl(capture)
+    second = GStreamerCaptureFramesMixin.get_frames_impl(capture)
+    assert len(first) == 1
+    assert second == []
+    assert capture._same_frame_count == 1
+    frame.frame_id = 8
+    third = GStreamerCaptureFramesMixin.get_frames_impl(capture)
+    assert len(third) == 1
+    assert created == [7, 8]
+
+
+def test_release_does_not_clear_flags_of_a_newer_generation():
+    capture = _capture()
+    capture._pipeline_generation = 2
+    capture.pipeline = object()
+
+    def _teardown(*_args, **_kwargs):
+        capture._pipeline_generation = 3
+
+    capture._teardown_pipeline = Mock(side_effect=_teardown)
+    capture._generation_is_current = lambda generation: capture._pipeline_generation == generation
+
+    VideoCaptureGStreamer.release(capture)
+
+    capture._teardown_pipeline.assert_called_once_with(
+        "release", join_main_loop=True, expected_generation=2
+    )
+    assert capture.is_inited is True
+    assert capture.is_working is True
+
+
+def test_begin_reconnect_release_does_not_start_a_second_release():
+    calls = []
+    capture = SimpleNamespace(
+        source_names=["cam"],
+        logger=Mock(),
+        _reconnect_release_thread=SimpleNamespace(is_alive=lambda: True),
+        _reconnect_release_done=Event(),
+        release=lambda: calls.append("release"),
+        _abandon_stalled_teardown=lambda: calls.append("abandon"),
+    )
+    capture._reconnect_release_done.set()
+
+    GStreamerCaptureFramesMixin._begin_reconnect_release(capture, 0.01)
+
+    assert calls == []
 
 
 def test_restart_script_uses_detach_and_survived_kill_error():

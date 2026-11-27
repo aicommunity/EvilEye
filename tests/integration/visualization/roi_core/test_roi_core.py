@@ -7,7 +7,6 @@ except ImportError:
     from PyQt5.QtWidgets import QApplication
     pyqt_version = 5
 
-import numpy as np
 
 from evileye.visualization_modules.roi_core import ROIGraphicsView
 

@@ -52,7 +52,7 @@ class DatabaseAdapterCamEvents(DatabaseAdapterBase):
                 continue
             name = camera_event_identity(source_names=source.get('source_names'), address=source['camera'])
             if identity == name or media_url_without_credentials(identity) == media_url_without_credentials(source['camera']):
-                address = source['camera']
+                address = media_url_without_credentials(source['camera'])
                 break
         fields_for_saving = {
             "camera_full_address": address,

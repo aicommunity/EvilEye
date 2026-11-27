@@ -17,6 +17,18 @@ from .image_storage_service import ImageStorageService
 from .database_validator import DatabaseValidator
 
 
+# Fixed predicates. Not taken from configuration, so sql.SQL is safe here.
+RETENTION_PREDICATES = {
+    "objects": "COALESCE(time_lost, time_stamp)",
+    "zone_events": "time_entered",
+    "attribute_events": "COALESCE(time_finished, time_stamp)",
+    "camera_events": "time_stamp",
+    "schedule_alarm_events": "COALESCE(time_lost, time_stamp)",
+    "system_events": "time_stamp",
+    "alarm_events": "time_stamp",
+}
+
+
 # see https://ru.hexlet.io/blog/posts/python-postgresql
 
 
@@ -254,11 +266,17 @@ class DatabaseControllerPg(DatabaseControllerBase):
         return self.conn_pool is not None
 
     def query_impl(self, query_string, data=None):
+        """Legacy tolerant entry: returns None on failure (NOT the same as empty).
+
+        Prefer ``query_checked`` (raises) in new code. Failure is logged at
+        error level so a swallowed query cannot pass unnoticed (TD-AUD-D7).
+        """
         try:
             return self.query_checked(query_string, data)
         except Exception as error:
-            self.logger.warning(
-                f'Transaction ({query_string}) failed: {error}'
+            self.logger.error(
+                f'Transaction ({query_string}) failed: {error}',
+                exc_info=True,
             )
             return None
 
@@ -350,26 +368,42 @@ class DatabaseControllerPg(DatabaseControllerBase):
             if self.conn_pool is None:
                 continue
 
-            connection = None
-            try:
-                connection = self.conn_pool.getconn()
-                with connection:
-                    with connection.cursor() as curs:
-                        curs.execute(query_string, data)
-                        record = curs.fetchone()
-                        row_num = record[0]
-                        box = record[1]
-                        if self._image_storage:
-                            self._image_storage.save_image(preview_path, frame_path, image, box)
-                if query_type == QueryType.Insert:
-                    threading_events.notify(EventType.HANDLER_NEW_OBJECT, row_num)
-                elif query_type == QueryType.Update:
-                    threading_events.notify(EventType.HANDLER_UPDATE_OBJECT, row_num)
-            except psycopg2.OperationalError:
-                self.logger.info(f'Transaction ({query_string}) is not committed')
-            finally:
-                if connection:
-                    self.conn_pool.putconn(connection)
+            _, error = self.error_handler.execute_with_retry(
+                lambda: self._execute_object_write(
+                    query_type, query_string, data, preview_path, frame_path, image
+                ),
+                max_retries=3,
+                initial_delay=0.1,
+                max_delay=0.5,
+                retryable_errors=(psycopg2.OperationalError,),
+            )
+            if error is not None:
+                # Audit D3: this record was dropped silently at info level.
+                self.logger.error(
+                    'Object write failed after retries and was lost: %s', error
+                )
+
+    def _execute_object_write(
+        self, query_type, query_string, data, preview_path, frame_path, image
+    ):
+        connection = None
+        try:
+            connection = self.conn_pool.getconn()
+            with connection:
+                with connection.cursor() as curs:
+                    curs.execute(query_string, data)
+                    record = curs.fetchone()
+                    row_num = record[0]
+                    box = record[1]
+                    if self._image_storage:
+                        self._image_storage.save_image(preview_path, frame_path, image, box)
+            if query_type == QueryType.Insert:
+                threading_events.notify(EventType.HANDLER_NEW_OBJECT, row_num)
+            elif query_type == QueryType.Update:
+                threading_events.notify(EventType.HANDLER_UPDATE_OBJECT, row_num)
+        finally:
+            if connection:
+                self.conn_pool.putconn(connection)
 
     def _save_image(self, preview_path, frame_path, image, box=None, zone_coords=None):
         if self._image_storage:
@@ -519,6 +553,29 @@ class DatabaseControllerPg(DatabaseControllerBase):
         project_id = self.query(query, (cur_time,))[0][0]
         return project_id
 
+    def finish_job(self, terminated: bool = False) -> bool:
+        """TD-AUD-JOBS: write jobs.finish_time/is_terminated when a job ends.
+
+        Without this every job stayed open forever and the completed/error job
+        counters in project statistics were always zero.
+        """
+        if self.conn_pool is None or not self._job_created or not self._job_id:
+            return False
+        import datetime
+
+        update = sql.SQL(
+            'UPDATE jobs SET finish_time = %s, is_terminated = %s,'
+            ' last_record = GREATEST(COALESCE((SELECT max(record_id) FROM objects), first_record - 1), first_record - 1)'
+            ' WHERE job_id = %s'
+        )
+        try:
+            rows = self.query_checked(update, (datetime.datetime.now(), bool(terminated), self._job_id))
+            self.logger.info("Job %s finished (terminated=%s)", self._job_id, bool(terminated))
+            return True
+        except Exception as exc:
+            self.logger.error("Failed to finish job %s: %s", self._job_id, exc)
+            return False
+
     def _create_new_job(self, project_id):
         cur_time = datetime.datetime.now()
         select_query = sql.SQL('SELECT max(record_id) FROM objects')
@@ -596,32 +653,102 @@ class DatabaseControllerPg(DatabaseControllerBase):
     def get_job_id(self):
         return self._job_id
 
-    def get_next_event_id(self, table_names: list[str]) -> int:
+    def purge_old_records(self, days: int) -> dict[str, int]:
+        """Delete rows older than ``days`` days from append-only event tables.
+
+        Audit 2026-11 (D4): nothing ever deleted old rows, so the tables grew
+        unbounded. Deletes run per table; a missing table does not abort the
+        purge. Returns the per-table deleted-row counts.
+        """
+        days = int(days)
+        if days <= 0 or self.conn_pool is None:
+            return {}
+        known = set(self.tables or {})
+        deleted: dict[str, int] = {}
+        for table, predicate in RETENTION_PREDICATES.items():
+            if known and table not in known and table != "alarm_events":
+                continue
+            query = sql.SQL("DELETE FROM {table} WHERE {predicate} < NOW() - %s::interval").format(
+                table=sql.Identifier(table),
+                predicate=sql.SQL(predicate),
+            )
+            connection = None
+            try:
+                connection = self.conn_pool.getconn()
+                with connection:
+                    with connection.cursor() as curs:
+                        curs.execute(query, (f"{days} days",))
+                        deleted[table] = int(curs.rowcount or 0)
+            except Exception as exc:
+                undefined = type(exc).__name__ == "UndefinedTable" or getattr(exc, "pgcode", None) == "42P01"
+                if undefined:
+                    self.logger.info("purge_old_records: %s is absent: %s", table, exc)
+                else:
+                    self.logger.error("purge_old_records: %s failed: %s", table, exc)
+            finally:
+                if connection is not None:
+                    try:
+                        self.conn_pool.putconn(connection)
+                    except Exception:
+                        pass
+        if deleted:
+            self.logger.info("purge_old_records (%d days): %s", days, deleted)
+        return deleted
+
+    def get_next_event_id(self, table_names: list[str]):
         """
         Get the next event_id across multiple event tables.
 
         This keeps DB-specific SQL inside the DB layer (used by EventsProcessor).
+        Queries each table separately: one missing/broken table no longer kills
+        the whole UNION and silently resets ids to 0 (audit 2026-11, D1).
+        Returns ``None`` when no table could be queried, so the caller keeps
+        its counter instead of restarting from 0 (PK conflicts).
         """
         if self.conn_pool is None:
-            return 0
+            return None
         table_names = [t for t in (table_names or []) if t]
         if not table_names:
-            return 0
+            return None
 
-        subqueries = [
-            sql.SQL("SELECT MAX(event_id) as event_id FROM {table}").format(table=sql.Identifier(t))
-            for t in table_names
-        ]
-        query = sql.SQL("SELECT MAX(event_id) FROM ({subqueries}) AS temp").format(
-            subqueries=sql.SQL(" UNION ").join(subqueries)
-        )
-        record = self.query(query, None)
-        if not record or not record[0] or record[0][0] is None:
-            return 0
+        # TD-AUD-D1: a sequence is race-free across concurrent instances;
+        # the per-table MAX fallback below covers pre-migration databases.
         try:
-            return int(record[0][0]) + 1
-        except Exception:
-            return 0
+            record = self.query("SELECT nextval('event_id_seq')", None)
+            if record and record[0] and record[0][0] is not None:
+                return int(record[0][0])
+        except Exception as exc:
+            self.logger.debug("event_id_seq unavailable (%s); using MAX+1", exc)
+
+        max_id = 0
+        queried = 0
+        for table in table_names:
+            query = sql.SQL("SELECT MAX(event_id) FROM {table}").format(
+                table=sql.Identifier(table)
+            )
+            try:
+                record = self.query(query, None)
+            except Exception as exc:
+                self.logger.warning(
+                    "get_next_event_id: failed to query %s: %s", table, exc
+                )
+                continue
+            if record is None:
+                # query() returns None only on error; a successful query on an
+                # empty table yields [[None]].
+                continue
+            queried += 1
+            if record and record[0] and record[0][0] is not None:
+                try:
+                    max_id = max(max_id, int(record[0][0]))
+                except (TypeError, ValueError):
+                    continue
+        if queried == 0:
+            self.logger.error(
+                "get_next_event_id: could not query any of %s", table_names
+            )
+            return None
+        return max_id + 1
 
     def get_config_by_job_id(self, job_id: int) -> dict:
         """

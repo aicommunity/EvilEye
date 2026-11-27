@@ -522,3 +522,23 @@ restart.
 
 Plugin names for the Web workshop must not be Python standard library modules or already importable packages
 (`torch`, `numpy`, ...), because the plugin becomes a top-level package.
+
+## Deprecation: legacy MP detector name
+
+`ObjectDetectorYoloMp` is a compatibility alias of `ObjectDetectorYolo`.
+`scripts/validate_config.py` warns when a config still uses that type. Migrate
+to `ObjectDetectorYolo` and set `execution_mode` to `thread` or `process`.
+The alias, the factory key `yolo_mp`, and the tests that mention that name
+can be removed after the next minor release. Nothing else in this paragraph
+is scheduled for removal.
+
+`DetectionThreadYoloMp` is the current process-mode implementation inside
+`ObjectDetectorYolo`. It is not a deletion candidate.
+
+`evileye/core/mp_queue_config.py` and the factory entries for `yolo`, `rtdetr`,
+and `rfdetr` stay. Trackers and thread-mode detectors still use them.
+
+`LegacyProcessorModuleAdapter` stays as the bridge for third-party modules that
+still use the old `put`/`get` protocol. Built-in modules do not use it. No
+deprecation window is open for the adapter: external plugins have not been
+told to leave it yet (TD-PS-D3).

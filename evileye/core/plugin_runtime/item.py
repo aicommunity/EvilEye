@@ -37,6 +37,11 @@ from .transport import (
     _validate_model_class_mapping_capability,
 )
 
+# Sentinel pushed into the drained-output buffer when the worker failed in a
+# way that must surface to the pipeline thread as "no result / degraded".
+_FATAL_PROCESS_OUTPUT = object()
+
+
 class ItemModuleWorker(MpWorker):
     """Spawn-safe bridge that recreates a plugin module inside the child."""
 
@@ -231,10 +236,21 @@ class ItemModuleAdapter(_HealthMixin, EvilEyeBase):
         self._model_class_mapping: dict[str, int] | None = None
         self._model_class_mapping_lock = threading.Lock()
         from ..frame_transport import SharedFrameTransport
-        self._frame_transport = SharedFrameTransport()
+        # Segment pooling removes the per-frame SharedMemory create/unlink pair
+        # (TD-PS-D2); disable with EVILEYE_SHM_POOL=0.
+        import os as _os
+        self._frame_transport = SharedFrameTransport(
+            pool_segments=str(
+                _os.getenv("EVILEYE_SHM_POOL", "1")
+            ).strip().lower() not in {"0", "false", "no", "off"}
+        )
         self._process_pending: dict[int, dict[str, Any]] = {}
         self._process_pending_lock = threading.Lock()
         self._process_sequence = 0
+        # Process-mode output drainer (TD-PS-D7): worker envelopes are decoded
+        # here instead of once per pipeline tick.
+        self._output_drainer: threading.Thread | None = None
+        self._drained_outputs: queue.Queue = queue.Queue(maxsize=16)
         self.reports_model_class_mapping = (
             "model_class_mapping" in capabilities
         )
@@ -267,7 +283,15 @@ class ItemModuleAdapter(_HealthMixin, EvilEyeBase):
         self.source_ids = tuple(
             int(item) for item in (params.get("source_ids") or ())
         )
-        self._queue_size = max(1, int(params.get("queue_size", 8)))
+        import os as _os
+
+        def _default_queue_size() -> int:
+            try:
+                return max(1, int(_os.getenv("EVILEYE_MODULE_QUEUE_SIZE", "16")))
+            except ValueError:
+                return 16
+
+        self._queue_size = max(1, int(params.get("queue_size", _default_queue_size())))
         self._config = dict(params.get("config") or {})
         capabilities = set(self.registered_module.spec.capabilities or ())
         requested_workers = int(params.get("worker_count", 1))
@@ -340,9 +364,11 @@ class ItemModuleAdapter(_HealthMixin, EvilEyeBase):
                 try:
                     dropped, dropped_payload = self._mp_control.put_drop_oldest(payload)
                 except queue.Full as exc:
+                    # Queue stayed full even after eviction (feeder lag): both the
+                    # evicted item and the new frame are lost. Count the drop once —
+                    # double counting inflated the loss metrics used to chase
+                    # TD-PS-D7.
                     evicted_payload = getattr(exc, "dropped_item", None)
-                    if evicted_payload is not None:
-                        self._record_input_drop()
                     self._record_input_drop()
                     return _IncomingFrameDropped(evicted_payload)
                 if dropped:
@@ -462,6 +488,16 @@ class ItemModuleAdapter(_HealthMixin, EvilEyeBase):
             worker.ready_event = ready_event
             worker.init_failed_event = init_failed_event
             self._mp_control.start()
+            # Drain worker outputs continuously instead of once per pipeline
+            # tick (TD-PS-D7): the worker never blocks long on a full output
+            # queue and results are ready for the next tick immediately.
+            self._drained_outputs = queue.Queue(maxsize=max(2, self._queue_size * 2))
+            self._output_drainer = threading.Thread(
+                target=self._drain_process_outputs_loop,
+                name=f"Plugin-{self.module_id.replace('/', '-')}-drain",
+                daemon=True,
+            )
+            self._output_drainer.start()
             return
 
         self._process_ready_events = []
@@ -664,7 +700,21 @@ class ItemModuleAdapter(_HealthMixin, EvilEyeBase):
                 with self._process_pending_lock:
                     request_id = self._process_sequence
                     self._process_sequence += 1
-                if self.accepts_frame_handle:
+                # Module-supplied IPC packing (e.g. ROI crops instead of the
+                # full frame, TD-PS-D7): when the module provides
+                # pack_process_item(), its payload replaces the default
+                # frame->shared-memory conversion entirely.
+                packed_item = None
+                packer = getattr(self._module, "pack_process_item", None)
+                if not callable(packer):
+                    packer = getattr(
+                        self.registered_module.spec.factory, "pack_process_item", None
+                    )
+                if callable(packer) and self.accepts_frame_handle:
+                    packed_item = packer(item)
+                if packed_item is not None:
+                    process_item, frames, handles = packed_item, {}, []
+                elif self.accepts_frame_handle:
                     process_item, frames, handles = _prepare_item_for_process(
                         item, self._frame_transport, request_id
                     )
@@ -681,6 +731,7 @@ class ItemModuleAdapter(_HealthMixin, EvilEyeBase):
                 with self._process_pending_lock:
                     self._process_pending[request_id] = {
                         "frames": frames, "handles": handles,
+                        "original": item if packed_item is not None else None,
                     }
                 payload = (_PROCESS_INPUT_MARKER, request_id, serialized_item)
             dropped_payload = self._enqueue_input(item, payload)
@@ -736,112 +787,16 @@ class ItemModuleAdapter(_HealthMixin, EvilEyeBase):
             if self.execution_mode == "process":
                 if self._mp_control is None:
                     return None
-                while True:
-                    result = self._mp_control.get_nowait()
-                    if not (
-                        isinstance(result, tuple) and len(result) == 3
-                        and result[0] == _PROCESS_OUTPUT_MARKER
-                    ):
-                        self.degraded = True
-                        self._release_all_process_requests()
-                        self.logger.error(
-                            "Plugin module %s returned an invalid process envelope",
-                            self.module_id,
-                        )
-                        return None
-                    if result[1] == "metadata":
-                        try:
-                            self._set_model_class_mapping(pickle.loads(result[2]))
-                        except Exception as exc:
-                            self.degraded = True
-                            self.logger.error(
-                                "Plugin module %s returned invalid class mapping metadata: %s",
-                                self.module_id,
-                                exc,
-                            )
-                        continue
-                    if result[1] == "item_error":
-                        request_id, message = None, result[2]
-                        if isinstance(message, bytes):
-                            try:
-                                request_id, message = pickle.loads(message)
-                            except Exception:
-                                pass
-                        self._release_process_request(request_id)
-                        self._track_completed_item()
-                        self.item_errors += 1
-                        self._record_item_error_event()
-                        self.logger.warning(
-                            "Plugin module %s skipped an item after an error: %s",
-                            self.module_id, message,
-                        )
-                        continue
-                    if result[1] == "error":
-                        request_id = None
-                        message = result[2]
-                        if isinstance(message, bytes):
-                            try:
-                                request_id, message = pickle.loads(message)
-                            except Exception:
-                                pass
-                        self._release_process_request(request_id)
-                        self._release_all_process_requests()
-                        self.degraded = True
-                        self._failure_reported = True
-                        self._clear_pending_items()
-                        self.logger.error(
-                            "Plugin module %s failed in worker: %s", self.module_id, message
-                        )
-                        return None
-                    if result[1] == "skip":
-                        self._release_process_request(
-                            result[2] if isinstance(result[2], int) else None
-                        )
-                        self._track_completed_item()
-                        continue
-                    if result[1] == "output":
-                        self._track_completed_item()
-                        request_id = None
-                        try:
-                            decoded = pickle.loads(result[2])
-                            if (
-                                isinstance(decoded, tuple) and len(decoded) == 3
-                                and decoded[0] == _PROCESS_RESULT_MARKER
-                                and isinstance(decoded[1], int)
-                            ):
-                                request_id = decoded[1]
-                                pending = self._process_pending.get(request_id)
-                                if pending is None:
-                                    raise PluginError(
-                                        f"Module '{self.module_id}' returned an unknown "
-                                        f"process request id {request_id}"
-                                    )
-                                output = _restore_process_result(
-                                    decoded[2], pending["frames"], request_id
-                                )
-                                self._release_process_request(request_id)
-                                return output
-                            raise PluginError(
-                                f"Module '{self.module_id}' returned an invalid "
-                                "process result envelope"
-                            )
-                        except Exception as exc:
-                            self._release_process_request(request_id)
-                            self._release_all_process_requests()
-                            self.degraded = True
-                            self.logger.error(
-                                "Plugin module %s returned an invalid serialized output: %s",
-                                self.module_id,
-                                exc,
-                            )
-                            return None
-                    self.degraded = True
-                    self._release_all_process_requests()
-                    self.logger.error(
-                        "Plugin module %s returned an unknown process envelope",
-                        self.module_id,
-                    )
+                # Drained by the background output drainer thread (see
+                # _drain_process_outputs_loop): results are available as soon
+                # as the worker produces them, not once per pipeline tick.
+                try:
+                    result = self._drained_outputs.get_nowait()
+                except queue.Empty:
                     return None
+                if result is _FATAL_PROCESS_OUTPUT:
+                    return None
+                return result
             result = self._output_queue.get_nowait()
             self._track_completed_item()
             return result
@@ -853,6 +808,171 @@ class ItemModuleAdapter(_HealthMixin, EvilEyeBase):
                 self._check_process_health()
                 return None
             raise
+
+    def _push_drained_output(self, output) -> None:
+        """Bounded drop-oldest hand-off of decoded worker results."""
+        while True:
+            try:
+                self._drained_outputs.put_nowait(output)
+                return
+            except queue.Full:
+                try:
+                    self._drained_outputs.get_nowait()
+                except queue.Empty:
+                    return
+
+    def _handle_process_envelope(self, result) -> None:
+        """Decode one worker envelope (runs on the output drainer thread)."""
+        if not (
+            isinstance(result, tuple) and len(result) == 3
+            and result[0] == _PROCESS_OUTPUT_MARKER
+        ):
+            self.degraded = True
+            self._release_all_process_requests()
+            self.logger.error(
+                "Plugin module %s returned an invalid process envelope",
+                self.module_id,
+            )
+            self._push_drained_output(_FATAL_PROCESS_OUTPUT)
+            return
+        if result[1] == "metadata":
+            try:
+                self._set_model_class_mapping(pickle.loads(result[2]))
+            except Exception as exc:
+                self.degraded = True
+                self.logger.error(
+                    "Plugin module %s returned invalid class mapping metadata: %s",
+                    self.module_id,
+                    exc,
+                )
+            return
+        if result[1] == "item_error":
+            request_id, message = None, result[2]
+            if isinstance(message, bytes):
+                try:
+                    request_id, message = pickle.loads(message)
+                except Exception:
+                    pass
+            self._release_process_request(request_id)
+            self._track_completed_item()
+            self.item_errors += 1
+            self._record_item_error_event()
+            self.logger.warning(
+                "Plugin module %s skipped an item after an error: %s",
+                self.module_id, message,
+            )
+            return
+        if result[1] == "error":
+            request_id = None
+            message = result[2]
+            if isinstance(message, bytes):
+                try:
+                    request_id, message = pickle.loads(message)
+                except Exception:
+                    pass
+            self._release_process_request(request_id)
+            self._release_all_process_requests()
+            self.degraded = True
+            self._failure_reported = True
+            self._clear_pending_items()
+            self.logger.error(
+                "Plugin module %s failed in worker: %s", self.module_id, message
+            )
+            self._push_drained_output(_FATAL_PROCESS_OUTPUT)
+            return
+        if result[1] == "skip":
+            self._release_process_request(
+                result[2] if isinstance(result[2], int) else None
+            )
+            self._track_completed_item()
+            return
+        if result[1] == "output":
+            self._track_completed_item()
+            request_id = None
+            try:
+                decoded = pickle.loads(result[2])
+                if (
+                    isinstance(decoded, tuple) and len(decoded) == 3
+                    and decoded[0] == _PROCESS_RESULT_MARKER
+                    and isinstance(decoded[1], int)
+                ):
+                    request_id = decoded[1]
+                    with self._process_pending_lock:
+                        pending = self._process_pending.get(request_id)
+                    if pending is None:
+                        raise PluginError(
+                            f"Module '{self.module_id}' returned an unknown "
+                            f"process request id {request_id}"
+                        )
+                    original = pending.get("original")
+                    output = None
+                    if original is not None:
+                        # Module-supplied packing: rebuild the output item from
+                        # the locally kept original (crops-only IPC path).
+                        restorer = getattr(self._module, "restore_process_result", None)
+                        if not callable(restorer):
+                            restorer = getattr(
+                                self.registered_module.spec.factory,
+                                "restore_process_result",
+                                None,
+                            )
+                        if callable(restorer):
+                            output = restorer(decoded[2], original)
+                        else:
+                            output = _restore_process_result(
+                                decoded[2], pending["frames"], request_id
+                            )
+                    else:
+                        output = _restore_process_result(
+                            decoded[2], pending["frames"], request_id
+                        )
+                    self._release_process_request(request_id)
+                    self._push_drained_output(output)
+                    return
+                raise PluginError(
+                    f"Module '{self.module_id}' returned an invalid "
+                    "process result envelope"
+                )
+            except Exception as exc:
+                self._release_process_request(request_id)
+                self._release_all_process_requests()
+                self.degraded = True
+                self.logger.error(
+                    "Plugin module %s returned an invalid serialized output: %s",
+                    self.module_id,
+                    exc,
+                )
+                self._push_drained_output(_FATAL_PROCESS_OUTPUT)
+                return
+        self.degraded = True
+        self._release_all_process_requests()
+        self.logger.error(
+            "Plugin module %s returned an unknown process envelope",
+            self.module_id,
+        )
+        self._push_drained_output(_FATAL_PROCESS_OUTPUT)
+
+    def _drain_process_outputs_loop(self):
+        """Continuously decode worker envelopes (process mode, TD-PS-D7)."""
+        while not self._stop_event.is_set():
+            control = self._mp_control
+            if control is None:
+                break
+            try:
+                result = control.get(timeout=0.2)
+            except queue.Empty:
+                continue
+            except Exception:
+                if not self._stop_event.is_set():
+                    self.degraded = True
+                    self.logger.exception(
+                        "Plugin module %s output drainer failed", self.module_id
+                    )
+                    self._push_drained_output(_FATAL_PROCESS_OUTPUT)
+                break
+            if result is None:
+                continue
+            self._handle_process_envelope(result)
 
     def _on_workers_restarted(self) -> None:
         """Hook: a pool restart discarded all in-flight work."""
@@ -917,6 +1037,20 @@ class ItemModuleAdapter(_HealthMixin, EvilEyeBase):
             **self._health_stats(),
         }
 
+    # -- MpPendingReporter protocol --------------------------------------
+    # Without these the controller's soft backpressure and the PerfDiag MP
+    # barrier always saw pending=0 for plugin adapters (audit 2026-11, Г3).
+
+    def mp_pending_depth(self) -> int:
+        """Items submitted to the worker but not yet returned (queued+processing)."""
+        return self.pending_work_count()
+
+    def mp_diag_put_dropped(self) -> int:
+        return int(self.input_queue_dropped)
+
+    def mp_diag_pending_evict(self) -> int:
+        return 0
+
     def get_debug_info(self, debug_info: dict | None):
         if debug_info is None:
             debug_info = {}
@@ -925,11 +1059,14 @@ class ItemModuleAdapter(_HealthMixin, EvilEyeBase):
         return debug_info
 
     def stop(self):
+        self._stop_event.set()
+        if self._output_drainer is not None and self._output_drainer.is_alive():
+            self._output_drainer.join(timeout=2.0)
+        self._output_drainer = None
         if self._mp_control is not None:
             self._mp_control.stop()
             self._mp_control = None
         self._release_all_process_requests()
-        self._stop_event.set()
         try:
             self._input_queue.put_nowait(None)
         except queue.Full:
@@ -940,6 +1077,15 @@ class ItemModuleAdapter(_HealthMixin, EvilEyeBase):
 
     def release_impl(self):
         self.stop()
+        # Unmap/unlink pooled SHM segments as well (stop() only returns active
+        # handles to the pool).
+        try:
+            self._frame_transport.release_all_owned()
+        except Exception:
+            self.logger.exception(
+                "Plugin module %s failed to release frame transport segments",
+                self.module_id,
+            )
 
     def reset_impl(self):
         self.stop()

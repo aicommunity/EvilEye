@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import logging
 import os
 import shutil
 import tempfile
@@ -23,6 +24,8 @@ from evileye.api.core.web_auth_bootstrap import user_must_change_password
 from evileye.api.core.safe_paths import UnsafePathError, assert_under_dir, safe_config_name
 from evileye.service_manager.minimal_config import ensure_system_config, minimal_system_config
 from evileye.service_manager.state import load_state
+
+logger = logging.getLogger("evileye.api.setup")
 
 router = APIRouter(prefix="/api/v1/setup", tags=["setup"])
 
@@ -335,6 +338,53 @@ async def setup_basic_put(payload: BasicSetupModel) -> dict:
     return {"ok": True, "status": status, "basic": projected}
 
 
+def _resolve_db_host(host: str, port: int) -> str:
+    """Return one allowed IP for a setup database probe.
+
+    Resolution failure is a refusal. Every address the name maps to must be
+    allowed, so a round-robin record cannot hide a link-local target. Loopback
+    stays allowed because the database usually runs beside the web service.
+    ``EVILEYE_SETUP_DB_EXTRA_HOSTS`` cannot bypass this block list.
+    """
+    import ipaddress
+    import socket
+
+    raw = str(host or "").strip()
+    if not raw or any(char in raw for char in ",% \t[]"):
+        raise ValueError("host is not allowed")
+    try:
+        infos = socket.getaddrinfo(raw, int(port), type=socket.SOCK_STREAM)
+    except socket.gaierror as exc:
+        raise ValueError("host is not allowed") from exc
+    chosen: str | None = None
+    ula = ipaddress.IPv6Network("fc00::/7")
+    for info in infos:
+        ip_text = str(info[4][0]).split("%", 1)[0]
+        try:
+            addr = ipaddress.ip_address(ip_text)
+        except ValueError as exc:
+            raise ValueError("host is not allowed") from exc
+        if isinstance(addr, ipaddress.IPv6Address) and addr.ipv4_mapped is not None:
+            addr = addr.ipv4_mapped
+        blocked = (
+            addr.is_link_local
+            # ::1 carries is_reserved=True in ipaddress while being plain
+            # loopback; loopback must stay allowed (the database usually runs
+            # beside the web service).
+            or (addr.is_reserved and not addr.is_loopback)
+            or addr.is_multicast
+            or addr.is_unspecified
+            or (isinstance(addr, ipaddress.IPv6Address) and addr in ula)
+        )
+        if blocked:
+            raise ValueError("host is not allowed")
+        if chosen is None:
+            chosen = str(addr)
+    if chosen is None:
+        raise ValueError("host is not allowed")
+    return chosen
+
+
 @router.post("/check-data-dir")
 async def setup_check_data_dir(payload: DataDirPayload) -> dict:
     raw = payload.path.strip()
@@ -342,6 +392,25 @@ async def setup_check_data_dir(payload: DataDirPayload) -> dict:
         raise HTTPException(status_code=400, detail="path is required")
     path = Path(raw).expanduser()
     created = False
+    # Audit W3: without a trust flag the endpoint must not create/write
+    # arbitrary filesystem paths (it used to mkdir anywhere as admin).
+    import os
+
+    if not str(os.getenv("EVILEYE_SETUP_TRUST_DATA_DIR", "")).strip().lower() in {"1", "true", "yes", "on"}:
+        from evileye.core.paths import site_root
+
+        root = site_root()
+        try:
+            resolved = path.resolve()
+            resolved.relative_to(root)
+        except ValueError:
+            return {
+                "ok": False,
+                "writable": False,
+                "free_bytes": 0,
+                "message": "Path must stay under the site root (set EVILEYE_SETUP_TRUST_DATA_DIR=1 to allow arbitrary paths)",
+                "created": False,
+            }
     try:
         if not path.exists():
             path.mkdir(parents=True, exist_ok=True)
@@ -366,6 +435,15 @@ async def setup_check_data_dir(payload: DataDirPayload) -> dict:
 
 @router.post("/test-database")
 async def setup_test_database(payload: TestDbPayload) -> dict:
+    # Audit W3: this admin endpoint dials an arbitrary host:port. Refuse
+    # link-local / reserved targets (cloud metadata, SSRF pivots); operators
+    # can extend the allow-list via EVILEYE_SETUP_DB_EXTRA_HOSTS.
+    host = str(payload.host_name or "").strip()
+    try:
+        host_ip = _resolve_db_host(host, int(payload.port))
+    except (TypeError, ValueError):
+        return {"ok": False, "message": "Host is not allowed"}
+
     try:
         import psycopg2
     except Exception:
@@ -373,7 +451,7 @@ async def setup_test_database(payload: TestDbPayload) -> dict:
             import psycopg  # type: ignore
 
             conn = psycopg.connect(
-                host=payload.host_name,
+                host=host_ip,
                 port=payload.port,
                 dbname=payload.database_name,
                 user=payload.user_name,
@@ -382,12 +460,13 @@ async def setup_test_database(payload: TestDbPayload) -> dict:
             )
             conn.close()
             return {"ok": True, "message": "Connected"}
-        except Exception as exc:
-            return {"ok": False, "message": str(exc)}
+        except Exception:
+            logger.exception("Setup database probe failed")
+            return {"ok": False, "message": "Database connection failed"}
 
     try:
         conn = psycopg2.connect(
-            host=payload.host_name,
+            host=host_ip,
             port=payload.port,
             dbname=payload.database_name,
             user=payload.user_name,
@@ -396,5 +475,6 @@ async def setup_test_database(payload: TestDbPayload) -> dict:
         )
         conn.close()
         return {"ok": True, "message": "Connected"}
-    except Exception as exc:
-        return {"ok": False, "message": str(exc)}
+    except Exception:
+        logger.exception("Setup database probe failed")
+        return {"ok": False, "message": "Database connection failed"}

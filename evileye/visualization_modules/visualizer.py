@@ -107,6 +107,7 @@ class Visualizer(EvilEyeBase):
                     font_params_value,
                     text_config=self.text_config,
                     class_mapping=self.class_mapping,
+                    thread_num=self.source_index_map.get(self.source_ids[i], i),
                     logger_name=logger_name,
                     parent_logger=self.logger
                 ))

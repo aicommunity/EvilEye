@@ -55,8 +55,9 @@ RUN chmod +x /tmp/install_pypi_deps.py /usr/local/bin/evileye-entrypoint /opt/ev
 
 EXPOSE 8181
 
-HEALTHCHECK --interval=30s --timeout=5s --retries=3 \
-    CMD python -c "import evileye, torch, ultralytics" || exit 1
+# Audit 2026-11 (TD-AUD-014): check the running service, not importability.
+HEALTHCHECK --interval=30s --timeout=5s --start-period=60s --retries=3 \
+    CMD python -c "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:8181/ready', timeout=4).status == 200 else 1)" || exit 1
 
 ENTRYPOINT ["evileye-entrypoint"]
 CMD ["evileye", "server", "--host", "0.0.0.0", "--port", "8181", "--no-reload"]

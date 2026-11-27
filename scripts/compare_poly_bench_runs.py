@@ -8,7 +8,7 @@ import csv
 import json
 from pathlib import Path
 
-from poly_mode_compare_lib import DEFAULT_OUT_DIR, REPO_ROOT
+from poly_mode_compare_lib import REPO_ROOT
 
 
 def _load_csv(path: Path) -> list[dict[str, str]]:

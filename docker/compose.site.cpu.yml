@@ -6,7 +6,7 @@ services:
     restart: unless-stopped
     environment:
       POSTGRES_USER: postgres
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-postgres}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD before starting the stack}
       POSTGRES_DB: evil_eye_db
     volumes:
       - ./postgres_data:/var/lib/postgresql/data
@@ -47,4 +47,6 @@ services:
     depends_on:
       db:
         condition: service_healthy
+    healthcheck:
+      disable: true
     command: ["evileye", "run", "configs/single_video.json", "--no-gui"]

@@ -15,7 +15,6 @@ def test_detection():
     try:
         from ultralytics import YOLO
         import cv2
-        import numpy as np
         
         # Load model
         model_path = "models/yolov8n.pt"

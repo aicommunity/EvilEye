@@ -1,10 +1,7 @@
-import sys
-from pathlib import Path
 from PyQt6.QtWidgets import QWidget, QVBoxLayout, QTabWidget
 from PyQt6.QtCore import pyqtSignal
 
 # Add parent directory to path for imports
-sys.path.append(str(Path(__file__).parent.parent.parent))
 
 from .journal_data_source_json import JsonLabelJournalDataSource
 from .unified_objects_journal import UnifiedObjectsJournal

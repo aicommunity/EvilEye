@@ -2,21 +2,52 @@
 Базовый класс для унифицированных журналов объектов и событий
 """
 
-import sys
-from pathlib import Path
 from typing import Optional
 
 try:
+    from PyQt6.QtCore import QThread, pyqtSignal
     from PyQt6.QtWidgets import QWidget
 
     pyqt_version = 6
 except ImportError:
+    from PyQt5.QtCore import QThread, pyqtSignal
     from PyQt5.QtWidgets import QWidget
 
     pyqt_version = 5
 
+
+class JournalFetchThread(QThread):
+    """Fetch a journal page off the UI thread (TD-AUD-011).
+
+    The data source fetch may hit PostgreSQL synchronously; running it in a
+    QTimer slot froze the UI for the query duration every tick.
+    """
+
+    fetched = pyqtSignal(object)
+
+    def __init__(self, data_source, page: int, size: int, filters: dict,
+                 sort=None, force_refresh: bool = False, parent=None):
+        super().__init__(parent)
+        self._data_source = data_source
+        self._page = page
+        self._size = size
+        self._filters = filters
+        self._sort = sort or []
+        self._force_refresh = force_refresh
+
+    def run(self):
+        try:
+            if self._force_refresh:
+                try:
+                    self._data_source.force_refresh()
+                except AttributeError:
+                    pass
+            rows = self._data_source.fetch(self._page, self._size, self._filters, self._sort)
+            self.fetched.emit(rows or [])
+        except Exception:
+            self.fetched.emit([])
+
 # Add parent directory to path for imports
-sys.path.append(str(Path(__file__).parent.parent.parent))
 
 from .journal_data_source import EventJournalDataSource
 from .journal_path_resolver import JournalPathResolver

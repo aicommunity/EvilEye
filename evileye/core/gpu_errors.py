@@ -6,8 +6,13 @@ import re
 import sys
 from typing import Any
 
-# Dedicated process exit code: MpControl must not auto-restart on this code.
+# Dedicated process exit codes shared by MpWorker/MpControl.
+# MpControl must not auto-restart on the CUDA OOM code.
 MP_EXIT_CUDA_OOM = 42
+# Worker died from an unexpected non-CUDA exception (init or processing loop).
+# Unlike a clean exit(0), the health monitor logs it as a crash; the pool may
+# still restart the worker according to its restart policy.
+MP_EXIT_CRASH = 3
 
 _CUDA_OOM_PATTERNS = (
     re.compile(r"cuda.*out of memory", re.IGNORECASE),

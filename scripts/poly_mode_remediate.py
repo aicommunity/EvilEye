@@ -9,7 +9,7 @@ import subprocess
 import sys
 from pathlib import Path
 
-from poly_mode_compare_lib import COMPARE_CONFIGS, DEFAULT_OUT_DIR, REPO_ROOT
+from poly_mode_compare_lib import DEFAULT_OUT_DIR, REPO_ROOT
 
 
 def _failed_runs(summary_path: Path) -> list[dict]:

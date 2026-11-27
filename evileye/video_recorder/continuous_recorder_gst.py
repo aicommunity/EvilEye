@@ -4,6 +4,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Optional
 import datetime as _dt
+import os
 import threading
 import time
 import atexit
@@ -30,6 +31,58 @@ class GstBranchRefs:
     splitmuxsink: object
 
 
+def push_eos_to_detached_branch(queue, splitmux, gst=None) -> bool:
+    """Deliver EOS after the branch has been removed from the capture bin.
+
+    ``bin.remove()`` unlinks pads, so ``queue.src.push_event(EOS)`` is rejected.
+    The muxer element can still take the event directly.
+    """
+    if gst is None:
+        from evileye.capture.gstreamer_capture_common import Gst as gst
+    if gst is None:
+        return False
+    try:
+        event = gst.Event.new_eos()
+    except Exception:
+        return False
+    if splitmux is not None and hasattr(splitmux, "send_event"):
+        try:
+            if splitmux.send_event(event):
+                return True
+        except Exception:
+            pass
+    if queue is None or not hasattr(queue, "get_static_pad"):
+        return False
+    try:
+        pad = queue.get_static_pad("src")
+    except Exception:
+        pad = None
+    if pad is None:
+        return False
+    try:
+        peer = pad.get_peer() if hasattr(pad, "get_peer") else None
+    except Exception:
+        peer = None
+    if peer is None and splitmux is not None and hasattr(splitmux, "get_static_pad"):
+        sink = None
+        for pad_name in ("video", "sink"):
+            try:
+                sink = splitmux.get_static_pad(pad_name)
+            except Exception:
+                sink = None
+            if sink is not None:
+                break
+        if sink is not None and hasattr(pad, "link"):
+            try:
+                pad.link(sink)
+            except Exception:
+                pass
+    try:
+        return bool(pad.push_event(gst.Event.new_eos()))
+    except Exception:
+        return False
+
+
 class GstContinuousRecorder(VideoRecorderBase):
     """
 
@@ -52,6 +105,8 @@ class GstContinuousRecorder(VideoRecorderBase):
         self._recording_checked_files: set[Path] = set()
         self._recording_min_file_size_kb: int = 0
         self._recording_container: str = "mp4"
+        # Basename prefix of the live splitmux location (without _%05d.ext).
+        self._active_splitmux_prefix: Optional[str] = None
         self._lock = threading.RLock()
         self._segments_attached: int = 0
         self._last_stats_ts: float = 0.0
@@ -171,6 +226,12 @@ class GstContinuousRecorder(VideoRecorderBase):
             self._recording_min_file_size_kb = self.params.min_file_size_kb
             self._recording_container = self.params.container
             self._recording_checked_files = set()
+            try:
+                self._active_splitmux_prefix = (
+                    self._session_stem.name if self._session_stem is not None else None
+                )
+            except Exception:
+                self._active_splitmux_prefix = None
 
             # Attach as one transaction. A partial branch must not remain in
             # the capture pipeline when a link or element setup fails.
@@ -276,6 +337,10 @@ class GstContinuousRecorder(VideoRecorderBase):
             )
             self._session_stem = (out_dir / name).with_suffix("")
             self._session_date_str = date_str
+            try:
+                self._active_splitmux_prefix = self._session_stem.name
+            except Exception:
+                pass
             if day_changed and fragment_id > 0:
                 try:
                     location_pattern = str(self._session_stem) + "_%05d." + self.params.container
@@ -408,18 +473,32 @@ class GstContinuousRecorder(VideoRecorderBase):
                     validate_integrity = getattr(self.params, "validate_video_integrity", True)
                     validation_timeout = getattr(self.params, "video_validation_timeout", 2.0)
 
+                    active_prefix = self._active_splitmux_prefix
                     for out_dir in dirs:
                         if not out_dir or not out_dir.exists():
                             continue
                         for fp in out_dir.glob(f"*.{self._recording_container}"):
                             if fp in self._recording_checked_files:
                                 continue
-                            check_and_delete_small_files(
+                            # Never touch the live splitmux location, even if
+                            # truncated to 0 during an abandoned teardown.
+                            if active_prefix and fp.name.startswith(active_prefix + "_"):
+                                continue
+                            deleted = check_and_delete_small_files(
                                 fp,
                                 self._recording_min_file_size_kb,
                                 validate_integrity=validate_integrity,
                                 validation_timeout=validation_timeout,
                             )
+                            if deleted:
+                                reason = getattr(
+                                    check_and_delete_small_files, "last_reason", None
+                                )
+                                self.logger.info(
+                                    "GstContinuousRecorder deleted recording file: %s (%s)",
+                                    fp,
+                                    reason or "unknown",
+                                )
                             try:
                                 stat = fp.stat()
                                 if (time.time() - stat.st_mtime) >= 60.0:
@@ -443,7 +522,158 @@ class GstContinuousRecorder(VideoRecorderBase):
         # splitmuxsink rotates based on max-size-time.
         return
 
-    def stop_with_pipeline(self, *, pipeline, Gst) -> None:
+    def _schedule_deferred_splitmux_release(self, refs: GstBranchRefs) -> None:
+        """After detach, EOS the branch once its fragment is stable, then drop it."""
+        prefix = getattr(self, "_deferred_fragment_prefix", None)
+        output_dirs = set(getattr(self, "_deferred_output_dirs", set()) or ())
+        container = getattr(self, "_deferred_container", None) or "mp4"
+        if not prefix or not output_dirs or refs.splitmuxsink is None:
+            return
+        try:
+            from evileye.capture.gstreamer_capture_pipeline import GStreamerCapturePipelineMixin
+        except Exception:
+            return
+        elements = [
+            refs.videoconvert,
+            refs.capsfilter,
+            refs.x264enc,
+            refs.h264parse,
+            refs.queue_before_mux,
+            refs.splitmuxsink,
+        ]
+        queue = refs.queue_before_mux
+        label = self.source.source_name if self.source else prefix
+
+        def send_eos() -> bool:
+            return push_eos_to_detached_branch(queue, refs.splitmuxsink)
+
+        def signature():
+            latest = None
+            latest_stat = None
+            pattern = f"{prefix}*.{container}"
+            for out_dir in output_dirs:
+                try:
+                    candidates = list(Path(out_dir).glob(pattern))
+                except Exception:
+                    continue
+                for path in candidates:
+                    try:
+                        stat = path.stat()
+                    except OSError:
+                        continue
+                    if latest_stat is None or stat.st_mtime_ns >= latest_stat.st_mtime_ns:
+                        latest = path
+                        latest_stat = stat
+            if latest is None or latest_stat is None:
+                return ("", 0, 0)
+            return (str(latest), int(latest_stat.st_size), int(latest_stat.st_mtime_ns))
+
+        GStreamerCapturePipelineMixin._register_deferred_splitmux_release(
+            elements=elements,
+            send_eos=send_eos,
+            signature=signature,
+            label=str(label),
+        )
+
+    def _orphan_recording_branch_refs(self, refs: GstBranchRefs) -> None:
+        """Pin recording elements without set_state(NULL) so open fragments stay intact."""
+        try:
+            from evileye.capture.gstreamer_capture_pipeline import GStreamerCapturePipelineMixin
+
+            orphan = GStreamerCapturePipelineMixin._orphan_gst_native
+        except Exception:
+            orphan = None
+        for elem in (
+            refs.videoconvert,
+            refs.capsfilter,
+            refs.x264enc,
+            refs.h264parse,
+            refs.queue_before_mux,
+            refs.splitmuxsink,
+            # recording_queue stays in the capture pipeline and is NULLed with it.
+        ):
+            if elem is None:
+                continue
+            if callable(orphan):
+                try:
+                    orphan(elem)
+                except Exception:
+                    pass
+
+    def _detach_recording_branch_preserving_splitmux(self, *, pipeline, refs: GstBranchRefs) -> bool:
+        """Unlink/remove the recording branch so capture pipeline NULL cannot truncate.
+
+        Leaves splitmux (and upstream encode elements) PLAYING but detached, with
+        strong orphan refs. Returns True when splitmux is no longer a pipeline child.
+        """
+        branch = [
+            refs.videoconvert,
+            refs.capsfilter,
+            refs.x264enc,
+            refs.h264parse,
+            refs.queue_before_mux,
+            refs.splitmuxsink,
+        ]
+        # Stop new buffers from reaching the muxer before remove().
+        try:
+            queue = refs.recording_queue
+            if queue is not None:
+                try:
+                    queue.set_property("leaky", 2)  # downstream
+                except Exception:
+                    pass
+                src_pad = None
+                try:
+                    src_pad = queue.get_static_pad("src")
+                except Exception:
+                    src_pad = None
+                if src_pad is not None:
+                    try:
+                        peer = src_pad.get_peer()
+                    except Exception:
+                        peer = None
+                    if peer is not None:
+                        try:
+                            src_pad.unlink(peer)
+                        except Exception:
+                            pass
+        except Exception:
+            pass
+
+        for elem in branch:
+            if elem is None or pipeline is None:
+                continue
+            try:
+                parent = elem.get_parent()
+            except Exception:
+                parent = None
+            if parent is not pipeline:
+                continue
+            try:
+                pipeline.remove(elem)
+            except Exception:
+                pass
+
+        self._orphan_recording_branch_refs(refs)
+        self._schedule_deferred_splitmux_release(refs)
+
+        try:
+            splitmux = refs.splitmuxsink
+            if splitmux is None:
+                return True
+            parent = splitmux.get_parent()
+            return parent is not pipeline
+        except Exception:
+            return False
+
+    def stop_with_pipeline(
+        self,
+        *,
+        pipeline,
+        Gst,
+        finalize: bool = True,
+        cancel_event: Optional[threading.Event] = None,
+    ) -> None:
         with self._lock:
             self._check_stop.set()
             self.is_running = False
@@ -455,8 +685,12 @@ class GstContinuousRecorder(VideoRecorderBase):
             if self._recording_out_dir is not None:
                 output_dirs.add(self._recording_out_dir)
             container = self._recording_container
+            self._deferred_fragment_prefix = self._active_splitmux_prefix
+            self._deferred_output_dirs = set(output_dirs)
+            self._deferred_container = container
             self._recording_out_dir = None
             self._recording_out_dirs = set()
+            self._active_splitmux_prefix = None
             self._session_date_str = None
             self._session_stem = None
             self._session_start_ts = None
@@ -472,6 +706,9 @@ class GstContinuousRecorder(VideoRecorderBase):
 
         if not refs:
             return
+
+        def _cancelled() -> bool:
+            return bool(cancel_event is not None and cancel_event.is_set())
 
         def _set_null_bounded(elem, *, timeout_sec: float = 1.0) -> None:
             if elem is None:
@@ -497,6 +734,23 @@ class GstContinuousRecorder(VideoRecorderBase):
                     self.source.source_name if self.source else "source",
                 )
 
+        # Abandon / cancel: never EOS+NULL the muxer. Incomplete qtmux/mp4mux
+        # finalize via set_state(NULL) rewrites the open fragment to 0 bytes.
+        # Detach the branch first so the capture/RTSP pipeline can still be NULLed.
+        if (not finalize) or _cancelled():
+            detached = self._detach_recording_branch_preserving_splitmux(
+                pipeline=pipeline, refs=refs
+            )
+            self.logger.warning(
+                "Preserving open splitmux fragment for %s "
+                "(finalize=%s, cancelled=%s, detached=%s); orphaning muxer",
+                self.source.source_name if self.source else "source",
+                finalize,
+                _cancelled(),
+                detached,
+            )
+            return
+
         # Unblock a full recording queue so muxer teardown cannot hang forever.
         try:
             recording_queue = refs.recording_queue
@@ -517,6 +771,14 @@ class GstContinuousRecorder(VideoRecorderBase):
         except Exception:
             pass
 
+        if _cancelled():
+            self.logger.warning(
+                "Recording finalize cancelled before EOS for %s; orphaning muxer",
+                self.source.source_name if self.source else "source",
+            )
+            self._detach_recording_branch_preserving_splitmux(pipeline=pipeline, refs=refs)
+            return
+
         # An attached but never-started branch may be blocked in preroll. No
         # segment exists to finalize until the first muxed buffer has arrived.
         eos_sent = False
@@ -528,10 +790,23 @@ class GstContinuousRecorder(VideoRecorderBase):
                 self.logger.warning("Could not send EOS to recording branch: %s", exc)
 
         if eos_sent:
-            deadline = time.monotonic() + 5.0
+            try:
+                finalize_sec = float(os.environ.get("EVILEYE_RECORDING_FINALIZE_SEC", "20"))
+            except ValueError:
+                finalize_sec = 20.0
+            deadline = time.monotonic() + max(5.0, finalize_sec)
             last_signature = None
             stable_since = None
             while time.monotonic() < deadline:
+                if _cancelled():
+                    self.logger.warning(
+                        "Recording finalize cancelled for %s; orphaning muxer to preserve fragment",
+                        self.source.source_name if self.source else "source",
+                    )
+                    self._detach_recording_branch_preserving_splitmux(
+                        pipeline=pipeline, refs=refs
+                    )
+                    return
                 try:
                     queue_level = refs.queue_before_mux.get_property("current-level-buffers")
                 except Exception:
@@ -572,11 +847,26 @@ class GstContinuousRecorder(VideoRecorderBase):
                     "Timed out waiting for recording branch to finalize for %s",
                     self.source.source_name if self.source else "source",
                 )
+                # Incomplete finalize + NULL truncates the open fragment to 0B.
+                # On abandon/cancel preserve bytes; clean shutdown still tries NULL.
+                if _cancelled():
+                    self.logger.warning(
+                        "Skipping splitmux NULL after cancelled finalize for %s",
+                        self.source.source_name if self.source else "source",
+                    )
+                    self._detach_recording_branch_preserving_splitmux(
+                        pipeline=pipeline, refs=refs
+                    )
+                    return
         elif had_media:
             self.logger.warning(
                 "Recording branch rejected EOS during shutdown for %s",
                 self.source.source_name if self.source else "source",
             )
+
+        if _cancelled():
+            self._detach_recording_branch_preserving_splitmux(pipeline=pipeline, refs=refs)
+            return
 
         for elem in [
             refs.videoconvert,
@@ -587,6 +877,11 @@ class GstContinuousRecorder(VideoRecorderBase):
             refs.splitmuxsink,
             refs.recording_queue,
         ]:
+            if _cancelled():
+                self._detach_recording_branch_preserving_splitmux(
+                    pipeline=pipeline, refs=refs
+                )
+                return
             _set_null_bounded(elem, timeout_sec=1.0)
             try:
                 if pipeline and elem is not None and elem.get_parent() == pipeline:

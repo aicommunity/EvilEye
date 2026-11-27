@@ -157,6 +157,7 @@ web_users.json
 web_ip_bans.json
 .evileye_service.json
 EvilEyeData*/
+pg_spool/
 *.mp4
 *.avi
 *.avi.download

@@ -17,9 +17,7 @@ from typing import Any
 from poly_mode_compare_lib import COMPARE_CONFIGS, DEFAULT_OUT_DIR, REPO_ROOT
 
 from render_multiprocessing_benchmark_report import (  # noqa: E402
-    _avg,
     _fmt,
-    _p95,
     _safe_float,
     parse_log,
     parse_samples,

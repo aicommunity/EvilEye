@@ -77,12 +77,44 @@ def event_health(stats, *, now=None):
         last = detector.get('last_success_at') or detector.get('started_at')
         if submitted > completed and last is not None and now - last > 30:
             reasons.append(name + ':updates_stalled')
+    capture_names = []
+    down_names = []
     for name, source in (components.get('pipeline', {}).get('module_instances') or {}).items():
+        if not isinstance(source, dict) or 'capture_health' not in source:
+            continue
         health = source.get('capture_health') or {}
+        capture_names.append(name)
         pending = health.get('teardown_pending_since')
         if pending is not None and now-pending > 30:
             reasons.append(name + ':native_teardown_stalled')
+        down_since = health.get('capture_down_since')
+        if (
+            health.get('working') is False
+            and isinstance(down_since, (int, float))
+            and now - down_since > 120
+        ):
+            reasons.append(name + ':source_down')
+            down_names.append(name)
+    if capture_names and len(down_names) == len(capture_names):
+        reasons.append('capture:all_sources_down')
     return reasons
+
+
+def capture_outage_restarts_pipeline(reasons) -> bool:
+    """One live camera must keep recording. Restart only when every capture is down
+    or the failure is not a partial source outage."""
+    cleaned = []
+    for reason in reasons or []:
+        text = str(reason).strip()
+        if text.startswith('event_health:'):
+            text = text[len('event_health:'):]
+        if text:
+            cleaned.extend(part for part in text.split(';') if part)
+    if not cleaned:
+        return False
+    if 'capture:all_sources_down' in cleaned:
+        return True
+    return any(not item.endswith(':source_down') for item in cleaned)
 
 
 def publish_heartbeat(site_dir, stats):

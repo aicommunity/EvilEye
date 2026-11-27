@@ -1,24 +1,37 @@
 # Technical debt ledger
 
-Last reviewed: plugin_support audit (stages 0-4), 2026-10-19
+Last reviewed: full project audit 2026-11 (see audit/AUDIT_2026-11.md).
+Audit fix plan executed 2026-11: stages 0-5 merged into `develop` via
+`docs/audit-2026-11`, `fix/audit-s0`, `perf/audit-s1`, `fix/audit-s2`,
+`sec/audit-s3`, `ci/audit-s4`, `refactor/audit-s5` (all --no-ff). 29 audit
+findings closed (TD-AUD-S0-*..TD-AUD-S5-*); remaining open items below.
 
 ## Open
 
 | ID | Description | File / area | Introduced | Target phase | Priority |
 |----|-------------|-------------|------------|--------------|----------|
 | TD-MP-401 | Capture triple-buffer reduction spike | capture | R4 | Deferred | P2 |
-| TD-MP-501 | module_capabilities JSON S4 | configs | — | Deferred | P3 |
-| TD-DOC-001 | `DualModeProcessor` adoption by all modules (S1) | core/dual_mode_processor.py | doc audit | Backlog | P3 |
+| TD-MP-501 | ~~module_capabilities JSON S4~~ Rejected: class attributes and `@register_module` stay the only source. Sketch kept as history in `docs/module_integration_simplification.md` | configs | — | Done | P3 |
+| TD-DOC-001 | ~~`DualModeProcessor` adoption by all modules (S1)~~ Only `RoiFeeder` and example `IdentityPass` inherit it. Detectors and trackers stay on the plugin runtime | core/dual_mode_processor.py | doc audit | Done | P3 |
 | TD-DOC-001b | RoiFeeder adopts DualModeProcessor (reference) | attributes_detection/roi_feeder.py | audit 2026-09-26 | Done | P3 |
-| TD-DOC-002 | `validate_config` JSON `stage_kind` (S6) | scripts/validate_config.py | doc audit | Backlog | P3 |
-| TD-PS-D1 | Detector in a multi-detector fanout without `model_class_mapping` is not remapped and does not fail start (B5 follow-up) | pipeline / controller | plugin_support audit | Backlog | P2 |
-| TD-PS-D2 | Shared-memory descriptor is re-allocated per `process` stage (~7-8 ms per 1080p stage); needs a change marker on `Frame.image` before it can be reused (C5) | core/plugin_runtime | plugin_support audit | Backlog | P2 |
-| TD-PS-D3 | Legacy MP detector path is still wired in (`DetectionThreadYoloMp`, `object_detection_yolo_mp.py`, `detection_thread_factory.py`, `mp_queue_config.py`, `validate_config.py`, MP tests). `LegacyProcessorModuleAdapter` has no built-in consumer (only `legacy_processor_protocol` in `base_class.py` for third-party plugins and tests): remove it after a deprecation notice in PLUGINS.md | object_detector, core/plugin_runtime/legacy.py | plugin_support audit | After deprecation window | P2 |
-| TD-PS-D4 | Ruff: 805 `F401` left (all non-stdlib: many may register modules or Qt widgets, so they need a manual review per file), 0 `B904`; 43 known `F821` in `scripts/ruff_baseline.json` (optional Qt imports, dialogs). Stdlib `F401` and all `B904` were fixed | repo-wide | plugin_support audit | Gradual | P3 |
-| TD-PS-D5 | Merged remote branches (`autorefactor_*`, `*-hotfix`, `experiments`; 45+ on origin) are not cleaned up | git remote | plugin_support audit | Needs owner decision | P3 |
-| TD-PS-D6 | Open acceptance criteria: target FPS/p95/loss budget (the old-vs-new comparison, browser alarm smoke and RTSP disconnect check were run on 2026-10-19, see docs/RUNTIME_VERIFICATION_2026-10-19.md) | docs/PLUGIN_MIGRATION_COMPLETION_PLAN.md | plugin_support audit | Before release | P1 |
-| TD-PS-D7 | Frame loss vs `main`: on the same 2688x1520 clip and config about 10 pp fewer frames reach the tracker output (82.9% vs 92.5%); cause not established. Details: see "TD-PS-D7" below | core/plugin_runtime, core/processor_step | live comparison 2026-10-19 | Next | P1 |
-| TD-PS-D8 | Schedule-alarm events carry no frames, so the journal preview column is empty | events_detectors | live alarm check 2026-10-19 | Backlog | P3 |
+| TD-DOC-002 | ~~`validate_config` JSON `stage_kind` (S6)~~ Any `mc_trackers.execution_mode` is warned as ignored; the stage always runs in the parent | scripts/validate_config.py | doc audit | Done | P3 |
+| TD-PS-D1 | ~~Detector in a multi-detector fanout without model_class_mapping~~ Closed in backlog fix: update_class_mapping_from_detectors raises when >1 detector and any lacks a mapping | pipeline / controller | audit | Done | P2 |
+| TD-PS-D2 | ~~Shared-memory descriptor is re-allocated per `process` stage~~ Segment pool implemented (stage 1). Design for the remaining change-marker is in `docs/shm_frame_ownership.md` (no runtime change). Skip re-copy still needs a cross-process refcount; do not skip `alloc_frame` merely because `frame_handle` is set | core/plugin_runtime | plugin_support audit | Design written, implementation open | P2 |
+| TD-PS-D3 | `ObjectDetectorYoloMp` alias, factory key `yolo_mp`, and their tests can go after the next minor release. `DetectionThreadYoloMp` stays (process-mode YOLO still constructs it). `mp_queue_config.py` and the yolo/rtdetr/rfdetr factory stay. `LegacyProcessorModuleAdapter` stays; no deprecation window is open for third-party put/get plugins. Notice corrected in `docs/PLUGINS.md` | object_detector, core/plugin_runtime/legacy.py | plugin_support audit | After the next minor, alias only | P2 |
+| TD-PS-D4 | Ruff: first batch plus a follow-up removed unused imports in `scripts/` and in tests when the import does not load Qt and does not exist only to register a module (`plantuml`, unused `Frame`, unused `get_logger`, unused `DETECTOR_CONFIG_KEY`). Remaining F401 in tests are mostly PyQt and `evileye` registration/widget imports. 43 known `F821` in `scripts/ruff_baseline.json`. The `evileye/` package was not swept | repo-wide | plugin_support audit | Gradual | P3 |
+| TD-PS-D5 | Remote branch inventory is in `docs/remote_branch_inventory.md` (45 origin refs on 2026-11-22). Seven are not merged into develop. No remote branch was deleted; cleanup still needs an owner decision | git remote | plugin_support audit | Inventory done, deletion needs owner | P3 |
+| TD-PS-D6 | Acceptance budget gated: `make acceptance-gate VIDEO=...` (scripts/tdps7_acceptance_gate.py, default budget TrackersOut/DetectorsIn >= 0.92, logs to docs/TDPS7_ACCEPTANCE_LOG.md). One run on the GPU host remains | docs | audit | Verification run pending | P1 |
+| TD-PS-D7 | Root causes fixed (stage 1) + corrections; acceptance gate prepared with TD-PS-D6. GPU-host measurement remains the closing step | core | audit | Verification run pending | P1 |
+| TD-PS-D8 | ~~Schedule-alarm events carry no frames~~ Fixed in stage 2 (TD-AUD-S2-5) | events_detectors | live alarm check 2026-10-19 | Done | P3 |
+
+
+
+| TD-AUD-011 | ~~Sync psycopg2 in QTimer slot~~ Closed in backlog fix: JournalFetchThread (QThread) fetches off the UI thread, result applied via signal | visualization_modules/unified_events_journal.py | audit | Done | P2 |
+| TD-AUD-D1 | ~~event_id MAX+1 race~~ Closed in backlog fix: event_id_seq sequence (migration aligns it past MAX; get_next_event_id prefers nextval, MAX+1 fallback kept for pre-migration DBs) | database_controller_pg.py | audit | Done | P2 |
+| TD-AUD-D7 | ~~query() None-on-error~~ Closed in backlog fix: error-level logging + documented contract; ConfigHistoryManager raises instead of [] | database_controller_pg.py | audit | Done | P3 |
+| TD-AUD-T8 | ~~Watchdog PID file~~ Closed in backlog fix: monitor/pids/<config>.json written at spawn (stack_control) + by the child (run_config, atexit cleanup); find_cli_and_child prefers the live record | watchdog_native.py | audit | Done | P2 |
+| TD-AUD-JOBS | ~~jobs.finish_time never written~~ Closed in backlog fix: finish_job() wired into Controller.stop() | config_history_manager.py | audit | Done | P3 |
+| TD-AUD-SQL-ID | ~~JSON adapter table_name identifier~~ Closed in backlog fix: KNOWN_EVENT_TABLES whitelist in JournalAdapterBase.set_params_impl | jadapter_base.py | audit | Done | P3 |
 
 ## In progress
 
@@ -29,6 +42,49 @@ Last reviewed: plugin_support audit (stages 0-4), 2026-10-19
 
 | ID | Closed in phase | Notes |
 |----|-----------------|-------|
+| TD-AUD-S0-1 | audit fix stage 0 (fix/audit-s0) | Bootstrap admin password no longer logged; stored once in a 0600 note next to credentials.json, removed after first password change; `must_change_password` enforced by AuthGuardMiddleware at the API level |
+| TD-AUD-S0-2 | audit fix stage 0 (fix/audit-s0) | CSRF origin check covers all non-GET `/api/v1/*` (was admin-only); internal token compared with `hmac.compare_digest` in ProtectionMiddleware; `/ready` reduced to `{"status":"ok"}`, details moved to protected `/api/v1/system/readiness` (runtime:view) |
+| TD-AUD-S0-3 | audit fix stage 0 (fix/audit-s0) | Double `_record_input_drop()` removed (frame-drop counters were inflated ~2x during TD-PS-D7 measurements) |
+| TD-AUD-S0-4 | audit fix stage 0 (fix/audit-s0) | MpWorker exits with `MP_EXIT_CRASH=3` on non-CUDA init/loop failures instead of clean 0, so the health monitor sees crashes |
+| TD-AUD-S0-5 | audit fix stage 0 (fix/audit-s0) | `CameraEvent.__eq__` compares `other.timestamp`; single `pickle.loads` for worker event output |
+| TD-AUD-S0-6 | audit fix stage 0 (fix/audit-s0) | MainWindow None-guards for `controller` in resizeEvent/check_controller_status; dead `api/routes/events.py` removed; stale `visualization.spec` and Py3.9 `__pycache__` legacy dirs removed |
+| TD-AUD-S0-7 | audit fix stage 0 (fix/audit-s0) | gitleaks secret-scanning job added to CI (full history) |
+| TD-AUD-S1-1 | audit fix stage 1 (perf/audit-s1) | Crops-only IPC for AttributeClassifier restored (pack_process_item/restore_process_result hooks in the plugin runtime; ROI crops cross the process boundary, not the full frame) |
+| TD-AUD-S1-2 | audit fix stage 1 (perf/audit-s1) | ItemModuleAdapter/ParallelItemModuleAdapter implement MpPendingReporter; estimate_mp_backlog_stats covers plugin adapters and attributes stages (soft backpressure no longer blind) |
+| TD-AUD-S1-3 | audit fix stage 1 (perf/audit-s1) | SHM segment pool in SharedFrameTransport (opt-in; plugin runtime enables it, EVILEYE_SHM_POOL=0 to disable, EVILEYE_SHM_POOL_MAX_FREE): no per-frame create/unlink |
+| TD-AUD-S1-4 | audit fix stage 1 (perf/audit-s1) | Continuous output-drainer thread for process-mode plugin modules: worker results decoded as they arrive instead of once per tick; bounded drop-oldest hand-off |
+| TD-AUD-S1-5 | audit fix stage 1 (perf/audit-s1) | Default module queue_size 8→16 (EVILEYE_MODULE_QUEUE_SIZE); MpControl queue-swap race fixed with _queues_lock + snapshots (TD-AUD-001) |
+| TD-AUD-S1-6 | audit fix stage 1, corrected on fix/audit-corrections | GStreamer get_frames_impl returns an empty list when the freshness key repeats, so the same physical frame is not copied again |
+| TD-AUD-S1-7 | audit fix stage 1 (perf/audit-s1) | Processor stop loops aggregate errors and keep stopping remaining processors instead of aborting on the first failure (TD-AUD-002) |
+| TD-AUD-S2-1 | audit fix stage 2 (fix/audit-s2) | ConfigHistoryManager: execute_query -> query (9 call sites); job statistics rewritten against the real jobs columns (status/frames_processed never existed) (TD-AUD-004) |
+| TD-AUD-S2-2 | audit fix stage 2, corrected on fix/audit-corrections | pg_spool writes JSON per adapter under image_dir/pg_spool/<event>. Legacy pickle files are quarantined and not loaded. Oversized records are refused |
+| TD-AUD-S2-3 | audit fix stage 2 (fix/audit-s2) | get_next_event_id queries tables individually (one broken table no longer resets ids to 0); get_last_id falls back to an epoch floor instead of 0 (no PK collisions); events_tables filters adapters by storage_backend (TD-AUD-006) |
+| TD-AUD-S2-4 | audit fix stage 2 (fix/audit-s2) | Objects writer thread: retries OperationalError via execute_with_retry and logs losses at error level (was: silent drop at info) |
+| TD-AUD-S2-5 | audit fix stage 2, corrected on fix/audit-corrections | ScheduleAlarmEvent carries detected and lost frames, and DatabaseAdapterBase.update() calls _update_impl again so the lost frame is persisted |
+| TD-AUD-S2-6 | audit fix stage 2 (fix/audit-s2) | DB retention: purge_old_records + daily DatabaseService loop behind database.retention_days (default off); EvilEyeData file retention already existed via storage_monitor |
+| TD-AUD-S3-1 | audit fix stage 3 (sec/audit-s3) | journal_data_source_db fully parameterized: dates, source names, source/object ids and LIMIT/OFFSET travel as %s params (was f-string SQL with manual escaping) (TD-AUD-007 / W1) |
+| TD-AUD-S3-2 | audit fix stage 3, corrected on fix/audit-corrections | /setup/test-database resolves every address and connects only to an allowed IP. Resolution failure and link-local/ULA targets are refused. /check-data-dir stays under the site root unless EVILEYE_SETUP_TRUST_DATA_DIR=1 |
+| TD-AUD-S3-3 | audit fix stage 3 (sec/audit-s3) | /auth/me re-resolves the session against the live user store - deleted/disabled users get 401 (W6) |
+| TD-AUD-S3-4 | audit fix stage 3, corrected on fix/audit-corrections | proxy_headers is off when trust_proxy is false. When it is on, forwarded_allow_ips follows trusted_proxy_ips. CORS methods and headers stay explicit |
+| TD-AUD-S3-5 | audit fix stage 3 (sec/audit-s3) | 500 responses no longer leak exception text (configs/extensions); failures logged server-side via logger.exception (W8) |
+| TD-AUD-S4-1 | audit fix stage 4 (ci/audit-s4) | CI: mypy ratchet job (scripts/check_mypy_ratchet.py + mypy_baseline.json, 6 seeded modules), integration job with postgres service (continue-on-error until consistently green), pytest-xdist + coverage --cov-fail-under=25 in the 3.12 unit job, develop branch added to push triggers (TD-AUD-008) |
+| TD-AUD-S4-2 | audit fix stage 4 (ci/audit-s4) | pre-commit pytest hook runs the unit suite (tests/unit -x -q), not a smaller subset. `make test` runs that unit suite with xdist; CI also applies the coverage gate. test-integration is separate |
+| TD-AUD-S4-3 | audit fix stage 4, corrected on fix/audit-corrections | Image HEALTHCHECK hits /ready. The pipeline service disables that check. POSTGRES_PASSWORD is required in the main compose file and the site compose files. Non-root USER is still deferred |
+| TD-AUD-S4-4 | audit fix stage 4 (ci/audit-s4) | SQLAlchemy removed from pyproject/requirements (declared, never imported); scripts/setup/fix_entry_points.py removed along with its Makefile/install.py/README call sites - pip console-scripts are the single mechanism (TD-AUD-015) |
+| TD-AUD-S4-5 | audit fix stage 4, corrected on fix/audit-corrections | site_runtime_guard reads Windows process info via psutil. Watchdog matches the config as its own argv element. A PID file is still open (TD-AUD-T8) |
+| TD-AUD-S5-1 | audit fix stage 5 (refactor/audit-s5) | Dead GUI journal generation removed: events_journal.py, handler_journal_view.py, objects_journal_json.py, both data loaders, table_data_thread.py, table_updater_view.py (~2700 lines) + their 22 integration tests (TD-AUD-009) |
+| TD-AUD-S5-2 | audit fix stage 5, corrected on fix/audit-corrections | VideoThread keeps the source index passed by the visualizer. The class counter no longer overwrites it |
+| TD-AUD-S5-3 | audit fix stage 5 (refactor/audit-s5) | Hardcoded 80-entry COCO dict moved from Controller.__init__ to ClassManager.DEFAULT_COCO_CLASS_MAPPING (TD-AUD-012, partial: full ControllerBootstrap decomposition still open) |
+| TD-AUD-S5-4 | audit fix stage 5 (refactor/audit-s5) | PipelineSurveillance: five ProcessorStep _init_* copy-pastes replaced by _init_step_processors (detectors/trackers/mc_trackers/attributes_roi/classifier) |
+| TD-AUD-S5-5 | audit fix stage 5 (refactor/audit-s5) | sys.path.append repo-root hacks removed from 9 visualization modules (+pruned unused sys/Path imports) |
+| TD-AUD-S5-6 | audit fix stage 5 (refactor/audit-s5) | Legacy MP detector deprecation notice added to docs/PLUGINS.md (TD-PS-D3 window opened) |
+| TD-MP-501 | docs/td-boundaries | JSON `module_capabilities` rejected; class attributes remain the source of truth |
+| TD-DOC-001 | docs/td-boundaries | DualModeProcessor stays limited to RoiFeeder and the IdentityPass example |
+| TD-DOC-002 | fix/td-hygiene | mc_trackers warns on any execution_mode |
+| TD-AUD-HF1 | hotfix_reconnect integration (2026-11) | Audit finding B5 closed upstream: stuck GStreamer teardown can no longer hold the capture lifecycle lock (teardown moved outside pipeline_lock via _detach_pipeline_state/_native_teardown_body, TEARDOWN_BUDGET_SEC=15s, reconnect no longer piles waits on an abandoned release, previous init() joined before a new attempt, _note_capture_down/up records one disconnect per outage for the watchdog via SOURCE_DOWN_SEC). Merged into develop as 3804eb4a; no conflicts with the stage-1 frame_id/novelty fixes (verified coexisting) |
+| TD-AUD-C1 | fix/audit-corrections follow-up | SSRF resolver allows loopback again: `::1` carries is_reserved=True in Python ipaddress, so `localhost` was refused, contradicting the documented loopback policy (is_reserved now ignores is_loopback) |
+| TD-AUD-C2 | fix/audit-corrections follow-up | Spool replays only connection-class failures (OperationalError/InterfaceError/ConnectionError): a post-commit image-save failure no longer re-executes the committed INSERT (was: duplicate row / attempts==2) |
+| TD-AUD-C3 | fix/audit-corrections follow-up | checked-writes tests use per-test tmp image_dir - spool records no longer leak between runs through the shared /tmp path |
 | TD-002 | phase 0 | Removed duplicate `DetectionThreadFactory` in `detection_thread_factory.py` |
 | TD-005 | phase 0 | Doc/CLI gaps D1–D6, D8–D10 addressed in README, Makefile, MULTIPROCESSING, launch/process |
 | TD-006 | phase 0 | `tool.coverage.run.source` uses `evileye` package prefix |
@@ -145,3 +201,34 @@ before this can be called finished).
 | TD-GUI-SPLIT | Full `main_window.py` decomposition — needs dedicated GUI regression suite |
 | TD-YOLO-SINGLETON | Shared YOLO model cache — forbidden (thread/process safety) |
 | TD-018 | `capture/` materialize_frame in gstreamer path — low ROI; SHM owned by capture callbacks |
+
+## Remaining known items (post stage-2)
+
+- JSON event journal rewrites the whole daily file per event (O(n^2) on heavy days) - switch to NDJSON append with readers support (deferred; needs a coordinated reader update).
+
+## Known environment-dependent test failures (Windows dev host, pre-existing)
+
+Verified failing on the clean baseline before the audit fixes; not regressions:
+- `tests/unit/core/test_process_control.py` (3) - POSIX process groups unavailable
+- `tests/unit/capture/test_gstreamer_release_lifecycle.py::test_set_gst_state_null_bounded_returns_after_timeout_and_marks_abandoned` - no GStreamer on the Windows host (`Gst is None` -> `_set_gst_state_null_bounded` short-circuits to True before the hung-element path; runs properly on CI/hosts with GStreamer)
+- `tests/unit/controller/test_runtime_diagnostics.py::test_runtime_stats_control_command_round_trips_over_control_ipc` - IPC on Windows
+- `tests/integration/visualization/configurer/test_configurer_simple.py` - cross-drive relpath (C:/E:)
+
+## Post-stage-5 notes
+
+- `create_app()` writes `credentials.json` under `EVILEYE_SITE_DIR` (cwd when
+  unset). `tests/conftest.py` now points that variable at a per-test temp site,
+  so a full-suite run no longer adds `web_auth` to a real `<cwd>/credentials.json`.
+- TD-PS-D7: root causes fixed in stage 1. A 2026-11-22 attempt on this GPU
+  host (GTX 1660 SUPER, ffmpeg present) did not produce a ratio: the reference
+  clip and `models/yolo11m.pt` are absent, and `configs/hardhat_1cam.json` still
+  requires `models/y8mhardhats.pt`, which is also absent, so the pipeline exits
+  before any frame (`DetectorsIn=0`, gate exit 2). TD-PS-D6/D7 stay open.
+  See `docs/TDPS7_ACCEPTANCE_LOG.md`. The gate now writes its config under
+  `configs/` and scores `detector_in`/`tracker_out` from the run.
+- Docker non-root `USER` deliberately deferred: existing host-mounted data dirs
+  assume root ownership (documented in TD-AUD-S4-3).
+
+## Backlog branch fix/audit-backlog (2026-11-22)
+
+Closed TD-PS-D1, TD-AUD-D1, TD-AUD-T8, TD-AUD-011, TD-AUD-D7, TD-AUD-JOBS, TD-AUD-SQL-ID; TD-PS-D6/D7 gate prepared (`make acceptance-gate`). Still open by design: TD-PS-D2 skip-copy (design in docs/shm_frame_ownership.md, implementation needs a refcount), TD-PS-D3 alias removal after the next minor (DetectionThreadYoloMp stays), TD-MP-401 (measurement procedure written, queues unchanged), TD-PS-D4 (gradual F401), TD-PS-D5 (owner decision). TD-MP-501 and TD-DOC-001/002 are closed as decisions, not as new runtime.

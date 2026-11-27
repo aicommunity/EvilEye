@@ -14,13 +14,27 @@ from abc import abstractmethod, ABC
 
 # Базовый класс журнального адаптера, для того чтобы формировать SELECT запросы к соответствующим таблицам в БД
 class JournalAdapterBase(EvilEyeBase, ABC):
+    # TD-AUD-SQL-ID: select_query() interpolates table_name into raw SQL, so
+    # it must come from a fixed set of event tables - never free-form config.
+    KNOWN_EVENT_TABLES = frozenset({
+        "zone_events", "attribute_events", "cam_events", "camera_events",
+        "schedule_alarm_events", "fov_events", "alarm_events",
+        "system_events", "objects",
+    })
+
     def __init__(self):
         super().__init__()
         self.table_name = None
         self.event_name = None
 
     def set_params_impl(self):
-        self.table_name = self.params['table_name']
+        table = str(self.params.get('table_name') or '').strip()
+        if table and table not in self.KNOWN_EVENT_TABLES:
+            raise ValueError(
+                f"table_name {table!r} is not a known event table "
+                f"(allowed: {', '.join(sorted(self.KNOWN_EVENT_TABLES))})"
+            )
+        self.table_name = table or None
 
     def get_params_impl(self):
         params = dict()

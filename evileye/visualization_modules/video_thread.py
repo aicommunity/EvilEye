@@ -41,7 +41,8 @@ class VideoThread(QThread):
     add_roi_signal = pyqtSignal(int, QPixmap)
 
     def __init__(self, source_id, fps, rows, cols, show_debug_info, font_params, text_config=None, class_mapping=None,
-                 logger_name: str | None = None, parent_logger: logging.Logger | None = None):
+                 logger_name: str | None = None, parent_logger: logging.Logger | None = None,
+                 thread_num: int | None = None):
         super().__init__()
         base_name = "evileye.video_thread"
         full_name = f"{base_name}.{logger_name}" if logger_name else base_name
@@ -51,7 +52,13 @@ class VideoThread(QThread):
         VideoThread.cols = cols
         self.queue = Queue(maxsize=fps)
 
-        self.thread_num = VideoThread.thread_counter
+        # Label index. Audit 2026-11 (TD-AUD-010): the monotonic class counter
+        # never reset, so after a visualizer re-init new threads emitted
+        # out-of-range indices and every frame was silently dropped. The
+        # visualizer now passes the stable source index explicitly.
+        self.thread_num = (
+            thread_num if thread_num is not None else VideoThread.thread_counter
+        )
         self.source_id = source_id
         self.zones = None
         self.show_zones = False
@@ -61,7 +68,6 @@ class VideoThread(QThread):
         self.run_flag = False
         self.show_debug_info = show_debug_info
         self.fps = fps
-        self.thread_num = VideoThread.thread_counter  # Номер потока для определения, какой label обновлять
         self.det_params = None
         self.text_config = text_config or {}  # Text configuration for rendering
         self.visualizer_ref = None
@@ -99,7 +105,8 @@ class VideoThread(QThread):
             self.font_color = (0, 0, 255)
 
         # Определяем количество потоков в зависимости от параметра split
-        VideoThread.thread_counter += 1
+        if thread_num is None:
+            VideoThread.thread_counter += 1
 
         # Perf diagnostics (disabled by default). Enable with env EVILEYE_PERF_DIAG=1
         self._perf_diag_env = os.getenv("EVILEYE_PERF_DIAG", "").strip().lower() in {"1", "true", "yes", "on"}

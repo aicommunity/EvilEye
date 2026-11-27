@@ -14,6 +14,44 @@ def _apply_alter_statements(db_controller, statements: Iterable[str]) -> None:
         db_controller.query(stmt, None)
 
 
+def _align_event_id_sequence(db_controller, logger=None) -> None:
+    """Advance event_id_seq past MAX(event_id) across the event tables."""
+    from psycopg2 import sql
+
+    tables = [
+        name for name in (
+            "zone_events", "attribute_events", "cam_events",
+            "schedule_alarm_events", "alarm_events", "system_events",
+        )
+        if name in (getattr(db_controller, "tables", None) or {})
+    ]
+    max_id = 0
+    for table in tables:
+        query = sql.SQL("SELECT COALESCE(MAX(event_id), 0) FROM {table}").format(
+            table=sql.Identifier(table)
+        )
+        try:
+            record = db_controller.query(query, None)
+        except Exception:
+            continue
+        if record and record[0] and record[0][0] is not None:
+            try:
+                max_id = max(max_id, int(record[0][0]))
+            except (TypeError, ValueError):
+                continue
+    try:
+        db_controller.query(
+            "SELECT setval('event_id_seq', %s, %s)",
+            (max_id, max_id > 0),
+        )
+    except Exception as exc:
+        if logger:
+            try:
+                logger.warning(f"event_id_seq alignment failed: {exc}")
+            except Exception:
+                pass
+
+
 def apply_startup_migrations(db_controller, logger: Optional[object] = None) -> None:
     """
     Apply lightweight, idempotent migrations required by recent features.
@@ -75,10 +113,15 @@ def apply_startup_migrations(db_controller, logger: Optional[object] = None) -> 
         );
         """,
         "CREATE INDEX IF NOT EXISTS idx_alarm_events_time_stamp ON alarm_events (time_stamp);",
+        # TD-AUD-D1: race-free event-id allocation across concurrent
+        # instances. The sequence is advanced past the current MAX(event_id)
+        # below so existing rows keep their ids.
+        "CREATE SEQUENCE IF NOT EXISTS event_id_seq START 1;",
     )
 
     try:
         _apply_alter_statements(db_controller, stmts)
+        _align_event_id_sequence(db_controller, logger)
         if logger:
             try:
                 logger.info("DB startup migrations applied (idempotent)")

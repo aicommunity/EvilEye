@@ -53,7 +53,6 @@ from .roi_editor_window import ROIEditorWindow
 from .dialogs.class_mapping_dialog import ClassMappingDialog
 from .stream_player_window import StreamPlayerWindow
 
-sys.path.append(str(Path(__file__).parent.parent.parent))
 
 
 # Собственный класс для label, чтобы переопределить двойной клик мышкой
@@ -1316,10 +1315,16 @@ class MainWindow(QMainWindow):
 
     def resizeEvent(self, event: QtGui.QResizeEvent) -> None:
         super().resizeEvent(event)
+        if self.controller is None:
+            # The window can be shown/resized before set_controller() connects
+            # the pipeline (standalone preview, tests).
+            return
         self.controller.set_current_main_widget_size(self.geometry().width() - self.toolbar_width,
                                                      self.geometry().height() - self.menu_height)
 
     def check_controller_status(self):
+        if self.controller is None:
+            return
         if not self.controller.is_running():
             self.close()
 
